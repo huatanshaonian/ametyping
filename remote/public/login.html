@@ -26,7 +26,7 @@
   .title span { flex: 1; letter-spacing: .5px; }
   .x { width: 16px; height: 14px; padding: 0; font: bold 11px/10px Tahoma, sans-serif; color: var(--ink); cursor: default; }
   .body { display: flex; gap: 14px; padding: 16px 14px 14px; }
-  .icon { flex: none; width: 32px; height: 32px; image-rendering: pixelated; }
+  .icon { flex: none; width: 48px; height: 48px; image-rendering: pixelated; }
   form { flex: 1; min-width: 0; }
   p { margin: 0 0 12px; }
   .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
@@ -40,7 +40,7 @@
   button.b:focus-visible { outline: 1px dotted var(--ink); outline-offset: -5px; }
   button.b.def { outline: 1px solid var(--dark); }
   button.b:disabled { color: var(--shade); cursor: default; }
-  .msg { min-height: 17px; margin: 0 14px 8px; padding-left: 46px; color: #a0103c; }
+  .msg { min-height: 17px; margin: 0 14px 8px; padding-left: 62px; color: #a0103c; }
   .status { margin: 0 2px 0; padding: 2px 5px; font-size: 11px; color: #5a3048; }
   @media (max-width: 380px) { .icon { display: none; } .body { padding: 14px 10px 12px; } .msg { padding-left: 0; } }
 </style>
@@ -49,13 +49,8 @@
 <div class="win raised" role="dialog" aria-labelledby="ttl">
   <div class="title"><span id="ttl">登录</span><button class="x raised" type="button" tabindex="-1" aria-hidden="true">×</button></div>
   <div class="body">
-    <!-- a pixel key -->
-    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" shape-rendering="crispEdges">
-      <rect x="1" y="3" width="6" height="6" fill="#6b2a4a"/><rect x="2" y="4" width="4" height="4" fill="#f5c542"/>
-      <rect x="3" y="5" width="2" height="2" fill="#6b2a4a"/><rect x="7" y="5" width="8" height="2" fill="#6b2a4a"/>
-      <rect x="7" y="5" width="7" height="1" fill="#f5c542"/><rect x="11" y="7" width="2" height="3" fill="#6b2a4a"/>
-      <rect x="13" y="7" width="2" height="2" fill="#6b2a4a"/>
-    </svg>
+    <!-- Win98 network neighbourhood icon (48x48, inlined: the login page may load nothing else) -->
+    <img class="icon" alt="" width="48" height="48" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwBAMAAAClLOS0AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAJ1BMVEUAAAB/f3/AwMD///8AAAAAAIAAAP8A//8AgIAA/wAAgACAgAD//wA6t+/tAAAAAXRSTlMAQObYZgAAAAFiS0dEAxEMTPIAAAAHdElNRQfiBhoALCAl4xkUAAABHklEQVQ4y82TMW7DMAxFJSAHCB1vXSo3W5ZYHushTo0iQKcgyBVyhKBH6Nyta8deIUfwpUpFJikxDZAhQ/+oB5HU/5QxxlhgmUxFRapX6bnl8yfIwKwh1Rmwnm84BajzTIN+1E6D10PUJTjeDxz+AdjmuVi/H6VysZ5MV7mw7ToXTlznMhlN71QusiKcSwRcufabj6gRcGG/ef8DOCylwdcngjk21+Dnm0pd7XEbEEcVoIeH5hkIWz2P9l8FFztMgG3XQGwvYZoAmQ+6ohTA46HACUgvQAECJPFz6KWZwsPp1OGMVSKHYNk8t8NL00guWCmAx2rRDmtcHsoFtQ5g1b+1Q9gAyqVysdR5ztR+/eFzUMrSQ6bkO6QP73tjfgEEz7NK1Rcm+AAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAxOC0wNi0yNlQwMDo0NDozMi0wNDowMCBSOocAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMTgtMDYtMjZUMDA6NDQ6MzItMDQ6MDBRD4I7AAAAAElFTkSuQmCC">
     <form id="f" autocomplete="on">
       <p>请输入用户名、密码和验证码。</p>
       <div class="row"><label for="user">用户名(<u>U</u>):</label><div class="field sunken"><input id="user" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" accesskey="u" required></div></div>
