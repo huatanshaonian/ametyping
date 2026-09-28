@@ -4,13 +4,21 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain } = require
 const path = require('path');
 const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
+const bridge = require('./bridge');
+const transcript = require('./transcript');
+const { createPermissions } = require('./permissions');
+const { normalizeSession } = require('./session-source');
 
 const VX = 190, ART_W = 1060, ART_H = 1080;  // visible slice of the art space (see renderer.js)
 const SCALES = { 小: 0.28, 中: 0.36, 大: 0.46 };
 
 let win, tray;
+// dev: run a second copy next to the installed one (own settings + single-instance lock, own port)
+if (process.env.AME_PROFILE) app.setPath('userData', process.env.AME_PROFILE);
+const PORT = +process.env.AME_PORT || 3940;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
-let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her' };
+// panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box
+let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup' };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
@@ -83,7 +91,9 @@ function buildMenu() {
     { label: '键盘朝向', submenu: [['her', '朝她（真实对坐）'], ['you', '朝你（布局和你的键盘一样）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.facing === v,
       click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
-    { label: '打开 Claude 进度面板', click: () => { if (sessions.size) { pushBubble(null); placeBubble(); bubbleWin.showInactive(); } } },
+    { label: '打开 Claude / Codex 面板', click: () => { if (sessions.size || chatMode()) { pushBubble(null); placeBubble(); bubbleWin.showInactive(); } } },
+    { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）']].map(([v, l]) => ({
+      label: l, type: 'radio', checked: settings.panelMode === v, click: () => setPanelMode(v) })) },
     { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
       label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
       click: () => { settings.kbTheme = v; save(); win.webContents.send('config', cfg()); } })) },
@@ -112,6 +122,10 @@ app.whenReady().then(() => {
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png')));
   tray.setToolTip('糖糖敲键盘');
   buildMenu();
+  if (chatMode()) {
+    bridge.start();                          // warm up: the first hook event needs the process lookup fast
+    bubbleWin.webContents.once('did-finish-load', () => { pushBubble(null); placeBubble(); bubbleWin.showInactive(); });
+  }
 
   if (process.env.AME_DEMO) return runDemo(process.env.AME_DEMO);
   uIOhook.on('keydown', (e) => win && win.webContents.send('key', { code: e.keycode, down: true }));
@@ -219,8 +233,20 @@ ipcMain.on('set-scale', (_e, s, commit) => { if (win) setScale(s, commit); });
 // Ame reacts (renderer) and a progress bubble above her head shows the line (Codex-pet style).
 const http = require('http');
 // Claude panel under Ame: session list (left) + selected session log (right); resizable, size remembered
-let bubW = settings.panelW || 600, bubH = settings.panelH || 280;
+// each mode remembers its own size (the chat needs more room than the progress log)
+const chatMode = () => settings.panelMode === 'chat';
+const sizeKeys = () => (chatMode() ? ['chatW', 'chatH', 680, 460] : ['panelW', 'panelH', 600, 280]);
+let bubW, bubH;
+function loadPanelSize() { const [kw, kh, dw, dh] = sizeKeys(); bubW = settings[kw] || dw; bubH = settings[kh] || dh; }
+loadPanelSize();
 let bubbleWin = null;
+function setPanelMode(v) {
+  settings.panelMode = v; save(); buildMenu();
+  loadPanelSize();
+  if (chatMode()) bridge.start();
+  pushBubble(null);
+  if (chatMode()) { placeBubble(); bubbleWin.showInactive(); } else if (bubbleWin.isVisible()) placeBubble();
+}
 function createBubble() {
   bubbleWin = new BrowserWindow({
     width: bubW, height: bubH, transparent: true, frame: false, resizable: false, thickFrame: false,
@@ -231,6 +257,7 @@ function createBubble() {
   });
   bubbleWin.setAlwaysOnTop(true, 'floating');
   bubbleWin.loadFile('bubble.html');
+  bubbleWin.webContents.on('did-finish-load', () => pushBubble(null));
   bubbleWin.on('focus', keepAmeOnTop);     // clicking the panel must not lift it above Ame
   bubbleWin.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level < 1) return;
@@ -304,7 +331,7 @@ function endPanelResize() {
   const wasDrag = panelGest.drag;
   clearInterval(panelTimer); panelGest = null;
   if (wasDrag) { const [x, y] = win.getPosition(); settings.x = x; settings.y = y; save(); return; }
-  settings.panelW = bubW; settings.panelH = bubH; save();
+  const [kw, kh] = sizeKeys(); settings[kw] = bubW; settings[kh] = bubH; save();
 }
 ipcMain.on('bubble-size', (_e, h) => {
   void h;                                                        // the panel has a user-chosen size now
@@ -313,32 +340,48 @@ ipcMain.on('bubble-size', (_e, h) => {
 // Every session is tracked separately (id from the hook payload). The dialogue box lists all live
 // sessions; Ame's own reaction is computed across them: she is only "done & happy" when no session
 // is still working, and waves whenever any session needs you.
-const sessions = new Map();     // id -> { id, project, state, lines[], steps, t0, last }
+const sessions = new Map();     // id -> { id, project, state, lines[], steps, t0, last, transcript, cwd, claudePid, terminal }
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, KEEP_MS = 20 * 60e3, AUTOHIDE_MS = 25e3;
+const CHAT_KEEP_MS = 12 * 3600e3;                                 // chat mode keeps ended sessions around (to resume them)
 let hideTimer = null;
 
 function sessionLabel(s) {
   if (s.title) return s.title;                                    // the conversation's name in the Claude app
-  const same = [...sessions.values()].filter((o) => o.project === s.project && !o.title);
-  const base = s.project || 'Claude';
-  return same.length > 1 ? `${base} #${String(s.id).slice(0, 4)}` : base;
+  const same = [...sessions.values()].filter((o) => o.provider === s.provider && o.project === s.project && !o.title);
+  const base = s.project || (s.provider === 'codex' ? 'Codex' : 'Claude');
+  return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
+}
+const permissions = createPermissions(() => pushBubble(null));
+ipcMain.handle('permission-decide', (e, id, choice) => {
+  if (!bubbleWin || e.sender !== bubbleWin.webContents) return { ok: false };
+  return { ok: permissions.decide(id, choice) };
+});
+app.on('before-quit', () => permissions.clear());
+// how a reply typed in the panel reaches this session
+function replyVia(s) {
+  if (s.provider === 'codex') return 'codex';
+  if (s.state === 'ended') return 'resume';
+  if (s.headless) return 'busy';
+  if (s.claudePid && s.terminal) return 'terminal';
+  return s.claudePid ? 'none' : 'unknown';
 }
 function pushBubble(changedId) {
   if (!bubbleWin) return;
   const list = [...sessions.values()].sort((x, y) => x.born - y.born).map((s) => ({   // stable order: cards never jump
     id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last,
+    provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id),
   }));
-  if (!list.length) { hideBubble(); return; }
-  bubbleWin.webContents.send('bubble-state', { sessions: list, changedId });
+  if (!list.length && !chatMode()) { hideBubble(); return; }
+  bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode });
   if (changedId) {                               // new activity: show the panel
     placeBubble();
     if (!bubbleWin.isVisible()) bubbleWin.showInactive();
     keepAmeOnTop();
   }
-  // auto-hide once nothing is working or waiting (unless the mouse is on the panel)
+  // popup mode: auto-hide once nothing is working or waiting (unless the mouse is on the panel)
   clearTimeout(hideTimer);
-  if (!list.some((s) => WORKING.has(s.state) || s.state === 'waiting')) {
+  if (!chatMode() && !list.some((s) => WORKING.has(s.state) || s.state === 'waiting' || s.permissions.length)) {
     hideTimer = setTimeout(function check() {
       const c = screen.getCursorScreenPoint(), bb = bubbleWin.getBounds();
       const over = c.x >= bb.x && c.x < bb.x + bb.width && c.y >= bb.y && c.y < bb.y + bb.height;
@@ -348,18 +391,46 @@ function pushBubble(changedId) {
 }
 const anyWorking = (exceptId) => [...sessions.values()].some((s) => s.id !== exceptId && WORKING.has(s.state));
 
+// Which process is this session, and does it sit in a terminal? The hook sends its parent pid; walk up to
+// the Claude Code process (claude.exe, or node/bun for an npm install) and look at what started it: a shell
+// or terminal = an interactive session we can type into; an IDE / the desktop app = no console to use.
+const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
+const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|WindowsTerminal|OpenConsole|conhost|explorer|wezterm-gui|alacritty|mintty|Tabby|Hyper|ConEmu64|ConEmuC64|ConEmu|ConEmuC|wsl|wslhost|tmux)\.exe$/i;
+async function locateSession(s, pid) {
+  if (!s || s.provider === 'codex') return;
+  if (!pid || s.fromPid === pid) return;
+  const chain = await bridge.ancestors(pid);
+  const i = chain.findIndex((p) => CLAUDE_EXE.test(p.name));
+  if (i < 0) return;                                               // not found: try again on the next event
+  s.fromPid = pid;
+  s.claudePid = chain[i].pid;
+  const parent = chain[i + 1];
+  s.headless = !!parent && parent.pid === process.pid;           // a `claude -p --resume` we started ourselves
+  s.terminal = !!parent && TERM_HOSTS.test(parent.name);
+  pushBubble(null);                                                // the reply box may have become usable
+}
+async function procAlive(pid) {
+  if (!pid) return false;
+  const c = await bridge.ancestors(pid);
+  return !!c.length && CLAUDE_EXE.test(c[0].name);                // same pid, still a Claude process (not a reused pid)
+}
+
 function onClaudeEvent(type, d) {
   const id = d.session || 'unknown', t = Date.now();
   if (type === 'quit') {
-    sessions.delete(id);
+    const q = sessions.get(id);
+    if (chatMode() && q) { q.state = 'ended'; q.claudePid = null; q.headless = false; q.fromPid = null; q.last = t; }   // kept: can be resumed
+    else sessions.delete(id);
     if (![...sessions.values()].some((s) => WORKING.has(s.state))) win.webContents.send('claude', 'idle');
     return pushBubble(null);
   }
   let s = sessions.get(id);
-  if (!s) { s = { id, project: '', state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t }; sessions.set(id, s); }
+  if (!s) { s = { id, provider: d.provider || 'claude', rawSession: d.rawSession || id, project: '', state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t }; sessions.set(id, s); }
   if (d.project) s.project = String(d.project).slice(0, 40);
   if (d.title) s.title = String(d.title).slice(0, 60);
-  if (type === 'idle') { s.last = t; return; }                  // SessionStart: known, nothing to show yet
+  if (d.transcript) s.transcript = String(d.transcript);
+  if (d.cwd) s.cwd = String(d.cwd);
+  if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return pushBubble(null); }   // SessionStart
   if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; if (type === 'message' && s.lines.length) s.lines.push({ sep: true, t }); }
   if (type === 'thinking' || type === 'reading') s.steps++;
   s.state = type; s.last = t;
@@ -381,7 +452,7 @@ setInterval(() => {
   for (const [id, s] of sessions) {
     if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) { s.state = 'idle'; changed = true; }
     if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) { s.state = 'idle'; changed = true; }
-    if (t - s.last > KEEP_MS) { sessions.delete(id); changed = true; }
+    if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS)) { sessions.delete(id); chats.delete(id); changed = true; }
   }
   if (changed) {
     if (![...sessions.values()].some((s) => WORKING.has(s.state))) win.webContents.send('claude', 'idle');
@@ -391,15 +462,115 @@ setInterval(() => {
 
 http.createServer((req, res) => {
   const m = req.method === 'POST' && /^\/event\/([a-z]+)$/.exec(req.url);
+  const permission = req.method === 'POST' && req.url === '/permission';
   let body = '';
-  req.on('data', (c) => { body += c; if (body.length > 20000) req.destroy(); });
-  req.on('end', () => {
+  req.setEncoding('utf8');
+  req.on('data', (c) => { body += c; if (body.length > (permission ? 2e6 : 20000)) req.destroy(); });
+  req.on('end', async () => {
+    let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
+    if (!d || typeof d !== 'object' || Array.isArray(d)) d = {};
+    d = normalizeSession(d);
+    if (permission) {
+      if (!win || win.isDestroyed() || !bubbleWin || bubbleWin.isDestroyed()) { res.end('{}'); return; }
+      if (typeof d.session !== 'string' || !d.session || typeof d.tool !== 'string' || !d.tool) {
+        res.writeHead(400); res.end('{}'); return;
+      }
+      permissions.add(d, res);
+      onClaudeEvent('waiting', { ...d, text: `需要确认：${d.tool}` });
+      pushBubble(d.session);
+      if (d.pid) locateSession(sessions.get(d.session), d.pid).catch(() => {});
+      return;
+    }
+    if (m) permissions.advance(d);
+    // the hook waits for this answer, so its parent process is still alive while we look it up
+    // (matters when the hook runs through a shell that exits right after it)
+    if (m && d.pid && win && !win.isDestroyed()) {
+      const id = d.session || 'unknown';
+      let s = sessions.get(id);
+      if (!s) { onClaudeEvent('idle', { ...d, session: id }); s = sessions.get(id); }
+      if (s) await Promise.race([locateSession(s, d.pid).catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
+    }
     res.writeHead(m ? 200 : 404); res.end();
     if (!m || !win || win.isDestroyed()) return;
-    let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
     onClaudeEvent(m[1], d);
   });
-}).on('error', () => {}).listen(3940, '127.0.0.1');
+}).on('error', () => {}).listen(PORT, '127.0.0.1');
+
+// ---- chat mode: full conversation + replies ----
+const chats = new Map();        // id -> transcript cache (see transcript.js)
+let chatSel = null;
+function findTranscript(id) {
+  const root = path.join(app.getPath('home'), '.claude', 'projects');
+  try {
+    for (const d of fs.readdirSync(root)) { const f = path.join(root, d, `${id}.jsonl`); if (fs.existsSync(f)) return f; }
+  } catch {}
+  return null;
+}
+function pushChat(force) {
+  const s = chatSel && sessions.get(chatSel);
+  if (!s || !chatMode() || !bubbleWin || !bubbleWin.isVisible()) return;
+  if (s.provider === 'codex') {
+    if (force || s.chatPushed !== s.last) {
+      s.chatPushed = s.last;
+      bubbleWin.webContents.send('chat-log', { id: s.id, msgs: [
+        { role: 'sys', text: 'Codex 实时进度 · 继续对话请回到 Codex', t: s.born },
+        ...s.lines.filter((l) => !l.sep).map((l) => ({ role: 'sys', text: l.text, t: l.t })),
+      ] });
+    }
+    return;
+  }
+  if (!s.transcript) s.transcript = findTranscript(s.id);
+  if (!s.transcript) return;
+  let c = chats.get(s.id);
+  if (!c || c.file !== s.transcript) { c = { file: s.transcript }; chats.set(s.id, c); }
+  let changed = false;
+  try { changed = transcript.poll(c); } catch (e) { console.error('transcript: ' + e.message); }
+  if (c.title && !s.title) { s.title = String(c.title).slice(0, 60); pushBubble(null); }
+  if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
+}
+setInterval(() => pushChat(false), 1000);
+ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
+
+function claudeExe() {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const f = path.join(dir, 'claude.exe'); if (dir && fs.existsSync(f)) return f;
+  }
+  const f = path.join(app.getPath('home'), '.local', 'bin', 'claude.exe');
+  return fs.existsSync(f) ? f : null;
+}
+// the session's process is gone: continue it in the background (`claude -p --resume <id>`); its hooks report
+// back like any other session, and the transcript it appends to is the same file the panel shows
+function resumeHeadless(s, text) {
+  const exe = claudeExe();
+  if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
+  const { spawn } = require('child_process');
+  const p = spawn(exe, ['-p', '--resume', s.id], { cwd: s.cwd && fs.existsSync(s.cwd) ? s.cwd : app.getPath('home'),
+    windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+  p.on('error', () => {});
+  p.stdin.on('error', () => {});
+  p.stdin.end(text);                                               // prompt on stdin: never parsed as an option
+  p.on('exit', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
+  s.headless = true; s.state = 'message'; s.last = Date.now();
+  pushBubble(null);
+  return { ok: true, msg: '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
+}
+
+async function chatSend(id, text) {
+  const s = sessions.get(id);
+  if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
+  if (s.provider === 'codex') return { ok: false, msg: '请在 Codex 中继续对话；这里可以查看进度和处理权限' };
+  if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
+  if (s.claudePid && await procAlive(s.claudePid)) {
+    if (!s.terminal) return { ok: false, msg: '这个会话不在终端里（IDE 插件 / 桌面 App），没法从这里回复' };
+    // the terminal is showing a prompt (permission, question): typed text would land in it and pick options
+    if (s.state === 'waiting' || permissions.list(s.id).length) return { ok: false, msg: '它在等你确认，先处理确认（面板卡片或终端里）' };
+    const r = await bridge.send(s.claudePid, text);
+    return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
+  }
+  if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
+  return resumeHeadless(s, text);
+}
+ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.
 // (Relying on renderer mousemove fails: while the window follows the cursor the pointer barely moves
@@ -463,5 +634,5 @@ ipcMain.on('drag-by', (_e, dx, dy) => {
   win.setPosition(c.x, c.y);
 });
 
-app.on('will-quit', () => { try { uIOhook.stop(); } catch {} });
+app.on('will-quit', () => { try { uIOhook.stop(); } catch {} bridge.stop(); });
 app.on('window-all-closed', () => app.quit());

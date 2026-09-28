@@ -9,7 +9,7 @@ const seen = {};                       // session id -> last activity time the u
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const stateName = (st) => (WORKING.has(st) ? ['working', '进行中'] : st === 'waiting' ? ['waiting', '等你确认']
-  : st === 'done' ? ['done', '完成'] : ['idle', '空闲']);
+  : st === 'done' ? ['done', '完成'] : st === 'ended' ? ['idle', '已关闭'] : ['idle', '空闲']);
 const ago = (t0) => { const s = Math.round((Date.now() - t0) / 1000); return s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分`; };
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const lastText = (s) => { for (let i = s.lines.length - 1; i >= 0; i--) if (!s.lines[i].sep) return s.lines[i].text; return '…'; };
@@ -58,6 +58,7 @@ list.addEventListener('pointerdown', (e) => {
   if (!s) return;
   selected = s.id; pinned = true; seen[s.id] = s.last; lastTypedKey = '';
   renderAll(false);
+  if (chatOn) { selectChat(); composeState(); }
 });
 
 function renderLog(typeNewest) {
@@ -92,11 +93,66 @@ function renderLog(typeNewest) {
   log.scrollTop = log.scrollHeight;
 }
 
-function renderAll(typeNewest) { renderList(); renderLog(typeNewest); header(); }
+function renderAll(typeNewest) { renderList(); if (!chatOn) renderLog(typeNewest); renderPermissions(); header(); }
 
-window.bubble.onState(({ sessions, changedId }) => {
+// Keep permission cards stable while progress and terminal updates arrive.
+const permissionCards = new Map();
+function renderPermissions() {
+  const s = data.find((x) => x.id === selected);
+  const requests = s && s.permissions || [];
+  const ids = new Set(requests.map((p) => p.id));
+  for (const [id, el] of permissionCards) if (!ids.has(id)) { el.remove(); permissionCards.delete(id); }
+  for (const p of requests) {
+    if (permissionCards.has(p.id)) continue;
+    const card = document.createElement('div'); card.className = 'permission'; card.dataset.id = p.id;
+    const title = document.createElement('div'); title.className = 'permission-title';
+    title.textContent = `需要你确认 · ${p.tool}${p.subagent ? ` · ${p.subagent}` : ''}`;
+    const details = document.createElement('pre');
+    const i = p.input || {};
+    // Show complete parameters (including edits), never interpret tool input as HTML.
+    details.textContent = [p.cwd && `工作目录：${p.cwd}`, i.description,
+      i.command && `命令：${i.command}`, (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`,
+      JSON.stringify(i, null, 2)].filter(Boolean).join('\n');
+    const actions = document.createElement('div'); actions.className = 'permission-actions';
+    for (const [choice, label] of [['allow', '允许'], ['deny', '拒绝']]) {
+      const b = document.createElement('button'); b.type = 'button'; b.dataset.choice = choice; b.textContent = label;
+      actions.appendChild(b);
+    }
+    const status = document.createElement('span'); status.className = 'permission-status'; status.textContent = '也可在终端回答';
+    actions.appendChild(status); card.append(title, details, actions);
+    permissionCards.set(p.id, card); $('permissions').appendChild(card);
+  }
+}
+async function decidePermission(button) {
+  if (button.disabled) return;
+  const card = button.closest('.permission');
+  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  const status = card.querySelector('.permission-status'); status.textContent = '提交中…';
+  try {
+    const r = await window.bubble.decidePermission(card.dataset.id, button.dataset.choice);
+    status.textContent = r.ok ? '已提交' : '请求已结束';
+  } catch {
+    status.textContent = '提交失败，请重试或在终端回答';
+    for (const b of card.querySelectorAll('button')) b.disabled = false;
+  }
+}
+document.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const button = hit && hit.closest('.permission button');
+  if (button) { e.preventDefault(); decidePermission(button); }
+});
+// Keyboard activation remains available without submitting twice after a pointer press.
+$('permissions').addEventListener('click', (e) => {
+  if (e.detail === 0 && e.target.matches('button')) decidePermission(e.target);
+});
+
+window.bubble.onState(({ sessions, changedId, mode }) => {
   const prev = data.find((s) => s.id === changedId);
+  const prevSel = data.find((s) => s.id === selected);
+  const prevSelState = prevSel && prevSel.state;
   data = sessions;
+  setMode(mode);
   if (!data.find((s) => s.id === selected)) { selected = null; pinned = false; }
   // stay on the current session while it is still working (others just get a red dot);
   // move on when it has finished (unless you picked it yourself); a session that needs you always takes over
@@ -110,6 +166,7 @@ window.bubble.onState(({ sessions, changedId }) => {
   if (changed && (!prev || prev.state !== changed.state) && ['message', 'done', 'waiting'].includes(changed.state)) {
     try { se.currentTime = 0; se.play(); } catch {}
   }
+  if (chatOn) { selectChat(); composeState(); }
 });
 window.bubble.onHide(() => {});
 document.addEventListener('pointerdown', (e) => {
@@ -127,3 +184,92 @@ document.addEventListener('pointerup', endResize);
 grip.addEventListener('lostpointercapture', endResize);
 setInterval(header, 5000);
 
+
+// ---------- chat mode (常驻对话): the whole conversation from the transcript + a reply box ----------
+const chatEl = $('chat'), input = $('input'), note = $('note');
+let chatOn = false, chatFor = null, noteTimer = null;
+
+function setMode(mode) {
+  const on = mode === 'chat';
+  if (on === chatOn) return;
+  chatOn = on;
+  document.body.classList.toggle('chat', on);
+  if (!on) chatFor = null;
+}
+function selectChat() {
+  if (selected === chatFor) return;
+  chatFor = selected; chatEl.innerHTML = ''; chatEl.dataset.loaded = '';
+  window.bubble.select(selected);
+}
+function showNote(msg, ms = 5000) {
+  clearTimeout(noteTimer);
+  note.textContent = msg; note.classList.toggle('show', !!msg);
+  if (msg) noteTimer = setTimeout(() => note.classList.remove('show'), ms);
+}
+const PLACEHOLDER = {
+  terminal: '回复（Enter 发送，Shift+Enter 换行）',
+  resume: '会话已关闭：发送会在后台用 claude -p --resume 续上',
+  busy: '后台续聊进行中…',
+  none: '这个会话不在终端里（IDE / 桌面 App），只能看不能回',
+  unknown: '等它下一次有动静，就知道它在哪个终端了',
+};
+function composeState() {
+  const s = data.find((x) => x.id === selected);
+  const via = s ? s.via : 'unknown';
+  input.disabled = !s || via === 'none' || via === 'busy' || via === 'unknown';
+  input.placeholder = s ? PLACEHOLDER[via] : '还没有会话';
+}
+
+// --- tiny markdown: code fences, inline code, bold, headings; everything else is escaped text ---
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function inline(s) {
+  return esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
+}
+function md(text) {
+  const out = [];
+  String(text).split(/```[^\n]*\n?/).forEach((part, i) => {
+    if (i % 2) out.push(`<pre>${esc(part.replace(/\n$/, ''))}</pre>`);
+    else for (const para of part.split(/\n{2,}/)) if (para.trim()) out.push(`<p>${inline(para.trim())}</p>`);
+  });
+  return out.join('');
+}
+function msgEl(m) {
+  const d = document.createElement('div');
+  d.className = 'm ' + m.role;
+  const tm = `<span class="tm">${hhmm(m.t)}</span>`;
+  if (m.role === 'assistant') d.innerHTML = md(m.text);
+  else if (m.role === 'tool') {
+    const shown = m.items.slice(-4).map(esc).join(' · ');
+    d.innerHTML = `<b>⚙</b> ${m.items.length > 4 ? `…等 ${m.items.length} 步 · ` : ''}${shown}${tm}`;
+  } else if (m.role === 'user') { d.textContent = m.text; d.insertAdjacentHTML('beforeend', tm); }
+  else d.textContent = m.text;
+  return d;
+}
+window.bubble.onChat(({ id, msgs }) => {
+  if (id !== selected) return;
+  const atBottom = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 40;
+  chatEl.innerHTML = '';
+  if (!msgs.length) chatEl.innerHTML = '<div class="m sys">（这个会话还没有内容）</div>';
+  for (const m of msgs) chatEl.appendChild(msgEl(m));
+  if (atBottom || !chatEl.dataset.loaded) chatEl.scrollTop = chatEl.scrollHeight;
+  chatEl.dataset.loaded = '1';
+});
+
+async function send() {
+  const text = input.value;
+  if (!text.trim() || input.disabled || !selected) return;
+  showNote('发送中…', 20000);
+  const r = await window.bubble.send(selected, text);
+  if (r.ok) { input.value = ''; showNote(r.msg || '', 6000); if (!r.msg) showNote(''); }
+  else showNote(r.msg || '没发出去', 8000);                        // text stays in the box
+}
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
+});
+// the send button reacts on press, hit-tested at the real point (see the note on the card list above)
+document.addEventListener('pointerdown', (e) => {
+  if (!chatOn) return;
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  if (hit && hit.id === 'sendb') { e.preventDefault(); send(); }
+});

@@ -26,9 +26,24 @@ Grab `AmeTyping-portable.exe` from [Releases](../../releases) and run it. It is 
 ## 接入 Claude Code（可选）
 
 1. 装好 [Node.js](https://nodejs.org/)。
-2. 把本仓库的 `hook-relay.js` 放到任意位置。
-3. 参考 [`claude-hooks.example.json`](claude-hooks.example.json)，把其中的 `hooks` 合并进 `~/.claude/settings.json`，并把路径改成你的 `hook-relay.js` 实际路径。
+2. 把本仓库的 `hook-relay.js` 和 `permission-hook.js` 放到任意位置。
+3. 参考 [`claude-hooks.example.json`](claude-hooks.example.json)，把其中的 `hooks` 合并进 `~/.claude/settings.json`，并把两个脚本的路径改成实际路径。
 4. 开着糖糖用 Claude Code，面板会在有会话活动时自动出现；托盘菜单「打开 Claude 面板」也能手动叫出来。
+
+### 面板模式
+
+权限确认卡片在两种模式下都会弹出，显示工具名、工作目录、命令／文件路径和完整参数，提供「允许」「拒绝」。终端仍可回答；请求断开或收到后续工具／结束事件时，面板撤掉对应卡片，过期按钮不能再次决定。糖糖没开时 hook 静默退出，继续原来的终端确认流程。
+
+`PermissionRequest` 必须是同步 command hook（不要设置 `async: true`），示例超时为 120 秒。面板最多等待 105 秒，脚本自身等待 110 秒；超时不自动允许或拒绝，交回 Claude 原有权限流程。请同时更新 `hook-relay.js`，后续事件才能及时清理卡片。协议见 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks#permissionrequest)。
+
+托盘菜单「面板模式」可以切换：
+
+- **弹出进度**（默认）：有动静时弹出一行行进度，停下后自动收起。
+- **常驻对话**：面板一直在。右边是这个会话的完整对话（从 transcript 读取），底下可以直接回复：
+  - 会话开在终端里：回复会直接打进那个终端（`WriteConsoleInput`，不抢焦点、不模拟全局按键），和你在终端里敲的一样；Claude 正忙时会进入排队。
+  - 会话已经关了：用 `claude -p --resume <id>` 在后台续上，结果照样出现在面板里（需要确认权限的操作会被跳过）。
+  - IDE 插件 / 桌面 App 里的会话没有终端可打字，只能看。
+  - 会话正在等你确认（权限卡片未处理，或终端里有提问 / 选择框）时，回复会被拦下，免得文字被打进确认框里；先在卡片或终端里处理掉再发。
 
 `hook-relay.js` 读取 hook 事件，生成一行中文进度（在读 / 在改 / 在跑 / 要你确认 / 完成了……），会话标题取自该会话 transcript 里的自定义标题，然后 POST 到本机 3940 端口。它 0.7 秒内必定退出，不会拖慢 Claude。
 

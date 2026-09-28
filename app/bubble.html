@@ -22,6 +22,7 @@
     background: var(--pink); cursor: pointer; font-size: 12px; }
   #close:hover { background: #fff; }
   #wrap { display: flex; height: 100%; }
+  #right { position: relative; }
   #list { width: 150px; flex: none; overflow-y: auto; border-right: 2px solid var(--blue); background: rgba(240, 209, 241, .35); }
   #list::-webkit-scrollbar, #log::-webkit-scrollbar { width: 6px; }
   #list::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb { background: var(--blue); }
@@ -53,13 +54,58 @@
   #grip { position: absolute; right: -9px; bottom: -22px; width: 20px; height: 20px; cursor: nwse-resize;
     background: linear-gradient(135deg, transparent 0 45%, var(--blue) 45% 53%, transparent 53% 63%, var(--blue) 63% 71%, transparent 71% 81%, var(--blue) 81% 89%, transparent 89%); }
   #grip:hover { filter: brightness(1.6); }
+  /* ---- chat mode (常驻对话): full conversation + reply box ---- */
+  #chat, #compose, #note { display: none; }
+  body.chat #log { display: none; }
+  body.chat #chat, body.chat #compose { display: block; }
+  #chat { flex: 1; overflow-y: auto; padding: 6px 10px; user-select: text; }
+  #chat::-webkit-scrollbar { width: 6px; }
+  #chat::-webkit-scrollbar-thumb { background: var(--blue); }
+  .m { margin: 4px 0 8px; max-width: 92%; word-break: break-word; }
+  .m.user { margin-left: auto; width: fit-content; background: var(--pink); border: 1px solid rgba(77, 35, 207, .45);
+    padding: 3px 8px; white-space: pre-wrap; }
+  .m.assistant { background: #fff; border: 1px solid rgba(77, 35, 207, .25); padding: 4px 9px; }
+  .m.assistant p { margin: 0 0 5px; white-space: pre-wrap; } .m.assistant p:last-child { margin: 0; }
+  .m pre { margin: 4px 0; padding: 4px 6px; background: rgba(240, 209, 241, .45); border-left: 2px solid var(--blue);
+    white-space: pre-wrap; font: 12px/16px "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace; }
+  .m code { font: 12px "Cascadia Mono", Consolas, monospace; background: rgba(240, 209, 241, .6); padding: 0 2px; }
+  .m.tool { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .5); margin: 2px 0 6px; }
+  .m.tool b { color: rgba(77, 35, 207, .55); font-weight: normal; }
+  .m.sys { font-size: 11px; color: rgba(58, 34, 84, .45); text-align: center; max-width: none; }
+  .m .tm { font-size: 10px; color: rgba(77, 35, 207, .4); margin-left: 6px; }
+  #sendb { font: inherit; font-size: 12px; color: var(--blue); background: var(--pink); border: 1px solid var(--blue);
+    padding: 0 7px; height: 20px; cursor: pointer; }
+  #sendb:hover { background: #fff; }
+  #sendb:active { background: var(--blue); color: #fff; }
+  #compose { border-top: 2px solid var(--blue); position: relative; background: #fff; }
+  #input { display: block; width: 100%; box-sizing: border-box; height: 52px; resize: none; border: 0; outline: 0; padding: 4px 64px 4px 8px;
+    font: inherit; color: var(--ink); background: transparent; user-select: text; }
+  #input:disabled { background: rgba(240, 209, 241, .3); }
+  #sendb { position: absolute; right: 6px; bottom: 6px; height: 22px; }
+  #note { padding: 1px 8px; font-size: 11.5px; line-height: 17px; background: rgb(255, 244, 214);
+    border-bottom: 1px solid rgb(208, 82, 28); color: rgb(150, 60, 10); }
+  #note.show { display: block; }
+  #permissions { flex: none; max-height: 65%; overflow: auto; }
+  #permissions:empty { display: none; }
+  .permission { margin: 5px 8px; padding: 6px; border: 2px solid var(--blue); background: #fff3ff; }
+  .permission-title { color: var(--blue); font-weight: bold; overflow-wrap: anywhere; }
+  .permission pre { margin: 4px 0; max-height: 105px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    user-select: text; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+  .permission-actions { display: flex; gap: 8px; align-items: center; }
+  .permission button { font: inherit; color: var(--blue); background: var(--pink); border: 1px solid var(--blue); cursor: pointer; }
+  .permission button:hover { background: #fff; }
+  .permission button:disabled { opacity: .5; cursor: default; }
+  .permission-status { font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="box">
   <div id="title"><span id="who">Claude</span><span id="meta"></span><span id="close" title="收起">×</span></div>
   <div id="grip" title="拖动调整大小"></div>
-  <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div></div></div>
+  <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div>
+    <div id="permissions" aria-live="polite"></div>
+    <div id="chat"></div>
+    <div id="compose"><div id="note"></div><textarea id="input" placeholder="回复（Enter 发送，Shift+Enter 换行）"></textarea><button id="sendb">发送</button></div></div></div>
 </div>
 <audio id="se" src="assets/dialog/Dialog.wav" preload="auto"></audio>
 <script src="bubble.js"></script>

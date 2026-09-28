@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORTS = [3940];
+const eventAt = Date.now();
 const READING_TOOLS = new Set(['Read', 'NotebookRead']);
 setTimeout(() => process.exit(0), 700);            // hard exit guard
 
@@ -22,7 +23,11 @@ process.stdin.on('end', () => {
   try { text = describe(p, event); } catch {}
   let title = '';
   try { title = sessionTitle(p.transcript_path); } catch {}
-  const body = JSON.stringify({ session: p.session_id || null, text, title, project: p.cwd ? path.basename(p.cwd) : '' });
+  // pid: our parent, i.e. the Claude Code process (the pet walks up from it to find the terminal to reply into);
+  // transcript + cwd: for the full conversation view and for resuming a closed session
+  const body = JSON.stringify({ session: p.session_id || null, text, title, project: p.cwd ? path.basename(p.cwd) : '',
+    cwd: p.cwd || '', transcript: p.transcript_path || '', pid: process.ppid,
+    hookEvent: p.hook_event_name, agentId: p.agent_id || '', eventAt });
   let pending = PORTS.length;
   const done = () => { if (--pending <= 0) process.exit(0); };
   for (const port of PORTS) send(port, event, body, done);
@@ -34,6 +39,8 @@ function looksLikeToolError(r) {
 }
 
 function mapEvent(p) {
+  // subagent internals: only their tool calls
+  if (p.agent_id && !['PreToolUse', 'PostToolUse', 'PostToolUseFailure'].includes(p.hook_event_name)) return null;
   switch (p.hook_event_name) {
     case 'UserPromptSubmit': return 'message';
     case 'PreToolUse': return READING_TOOLS.has(p.tool_name) ? 'reading' : 'thinking';
@@ -41,6 +48,7 @@ function mapEvent(p) {
     case 'PostToolUseFailure': return 'error';
     case 'Notification': return 'waiting';
     case 'Stop': return 'done';
+    case 'StopFailure': return 'error';
     case 'SessionStart': return 'idle';
     case 'SessionEnd': return 'quit';
     default: return null;
@@ -121,7 +129,10 @@ function describe(p, event) {
       if (/waiting for your input/i.test(msg)) return '在等你回复～';
       return `等你一下：${cut(msg, 50)}`;
     }
-    case 'Stop': { const t = lastAssistantText(p.transcript_path); return t ? `完成了：${cut(t, 150)}` : '完成了'; }
+    case 'StopFailure': return `出错了：${p.error_type || 'API error'}`;
+    case 'Stop': {
+      const t = p.last_assistant_message ? String(p.last_assistant_message).replace(/[#*`>|_]/g, '').replace(/\s+/g, ' ')
+        : lastAssistantText(p.transcript_path); return t ? `完成了：${cut(t, 150)}` : '完成了'; }
     default: return '';
   }
 }
