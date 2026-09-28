@@ -9,14 +9,14 @@ const seen = {};                       // session id -> last activity time the u
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const stateName = (st) => (WORKING.has(st) ? ['working', '进行中'] : st === 'waiting' ? ['waiting', '等你确认']
-  : st === 'done' ? ['done', '完成'] : st === 'ended' ? ['idle', '已关闭'] : ['idle', '空闲']);
+  : st === 'done' ? ['done', '完成'] : st === 'paused' ? ['idle', '已中断'] : st === 'ended' ? ['idle', '已关闭'] : ['idle', '空闲']);
 const ago = (t0) => { const s = Math.round((Date.now() - t0) / 1000); return s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分`; };
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const lastText = (s) => { for (let i = s.lines.length - 1; i >= 0; i--) if (!s.lines[i].sep) return s.lines[i].text; return '…'; };
 
 function header() {
   const running = data.filter((s) => WORKING.has(s.state)).length, waiting = data.filter((s) => s.state === 'waiting').length;
-  $('who').textContent = `Claude ─ ${data.length} 个会话`;
+  $('who').textContent = `Claude / Codex ─ ${data.length} 个会话`;
   $('meta').textContent = [running && `${running} 个在跑`, waiting && `${waiting} 个等你`].filter(Boolean).join(' · ') || '都停下了';
   const s = data.find((x) => x.id === selected);
   if (s) {
@@ -44,7 +44,7 @@ function renderList() {
     c.querySelector('.nm').textContent = s.label;
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
-    st.textContent = s.project && s.project !== s.label ? `${name} · ${s.project}` : name;
+    st.textContent = `${s.provider === 'codex' ? 'Codex' : 'Claude'} · ${name}`;
   });
 }
 // select on press (not click): nothing can swap the element between press and release
@@ -111,14 +111,17 @@ function renderPermissions() {
     const i = p.input || {};
     // Show complete parameters (including edits), never interpret tool input as HTML.
     details.textContent = [p.cwd && `工作目录：${p.cwd}`, i.description,
-      i.command && `命令：${i.command}`, (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`,
+      i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`, (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`,
       JSON.stringify(i, null, 2)].filter(Boolean).join('\n');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
-    for (const [choice, label] of [['allow', '允许'], ['deny', '拒绝']]) {
+    const choices = [['allow', '允许'], ['deny', '拒绝']];
+    if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理']);
+    for (const [choice, label] of choices) {
       const b = document.createElement('button'); b.type = 'button'; b.dataset.choice = choice; b.textContent = label;
       actions.appendChild(b);
     }
-    const status = document.createElement('span'); status.className = 'permission-status'; status.textContent = '也可在终端回答';
+    const status = document.createElement('span'); status.className = 'permission-status';
+    status.textContent = p.provider === 'codex' ? '超时后交回 Codex' : '也可在终端回答';
     actions.appendChild(status); card.append(title, details, actions);
     permissionCards.set(p.id, card); $('permissions').appendChild(card);
   }
@@ -207,6 +210,7 @@ function showNote(msg, ms = 5000) {
   if (msg) noteTimer = setTimeout(() => note.classList.remove('show'), ms);
 }
 const PLACEHOLDER = {
+  codex: '请在 Codex 中继续对话；这里查看进度和处理权限',
   terminal: '回复（Enter 发送，Shift+Enter 换行）',
   resume: '会话已关闭：发送会在后台用 claude -p --resume 续上',
   busy: '后台续聊进行中…',
@@ -216,7 +220,7 @@ const PLACEHOLDER = {
 function composeState() {
   const s = data.find((x) => x.id === selected);
   const via = s ? s.via : 'unknown';
-  input.disabled = !s || via === 'none' || via === 'busy' || via === 'unknown';
+  input.disabled = !s || via === 'codex' || via === 'none' || via === 'busy' || via === 'unknown';
   input.placeholder = s ? PLACEHOLDER[via] : '还没有会话';
 }
 

@@ -1,0 +1,13 @@
+{
+  "name": "ame-remote",
+  "private": true,
+  "description": "Ame remote dashboard: server (remote/server) and per-machine agent (remote/agent)",
+  "scripts": {
+    "server": "node server/server.js",
+    "agent": "node agent/agent.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

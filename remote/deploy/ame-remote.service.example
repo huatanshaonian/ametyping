@@ -1,0 +1,37 @@
+# systemd unit for the dashboard server. Runs as an unprivileged user with a read-only system.
+#   sudo useradd --system --create-home --home-dir /opt/ame ame
+#   sudo -u ame git clone <repo> /opt/ame/ametyping && cd /opt/ame/ametyping/remote && sudo -u ame npm ci --omit=dev
+#   sudo -u ame node server/setup.js init
+#   sudo -u ame node server/setup.js production your.domain 100.x.y.z     (100.x.y.z = this server's VPN address)
+#   sudo cp deploy/ame-remote.service.example /etc/systemd/system/ame-remote.service
+#   sudo systemctl enable --now ame-remote
+[Unit]
+Description=Ame remote dashboard
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=ame
+WorkingDirectory=/opt/ame/ametyping/remote
+ExecStart=/usr/bin/node server/server.js
+Restart=on-failure
+RestartSec=3
+# the only thing it writes is audit.log next to config.json
+ReadWritePaths=/opt/ame/ametyping/remote/server
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

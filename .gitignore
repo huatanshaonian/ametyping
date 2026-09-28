@@ -2,3 +2,5 @@ node_modules/
 dist/
 release/
 *.log
+remote/server/config.json
+remote/agent/agent.json

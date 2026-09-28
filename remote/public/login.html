@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>登录</title>
+<!-- deliberately generic: nothing on this page says what sits behind it -->
+<style>
+  :root {
+    --desk: #f3c6d8; --face: #f6dde8; --light: #fff; --shade: #c48aa5; --dark: #6b2a4a;
+    --title1: #b0245e; --title2: #f08cb4; --ink: #2b1020; --field: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--desk);
+    font: 12px/1.4 "MS Sans Serif", "Microsoft Sans Serif", Tahoma, "SimSun", "宋体", sans-serif; color: var(--ink); }
+  /* classic 3D bevels */
+  .raised { background: var(--face); border: 1px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
+    box-shadow: inset -1px -1px 0 var(--shade), inset 1px 1px 0 #fbeef4; }
+  .sunken { border: 1px solid; border-color: var(--shade) var(--light) var(--light) var(--shade);
+    box-shadow: inset 1px 1px 0 var(--dark); }
+  .win { width: 380px; max-width: 100%; padding: 2px; }
+  .title { display: flex; align-items: center; gap: 6px; height: 20px; padding: 0 3px 0 5px; color: #fff; font-weight: bold;
+    background: linear-gradient(90deg, var(--title1), var(--title2)); user-select: none; }
+  .title span { flex: 1; letter-spacing: .5px; }
+  .x { width: 16px; height: 14px; padding: 0; font: bold 11px/10px Tahoma, sans-serif; color: var(--ink); cursor: default; }
+  .body { display: flex; gap: 14px; padding: 16px 14px 14px; }
+  .icon { flex: none; width: 32px; height: 32px; image-rendering: pixelated; }
+  form { flex: 1; min-width: 0; }
+  p { margin: 0 0 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { width: 72px; flex: none; white-space: nowrap; }
+  .row .field { flex: 1; min-width: 0; background: var(--field); padding: 1px; }
+  input { width: 100%; border: 0; outline: 0; padding: 3px 4px; font: inherit; font-size: 13px; background: transparent; color: var(--ink); }
+  #code { letter-spacing: 4px; }
+  .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  button.b { min-width: 75px; height: 23px; font: inherit; color: var(--ink); cursor: pointer; padding: 0 10px; }
+  button.b:active:not(:disabled) { border-color: var(--dark) var(--light) var(--light) var(--dark); box-shadow: inset 1px 1px 0 var(--shade); }
+  button.b:focus-visible { outline: 1px dotted var(--ink); outline-offset: -5px; }
+  button.b.def { outline: 1px solid var(--dark); }
+  button.b:disabled { color: var(--shade); cursor: default; }
+  .msg { min-height: 17px; margin: 0 14px 8px; padding-left: 46px; color: #a0103c; }
+  .status { margin: 0 2px 0; padding: 2px 5px; font-size: 11px; color: #5a3048; }
+  @media (max-width: 380px) { .icon { display: none; } .body { padding: 14px 10px 12px; } .msg { padding-left: 0; } }
+</style>
+</head>
+<body>
+<div class="win raised" role="dialog" aria-labelledby="ttl">
+  <div class="title"><span id="ttl">登录</span><button class="x raised" type="button" tabindex="-1" aria-hidden="true">×</button></div>
+  <div class="body">
+    <!-- a pixel key -->
+    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" shape-rendering="crispEdges">
+      <rect x="1" y="3" width="6" height="6" fill="#6b2a4a"/><rect x="2" y="4" width="4" height="4" fill="#f5c542"/>
+      <rect x="3" y="5" width="2" height="2" fill="#6b2a4a"/><rect x="7" y="5" width="8" height="2" fill="#6b2a4a"/>
+      <rect x="7" y="5" width="7" height="1" fill="#f5c542"/><rect x="11" y="7" width="2" height="3" fill="#6b2a4a"/>
+      <rect x="13" y="7" width="2" height="2" fill="#6b2a4a"/>
+    </svg>
+    <form id="f" autocomplete="on">
+      <p>请输入用户名、密码和验证码。</p>
+      <div class="row"><label for="user">用户名(<u>U</u>):</label><div class="field sunken"><input id="user" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" accesskey="u" required></div></div>
+      <div class="row"><label for="password">密码(<u>P</u>):</label><div class="field sunken"><input id="password" type="password" autocomplete="current-password" accesskey="p" required></div></div>
+      <div class="row"><label for="code">验证码(<u>C</u>):</label><div class="field sunken"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" accesskey="c" required></div></div>
+      <div class="btns">
+        <button class="b raised def" type="submit" id="ok">确定</button>
+        <button class="b raised" type="reset" id="cancel">取消</button>
+      </div>
+    </form>
+  </div>
+  <div class="msg" id="msg" role="status"></div>
+  <div class="status sunken" id="st">就绪</div>
+</div>
+<script src="/login.js"></script>
+</body>
+</html>

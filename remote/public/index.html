@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>糖糖看板</title>
+<style>
+  @font-face { font-family: "PixelMplus"; src: url(/asset/dialog/PixelMplus12-Regular.ttf); }
+  :root { --ink: rgb(58, 34, 84); --blue: rgb(77, 35, 207); --pink: rgb(240, 209, 241); --paper: #fdf6fb;
+    --edge: rgba(77, 35, 207, .3); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; flex-direction: column; height: 100%; background: var(--paper);
+    font-family: "PixelMplus", "Microsoft YaHei UI", system-ui, sans-serif; color: var(--ink); font-size: 13px; }
+  /* top bar */
+  #top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--blue); color: #fff; flex: none; }
+  #top img { width: 20px; height: 20px; border-radius: 3px; }
+  #top .grow { flex: 1; }
+  #conn { font-size: 12px; opacity: .85; }
+  #logout { color: #fff; background: transparent; border: 1px solid rgba(255,255,255,.6); padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+  #logout:hover { background: rgba(255,255,255,.15); }
+  /* layout: session list on the left, conversation on the right */
+  #wrap { display: flex; flex: 1; min-height: 0; }
+  #list { width: 260px; flex: none; overflow-y: auto; border-right: 2px solid var(--blue); background: rgba(240, 209, 241, .3); }
+  #list::-webkit-scrollbar, #conv::-webkit-scrollbar { width: 7px; }
+  #list::-webkit-scrollbar-thumb, #conv::-webkit-scrollbar-thumb { background: var(--blue); }
+  .mc { padding: 4px 10px; font-size: 11px; color: rgba(58,34,84,.55); background: rgba(77,35,207,.08);
+    border-top: 1px solid var(--edge); border-bottom: 1px dotted var(--edge); position: sticky; top: 0; }
+  .mc .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; background: #b9a; }
+  .mc.on .dot { background: rgb(60, 170, 120); }
+  .card { padding: 6px 10px 7px; border-bottom: 1px dotted var(--edge); cursor: pointer; }
+  .card:hover { background: rgba(255,255,255,.6); }
+  .card.sel { background: #fff; box-shadow: inset 3px 0 0 var(--blue); }
+  .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .sm { font-size: 11.5px; color: rgba(58,34,84,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .card .st { font-size: 10.5px; margin-top: 2px; }
+  .st.working { color: rgb(60, 140, 120); } .st.waiting { color: rgb(208, 82, 28); }
+  .st.done { color: rgb(180, 50, 110); } .st.idle { color: rgba(58,34,84,.4); }
+  #empty { padding: 20px 12px; color: rgba(58,34,84,.5); font-size: 12px; }
+  /* conversation */
+  #right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #head { padding: 6px 12px; border-bottom: 1px dotted var(--edge); color: var(--blue); display: flex; justify-content: space-between; gap: 8px; }
+  #head b { font-weight: normal; } #head .meta { color: rgba(77,35,207,.55); font-size: 12px; }
+  #conv { flex: 1; overflow-y: auto; padding: 10px 12px; }
+  /* permission cards + reply box */
+  #perms { flex: none; max-height: 45%; overflow-y: auto; }
+  #perms:empty { display: none; }
+  .perm { margin: 6px 12px; padding: 6px 9px; background: #fff; border: 2px solid rgb(208, 82, 28); }
+  .perm .pt { color: rgb(208, 82, 28); margin-bottom: 4px; }
+  .perm pre { margin: 0 0 6px; max-height: 180px; overflow: auto; padding: 5px 7px; background: rgba(240,209,241,.5);
+    white-space: pre-wrap; word-break: break-all; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+  .perm .pa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .perm .ps { font-size: 11px; color: rgba(58,34,84,.55); }
+  .btn { font: inherit; font-size: 12.5px; padding: 3px 12px; cursor: pointer; border: 1px solid var(--blue); background: var(--pink); color: var(--blue); }
+  .btn:hover:not(:disabled) { background: #fff; }
+  .btn.go { background: var(--blue); color: #fff; } .btn.go:hover:not(:disabled) { background: rgb(100, 65, 220); }
+  .btn.no { border-color: rgb(180, 50, 110); color: rgb(180, 50, 110); background: #fff; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  #compose { flex: none; display: flex; gap: 6px; align-items: flex-end; padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    border-top: 2px solid var(--blue); background: rgba(240,209,241,.4); }
+  #say { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 13px; line-height: 18px; color: var(--ink); max-height: 140px;
+    padding: 5px 8px; border: 1px solid var(--edge); background: #fff; outline: none; }
+  #say:focus { border-color: var(--blue); }
+  #say:disabled { background: rgba(255,255,255,.5); }
+  #note { flex: none; font-size: 11.5px; padding: 3px 12px; color: var(--blue); background: rgba(77,35,207,.08); display: none; }
+  #note.show { display: block; } #note.bad { color: rgb(180, 50, 110); }
+  /* step-up: re-enter the code before acting */
+  #gate { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(58,34,84,.35); }
+  #gate[hidden] { display: none; }
+  #gate form { width: 300px; max-width: 100%; background: var(--paper); border: 2px solid var(--blue); box-shadow: 6px 6px 0 rgba(77,35,207,.25); }
+  #gate .gt { padding: 5px 10px; background: var(--blue); color: #fff; }
+  #gate .gb { padding: 12px 14px 14px; }
+  #gate p { margin: 0 0 10px; font-size: 12px; color: rgba(58,34,84,.7); }
+  #gate-code { width: 100%; padding: 7px; font: inherit; font-size: 20px; letter-spacing: 6px; text-align: center; border: 1px solid var(--blue); color: var(--ink); }
+  #gate .ga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  #gate-msg { min-height: 16px; margin-top: 6px; font-size: 12px; color: rgb(180, 50, 110); }
+  .card .pb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: #fff; background: rgb(208, 82, 28); }
+  .m { margin: 5px 0 10px; max-width: 90%; word-break: break-word; }
+  .m.user { margin-left: auto; width: fit-content; background: var(--pink); border: 1px solid var(--edge); padding: 4px 9px; white-space: pre-wrap; }
+  .m.assistant { background: #fff; border: 1px solid var(--edge); padding: 5px 10px; }
+  .m.assistant p { margin: 0 0 6px; white-space: pre-wrap; } .m.assistant p:last-child { margin: 0; }
+  .m pre { margin: 5px 0; padding: 5px 7px; background: rgba(240,209,241,.5); border-left: 2px solid var(--blue);
+    white-space: pre-wrap; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+  .m code { font: 12px Consolas, monospace; background: rgba(240,209,241,.6); padding: 0 2px; }
+  .m.tool { font-size: 11.5px; color: rgba(58,34,84,.5); } .m.tool b { color: rgba(77,35,207,.55); font-weight: normal; }
+  .m.sys { font-size: 11px; color: rgba(58,34,84,.45); text-align: center; max-width: none; }
+  .m .tm { font-size: 10px; color: rgba(77,35,207,.4); margin-left: 6px; }
+  #pick { padding: 24px 14px; color: rgba(58,34,84,.5); }
+  @media (max-width: 620px) {
+    #list { width: 100%; }
+    body.viewing #list { display: none; }
+    body:not(.viewing) #right { display: none; }
+    #back { display: inline-block; }
+  }
+  #back { display: none; margin-right: 4px; color: var(--blue); background: var(--pink); border: 1px solid var(--blue); padding: 1px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="top">
+  <img src="/asset/icon256.png" alt="">
+  <span>糖糖看板</span>
+  <span class="grow"></span>
+  <span id="conn">连接中…</span>
+  <button id="logout">退出</button>
+</div>
+<div id="wrap">
+  <div id="list"><div id="empty">还没有机器连上来。</div></div>
+  <div id="right">
+    <div id="head"><span><button id="back">‹ 返回</button><b id="hname">选择一个会话</b></span><span class="meta" id="hmeta"></span></div>
+    <div id="conv"><div id="pick">从左边选一个会话查看完整对话。</div></div>
+    <div id="perms"></div>
+    <div id="note"></div>
+    <form id="compose" autocomplete="off">
+      <textarea id="say" rows="1" placeholder="先选一个会话" disabled></textarea>
+      <button id="sendbtn" class="btn go" type="submit" disabled>发送</button>
+    </form>
+  </div>
+</div>
+<div id="gate" hidden>
+  <form id="gate-form" autocomplete="off">
+    <div class="gt">再次验证</div>
+    <div class="gb">
+      <p>远程操作前需要验证码（10 分钟内有效）。</p>
+      <input id="gate-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required>
+      <div id="gate-msg"></div>
+      <div class="ga"><button class="btn" type="button" id="gate-cancel">取消</button><button class="btn go" type="submit" id="gate-ok">确定</button></div>
+    </div>
+  </form>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -91,7 +91,7 @@
   .permission-title { color: var(--blue); font-weight: bold; overflow-wrap: anywhere; }
   .permission pre { margin: 4px 0; max-height: 105px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
     user-select: text; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
-  .permission-actions { display: flex; gap: 8px; align-items: center; }
+  .permission-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .permission button { font: inherit; color: var(--blue); background: var(--pink); border: 1px solid var(--blue); cursor: pointer; }
   .permission button:hover { background: #fff; }
   .permission button:disabled { opacity: .5; cursor: default; }
@@ -100,7 +100,7 @@
 </head>
 <body>
 <div id="box">
-  <div id="title"><span id="who">Claude</span><span id="meta"></span><span id="close" title="收起">×</span></div>
+  <div id="title"><span id="who">Claude / Codex</span><span id="meta"></span><span id="close" title="收起">×</span></div>
   <div id="grip" title="拖动调整大小"></div>
   <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div>
     <div id="permissions" aria-live="polite"></div>

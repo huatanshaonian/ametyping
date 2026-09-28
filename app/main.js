@@ -232,6 +232,7 @@ ipcMain.on('set-scale', (_e, s, commit) => { if (win) setScale(s, commit); });
 // Claude Code events (via ../hook-relay.js): POST http://127.0.0.1:3940/event/<type>  body {text, project}
 // Ame reacts (renderer) and a progress bubble above her head shows the line (Codex-pet style).
 const http = require('http');
+const crypto = require('crypto');
 // Claude panel under Ame: session list (left) + selected session log (right); resizable, size remembered
 // each mode remembers its own size (the chat needs more room than the progress log)
 const chatMode = () => settings.panelMode === 'chat';
@@ -441,7 +442,7 @@ function onClaudeEvent(type, d) {
   // Ame's reaction across all sessions
   if (type === 'done') win.webContents.send('claude', anyWorking(id) ? 'done-partial' : 'done');
   else if (type === 'waiting') win.webContents.send('claude', 'waiting');
-  else win.webContents.send('claude', type);
+  else win.webContents.send('claude', type === 'paused' ? (anyWorking(id) ? 'thinking' : 'idle') : type);
   if (text || type === 'done') pushBubble(id);
 }
 
@@ -460,6 +461,48 @@ setInterval(() => {
   }
 }, 5000);
 
+// ---- control API for the remote agent (../remote/agent/agent.js): the same two actions as the panel,
+// reply to a session and answer a permission card. Guarded by a random token written to
+// ~/.ametyping/control-token-<port> (this user only). The custom header also keeps web pages out: a
+// cross-origin request carrying it needs a CORS preflight, which is never answered; any Origin is refused.
+const CONTROL_TOKEN = crypto.randomBytes(32).toString('hex');
+const controlTokenFile = path.join(app.getPath('home'), '.ametyping', `control-token-${PORT}`);
+function writeControlToken() {
+  try {
+    fs.mkdirSync(path.dirname(controlTokenFile), { recursive: true });
+    fs.writeFileSync(controlTokenFile, CONTROL_TOKEN, { mode: 0o600 });
+  } catch (e) { console.error('control token: ' + e.message); }
+}
+app.on('will-quit', () => { try { if (fs.readFileSync(controlTokenFile, 'utf8') === CONTROL_TOKEN) fs.unlinkSync(controlTokenFile); } catch {} });
+function controlOk(req) {
+  const t = Buffer.from(String(req.headers['x-ame-control'] || ''));
+  return !req.headers.origin && t.length === CONTROL_TOKEN.length && crypto.timingSafeEqual(t, Buffer.from(CONTROL_TOKEN));
+}
+function controlState() {
+  return [...sessions.values()].sort((x, y) => x.born - y.born).map((s) => ({
+    id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s),
+    t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8),
+    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent,
+      input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
+  }));
+}
+async function onControl(req, res, body) {
+  const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+  if (!controlOk(req)) return out(403, { ok: false });
+  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState() });
+  let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
+  if (req.method === 'POST' && req.url === '/control/send') {
+    const text = typeof d.text === 'string' ? d.text : '';
+    if (typeof d.id !== 'string' || !text.trim() || text.length > 8000) return out(400, { ok: false, msg: '内容为空或太长' });
+    return out(200, await chatSend(d.id, text));
+  }
+  if (req.method === 'POST' && req.url === '/control/decide') {
+    if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
+    return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
+  }
+  return out(404, { ok: false });
+}
+
 http.createServer((req, res) => {
   const m = req.method === 'POST' && /^\/event\/([a-z]+)$/.exec(req.url);
   const permission = req.method === 'POST' && req.url === '/permission';
@@ -467,6 +510,7 @@ http.createServer((req, res) => {
   req.setEncoding('utf8');
   req.on('data', (c) => { body += c; if (body.length > (permission ? 2e6 : 20000)) req.destroy(); });
   req.on('end', async () => {
+    if (req.url.startsWith('/control/')) return onControl(req, res, body).catch(() => { try { res.writeHead(500); res.end('{}'); } catch {} });
     let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
     if (!d || typeof d !== 'object' || Array.isArray(d)) d = {};
     d = normalizeSession(d);
@@ -494,7 +538,7 @@ http.createServer((req, res) => {
     if (!m || !win || win.isDestroyed()) return;
     onClaudeEvent(m[1], d);
   });
-}).on('error', () => {}).listen(PORT, '127.0.0.1');
+}).on('error', () => {}).listen(PORT, '127.0.0.1', writeControlToken);
 
 // ---- chat mode: full conversation + replies ----
 const chats = new Map();        // id -> transcript cache (see transcript.js)

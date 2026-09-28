@@ -1,0 +1,32 @@
+# Caddy in front of the dashboard. Caddy gets and renews the HTTPS certificate by itself.
+# Copy to /etc/caddy/Caddyfile, replace your.domain, then: sudo systemctl reload caddy
+#
+# The Node server listens on 127.0.0.1:8787 only; agents use their own listener on the VPN address
+# (config.json "agent"), which Caddy does not expose at all.
+
+your.domain {
+	# Optional extra wall: only these addresses reach the site at all (home, office, phone carrier...).
+	# Uncomment and fill in to stop brute force before it gets to the login.
+	# @outside not remote_ip 203.0.113.7/32 198.51.100.0/24
+	# respond @outside 404
+
+	# agents never come through here
+	@agent path /agent /agent/*
+	respond @agent 404
+
+	# Caddy replaces any X-Forwarded-For the client sends with the real address by default, and the
+	# server reads the last entry -- together the per-IP lockout cannot be dodged with a forged header.
+	reverse_proxy 127.0.0.1:8787
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/dashboard.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

@@ -47,6 +47,62 @@ Grab `AmeTyping-portable.exe` from [Releases](../../releases) and run it. It is 
 
 `hook-relay.js` 读取 hook 事件，生成一行中文进度（在读 / 在改 / 在跑 / 要你确认 / 完成了……），会话标题取自该会话 transcript 里的自定义标题，然后 POST 到本机 3940 端口。它 0.7 秒内必定退出，不会拖慢 Claude。
 
+## 接入 Codex（可选）
+
+支持 Codex 的 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PermissionRequest`、`Stop`、`Interrupt` 和 `SessionEnd`。Claude / Codex 会话共用面板，但有各自的来源标识和权限请求。
+
+在仓库根目录执行 `node install-codex-hooks.js`，会将 `codex-hook.js` 的绝对路径合并进 `$CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`）。已有配置先备份，其他 hook 与 `config.toml` 中的 `notify` 保留；重复安装不会重复添加相同命令。也可参考 [`codex-hooks.example.json`](codex-hooks.example.json) 手动配置。移动仓库后需更新 hook 路径并移除旧路径的条目。
+
+安装后在 Codex CLI 输入 `/hooks`，审查并信任 AmeTyping 的 hook 定义；新会话加载后生效。未信任的 hook 会被 Codex 跳过。详见 [Codex 官方 hooks 文档](https://learn.chatgpt.com/docs/hooks)。
+
+- **进度**：弹出模式和常驻模式都显示本次接入后的实时事件摘要，包括运行命令、修改文件、完成和中断。Codex 对话仍在 Codex 原窗口继续；这里不读取其非稳定格式的历史 transcript，也不使用 Claude 的终端／续聊接口。
+- **权限**：卡片显示命令或 `apply_patch` 补丁，提供「允许」「拒绝」「在 Codex 中处理」。Codex 先运行同步权限 hook，未作决定才进入原生审批，因此不承诺两个确认框同时出现。第三个按钮立即交回原生审批；超时、糖糖未运行或连接断开也不自动允许。
+- **超时**：权限 hook 配置为 120 秒，脚本最多等待 110 秒，面板最多等待 105 秒；其他 hook 快速返回空 JSON，不添加对话上下文。不要将权限 hook 设成 `async`。
+- **验证**：`node --test codex-hook.test.js app/permissions.test.js`。`AME_PORT` 可为 Codex hook 指定本机测试端口（默认 3940）。
+
+## 远程看板（可选）
+
+`remote/` 是一个自托管网页：在手机或别的电脑上查看各台机器的 Claude Code 会话，并可以远程回复、处理权限确认。
+
+```
+公网 443 ── Caddy（HTTPS） ── 127.0.0.1:8787  网页 + 登录
+                                    │
+VPN（如 Tailscale）── <VPN 地址>:8788  agent 入口 ←── 各台机器的 agent ── 本机糖糖（127.0.0.1:3940）
+```
+
+### 部署（VPS，公网域名）
+
+1. 装 Node.js、[Caddy](https://caddyserver.com/)、VPN（如 Tailscale）。防火墙只开 22 和 443，SSH 只用密钥登录。
+2. 按 [`remote/deploy/ame-remote.service.example`](remote/deploy/ame-remote.service.example) 顶部的步骤建用户、拉代码、`npm ci`，再：
+   - `node server/setup.js init`：设置用户名、密码（建议 20 位以上随机串），用验证器 App 扫码绑定 TOTP；
+   - `node server/setup.js production your.domain <服务器的 VPN 地址>`：切到 HTTPS 模式，agent 入口只监听 VPN 地址；
+   - `node server/setup.js add-agent <机器名>`：每台机器一个令牌（只显示一次）。
+3. 把 [`remote/deploy/Caddyfile.example`](remote/deploy/Caddyfile.example) 改好域名放进 `/etc/caddy/Caddyfile`，装好 systemd 服务并启动。
+4. 每台机器：复制 `remote/agent/agent.example.json` 为 `agent.json`，`server` 填 `ws://<服务器的 VPN 地址>:8788/agent`，填入令牌，`npm run agent`。
+
+手机丢了：SSH 上服务器运行 `node server/setup.js totp` 重新绑定；忘记密码：`node server/setup.js password`。
+
+### 远程控制
+
+**默认关闭**，需在该机器的 `agent.json` 里设 `"control": true`，且糖糖正在运行。开启后网页可以：
+
+- **回复**：和本机常驻对话面板相同的规则——终端会话直接打进终端；已关闭的会话用 `claude -p --resume` 在后台续上；IDE / 桌面 App 会话只能看；有待确认时回复会被拦下。
+- **权限确认**：显示与本机面板相同的卡片（允许 / 拒绝，Codex 另有「在 Codex 中处理」）。
+
+服务器 `config.json` 里设 `"control": false` 可以整体改回只读。
+
+### 安全措施
+
+- **登录前什么都不暴露**：登录页是一个通用的登录框，没有名字、图片；静态素材也要登录后才能拿；带 `noindex`。
+- **一步登录**：用户名、密码、验证码一起提交；错在哪里都只回「登录失败」，密码无法单独猜。密码 scrypt 加盐存储，验证码一次一用。
+- **防爆破**：同一 IP 15 分钟错 5 次锁 15 分钟；全局 1 小时错 20 次锁 30 分钟。IP 取 Caddy 追加在 `X-Forwarded-For` 最右边的值，伪造这个头绕不过去。想把爆破挡在门外，可在 Caddyfile 里打开 IP 白名单。
+- **操作前再验一次**：只看不需要；发回复、批准权限前，需要 10 分钟内输过验证码（登录那次也算）。被偷的 cookie 只能看，不能动。
+- **会话**：空闲 8 小时或登录满 24 小时失效；登出后已打开的页面立即断开。HTTPS 下 cookie 为 `__Host-sid`（HttpOnly、Secure、SameSite=Strict），并启用 HSTS。
+- **跨站**：所有写请求和 WebSocket 都校验来源；CSP 只允许本站脚本。
+- **agent**：只在 VPN 地址上监听，公网入口上没有 `/agent`；机器用 256 位随机令牌认证，服务器只存哈希。
+- **本机**：糖糖的控制接口只听 127.0.0.1，要求 `~/.ametyping/control-token-<端口>` 里的随机令牌（每次启动重新生成），并拒绝带 `Origin` 的请求，本机网页无法调用。
+- **审计**：登录、验证、每次操作都记入 `audit.log`（机器、会话、字数，不记内容）；每分钟最多 30 次操作。
+
 ## 从源码运行 / 打包
 
 ```bash
