@@ -1,0 +1,36 @@
+{
+  "name": "ame-typing",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-packager . AmeTyping --platform=win32 --arch=x64 --out=../dist --overwrite --icon=assets/app.ico --asar --asar.unpack=**/*.node --prune=true --win32metadata.ProductName=AmeTyping --win32metadata.FileDescription=AmeTyping"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2"
+  },
+  "productName": "AmeTyping",
+  "build": {
+    "appId": "local.ame.typing",
+    "productName": "AmeTyping",
+    "win": {
+      "target": "portable",
+      "icon": "assets/app.ico"
+    },
+    "portable": {
+      "artifactName": "AmeTyping-portable.exe"
+    },
+    "directories": {
+      "output": "../release"
+    }
+  },
+  "description": "Ame typing desktop pet",
+  "author": "local"
+}

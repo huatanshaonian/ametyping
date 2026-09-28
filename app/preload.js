@@ -1,0 +1,13 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('pet', {
+  onKey: (fn) => ipcRenderer.on('key', (_e, k) => fn(k)),
+  onConfig: (fn) => ipcRenderer.on('config', (_e, c) => fn(c)),
+  dragBy: (dx, dy) => ipcRenderer.send('drag-by', dx, dy),
+  setScale: (s, commit) => ipcRenderer.send('set-scale', s, commit),
+  onMouse: (fn) => ipcRenderer.on('mouse', (_e, m) => fn(m)),
+  setHit: (v) => ipcRenderer.send('hit', v),
+  gesture: (kind) => ipcRenderer.send('gesture', kind),
+  onClaude: (fn) => ipcRenderer.on('claude', (_e, t) => fn(t)),
+  onWinMove: (fn) => ipcRenderer.on('winmove', (_e, dx, dy) => fn(dx, dy)),
+});

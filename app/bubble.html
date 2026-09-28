@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self'; font-src 'self'">
+<style>
+  /* Claude panel in the game-original Windose window style (AmeDesk promo): 9-slice 40/12/24/12, pixelated.
+     Left: one card per session (name, one-line summary, red dot = unread). Right: the selected session's log. */
+  @font-face { font-family: "zpix"; src: url(assets/dialog/zpix.ttf); }
+  @font-face { font-family: "PixelMplus"; src: url(assets/dialog/PixelMplus12-Regular.ttf); }
+  :root { --ink: rgb(58, 34, 84); --blue: rgb(77, 35, 207); --pink: rgb(240, 209, 241); }
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; user-select: none; }
+  #box { position: absolute; left: 0; right: 0; top: 0; bottom: 0; box-sizing: border-box;
+    border-style: solid; border-width: 40px 12px 24px 12px;
+    border-image: url(assets/dialog/windowbase_active.png) 40 12 24 12 fill stretch; image-rendering: pixelated;
+    font-family: "zpix", "PixelMplus", "Microsoft YaHei UI", sans-serif; font-size: 13px; line-height: 19px; color: var(--ink); }
+  #title { position: absolute; left: 3px; right: 6px; top: -31px; height: 20px; display: flex; align-items: center;
+    gap: 8px; color: var(--blue); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: grab; }
+  #who { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  #meta { color: rgba(77, 35, 207, .6); }
+  #close { width: 16px; height: 16px; line-height: 14px; text-align: center; border: 1px solid var(--blue);
+    background: var(--pink); cursor: pointer; font-size: 12px; }
+  #close:hover { background: #fff; }
+  #wrap { display: flex; height: 100%; }
+  #list { width: 150px; flex: none; overflow-y: auto; border-right: 2px solid var(--blue); background: rgba(240, 209, 241, .35); }
+  #list::-webkit-scrollbar, #log::-webkit-scrollbar { width: 6px; }
+  #list::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb { background: var(--blue); }
+  .card { position: relative; padding: 5px 8px 6px 9px; border-bottom: 1px dotted rgba(77, 35, 207, .35); cursor: pointer; }
+  .card:hover { background: rgba(255, 255, 255, .7); }
+  .card.sel { background: #fff; box-shadow: inset 3px 0 0 var(--blue); }
+  .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
+  .card .sm { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .st { font-size: 10px; line-height: 13px; }
+  .st.working { color: rgb(60, 140, 120); } .st.waiting { color: rgb(208, 82, 28); } .st.done { color: rgb(180, 50, 110); } .st.idle { color: rgba(58, 34, 84, .4); }
+  .dot { position: absolute; right: 6px; top: 8px; width: 7px; height: 7px; background: rgb(235, 40, 80);
+    box-shadow: 0 0 0 1px #fff; display: none; }
+  .card.unread .dot { display: block; }
+  #right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #head { padding: 4px 10px; border-bottom: 1px dotted rgba(77, 35, 207, .35); color: var(--blue); font-size: 12px;
+    display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+  #head span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  #log { flex: 1; overflow-y: auto; padding: 4px 10px 6px; }
+  .ln { color: rgba(58, 34, 84, .55); word-break: break-all; }
+  .ln .tm { color: rgba(77, 35, 207, .45); font-size: 11px; margin-right: 5px; }
+  .ln.last { color: var(--ink); }
+  .ln.done { color: rgb(180, 50, 110); } .ln.waiting { color: rgb(208, 82, 28); } .ln.error { color: rgb(150, 100, 0); }
+  .ln.message { color: var(--blue); }
+  .sep { border-top: 1px dashed rgba(77, 35, 207, .3); margin: 5px 0 3px; }
+  .caret { display: inline-block; width: 7px; height: 11px; margin-left: 2px; background: var(--blue); vertical-align: -1px;
+    animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  /* resize grip in the bottom status bar, right corner */
+  #grip { position: absolute; right: -9px; bottom: -22px; width: 20px; height: 20px; cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 0 45%, var(--blue) 45% 53%, transparent 53% 63%, var(--blue) 63% 71%, transparent 71% 81%, var(--blue) 81% 89%, transparent 89%); }
+  #grip:hover { filter: brightness(1.6); }
+</style>
+</head>
+<body>
+<div id="box">
+  <div id="title"><span id="who">Claude</span><span id="meta"></span><span id="close" title="收起">×</span></div>
+  <div id="grip" title="拖动调整大小"></div>
+  <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div></div></div>
+</div>
+<audio id="se" src="assets/dialog/Dialog.wav" preload="auto"></audio>
+<script src="bubble.js"></script>
+</body>
+</html>
