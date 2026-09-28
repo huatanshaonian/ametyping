@@ -18,7 +18,8 @@ if (process.env.AME_PROFILE) app.setPath('userData', process.env.AME_PROFILE);
 const PORT = +process.env.AME_PORT || 3940;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 // panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box
-let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup' };
+// remoteControl: the dashboard may reply / answer permission cards through this pet (remote/agent needs "control": true too)
+let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
@@ -97,6 +98,8 @@ function buildMenu() {
     { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
       label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
       click: () => { settings.kbTheme = v; save(); win.webContents.send('config', cfg()); } })) },
+    { label: '允许远程控制（看板回复 / 审批）', type: 'checkbox', checked: !!settings.remoteControl,
+      click: (m) => { settings.remoteControl = m.checked; save(); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
     { label: '调试信息', type: 'checkbox', checked: settings.debug,
@@ -489,7 +492,8 @@ function controlState() {
 async function onControl(req, res, body) {
   const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (!controlOk(req)) return out(403, { ok: false });
-  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState() });
+  if (req.method === 'GET' && req.url === '/control/state') return out(200, { control: !!settings.remoteControl, sessions: controlState() });
+  if (!settings.remoteControl) return out(200, { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' });
   let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
   if (req.method === 'POST' && req.url === '/control/send') {
     const text = typeof d.text === 'string' ? d.text : '';

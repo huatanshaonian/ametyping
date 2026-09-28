@@ -8,7 +8,8 @@
 //   2) the local pet (127.0.0.1:3940/control/state, if it is running and control is on) -- how each session
 //      can be replied to, pending permission cards, and Codex sessions.
 //
-// Remote control is OFF unless agent.json says "control": true. When on, the server may ask for exactly two
+// Remote control is OFF unless agent.json says "control": true AND the local pet allows it (its tray option
+// "允许远程控制"; the Linux headless service has no such option and always allows it). When on, the server may ask for exactly two
 // things, both carried out by the local pet the same way its own panel does them: type a reply into a
 // session (`send`) and answer a permission card (`decide`). Nothing else coming down the socket is honoured.
 // This file reuses the pet's transcript parser (../../app/transcript.js).
@@ -90,6 +91,8 @@ function scan() {
 
 // ---------- the local pet (control API on 127.0.0.1) ----------
 const pet = new Map();                               // id -> session as the pet sees it
+let petUp = false, petAllows = false;                // pet reachable / its "允许远程控制" option (absent = allowed)
+const controlOn = () => CONTROL && petUp && petAllows;
 function petCall(method, p, body) {
   let token;
   try { token = fs.readFileSync(PET_TOKEN_FILE, 'utf8').trim(); } catch { return Promise.resolve(null); }
@@ -109,6 +112,7 @@ function petCall(method, p, body) {
 async function pollPet() {
   const r = CONTROL ? await petCall('GET', '/control/state') : null;
   pet.clear();
+  petUp = !!r; petAllows = !!r && r.control !== false;
   if (r && Array.isArray(r.sessions)) for (const s of r.sessions) if (s && typeof s.id === 'string') pet.set(s.id, s);
 }
 // the only two things the agent does for the server
@@ -121,6 +125,7 @@ async function control(d) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice });
   } else return { ok: false, msg: '无效请求' };
   if (!r) return { ok: false, msg: '本机糖糖没在运行，没法操作' };
+  if (r.ok === false && !petAllows) return { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' };
   setTimeout(() => tick(true), 300);
   return { ok: !!r.ok, msg: typeof r.msg === 'string' ? r.msg.slice(0, 200) : '' };
 }
@@ -161,7 +166,7 @@ function connect() {
   ws.on('open', () => {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: CONTROL }));
+    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn() }));
     lastConv.clear();
     tick(true);
   });
@@ -190,10 +195,10 @@ async function tick(force) {
     await pollPet();
     scan();
     const list = stateList();
-    const sig = JSON.stringify(list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)]));
+    const sig = JSON.stringify([controlOn(), ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
     if (sig === lastSig && force !== true) return;
     lastSig = sig;
-    sendJSON({ t: 'state', control: CONTROL, sessions: list });
+    sendJSON({ t: 'state', control: controlOn(), sessions: list });
     for (const s of list) {
       const cs = `${s.last}|${tailT(s)}`;
       if (lastConv.get(s.id) !== cs) { lastConv.set(s.id, cs); sendConv(s.id); }
@@ -202,4 +207,4 @@ async function tick(force) {
 }
 setInterval(tick, SCAN_MS);
 connect();
-console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}）` : '关'}`);
+console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);
