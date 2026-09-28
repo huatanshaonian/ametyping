@@ -9,9 +9,11 @@ const path = require('path');
 
 const FILE = path.join(os.homedir(), '.claude', 'settings.json');
 const ROOT = path.resolve(__dirname, '..');
-const NODE = process.execPath;                                     // absolute: hooks do not depend on the shell's PATH (nvm)
-const RELAY = path.join(ROOT, 'hook-relay.js');
-const PERM = path.join(ROOT, 'permission-hook.js');
+// forward slashes: on Windows the hook command may run through bash or cmd, both take C:/... inside quotes
+const fwd = (p) => p.replace(/\\/g, '/');
+const NODE = fwd(process.execPath);                                // absolute: hooks do not depend on the shell's PATH (nvm)
+const RELAY = fwd(path.join(ROOT, 'hook-relay.js'));
+const PERM = fwd(path.join(ROOT, 'permission-hook.js'));
 const q = (s) => `"${s}"`;
 const MARK = /[\\/](hook-relay|permission-hook)\.js"?$/;           // how our own entries are recognised
 
