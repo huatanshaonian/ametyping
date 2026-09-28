@@ -34,7 +34,7 @@ Grab `AmeTyping-portable.exe` from [Releases](../../releases) and run it. It is 
 
 权限确认卡片在两种模式下都会弹出，显示工具名、工作目录、命令／文件路径和完整参数，提供「允许」「拒绝」。终端仍可回答；请求断开或收到后续工具／结束事件时，面板撤掉对应卡片，过期按钮不能再次决定。糖糖没开时 hook 静默退出，继续原来的终端确认流程。
 
-`PermissionRequest` 必须是同步 command hook（不要设置 `async: true`），示例超时为 120 秒。面板最多等待 105 秒，脚本自身等待 110 秒；超时不自动允许或拒绝，交回 Claude 原有权限流程。请同时更新 `hook-relay.js`，后续事件才能及时清理卡片。协议见 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks#permissionrequest)。
+`PermissionRequest` 必须是同步 command hook（不要设置 `async: true`），示例超时为 3660 秒。Claude Code 在等待 hook 的同时也在终端显示自己的确认，所以卡片可以一直等：面板最多等待约 60 分钟，脚本自身等待 60 分钟，任意一边回答即可；超时不自动允许或拒绝，交回 Claude 原有权限流程。请同时更新 `hook-relay.js`，后续事件才能及时清理卡片。协议见 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks#permissionrequest)。
 
 托盘菜单「面板模式」可以切换：
 

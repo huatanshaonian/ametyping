@@ -2,7 +2,12 @@
 const { randomUUID } = require('crypto');
 
 // A pending response is the authority: once it is gone, no UI action can decide it again.
-function createPermissions(onChange, timeout = 105000) {
+// How long a card waits: Claude Code shows its own terminal prompt at the same time, so its hook can wait
+// long (answered either way; permission-hook.js gives up after 60 min) -- the card must not vanish while the
+// terminal still asks. Codex waits for the hook before it asks itself, so its cards stay short.
+const WAIT = { claude: 3590e3, codex: 105e3 };
+function createPermissions(onChange, timeout = WAIT) {
+  const waitFor = (provider) => (typeof timeout === 'number' ? timeout : timeout[provider] || timeout.claude);
   const pending = new Map();
   function finish(id, choice) {
     const p = pending.get(id);
@@ -26,7 +31,7 @@ function createPermissions(onChange, timeout = 105000) {
         cwd: d.cwd || '', agentId: d.agentId || '', subagent: d.subagent || '',
         started: Date.now(), res };
       p.close = () => finish(id);
-      p.timer = setTimeout(() => finish(id), timeout);
+      p.timer = setTimeout(() => finish(id), waitFor(p.provider));
       pending.set(id, p);
       res.once('close', p.close);
       onChange(p.session);

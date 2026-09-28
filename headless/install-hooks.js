@@ -36,9 +36,9 @@ if (!remove) {
     (hooks[ev] = hooks[ev] || []).push({ ...(star ? { matcher: '*' } : {}),
       hooks: [{ type: 'command', command: `${q(NODE)} ${q(RELAY)}`, timeout: 5, async: true }] });
   }
-  // not async: the decision is this hook's output; timeout above permission-hook.js's own 110 s wait
+  // not async: the decision is this hook's output; timeout above permission-hook.js's own 60 min wait
   (hooks.PermissionRequest = hooks.PermissionRequest || []).push({ matcher: '*',
-    hooks: [{ type: 'command', command: `${q(NODE)} ${q(PERM)}`, timeout: 120 }] });
+    hooks: [{ type: 'command', command: `${q(NODE)} ${q(PERM)}`, timeout: 3660 }] });
 }
 if (Object.keys(hooks).length) cfg.hooks = hooks; else delete cfg.hooks;
 

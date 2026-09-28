@@ -3,13 +3,13 @@
 // the pet's panel ([允许] [本会话都允许] [拒绝]). The terminal shows its own prompt at the same time; whichever
 // you answer first wins (an answer in the terminal simply makes this hook's later reply irrelevant).
 // Pet not running / no answer in time -> no output, and Claude Code carries on with its normal prompt.
-// Configure WITHOUT "async" (the decision is this hook's output) and with a timeout above WAIT_MS, e.g. 120.
+// Configure WITHOUT "async" (the decision is this hook's output) and with a timeout above WAIT_MS, e.g. 3660.
 'use strict';
 const http = require('http');
 const path = require('path');
 
 const PORT = 3940;
-const WAIT_MS = 110e3;
+const WAIT_MS = 3600e3;                 // the terminal prompt is shown meanwhile: waiting blocks nothing
 setTimeout(() => process.exit(0), WAIT_MS + 3000).unref();
 
 let raw = '';

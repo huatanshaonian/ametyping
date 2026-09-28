@@ -100,6 +100,15 @@ const permissionCards = new Map();
 function renderPermissions() {
   const s = data.find((x) => x.id === selected);
   const requests = s && s.permissions || [];
+  // still asking but the card is gone (its hook gave up after an hour): say where to answer instead of showing nothing
+  const lastLine = s && [...s.lines].reverse().find((l) => !l.sep);
+  const stale = !!s && s.state === 'waiting' && !requests.length && !!lastLine && /确认/.test(lastLine.text);
+  let hint = $('permission-hint');
+  if (stale && !hint) {
+    hint = document.createElement('div'); hint.id = 'permission-hint'; hint.className = 'permission';
+    hint.textContent = '这个确认已超时，卡片已撤下：请到终端里回答';
+    $('permissions').prepend(hint);
+  } else if (!stale && hint) hint.remove();
   const ids = new Set(requests.map((p) => p.id));
   for (const [id, el] of permissionCards) if (!ids.has(id)) { el.remove(); permissionCards.delete(id); }
   for (const p of requests) {

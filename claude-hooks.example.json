@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "node \"C:/path/to/permission-hook.js\"",
-            "timeout": 120
+            "timeout": 3660
           }
         ]
       }
