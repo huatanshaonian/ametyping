@@ -43,34 +43,47 @@ function userText(s) {
   return s.trim() || null;
 }
 
-function parseLine(o, out) {
-  if (!o || o.isSidechain || o.isMeta) return;
+// The records one transcript line contributes, unmerged: what the conversation says without the tool output
+// (user / assistant text in full, each tool call as one line). The dashboard agent stores these on the server;
+// the panel merges them (parseLine).
+function recordsOf(o) {
+  const out = [];
+  if (!o || o.isSidechain || o.isMeta) return out;
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
   if (o.type === 'user' && m) {
     const parts = typeof m.content === 'string' ? [m.content]
       : (m.content || []).filter((b) => b.type === 'text').map((b) => b.text);
-    if (!parts.length) return;                                    // tool results
+    if (!parts.length) return out;                                // tool results
     const u = userText(parts.join('\n'));
-    if (!u) return;
+    if (!u) return out;
     if (typeof u === 'object') out.push({ role: 'sys', text: u.sys, t });
     else out.push({ role: 'user', text: u, t });
   } else if (o.type === 'assistant' && m && Array.isArray(m.content)) {
     for (const b of m.content) {
-      if (b.type === 'text' && b.text && b.text.trim()) {
-        const last = out[out.length - 1];                          // one reply streamed as several entries
-        if (last && last.role === 'assistant' && last.mid === m.id) last.text += '\n\n' + b.text.trim();
-        else out.push({ role: 'assistant', text: b.text.trim(), t, mid: m.id });
-      } else if (b.type === 'tool_use') {
-        const line = toolLine(b.name, b.input), last = out[out.length - 1];
-        if (last && last.role === 'tool') { last.items.push(line); last.t = t; }   // consecutive tools: one group
-        else out.push({ role: 'tool', items: [line], t });
-      }
+      if (b.type === 'text' && b.text && b.text.trim()) out.push({ role: 'assistant', text: b.text.trim(), t, mid: m.id });
+      else if (b.type === 'tool_use') out.push({ role: 'tool', items: [toolLine(b.name, b.input)], t });
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
-    out.title = o.aiTitle || o.customTitle || o.title || out.title;
+    const title = o.aiTitle || o.customTitle || o.title;
+    if (title) out.push({ role: 'title', text: String(title), t });
+  }
+  return out;
+}
+
+// append records to a chat log the way the panel shows it: one reply streamed as several entries becomes one
+// message, consecutive tool calls one group; a title record sets out.title
+function mergeRecords(out, recs) {
+  for (const r of recs) {
+    const last = out[out.length - 1];
+    if (r.role === 'title') out.title = r.text;
+    else if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid === r.mid) last.text += '\n\n' + r.text;
+    else if (r.role === 'tool' && last && last.role === 'tool') { last.items.push(...r.items); last.t = r.t; }
+    else out.push(r.role === 'tool' ? { ...r, items: [...r.items] } : { ...r });
   }
 }
+
+function parseLine(o, out) { mergeRecords(out, recordsOf(o)); }
 
 // cache: { file, offset, msgs, title } -- returns true when something new was read
 function poll(cache) {
@@ -99,4 +112,4 @@ function poll(cache) {
   return true;
 }
 
-module.exports = { poll };
+module.exports = { poll, recordsOf, mergeRecords };

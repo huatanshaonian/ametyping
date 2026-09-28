@@ -8,7 +8,8 @@
 // own panel. Every action is written to the audit log (never the text itself).
 // Before the login nothing gives away what this is: a plain login box, no art, no names, noindex.
 // Agents connect on their own listener (config "agent": {host, port}), meant for a VPN address only.
-// Nothing is persisted: the session list and conversations live in memory and pass straight through.
+// The session list lives in memory only. Conversations arrive as slim records and are written to disk by
+// store.js (config "dataDir", default data/ next to config.json); memory holds only the ones being looked at.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -16,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const auth = require('./auth');
+const { createStore } = require('./store');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -116,10 +118,18 @@ function broadcast(obj) {
   const s = JSON.stringify(obj);
   for (const c of clients) { try { c.ws.send(s); } catch {} }
 }
+const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
+process.on('SIGTERM', flushAndExit);
+process.on('SIGINT', flushAndExit);
+
 function pushConvTo(c) {
   if (!c.sub) return;
   const m = machines.get(c.sub.machine); const s = m && m.sessions.get(c.sub.id);
-  try { c.ws.send(JSON.stringify({ t: 'conv', machine: c.sub.machine, id: c.sub.id, msgs: s ? s.msgs.slice(-300) : [] })); } catch {}
+  // stored records (transcript sessions) or what the agent sent (sessions only the pet knows, e.g. Codex)
+  const src = store.has(c.sub.machine, c.sub.id) ? store.tail(c.sub.machine, c.sub.id) : (s ? s.msgs : []);
+  const msgs = (src || []).slice(-300).map((x) => ({ role: x.role, text: x.text, items: x.items, t: x.t }));
+  try { c.ws.send(JSON.stringify({ t: 'conv', machine: c.sub.machine, id: c.sub.id, msgs })); } catch {}
 }
 
 // ---------- agent -> server messages (the ONLY thing the server accepts from a machine) ----------
@@ -129,9 +139,15 @@ function pushConvTo(c) {
 // result {rid, ok, msg}                                              outcome of a send / decide
 const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
-function onAgentMessage(m, raw) {
+function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') { m.control = d.control === true; broadcast({ t: 'sessions', data: snapshot() }); return; }
+  if (d.t === 'rec') {
+    const r = store.accept(m.name, d);
+    if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
+    if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
+    return;
+  }
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200));
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
@@ -362,7 +378,9 @@ wssAgent.on('connection', (ws, req, a) => {
   m.sockets.add(ws);
   audit('agent-online', a.name, clientIp(req));
   broadcast({ t: 'sessions', data: snapshot() });
-  ws.on('message', (raw) => { if (raw.length < 200000) onAgentMessage(m, raw); });
+  // where the stored conversations of this machine stand: the agent streams on from there
+  try { ws.send(JSON.stringify({ t: 'sync', offsets: store.offsets(a.name) })); } catch {}
+  ws.on('message', (raw) => onAgentMessage(m, raw, ws));             // size capped by maxPayload
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {
     clearInterval(ping); m.sockets.delete(ws);

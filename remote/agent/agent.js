@@ -12,7 +12,8 @@
 // "允许远程控制"; the Linux headless service has no such option and always allows it). When on, the server may ask for exactly two
 // things, both carried out by the local pet the same way its own panel does them: type a reply into a
 // session (`send`) and answer a permission card (`decide`). Nothing else coming down the socket is honoured.
-// This file reuses the pet's transcript parser (../../app/transcript.js).
+// Conversations go to the server as slim records (records.js), streamed from the byte offset the server has
+// stored; the server writes them to disk. This file reuses the pet's transcript parser (../../app/transcript.js).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -20,6 +21,7 @@ const os = require('os');
 const http = require('http');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
+const records = require('./records');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -161,6 +163,9 @@ function convOf(id) {
 
 // ---------- connection ----------
 let ws = null, retry = 2000;
+// record streaming: per session a reader at the offset the server has stored (null until the server's "sync")
+let serverOff = null;
+const readers = new Map();
 function connect() {
   ws = new WebSocket(cfg.server, { headers: { Authorization: 'Bearer ' + cfg.token } });
   ws.on('open', () => {
@@ -168,12 +173,23 @@ function connect() {
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn() }));
     lastConv.clear();
+    serverOff = null; readers.clear();                // wait for the server's offsets before streaming
     tick(true);
   });
   ws.on('message', (raw) => {
     // honoured from the server: a request to read a conversation, and (only with "control": true) send / decide
     let d; try { d = JSON.parse(raw); } catch { return; }
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
+    else if (d.t === 'sync' && d.offsets && typeof d.offsets === 'object') {
+      // where the server stands per session: (re)start streaming there
+      serverOff = serverOff || {};
+      for (const [id, off] of Object.entries(d.offsets)) {
+        if (!Number.isFinite(off) || off < 0) continue;
+        serverOff[id] = off;
+        const r = readers.get(id); if (r) { r.offset = off; r.skipping = false; }
+      }
+      pushRecords();
+    }
     else if ((d.t === 'send' || d.t === 'decide') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
@@ -182,6 +198,25 @@ function connect() {
   ws.on('error', () => { try { ws.close(); } catch {} });
 }
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
+
+// new transcript lines of every tracked session, as slim records (a few batches per session per tick)
+function pushRecords() {
+  if (!serverOff || !ws || ws.readyState !== 1) return;
+  for (const id of [...readers.keys()]) if (!sess.has(id)) readers.delete(id);
+  for (const [id, c] of sess) {
+    let r = readers.get(id);
+    if (!r || r.file !== c.file) { r = records.createReader(c.file, serverOff[id] || 0); readers.set(id, r); }
+    for (let k = 0; k < 8; k++) {
+      if (ws.bufferedAmount > 8e6) return;                             // let the socket drain first
+      let b; try { b = records.readNext(r); } catch { b = null; }
+      if (!b) break;
+      sendJSON({ t: 'rec', id, from: b.from, to: b.to, reset: b.reset || undefined, recs: b.recs,
+        project: c.project || '', title: c.title || '' });
+      r.offset = b.to;
+      if (b.to === b.from) break;
+    }
+  }
+}
 function sendConv(id) { sendJSON({ t: 'conv', id, msgs: convOf(id) }); }
 
 // push the session list on a change, and each conversation whose content moved
@@ -196,13 +231,16 @@ async function tick(force) {
     scan();
     const list = stateList();
     const sig = JSON.stringify([controlOn(), ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
-    if (sig === lastSig && force !== true) return;
-    lastSig = sig;
-    sendJSON({ t: 'state', control: controlOn(), sessions: list });
-    for (const s of list) {
-      const cs = `${s.last}|${tailT(s)}`;
-      if (lastConv.get(s.id) !== cs) { lastConv.set(s.id, cs); sendConv(s.id); }
+    if (sig !== lastSig || force === true) {
+      lastSig = sig;
+      sendJSON({ t: 'state', control: controlOn(), sessions: list });
+      for (const s of list) {
+        if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
+        const cs = `${s.last}|${tailT(s)}`;
+        if (lastConv.get(s.id) !== cs) { lastConv.set(s.id, cs); sendConv(s.id); }
+      }
     }
+    pushRecords();                                   // every tick: a backlog (a long history) goes out over several
   } finally { ticking = false; }
 }
 setInterval(tick, SCAN_MS);
