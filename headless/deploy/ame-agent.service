@@ -1,0 +1,14 @@
+# systemd user unit: dashboard agent (pushes this machine's sessions to the server, relays send / decide).
+# Install like ame-headless.service; config in @ROOT@/remote/agent/agent.json.
+[Unit]
+Description=AmeTyping dashboard agent
+After=ame-headless.service network-online.target
+
+[Service]
+WorkingDirectory=@ROOT@/remote
+ExecStart=@NODE@ @ROOT@/remote/agent/agent.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

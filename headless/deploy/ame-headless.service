@@ -1,0 +1,16 @@
+# systemd user unit: AmeTyping headless service (Linux). @NODE@ / @ROOT@ are filled in on install:
+#   sed "s#@NODE@#$(command -v node)#; s#@ROOT@#$HOME/ametyping#" ame-headless.service > ~/.config/systemd/user/ame-headless.service
+#   systemctl --user daemon-reload && systemctl --user enable --now ame-headless
+#   sudo loginctl enable-linger $USER      # keep running without a login session
+[Unit]
+Description=AmeTyping headless service (hooks + control API on 127.0.0.1:3940)
+
+[Service]
+ExecStart=@NODE@ @ROOT@/headless/ame-headless.js
+Restart=on-failure
+RestartSec=3
+# tmux and claude are looked up on PATH
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
