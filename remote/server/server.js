@@ -55,9 +55,9 @@ if (cfg.secureCookies) SEC_HEADERS['Strict-Transport-Security'] = 'max-age=31536
 // with https the cookie gets the __Host- prefix: the browser then only accepts it Secure, Path=/, no Domain
 const SID = cfg.secureCookies ? '__Host-sid' : 'sid';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg' };
+  '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.wav': 'audio/wav' };
 // the desktop's own files (after login): one level under these folders, plain names only
-const STATIC = /^\/(css|js|js\/apps|icons|img|wall|vendor)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg)$/;
+const STATIC = /^\/(css|js|js\/apps|icons|img|wall|vendor|sounds)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg|wav)$/;
 
 // Behind the proxy, the client IP is the LAST X-Forwarded-For entry -- the one the proxy itself appended.
 // Anything to its left came from the client and could be forged to dodge the per-IP lockout.
@@ -293,7 +293,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, 'index.html');
-  if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall)\//.test(p) ? 'max-age=86400' : 'no-cache');
+  if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);

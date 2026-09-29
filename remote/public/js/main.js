@@ -9,6 +9,9 @@ import * as netpanel from './netpanel.js';
 import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
+import * as sounds from './apps/sounds.js';
+import * as sound from './sound.js';
+import './alerts.js';
 
 let current = prefs.get('machine', null);          // the computer whose desktop is shown
 
@@ -31,9 +34,24 @@ desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
+  { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
   'sep',
-  { icon: icon('key_win'), label: '注销', action: net.logout },
+  { icon: icon('key_win'), label: '注销', action: logout },
 ]);
+
+// 注销: the shut-down sound first (at most a few seconds), then log out
+async function logout() {
+  await Promise.race([sound.play('shutdown'), new Promise((r) => setTimeout(r, 4500))]);
+  net.logout();
+}
+
+// tray speaker: click to mute / unmute
+const soundBtn = document.getElementById('soundbtn');
+soundBtn.addEventListener('click', () => sound.setMuted(!sound.muted()));
+sound.onChange(() => {
+  soundBtn.firstElementChild.src = icon(sound.muted() ? 'loudspeaker_muted' : 'loudspeaker_rays', true);
+  soundBtn.title = sound.muted() ? '声音已关闭（点击打开）' : '声音（点击静音）';
+});
 
 function selectMachine(name) {
   current = name; prefs.set('machine', name);
@@ -59,3 +77,5 @@ net.on('sessions', render);
 wallpaper.init();
 net.connect();
 openDashboard();
+// just logged in (the login page leaves a mark): the start-up sound, once
+try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

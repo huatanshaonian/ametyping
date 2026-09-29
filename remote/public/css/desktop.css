@@ -115,6 +115,12 @@ img { image-rendering: pixelated; }
 #conn { font-size: 11px; }
 #conn.bad { color: rgb(180, 50, 110); }
 #netbtn { display: none; border: 0; background: none; padding: 0; }
+#soundbtn { border: 0; background: none; padding: 0; display: flex; }
+#soundbtn img { width: 16px; height: 16px; }
+.sounds { padding: 10px 14px; }
+.sounds label { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--edge); }
+.sounds label span { flex: 1; }
+.sounds .btn { padding: 1px 10px; }
 #netbtn img { width: 16px; height: 16px; }
 
 /* ---------- start menu ---------- */

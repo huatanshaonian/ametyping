@@ -1,5 +1,6 @@
 // The one WebSocket to the server: session list, conversations, and actions (send / key / decide) with results.
 import { askCode } from './gate.js';
+import * as sound from './sound.js';
 
 const handlers = new Map();
 let ws = null, ridN = 0;
@@ -35,8 +36,13 @@ export function connect() {
   };
 }
 
-// an action on a machine; acting needs a recently entered code: ask for it and retry
-export function act(o) {
+// an action on a machine; acting needs a recently entered code: ask for it and retry. A failure plays the error sound.
+export async function act(o) {
+  const r = await actOnce(o);
+  if (!r.ok && r.msg !== '已取消') sound.play('error');
+  return r;
+}
+function actOnce(o) {
   return new Promise((resolve) => {
     const go = () => {
       if (!ws || ws.readyState !== 1) return resolve({ ok: false, msg: '还没连上服务器' });

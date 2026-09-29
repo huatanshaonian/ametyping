@@ -2,6 +2,7 @@
 // and pictures the server downloaded from a URL (shared by every device). The choice is per browser.
 import { $, h, prefs } from './util.js';
 import * as wm from './wm.js';
+import * as sound from './sound.js';
 
 const desktop = $('#desktop');
 // illustrations: fan art from the game's ego-search screen, credited by artist handle (see wall credits)
@@ -73,7 +74,7 @@ export function openSettings() {
   async function del(w) {
     if (!confirm(`从服务器删除这张壁纸？（所有设备都看不到它了）`)) return;
     const r = await fetch('/api/wall/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: w.server }) });
-    if (r.ok) { if (prefs.get('wall') === w.id) prefs.set('wall', 'pc'); await refreshServer(); apply(); render(); say('已删除'); }
+    if (r.ok) { sound.play('recycle'); if (prefs.get('wall') === w.id) prefs.set('wall', 'pc'); await refreshServer(); apply(); render(); say('已删除'); }
     else say('删除失败', true);
   }
   fetchBtn.addEventListener('click', async () => {
