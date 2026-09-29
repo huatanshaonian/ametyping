@@ -69,7 +69,7 @@ export function render(r) {
   const st = r.stats || {};
   return h('article', { class: 'rp' },
     h('div', { class: 'rp-top' },
-      h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) }),
+      h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) + (r.brief ? '（补录，简略）' : '') }),
       h('div', { class: 'rp-meta', text: `${when(r.from)} – ${when(r.to)} · ${minutes(st.minutes || 0)} · ${st.sessions || 0} 个会话 · ${st.machines || 0} 台电脑` })),
     h('p', { class: 'rp-head', text: r.headline || '' }),
     ...sections, openBox, plans, artBox, kw,

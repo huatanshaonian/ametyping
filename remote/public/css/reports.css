@@ -56,3 +56,12 @@ html[data-theme="win98"] .rp-proj { border-color: #808080; }
 .rp-an { font-size: 12.5px; color: var(--muted); }
 .rp-thumb { display: block; max-width: 220px; max-height: 140px; margin: 4px 0; border: 1px solid var(--edge); image-rendering: auto; }
 a.rp-sess { text-decoration: none; display: inline-block; }
+/* search box, results and 问一问 */
+.rbar { flex-wrap: wrap; }
+.rbar .rq { flex: 1 1 180px; min-width: 120px; }
+.rs-list { list-style: none; padding-left: 0; }
+.rs-list li { margin: 6px 0; }
+.rs-link { padding: 0; border: 0; background: none; color: var(--border); text-decoration: underline; cursor: pointer; font: inherit; }
+.rs-snip { font-size: 12.5px; color: var(--muted); margin: 1px 0 0 12px; word-break: break-all; }
+.qa-answer { white-space: pre-wrap; line-height: 1.7; padding: 8px 10px; border: 1px solid var(--edge); background: #fff; }
+.rp-empty.bad { color: var(--bad); }

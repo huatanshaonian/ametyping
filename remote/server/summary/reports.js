@@ -24,10 +24,15 @@ function createReports(dir) {
   function list() {
     let names = []; try { names = fs.readdirSync(dir); } catch {}
     return names.filter((n) => DAY.test(n.slice(0, -5)) && n.endsWith('.json')).map((n) => n.slice(0, -5)).sort().reverse()
-      .map((date) => { const r = get(date) || {}; return { date, headline: r.headline || '', from: r.from, to: r.to, minutes: r.stats ? r.stats.minutes : 0 }; });
+      .map((date) => { const r = get(date) || {}; return { date, headline: r.headline || '', from: r.from, to: r.to, minutes: r.stats ? r.stats.minutes : 0, brief: !!r.brief }; });
   }
-  // the report the next one continues from (its open items carry over)
-  function latest() { const l = list(); return l.length ? get(l[0].date) : null; }
+  // the report the next one continues from (its open items carry over); backfilled ones (brief) do not count --
+  // whether their loose ends were done later cannot be told
+  function latest() {
+    for (const it of list()) { const r = get(it.date); if (r && !r.brief) return r; }
+    return null;
+  }
+  const has = (date) => DAY.test(String(date)) && fs.existsSync(file(date));
 
   const state = () => readJson(path.join(dir, 'state.json'), {});
   const setState = (patch) => writeJson(path.join(dir, 'state.json'), { ...state(), ...patch });
@@ -36,7 +41,7 @@ function createReports(dir) {
   const cacheGet = (key) => readJson(cacheFile(key), null);
   const cachePut = (key, v) => writeJson(cacheFile(key), v);
 
-  return { get, save, list, latest, state, setState, cacheGet, cachePut };
+  return { get, save, list, latest, has, state, setState, cacheGet, cachePut };
 }
 
 module.exports = { createReports };

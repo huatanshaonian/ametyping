@@ -15,6 +15,16 @@ const { createGenerator } = require('./generate');
 const { createScheduler } = require('./scheduler');
 const { createClassifier } = require('./classify');
 const { createEgress } = require('../egress');
+const { createSearch } = require('./search');
+const { createQA } = require('./qa');
+
+function readBody(req, cap = 4096) {
+  return new Promise((resolve, reject) => {
+    let b = ''; req.setEncoding('utf8');
+    req.on('data', (c) => { b += c; if (b.length > cap) { reject(new Error('too large')); req.destroy(); } });
+    req.on('end', () => resolve(b)); req.on('error', reject);
+  });
+}
 
 function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
@@ -34,9 +44,25 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log 
   const scheduler = createScheduler({ reports, store, generate: gen.generate, log, at: [hh || 0, mm || 0],
     quietMs: (cfg.quietMin != null ? +cfg.quietMin : 30) * 60e3, tickMs: +process.env.AME_SUMMARY_TICK_MS || 60e3 });
 
+  // search over reports, artifacts and every stored conversation; 问一问 on top of it
+  const search = createSearch({ storeDir: path.dirname(dir), reports, artifacts, sessions: () => store.sessions() });
+  const qa = createQA({ search, reports, ask: gen.ask, log });
+
   // the web API; true when the request was one of ours
   async function handle(req, res, url, ip, json) {
     const p = url.pathname;
+    if (req.method === 'GET' && p === '/api/search') {
+      json(res, 200, search.search(String(url.searchParams.get('q') || '').slice(0, 200)));
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/ask') { json(res, 200, { job: qa.state() }); return true; }
+    if (req.method === 'POST' && p === '/api/ask') {
+      let d = {}; try { d = JSON.parse(await readBody(req)); } catch {}
+      const r = qa.start(d.q);
+      if (r.ok) audit('ask', ip, `len=${String(d.q || '').length}`);
+      json(res, 200, r);
+      return true;
+    }
     if (req.method === 'GET' && p === '/api/reports') {
       const d = reports.get('draft');
       json(res, 200, { items: reports.list(), status: scheduler.status(), draft: d ? { headline: d.headline, from: d.from, to: d.to } : null });
@@ -45,6 +71,16 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log 
     if (req.method === 'GET' && p === '/api/report') {
       const r = reports.get(url.searchParams.get('date'));
       json(res, r ? 200 : 404, r || { error: 'not found' });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/report/backfill') {       // what a backfill would do (asked before starting it)
+      json(res, 200, { days: scheduler.backfillDays(30).map((j) => j.date) });
+      return true;
+    }
+    if (req.method === 'POST' && p === '/api/report/backfill') {
+      const r = scheduler.backfill(30);
+      if (r.ok) audit('report-backfill', ip, `days=${r.total}`);
+      json(res, 200, r);
       return true;
     }
     if (req.method === 'POST' && p === '/api/report/draft') {

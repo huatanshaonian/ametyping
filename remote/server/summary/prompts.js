@@ -38,8 +38,9 @@ function sessionPrompt(d, hint) {
 // the day: sessions (condensed transcript, or their own summary when long) + what was still open before
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
-function dayPrompt({ from, to, sessions, open, artifacts = [] }) {
+function dayPrompt({ from, to, sessions, open, artifacts = [], brief = false }) {
   const parts = [
+    ...(brief ? ['（这是补录的旧日报：写得简略些——每个项目 summary 一两句，done 最多 3 条，decisions 只写真正重要的；open 只列这一天新产生的未完成事项；产出物的说明照常写。）'] : []),
     `下面是用户在 ${fmtTime(from)} 到 ${fmtTime(to)} 之间和 AI 编程助手（Claude Code / Codex）的全部会话摘录，以及之前记下的未完成事项。请写一份给用户自己看的工作日报。`,
     '要求：',
     '- 按项目归类：同一个项目可能分散在多个会话、多台电脑，合并成一项；name 用简短好认的项目名。sessions 列出属于它的会话编号（如 S1）。',

@@ -341,7 +341,7 @@ const server = http.createServer(async (req, res) => {
     return fs.readFile(w.f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, w.type, { 'Cache-Control': 'max-age=86400' }));
   }
   // 日报 (summary/index.js)
-  if (summary && p.startsWith('/api/report') && await summary.handle(req, res, url, ip, json)) return;
+  if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));

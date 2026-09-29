@@ -57,9 +57,44 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
     return true;
   }
 
+  // 补录: past days without a report, oldest first, each from 4:30 to the next 4:30 (filed under the day it starts),
+  // up to where the scheduled reports begin
+  function backfillDays(days, t = now()) {
+    const until = reports.state().lastTo || cutoff(t);
+    const d = new Date(cutoff(t)); d.setDate(d.getDate() - days);
+    const out = [];
+    for (;;) {
+      const from = d.getTime(); d.setDate(d.getDate() + 1); const to = d.getTime();
+      if (to > until) break;
+      if (!reports.has(dayOf(from))) out.push({ from, to, date: dayOf(from), brief: true });
+    }
+    return out;
+  }
+  function backfill(days = 30) {
+    if (running) return { ok: false, msg: '正在生成，请稍等' };
+    const jobs = backfillDays(days);
+    if (!jobs.length) return { ok: false, msg: '最近 ' + days + ' 天都有日报了，没有要补的' };
+    running = { backfill: true, total: jobs.length, done: 0, started: now() };
+    (async () => {
+      let failures = 0;
+      try {
+        for (const j of jobs) {
+          running.date = j.date;
+          try { await generate(j); failures = 0; lastError = null; }
+          catch (e) {
+            lastError = `补录 ${j.date}：${e.message}`; lastErrorAt = now(); log(`日报补录 ${j.date} 失败：${e.message}`);
+            if (++failures >= 2) break;                               // the proxy / codex is down: stop, try again later
+          }
+          running.done++;
+        }
+      } finally { running = null; }
+    })();
+    return { ok: true, total: jobs.length };
+  }
+
   function status() {
     const t = now(), d = due(t);
-    return { running: running ? { draft: !!running.draft, since: running.started } : null,
+    return { running: running ? { draft: !!running.draft, since: running.started, backfill: !!running.backfill, done: running.done, total: running.total, date: running.date } : null,
       lastError, lastErrorAt, lastTo: reports.state().lastTo || 0, waiting: !!d && !running,
       next: d ? t : cutoff(t) + 24 * 3600e3 };
   }
@@ -69,7 +104,7 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
 
   const timer = tickMs ? setInterval(() => { tick().catch(() => {}); }, tickMs) : null;
   if (timer) timer.unref();
-  return { tick, draft, status, due, cutoff, stop: () => timer && clearInterval(timer) };
+  return { tick, draft, backfill, backfillDays, status, due, cutoff, stop: () => timer && clearInterval(timer) };
 }
 
 module.exports = { createScheduler, dayOf };

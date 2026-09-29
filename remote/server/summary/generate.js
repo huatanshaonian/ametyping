@@ -92,11 +92,13 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     reports.cachePut(key, it.summary);
   }
 
-  // job: { from, to, date, draft }
+  // job: { from, to, date, draft, brief } -- brief: a backfilled past day (shorter, no open items carried in; a day
+  // without sessions writes nothing and returns null)
   async function generate(job) {
     const { from, to, date } = job;
     const items = collect(from, to);
-    const prev = reports.latest();
+    if (job.brief && !items.length) return null;
+    const prev = job.brief ? null : reports.latest();
     const open = prev ? (prev.open || []).filter((o) => o.status === 'open') : [];
     for (const it of items) if (it.digest.text.length > SESSION_INLINE) await summarizeSession(it, from);
     const size = () => items.reduce((n, it) => n + (it.summary ? 800 : it.digest.text.length), 0);
@@ -106,16 +108,16 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     }
     const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
-      ? await ask(dayPrompt({ from, to, sessions: items, open, artifacts: arts }), DAY_SCHEMA)
+      ? await ask(dayPrompt({ from, to, sessions: items, open, artifacts: arts, brief: !!job.brief }), DAY_SCHEMA)
       : { headline: '这段时间没有 AI 会话记录', projects: [], open: open.map((o, i) => ({ ref: 'O' + (i + 1), text: o.text, project: o.project, status: 'open' })), plans: [], keywords: [], artifacts: [] };
     const report = assemble(job, items, open, ans, arts);
     reports.save(report);
     if (artifacts && report.artifacts.length) artifacts.record(date, report.artifacts);
-    log(`日报 ${job.draft ? '（到现在）' : date} 已生成：${items.length} 个会话，${report.stats.minutes} 分钟`);
+    log(`日报 ${job.draft ? '（到现在）' : date}${job.brief ? '（补录）' : ''} 已生成：${items.length} 个会话，${report.stats.minutes} 分钟`);
     return report;
   }
 
-  function assemble({ from, to, date, draft }, items, open, ans, arts = []) {
+  function assemble({ from, to, date, draft, brief }, items, open, ans, arts = []) {
     const byKey = new Map(items.map((it) => [it.key, it]));
     // the model sometimes decorates a reference ("S1：/home/u/x", "O2 整理…"): only the number counts
     const ref = (v, letter) => { const m = new RegExp(letter + '\\d+').exec(String(v || '')); return m ? m[0] : ''; };
@@ -144,7 +146,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
         files: d.files, cmds: d.cmds, resume: resumeCmd ? resumeCmd(d.cwd, d.id) : '' };
     });
     return {
-      date, draft: !!draft, from, to, generatedAt: Date.now(),
+      date, draft: !!draft, brief: !!brief, from, to, generatedAt: Date.now(),
       headline: ans.headline || '', projects, open: openOut,
       plans: (ans.plans || []).map((p) => ({ title: p.title, project: p.project, session: ref(p.session, 'S') })),
       keywords: ans.keywords || [], sessions,
@@ -154,7 +156,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     };
   }
 
-  return { generate, collect };
+  return { generate, collect, ask };
 }
 
 module.exports = { createGenerator };
