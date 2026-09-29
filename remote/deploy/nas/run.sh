@@ -30,7 +30,7 @@ case "$1" in
     [ -f "$D/server/config.json" ] || { echo "no config.json yet (run setup.js init)"; exit 1; }
     cd "$D" && umask 077
     # setsid: the loop outlives the task scheduler / ssh session that started it
-    setsid sh "$0" _supervise < /dev/null > /dev/null 2>&1 &
+    setsid sh "$ROOT/$(basename "$0")" _supervise < /dev/null > /dev/null 2>&1 &
     echo $! > "$SUP"; echo "started" ;;
   _supervise) supervise ;;
   stop)
