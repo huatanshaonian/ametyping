@@ -22,6 +22,8 @@ const http = require('http');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
 const records = require('./records');
+const { createFiles } = require('./files');
+const { createFsServe } = require('./fs-serve');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -34,6 +36,9 @@ const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_MS = cfg.scanMs || 2000;
 const IDLE_DROP_MS = cfg.keepMs || 30 * 60e3;      // stop listing a session with no file changes for this long
 const CONTROL = cfg.control === true;
+// read-only file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured
+const browse = createFiles(cfg.files);
+const fsServe = createFsServe(browse, (o) => sendJSON(o));
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
 
@@ -174,7 +179,7 @@ function connect() {
   ws.on('open', () => {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn() }));
+    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled }));
     lastConv.clear();
     serverOff = null; readers.clear(); metaSent.clear();   // wait for the server's offsets before streaming
     tick(true);
@@ -202,11 +207,12 @@ function connect() {
       }
       pushRecords();
     }
+    else if (typeof d.t === 'string' && d.t.startsWith('fs')) fsServe.handle(d);
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });
-  ws.on('close', () => { ws = null; setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
+  ws.on('close', () => { ws = null; fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
   ws.on('error', () => { try { ws.close(); } catch {} });
 }
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
@@ -249,7 +255,7 @@ async function tick(force) {
     const sig = JSON.stringify([controlOn(), ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
-      sendJSON({ t: 'state', control: controlOn(), sessions: list });
+      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, sessions: list });
       for (const s of list) {
         if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
         const cs = `${s.last}|${tailT(s)}`;
@@ -261,4 +267,4 @@ async function tick(force) {
 }
 setInterval(tick, SCAN_MS);
 connect();
-console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);
+console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；文件浏览：${browse.enabled ? '开' : '关'}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);

@@ -1,5 +1,5 @@
 // Desktop boot: connection, wallpaper, the current computer (network panel), desktop icons, start menu, and the
-// dashboard window. The file explorer ("我的电脑") and launching Claude come in later steps.
+// dashboard window, the file explorer ("我的电脑"). Launching Claude from a folder comes in the next step.
 import { h, icon, prefs } from './util.js';
 import * as net from './net.js';
 import * as wm from './wm.js';
@@ -8,19 +8,23 @@ import * as desktop from './desktop.js';
 import * as netpanel from './netpanel.js';
 import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
+import * as explorer from './apps/explorer.js';
 
 let current = prefs.get('machine', null);          // the computer whose desktop is shown
 
 const openDashboard = () => dashboard.open(current);
+// the current computer's files; explain instead when it cannot be browsed
 function openMyComputer() {
-  wm.open({ id: 'mycomputer', title: '我的电脑', icon: icon('computer_explorer', true), width: 420, height: 220,
-    content: h('div', { class: 'notice' }, h('b', { text: current || '（没有选中的电脑）' }), h('br'),
-      '浏览这台电脑的文件会在下一步加入：文件夹、Markdown（连同里面的图片）、图片和文本预览。') });
+  const m = net.state.sessions.find((x) => x.machine === current);
+  if (m && m.files) return explorer.open(current);
+  const why = !m ? '还没有选中的电脑。' : !m.online ? '这台电脑现在离线。' : '这台电脑没开放文件浏览：在它的 agent.json 里加上 "files"（例如 { "roots": ["/home/你"] }）并重启 agent。';
+  wm.open({ id: 'mycomputer-off', title: '我的电脑', icon: icon('computer_explorer', true), width: 420, height: 200,
+    content: h('div', { class: 'notice' }, h('b', { text: current || '' }), h('br'), why) });
 }
 
 const APPS = [
   { id: 'dashboard', label: '糖糖看板', icon: '/asset/icon256.png', open: openDashboard },
-  { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '文件浏览（下一步加入）' },
+  { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '浏览这台电脑的文件' },
   { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
 ];
 desktop.setIcons(APPS);

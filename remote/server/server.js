@@ -20,6 +20,7 @@ const { WebSocketServer } = require('ws');
 const auth = require('./auth');
 const { createStore } = require('./store');
 const { createWalls } = require('./walls');
+const { createFsRelay } = require('./fs-relay');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -128,7 +129,7 @@ function snapshot() {
       list.push({ id: e.id, label: e.title || e.project || 'Claude', project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
         lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id) });
     }
-    out.push({ machine: name, online: m.online, since: m.since, control: ctl, sessions: list.sort((a, b) => b.last - a.last) });
+    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
   }
   return out.sort((a, b) => a.machine.localeCompare(b.machine));
 }
@@ -140,6 +141,7 @@ function broadcast(obj) {
   for (const c of clients) { try { c.ws.send(s); } catch {} }
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
@@ -163,7 +165,7 @@ const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
-  if (d.t === 'hello') { m.control = d.control === true; broadcast({ t: 'sessions', data: snapshot() }); return; }
+  if (d.t === 'hello') { m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() }); return; }
   if (d.t === 'rec') {
     const r = store.accept(m.name, d);
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
@@ -171,9 +173,11 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200));
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
+    if (typeof d.files === 'boolean') m.files = d.files;
     const keep = new Set();
     for (const s of d.sessions) {
       if (!s || typeof s.id !== 'string') continue;
@@ -412,6 +416,10 @@ wssBrowser.on('connection', (ws, req, sid) => {
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
     } else if (d.t === 'unwatch') c.sub = null;
+    else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
+      if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
+      fsRelay.fromBrowser(c, d);                                       // read-only file explorer
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide') && typeof d.rid === 'string' && d.rid.length < 40) {
       // the login may have expired or been logged out while the socket stayed open
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
@@ -420,7 +428,7 @@ wssBrowser.on('connection', (ws, req, sid) => {
   });
   // the login can expire (or be ended elsewhere) while the socket stays open: re-check every minute
   const recheck = setInterval(() => { if (!auth.checkSessionQuiet(c.sid)) { try { ws.close(4401, 'expired'); } catch {} } }, 60e3);
-  const gone = () => { clearInterval(recheck); clients.delete(c); for (const [rid, p] of pending) if (p.c === c) { clearTimeout(p.timer); pending.delete(rid); } };
+  const gone = () => { clearInterval(recheck); clients.delete(c); fsRelay.dropClient(c); for (const [rid, p] of pending) if (p.c === c) { clearTimeout(p.timer); pending.delete(rid); } };
   ws.on('close', gone);
   ws.on('error', gone);
 });
@@ -438,7 +446,7 @@ wssAgent.on('connection', (ws, req, a) => {
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {
     clearInterval(ping); m.sockets.delete(ws);
-    if (m.sockets.size === 0) { m.online = false; audit('agent-offline', a.name); broadcast({ t: 'sessions', data: snapshot() }); }
+    if (m.sockets.size === 0) { m.online = false; fsRelay.dropMachine(a.name); audit('agent-offline', a.name); broadcast({ t: 'sessions', data: snapshot() }); }
   };
   ws.on('close', down); ws.on('error', down);
 });
