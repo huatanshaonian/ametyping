@@ -66,12 +66,12 @@ Claude Code 与 Codex 的 hook 把会话事件发给糖糖，她下面的面板�
 
 ```powershell
 # Windows：糖糖 + agent + hooks + 登录自启（计划任务）
-irm https://raw.githubusercontent.com/huatanshaonian/ametyping/chat-panel/install/install-windows.ps1 | iex
+irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1 | iex
 ```
 
 ```bash
 # Linux：无头服务 + agent + hooks + systemd 用户服务
-curl -fsSL https://raw.githubusercontent.com/huatanshaonian/ametyping/chat-panel/install/install-linux.sh | bash
+curl -fsSL https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-linux.sh | bash
 ```
 
 脚本可重复运行；环境变量 `AME_NAME`、`AME_TOKEN`、`AME_CONTROL`、`AME_FILES` 等可代替提问（见脚本开头）。agent 配置在 `remote/agent/agent.json`（示例 [`agent.example.json`](remote/agent/agent.example.json)）：`control` 是否允许远程控制，`files` 允许浏览的目录。Linux 上 `~/.ametyping/launch.sh` 是从网页启动 Claude 前执行的命令（例如设代理）。

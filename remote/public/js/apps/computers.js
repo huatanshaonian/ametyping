@@ -5,7 +5,7 @@ import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
 
-const RAW = 'https://raw.githubusercontent.com/huatanshaonian/ametyping/chat-panel/install';
+const RAW = 'https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install';
 const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 export function open() {

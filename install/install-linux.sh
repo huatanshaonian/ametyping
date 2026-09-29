@@ -2,7 +2,7 @@
 # AmeTyping 一键安装（Linux）：无头服务（代替糖糖）+ 看板 agent + Claude Code hooks + systemd 用户服务
 #
 # 运行（任选其一）：
-#   curl -fsSL https://raw.githubusercontent.com/huatanshaonian/ametyping/chat-panel/install/install-linux.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-linux.sh | bash
 #   bash install/install-linux.sh                      （在已克隆的仓库里）
 #
 # 需要：Node.js 18+（nvm 装的也行）、git、tmux（从看板回复要求 claude 跑在 tmux 里），这台机器已加入 Tailscale。
@@ -13,7 +13,7 @@
 set -euo pipefail
 REPO=https://github.com/huatanshaonian/ametyping.git
 DIR=${AME_DIR:-$HOME/ametyping}
-BRANCH=${AME_BRANCH:-chat-panel}
+BRANCH=${AME_BRANCH:-main}
 SERVER=${AME_SERVER:-ws://100.65.10.90:8788/agent}
 
 step() { printf '\n\033[35m== %s\033[0m\n' "$1"; }

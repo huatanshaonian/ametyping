@@ -1,7 +1,7 @@
 ﻿# AmeTyping 一键安装（Windows）：糖糖桌宠 + 看板 agent + Claude Code hooks + 开机自启
 #
 # 运行（任选其一）：
-#   irm https://raw.githubusercontent.com/huatanshaonian/ametyping/chat-panel/install/install-windows.ps1 | iex
+#   irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1 | iex
 #   powershell -ExecutionPolicy Bypass -File install\install-windows.ps1        （在已克隆的仓库里）
 #
 # 需要：Node.js 18+、git（没有会提示用 winget 安装），这台电脑已加入 Tailscale（agent 经它连群晖）。
@@ -10,7 +10,7 @@
 #   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
 param(
   [string]$Dir = "$env:USERPROFILE\ametyping",
-  [string]$Branch = 'chat-panel',
+  [string]$Branch = 'main',
   [string]$Server = 'ws://100.65.10.90:8788/agent'
 )
 $ErrorActionPreference = 'Stop'
