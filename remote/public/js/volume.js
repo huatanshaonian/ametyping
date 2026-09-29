@@ -1,7 +1,7 @@
 // The tray speaker: its icon shows whether sound is on; a click opens the old Windows "音量" popup -- a vertical
 // slider in a sunken groove with tick marks, and a 静音 box. Letting go of the slider plays a short sound at the new
 // level, as Windows 98 did.
-import { $, h, icon } from './util.js';
+import { $, h, icon, zoom } from './util.js';
 import * as sound from './sound.js';
 
 const btn = $('#soundbtn');
@@ -25,7 +25,7 @@ sound.onChange(show);
 
 function setFrom(clientY) {
   const r = track.getBoundingClientRect();
-  sound.setVolume(1 - (clientY - r.top - TOP) / RANGE);
+  sound.setVolume(1 - ((clientY - r.top) / zoom() - TOP) / RANGE);     // the rect is in screen px, TOP / RANGE in page px
 }
 let dragging = false;
 track.addEventListener('pointerdown', (e) => { dragging = true; track.setPointerCapture(e.pointerId); setFrom(e.clientY); e.preventDefault(); });

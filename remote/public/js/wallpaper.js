@@ -129,7 +129,8 @@ export function openSettings() {
   mode.addEventListener('change', () => { prefs.set('wallMode', mode.value); apply(); });
   const content = h('div', {},
     h('div', { class: 'wallbar', style: 'border-top:0;border-bottom:1px dotted var(--edge)' },
-      h('span', { text: '配色方案：' }), theme.picker(() => { apply(); render(); }), h('span', { text: '显示方式：' }), mode,
+      h('span', { text: '配色方案：' }), theme.picker(() => { apply(); render(); }),
+      h('span', { text: '界面大小：' }), theme.scalePicker(), h('span', { text: '显示方式：' }), mode,
       h('span', { style: 'font-size:12px;opacity:.65', text: '填充：铺满不留边（裁掉多余部分）；适应：完整显示' })),
     grid,
     h('div', { class: 'wallbar' }, url, fetchBtn, h('button', { class: 'btn', type: 'button', text: '本地图片…', onclick: () => file.click() }), file),

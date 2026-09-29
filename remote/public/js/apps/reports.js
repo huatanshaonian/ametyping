@@ -9,7 +9,7 @@ let app = null;
 export function open() {
   if (app) { wm.open({ id: 'reports' }); app.refresh(); return; }
   app = mount();
-  wm.open({ id: 'reports', title: '工作日报', icon: '/icons/notepad_file-16.png', content: app.root, width: 860, height: 580,
+  wm.open({ id: 'reports', title: '工作日报', icon: '/icons/history-16.png', content: app.root, width: 860, height: 580,
     onClose: () => { app.destroy(); app = null; } });
 }
 

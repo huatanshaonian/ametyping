@@ -1,7 +1,7 @@
 // Window manager for the desktop: the game's window frame, drag by the title bar, resize from the corner,
 // minimize / maximize / close, focus order. Windows live in #windows (the area left of the network panel and
 // above the taskbar). On narrow screens every window is maximized. Ported from amedesktop's launcher.
-import { $, h, narrow } from './util.js';
+import { $, h, narrow, zoom } from './util.js';
 
 const layer = $('#windows');
 const ICONS_W = 108;                     // new windows open right of the desktop icon column
@@ -118,8 +118,9 @@ function dragMove(handle, w) {
   handle.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const a = area();
-    nx = Math.max(-ow + 60, Math.min(a.w - 60, ox + e.clientX - sx));      // keep a grip of the title bar on screen
-    ny = Math.max(0, Math.min(a.h - 30, oy + e.clientY - sy));
+    const z = zoom();                                                        // pointer px -> page px
+    nx = Math.max(-ow + 60, Math.min(a.w - 60, ox + (e.clientX - sx) / z));   // keep a grip of the title bar on screen
+    ny = Math.max(0, Math.min(a.h - 30, oy + (e.clientY - sy) / z));
     if (!raf) raf = requestAnimationFrame(paint);
   });
   const end = () => {
@@ -146,7 +147,7 @@ function dragResize(handle, w, dir) {
   });
   handle.addEventListener('pointermove', (e) => {
     if (!rz) return;
-    const a = area(), dx = e.clientX - sx, dy = e.clientY - sy;
+    const a = area(), z = zoom(), dx = (e.clientX - sx) / z, dy = (e.clientY - sy) / z;
     if (dir.includes('e')) n.w = Math.min(a.w - o.x, Math.max(MIN_W, o.w + dx));
     if (dir.includes('s')) n.h = Math.min(a.h - o.y, Math.max(MIN_H, o.h + dy));
     if (dir.includes('w')) { const x = Math.min(o.x + o.w - MIN_W, Math.max(0, o.x + dx)); n.x = x; n.w = o.x + o.w - x; }

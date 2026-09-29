@@ -26,6 +26,8 @@ export const ago = (t) => {
 };
 export const icon = (name, small) => `/icons/${name}${small ? '-16' : ''}.png`;
 export const narrow = () => matchMedia('(max-width: 700px)').matches;
+// the page zoom set by the size setting (js/theme.js): pointer movements are in screen pixels, layout in page pixels
+export const zoom = () => parseFloat(document.documentElement.style.zoom) || 1;
 
 // per-browser preferences (selected machine, wallpaper...): never required, so storage failures are ignored
 export const prefs = {
