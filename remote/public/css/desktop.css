@@ -60,6 +60,19 @@ img { image-rendering: pixelated; }
 .win .resize { position: absolute; right: calc(-1 * var(--wr)); bottom: calc(-1 * var(--wb)); width: var(--wb); height: var(--wb); cursor: nwse-resize; touch-action: none;
   background: linear-gradient(135deg, transparent 45%, var(--border) 45%, var(--border) 55%, transparent 55%, transparent 70%, var(--border) 70%, var(--border) 80%, transparent 80%); }
 .win.max .resize { display: none; }
+/* invisible grab strips on every edge and corner (the se corner is the visible grip above) */
+.win .rz { position: absolute; z-index: 3; touch-action: none; }
+.win .rz-n, .win .rz-s { left: calc(10px - var(--wl)); right: calc(10px - var(--wr)); height: 6px; cursor: ns-resize; }
+.win .rz-n { top: calc(-1 * var(--wt)); }
+.win .rz-s { bottom: calc(-1 * var(--wb)); }
+.win .rz-e, .win .rz-w { top: calc(10px - var(--wt)); bottom: calc(10px - var(--wb)); width: 6px; cursor: ew-resize; }
+.win .rz-e { right: calc(-1 * var(--wr)); }
+.win .rz-w { left: calc(-1 * var(--wl)); }
+.win .rz-ne, .win .rz-nw, .win .rz-sw { width: 8px; height: 8px; }
+.win .rz-ne { top: calc(-1 * var(--wt)); right: calc(-1 * var(--wr)); cursor: nesw-resize; }
+.win .rz-nw { top: calc(-1 * var(--wt)); left: calc(-1 * var(--wl)); cursor: nwse-resize; }
+.win .rz-sw { bottom: calc(-1 * var(--wb)); left: calc(-1 * var(--wl)); cursor: nesw-resize; }
+.win.max .rz { display: none; }
 .win.max .titlebar { cursor: default; }
 
 /* ---------- network neighbourhood (right) ---------- */

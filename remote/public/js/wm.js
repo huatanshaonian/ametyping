@@ -39,7 +39,8 @@ export function open({ id, title, icon, content, width = 640, height = 440, onCl
       h('button', { class: 'tbtn', type: 'button', title: '最小化', text: '–', onclick: (e) => { e.stopPropagation(); minimize(id); } }),
       h('button', { class: 'tbtn', type: 'button', title: '最大化', text: '□', onclick: (e) => { e.stopPropagation(); toggleMax(id); } }),
       h('button', { class: 'tbtn close', type: 'button', title: '关闭', text: '×', onclick: (e) => { e.stopPropagation(); close(id); } })),
-    body, h('div', { class: 'resize' }));
+    body, h('div', { class: 'resize', dataset: { dir: 'se' } }),
+    ...['n', 's', 'e', 'w', 'ne', 'nw', 'sw'].map((d) => h('div', { class: 'rz rz-' + d, dataset: { dir: d } })));
   const a = area(), n = wins.size % 6;
   const width2 = Math.min(width, a.w - 12), height2 = Math.min(height, a.h - 12);
   Object.assign(el.style, { width: width2 + 'px', height: height2 + 'px',
@@ -51,7 +52,7 @@ export function open({ id, title, icon, content, width = 640, height = 440, onCl
   $('.titlebar', el).addEventListener('dblclick', () => toggleMax(id));
   el.addEventListener('pointerdown', () => focus(id));
   dragMove($('.titlebar', el), w);
-  dragResize($('.resize', el), w);
+  for (const g of el.querySelectorAll('[data-dir]')) dragResize(g, w, g.dataset.dir);
   if (narrow()) maximize(w);
   focus(id);
   return w.handle;
@@ -130,26 +131,33 @@ function dragMove(handle, w) {
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);
 }
-function dragResize(handle, w) {
-  let sx = 0, sy = 0, ow = 0, oh = 0, nw = 0, nh = 0, rz = false, raf = 0;
-  const paint = () => { raf = 0; if (rz) Object.assign(w.el.style, { width: nw + 'px', height: nh + 'px' }); };
+// resize from any edge or corner (dir: n s e w ne nw se sw), like a real window; the opposite side stays put
+const MIN_W = 240, MIN_H = 160;
+function dragResize(handle, w, dir) {
+  let sx = 0, sy = 0, o = null, n = null, rz = false, raf = 0;
+  const paint = () => { raf = 0; if (rz) apply(); };
+  const apply = () => Object.assign(w.el.style, { left: n.x + 'px', top: n.y + 'px', width: n.w + 'px', height: n.h + 'px' });
   handle.addEventListener('pointerdown', (e) => {
+    if (w.maxed || e.button !== 0) return;
     e.stopPropagation(); rz = true;
-    sx = e.clientX; sy = e.clientY; ow = nw = w.el.offsetWidth; oh = nh = w.el.offsetHeight;
+    sx = e.clientX; sy = e.clientY;
+    o = { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }; n = { ...o };
     handle.setPointerCapture(e.pointerId); focus(w.id);
   });
   handle.addEventListener('pointermove', (e) => {
     if (!rz) return;
-    const a = area();
-    nw = Math.min(a.w - w.el.offsetLeft, Math.max(240, ow + e.clientX - sx));
-    nh = Math.min(a.h - w.el.offsetTop, Math.max(160, oh + e.clientY - sy));
+    const a = area(), dx = e.clientX - sx, dy = e.clientY - sy;
+    if (dir.includes('e')) n.w = Math.min(a.w - o.x, Math.max(MIN_W, o.w + dx));
+    if (dir.includes('s')) n.h = Math.min(a.h - o.y, Math.max(MIN_H, o.h + dy));
+    if (dir.includes('w')) { const x = Math.min(o.x + o.w - MIN_W, Math.max(0, o.x + dx)); n.x = x; n.w = o.x + o.w - x; }
+    if (dir.includes('n')) { const y = Math.min(o.y + o.h - MIN_H, Math.max(0, o.y + dy)); n.y = y; n.h = o.y + o.h - y; }
     if (!raf) raf = requestAnimationFrame(paint);
   });
   const end = () => {
     if (!rz) return;
     rz = false;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
-    Object.assign(w.el.style, { width: nw + 'px', height: nh + 'px' });
+    apply();
   };
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);
