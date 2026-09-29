@@ -78,9 +78,11 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
 
   function assemble({ from, to, date, draft }, items, open, ans) {
     const byKey = new Map(items.map((it) => [it.key, it]));
+    // the model sometimes decorates a reference ("S1：/home/u/x", "O2 整理…"): only the number counts
+    const ref = (v, letter) => { const m = new RegExp(letter + '\\d+').exec(String(v || '')); return m ? m[0] : ''; };
     const catOf = new Map();
     const projects = (ans.projects || []).map((p) => {
-      const its = (p.sessions || []).map((k) => byKey.get(k)).filter(Boolean);
+      const its = [...new Set((p.sessions || []).map((k) => ref(k, 'S')))].map((k) => byKey.get(k)).filter(Boolean);
       for (const it of its) if (!catOf.has(it.key)) catOf.set(it.key, p.category);
       const files = new Map();
       for (const it of its) for (const f of it.digest.files) files.set(it.s.machine + '|' + f.path, { machine: it.s.machine, ...f });
@@ -92,7 +94,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     const prevByRef = new Map(open.map((o, i) => ['O' + (i + 1), o]));
     const seen = new Set();
     const openOut = (ans.open || []).map((o) => {
-      const p = prevByRef.get(o.ref); if (p) seen.add(o.ref);
+      const r = ref(o.ref, 'O'), p = prevByRef.get(r); if (p) seen.add(r);
       return { text: o.text, project: o.project, status: o.status, since: p ? p.since : date };
     });
     for (const [ref, o] of prevByRef) if (!seen.has(ref)) openOut.push(o);
@@ -105,7 +107,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     return {
       date, draft: !!draft, from, to, generatedAt: Date.now(),
       headline: ans.headline || '', projects, open: openOut,
-      plans: (ans.plans || []).map((p) => ({ title: p.title, project: p.project, session: p.session })),
+      plans: (ans.plans || []).map((p) => ({ title: p.title, project: p.project, session: ref(p.session, 'S') })),
       keywords: ans.keywords || [], sessions,
       stats: { minutes: sessions.reduce((n, s) => n + s.minutes, 0), sessions: sessions.length,
         machines: new Set(sessions.map((s) => s.machine)).size, files: sessions.reduce((n, s) => n + s.files.length, 0) },
