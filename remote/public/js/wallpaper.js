@@ -3,6 +3,7 @@
 import { $, h, prefs } from './util.js';
 import * as wm from './wm.js';
 import * as sound from './sound.js';
+import * as theme from './theme.js';
 
 const desktop = $('#desktop');
 // All from NEEDY GIRL OVERDOSE (as in amedesktop): the boot screen, and fan art the game shows on its ego-search
@@ -21,6 +22,7 @@ const BUILTIN = [
     sides: ['#d3a1a1 8%,#865e66 25%,#915355 42%,#5b2323 58%,#3a262a 75%,#877d7d 92%',
       '#a25051 8%,#808f7f 25%,#6f9075 42%,#657264 58%,#3e383b 75%,#733a3a 92%'] },
   { id: 'plain', name: '纯色', url: null, color: '#f7e1fb' },
+  { id: 'teal', name: 'Windows 青色', url: null, color: '#008080' },
 ];
 // how the picture covers the desktop (like Win98's 显示属性): 填充 is the default -- no bars, the edges are cropped
 export const MODES = [['fill', '填充'], ['fit', '适应'], ['stretch', '拉伸'], ['center', '居中'], ['tile', '平铺']];
@@ -126,7 +128,8 @@ export function openSettings() {
     ...MODES.map(([v, l]) => h('option', { value: v, text: l, selected: prefs.get('wallMode', 'fill') === v })));
   mode.addEventListener('change', () => { prefs.set('wallMode', mode.value); apply(); });
   const content = h('div', {},
-    h('div', { class: 'wallbar', style: 'border-top:0;border-bottom:1px dotted var(--edge)' }, h('span', { text: '显示方式：' }), mode,
+    h('div', { class: 'wallbar', style: 'border-top:0;border-bottom:1px dotted var(--edge)' },
+      h('span', { text: '配色方案：' }), theme.picker(() => { apply(); render(); }), h('span', { text: '显示方式：' }), mode,
       h('span', { style: 'font-size:12px;opacity:.65', text: '填充：铺满不留边（裁掉多余部分）；适应：完整显示' })),
     grid,
     h('div', { class: 'wallbar' }, url, fetchBtn, h('button', { class: 'btn', type: 'button', text: '本地图片…', onclick: () => file.click() }), file),

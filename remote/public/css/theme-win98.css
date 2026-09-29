@@ -1,0 +1,117 @@
+/* 配色方案「Windows 标准」: the classic Windows 98 look (grey 3-D face, navy title bars, teal desktop).
+   Everything is under html[data-theme="win98"] (set by js/theme-boot.js before the page paints); the tokens in
+   desktop.css are redefined first, then the parts drawn differently (window frame, bevels, taskbar, start menu). */
+html[data-theme="win98"] {
+  --border: #000080; --border-d: #000060; --title: #c0c0c0; --title-2: #c0c0c0; --body: #fff;
+  --cyan: #c0c0c0; --cyan-d: #a0a0a0; --pink: #000080; --pink-d: #000060; --ink: #000;
+  --gamepink: #c0c0c0; --panel: #c0c0c0; --edge: #808080;
+  --muted: #404040; --faint: #808080; --tint: #ececec; --tint-soft: #c0c0c0; --head-bg: #c0c0c0; --hover: rgba(0, 0, 128, .08);
+  --accent-muted: #5b5b9b; --accent-wash: rgba(0, 0, 128, .06); --quote-bg: #f4f4f4;
+  --warn: #b04a10; --bad: #a00000; --ok: #008000; --ok-text: #006000; --off: #808080;
+  --wt: 22px; --wr: 4px; --wb: 4px; --wl: 4px;                 /* 2 px bevel + face; 18 px title bar */
+  /* bevels: raised button, raised window edge, pressed button, sunken field */
+  --raised: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+  --raised-outer: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff;
+  --pressed: inset -1px -1px #fff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+  --sunken: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
+  --dither: repeating-conic-gradient(#fff 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
+}
+html[data-theme="win98"] body { background: #008080; }
+
+/* ---------- scrollbars ---------- */
+html[data-theme="win98"] ::-webkit-scrollbar,
+html[data-theme="win98"] .dash .list::-webkit-scrollbar, html[data-theme="win98"] .dash .conv::-webkit-scrollbar { width: 16px; height: 16px; }
+html[data-theme="win98"] ::-webkit-scrollbar-track,
+html[data-theme="win98"] .win .content::-webkit-scrollbar-track { background: var(--dither); }
+html[data-theme="win98"] ::-webkit-scrollbar-thumb,
+html[data-theme="win98"] .win .content::-webkit-scrollbar-thumb,
+html[data-theme="win98"] .dash .list::-webkit-scrollbar-thumb, html[data-theme="win98"] .dash .conv::-webkit-scrollbar-thumb {
+  background: #c0c0c0; border: 0; box-shadow: var(--raised); }
+html[data-theme="win98"] ::-webkit-scrollbar-corner { background: #c0c0c0; }
+
+/* ---------- desktop ---------- */
+html[data-theme="win98"] .dicon span, html[data-theme="win98"] #mark { color: #fff; text-shadow: 1px 1px 0 #000; }
+html[data-theme="win98"] .dicon.sel span { background: #000080; }
+
+/* ---------- windows: grey frame drawn from a 6x6 bevel (2 px slices), navy title bar inside it ---------- */
+html[data-theme="win98"] .win {
+  background: #c0c0c0; filter: none;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' shape-rendering='crispEdges'%3E%3Cpath fill='%230a0a0a' d='M0 0h6v6H0z'/%3E%3Cpath fill='%23dfdfdf' d='M0 0h5v5H0z'/%3E%3Cpath fill='%23808080' d='M1 1h4v4H1z'/%3E%3Cpath fill='%23fff' d='M1 1h3v3H1z'/%3E%3Cpath fill='%23c0c0c0' d='M2 2h2v2H2z'/%3E%3C/svg%3E") 2 / 2px stretch;
+}
+html[data-theme="win98"] .win.inactive { border-image-source: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' shape-rendering='crispEdges'%3E%3Cpath fill='%230a0a0a' d='M0 0h6v6H0z'/%3E%3Cpath fill='%23dfdfdf' d='M0 0h5v5H0z'/%3E%3Cpath fill='%23808080' d='M1 1h4v4H1z'/%3E%3Cpath fill='%23fff' d='M1 1h3v3H1z'/%3E%3Cpath fill='%23c0c0c0' d='M2 2h2v2H2z'/%3E%3C/svg%3E"); }
+html[data-theme="win98"] .win .titlebar {
+  top: calc(3px - var(--wt)); left: calc(3px - var(--wl)); right: calc(3px - var(--wr)); height: 18px;
+  padding: 0 58px 0 3px; gap: 4px; background: linear-gradient(90deg, #000080, #1084d0); }
+html[data-theme="win98"] .win.inactive .titlebar { background: linear-gradient(90deg, #808080, #b5b5b5); }
+html[data-theme="win98"] .win .title { color: #fff; }
+html[data-theme="win98"] .win.inactive .title { color: #c0c0c0; }
+html[data-theme="win98"] .win .tbtns { top: calc(5px - var(--wt)); right: calc(5px - var(--wr)); height: 14px; gap: 0; padding: 0; }
+html[data-theme="win98"] .win .tbtn { width: 16px; height: 14px; border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised);
+  font: bold 11px/1 Tahoma, "Microsoft YaHei UI", sans-serif; }
+html[data-theme="win98"] .win .tbtn:active { background: #c0c0c0; box-shadow: var(--pressed); padding: 1px 0 0 1px; }
+html[data-theme="win98"] .win .tbtn.close { margin-left: 2px; background: #c0c0c0; color: #000; }
+html[data-theme="win98"] .win .resize { right: calc(2px - var(--wr)); bottom: calc(2px - var(--wb)); width: 13px; height: 13px; z-index: 4;
+  background: linear-gradient(135deg, transparent 0 54%, #fff 54% 60%, #808080 60% 70%, transparent 70% 74%, #fff 74% 80%, #808080 80% 90%, transparent 90%); }
+
+/* ---------- network neighbourhood ---------- */
+html[data-theme="win98"] #netpanel { background: #c0c0c0; border-left: 0; box-shadow: var(--raised-outer); padding: 3px; }
+html[data-theme="win98"] #netpanel .ptitle { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
+html[data-theme="win98"] #netpanel .ptitle .padd { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); padding: 0 6px; line-height: 16px; }
+html[data-theme="win98"] #machines { margin-top: 4px; background: #fff; box-shadow: var(--sunken); padding: 4px; }
+html[data-theme="win98"] .mach .mn { color: #000; }
+html[data-theme="win98"] .mach.sel .mn { color: #fff; }
+
+/* ---------- taskbar ---------- */
+html[data-theme="win98"] #taskbar { background: #c0c0c0; border-top: 0; box-shadow: inset 0 1px #dfdfdf, inset 0 2px #fff; padding-top: 2px; }
+html[data-theme="win98"] #startbtn { margin: 4px 3px; padding: 0 6px 0 4px; color: #000; background: #c0c0c0; border: 0; box-shadow: var(--raised); }
+html[data-theme="win98"] #startbtn.on, html[data-theme="win98"] #startbtn:active { background: #c0c0c0; box-shadow: var(--pressed); }
+html[data-theme="win98"] #startbtn img { content: url(/icons/windows-16.png); height: 16px; }
+html[data-theme="win98"] .tb-sep { width: 0; background: none; margin: 6px 2px; border-left: 1px solid #808080; border-right: 1px solid #fff; }
+html[data-theme="win98"] .dockbtn { border: 0; background: #c0c0c0; color: #000; font-weight: normal; box-shadow: var(--raised); }
+html[data-theme="win98"] .dockbtn.active { background: var(--dither); box-shadow: var(--pressed); font-weight: bold; }
+html[data-theme="win98"] #tray { margin: 5px 3px; border-left: 0; box-shadow: inset 1px 1px #808080, inset -1px -1px #fff; color: #000; font-weight: normal; }
+html[data-theme="win98"] #volpop { background: #c0c0c0; border: 0; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] #volpop .vt { color: #000; }
+html[data-theme="win98"] #volpop .vgroove { border-color: #808080 #fff #fff #808080; background: #c0c0c0; }
+html[data-theme="win98"] #volpop .vticks { background: repeating-linear-gradient(180deg, #000 0 1px, transparent 1px 12px); }
+html[data-theme="win98"] #volpop .vthumb { background: #c0c0c0; border: 0; box-shadow: var(--raised); }
+
+/* ---------- start menu ---------- */
+html[data-theme="win98"] #startmenu { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] #startmenu .band { background: linear-gradient(0deg, #000080, #1084d0); }
+html[data-theme="win98"] .smi { color: #000; }
+html[data-theme="win98"] .smi:hover:not(:disabled) { background: #000080; color: #fff; }
+html[data-theme="win98"] .smsep { height: 0; background: none; border-top: 1px solid #808080; border-bottom: 1px solid #fff; }
+
+/* ---------- controls ---------- */
+html[data-theme="win98"] .btn { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); padding: 4px 12px; }
+html[data-theme="win98"] .btn:hover:not(:disabled) { background: #c0c0c0; }
+html[data-theme="win98"] .btn:active:not(:disabled) { box-shadow: var(--pressed); }
+html[data-theme="win98"] .btn.go { background: #c0c0c0; color: #000; outline: 1px solid #000; outline-offset: 0; }
+html[data-theme="win98"] .btn.no { background: #c0c0c0; color: var(--bad); }
+html[data-theme="win98"] .btn:disabled { opacity: 1; color: #808080; text-shadow: 1px 1px 0 #fff; }
+html[data-theme="win98"] .field { border: 0; background: #fff; color: #000; box-shadow: var(--sunken); padding: 5px 7px; }
+
+/* ---------- step-up dialog ---------- */
+html[data-theme="win98"] #gate { background: rgba(0, 0, 0, .25); }
+html[data-theme="win98"] #gate form { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] #gate .gt { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
+html[data-theme="win98"] #gate p { color: #000; }
+html[data-theme="win98"] #gate input { border: 0; box-shadow: var(--sunken); color: #000; }
+
+/* ---------- apps ---------- */
+html[data-theme="win98"] .dash .list { background: #fff; border-right: 0; box-shadow: inset -1px 0 #808080; }
+html[data-theme="win98"] .dash .card .nm { color: #000; }
+html[data-theme="win98"] .dash .card.sel { background: #000080; box-shadow: none; }
+html[data-theme="win98"] .dash .card.sel .nm, html[data-theme="win98"] .dash .card.sel .sm, html[data-theme="win98"] .dash .card.sel .st { color: #fff; }
+html[data-theme="win98"] .dash .compose { border-top: 0; box-shadow: inset 0 1px #808080, inset 0 2px #fff; }
+html[data-theme="win98"] .dash .say { border: 0; box-shadow: var(--sunken); }
+html[data-theme="win98"] .dash .m.user { background: #ffffe1; border-color: #808080; }
+html[data-theme="win98"] .dash .m.assistant { border-color: #808080; }
+html[data-theme="win98"] .xlist th { background: #c0c0c0; color: #000; border-bottom: 0; box-shadow: var(--raised); }
+html[data-theme="win98"] .xlist tbody tr:hover { background: var(--hover); }
+html[data-theme="win98"] .xlist tr.sel, html[data-theme="win98"] .xlist tr.sel:hover { background: #000080; }
+html[data-theme="win98"] .xstatus { box-shadow: inset 1px 1px #808080, inset -1px -1px #fff; border-top: 0; margin: 2px; }
+html[data-theme="win98"] .xlaunch { background: #c0c0c0; }
+html[data-theme="win98"] .cmpresult { border: 0; box-shadow: var(--sunken); }
+html[data-theme="win98"] .wall { border-color: #c0c0c0; }
