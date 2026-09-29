@@ -86,6 +86,11 @@
   .m.sys { font-size: 11px; color: rgba(58,34,84,.45); text-align: center; max-width: none; }
   .m .tm { font-size: 10px; color: rgba(77,35,207,.4); margin-left: 6px; }
   #pick { padding: 24px 14px; color: rgba(58,34,84,.5); }
+  #resume { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: rgba(58,34,84,.6); }
+  #resume[hidden] { display: none; }
+  #rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; color: var(--ink); background: rgba(240,209,241,.5); padding: 2px 6px; user-select: all; }
+  .more { padding: 5px 10px; font-size: 11.5px; color: var(--blue); cursor: pointer; border-bottom: 1px dotted var(--edge); }
+  .more:hover { background: rgba(255,255,255,.6); }
   @media (max-width: 620px) {
     #list { width: 100%; }
     body.viewing #list { display: none; }
@@ -107,6 +112,7 @@
   <div id="list"><div id="empty">还没有机器连上来。</div></div>
   <div id="right">
     <div id="head"><span><button id="back">‹ 返回</button><b id="hname">选择一个会话</b></span><span class="meta" id="hmeta"></span></div>
+    <div id="resume" hidden><span>继续：</span><code id="rcmd"></code><button class="btn" type="button" id="rcopy">复制</button></div>
     <div id="conv"><div id="pick">从左边选一个会话查看完整对话。</div></div>
     <div id="perms"></div>
     <div id="note"></div>

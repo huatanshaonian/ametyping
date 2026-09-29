@@ -1,7 +1,8 @@
 // Conversation store: the slim records agents stream in (remote/agent/records.js) are kept on disk for good --
 // the basis for later features such as a daily work summary. Memory only holds what is being looked at.
 //   <dir>/<YYYY-MM-DD>/<machine>/<session>.jsonl   one record per line, filed under the day it was said (server time)
-//   <dir>/state.json                               per machine / session: stored byte offset, project, title, days
+//   <dir>/state.json                               per machine / session: stored byte offset, project, title, cwd,
+//                                                  days, first / last activity -- the dashboard lists every session from it
 // Records are buffered and appended every FLUSH_MS; state.json is rewritten only after the appends, so after a
 // crash the offsets never run ahead of the files and the agent simply sends the lost part again.
 'use strict';
@@ -41,7 +42,7 @@ function clean(r) {
 function createStore(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stateFile = path.join(dir, 'state.json');
-  let state = {};                                    // machine -> id -> { off, project, title, days[], last }
+  let state = {};                                    // machine -> id -> { off, project, title, cwd, days[], first, last }
   try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
   const pending = new Map();                         // file -> [lines]
   const tails = new Map();                           // "machine|id" -> { msgs, used }
@@ -68,7 +69,11 @@ function createStore(dir) {
     e.off = d.to;
     if (typeof d.project === 'string' && d.project) e.project = d.project.slice(0, 60);
     if (typeof d.title === 'string' && d.title) e.title = d.title.slice(0, 80);
-    if (recs.length) e.last = Math.max(e.last, recs[recs.length - 1].t);
+    if (typeof d.cwd === 'string' && d.cwd) e.cwd = d.cwd.slice(0, 500);
+    if (recs.length) {
+      e.last = Math.max(e.last, recs[recs.length - 1].t);
+      if (!e.first || recs[0].t < e.first) e.first = recs[0].t;
+    }
     dirty = true;
     const tail = tails.get(`${m}|${d.id}`);
     if (tail) merge(tail.msgs, recs);
@@ -121,9 +126,29 @@ function createStore(dir) {
     return t.msgs;
   }
 
+  // project / title / cwd reported without new lines (a session that was already fully stored)
+  function meta(m, id, d) {
+    const e = state[m] && state[m][id];
+    if (!e) return;
+    let changed = false;
+    for (const [k, n] of [['project', 60], ['title', 80], ['cwd', 500]]) {
+      if (typeof d[k] === 'string' && d[k] && e[k] !== d[k].slice(0, n)) { e[k] = d[k].slice(0, n); changed = true; }
+    }
+    if (changed) dirty = true;
+  }
+  // every stored session that has said something: machine -> [{ id, project, title, cwd, first, last }]
+  function sessions() {
+    const out = {};
+    for (const [m, ids] of Object.entries(state)) {
+      out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last }));
+    }
+    return out;
+  }
+
   const offsets = (m) => Object.fromEntries(Object.entries(state[m] || {}).map(([id, e]) => [id, e.off]));
   const has = (m, id) => !!(state[m] && state[m][id]);
-  return { accept, flush, tail, offsets, has };
+  return { accept, meta, flush, tail, offsets, has, sessions };
 }
 
 module.exports = { createStore };

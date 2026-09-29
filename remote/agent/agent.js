@@ -166,6 +166,7 @@ let ws = null, retry = 2000;
 // record streaming: per session a reader at the offset the server has stored (null until the server's "sync")
 let serverOff = null;
 const readers = new Map();
+const metaSent = new Set();                          // sessions whose working directory was reported on this connection
 function connect() {
   ws = new WebSocket(cfg.server, { headers: { Authorization: 'Bearer ' + cfg.token } });
   ws.on('open', () => {
@@ -173,7 +174,7 @@ function connect() {
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn() }));
     lastConv.clear();
-    serverOff = null; readers.clear();                // wait for the server's offsets before streaming
+    serverOff = null; readers.clear(); metaSent.clear();   // wait for the server's offsets before streaming
     tick(true);
   });
   ws.on('message', (raw) => {
@@ -187,6 +188,15 @@ function connect() {
         if (!Number.isFinite(off) || off < 0) continue;
         serverOff[id] = off;
         const r = readers.get(id); if (r) { r.offset = off; r.skipping = false; }
+      }
+      // sessions the server stores but nobody is streaming right now (long idle): still tell it where they live,
+      // so the dashboard can say how to resume them -- once per connection
+      const files = new Map(newestFiles().map((f) => [f.id, f.file]));
+      for (const id of Object.keys(d.offsets)) {
+        if (metaSent.has(id) || readers.has(id) || !files.has(id)) continue;
+        metaSent.add(id);
+        const cwd = records.firstCwd(files.get(id));
+        if (cwd) sendJSON({ t: 'meta', id, cwd });
       }
       pushRecords();
     }
@@ -205,13 +215,17 @@ function pushRecords() {
   for (const id of [...readers.keys()]) if (!sess.has(id)) readers.delete(id);
   for (const [id, c] of sess) {
     let r = readers.get(id);
-    if (!r || r.file !== c.file) { r = records.createReader(c.file, serverOff[id] || 0); readers.set(id, r); }
+    if (!r || r.file !== c.file) {
+      r = records.createReader(c.file, serverOff[id] || 0); readers.set(id, r);
+      // what the server needs to list the session and say how to resume it, even if nothing new gets written
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
+    }
     for (let k = 0; k < 8; k++) {
       if (ws.bufferedAmount > 8e6) return;                             // let the socket drain first
       let b; try { b = records.readNext(r); } catch { b = null; }
       if (!b) break;
       sendJSON({ t: 'rec', id, from: b.from, to: b.to, reset: b.reset || undefined, recs: b.recs,
-        project: c.project || '', title: c.title || '' });
+        project: c.project || '', title: c.title || '', cwd: b.cwd || undefined });
       r.offset = b.to;
       if (b.to === b.from) break;
     }

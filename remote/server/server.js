@@ -41,7 +41,7 @@ function audit(...a) {
 // ---------- http helpers ----------
 const SEC_HEADERS = {
   'X-Robots-Tag': 'noindex, nofollow',
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
@@ -52,7 +52,9 @@ if (cfg.secureCookies) SEC_HEADERS['Strict-Transport-Security'] = 'max-age=31536
 // with https the cookie gets the __Host- prefix: the browser then only accepts it Secure, Path=/, no Domain
 const SID = cfg.secureCookies ? '__Host-sid' : 'sid';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+  '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg' };
+// the desktop's own files (after login): one level under these folders, plain names only
+const STATIC = /^\/(css|js|js\/apps|icons|img|wall|vendor)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg)$/;
 
 // Behind the proxy, the client IP is the LAST X-Forwarded-For entry -- the one the proxy itself appended.
 // Anything to its left came from the client and could be forged to dodge the per-IP lockout.
@@ -98,16 +100,33 @@ function machine(name) {
   if (!m) { m = { name, online: false, since: 0, sessions: new Map() }; machines.set(name, m); }
   return m;
 }
-// what the browser gets: no pids, no paths, no cwd -- just what to display
+// how to continue a session on its machine (Windows paths get PowerShell syntax)
+function resumeCmd(cwd, id) {
+  if (!cwd) return `claude --resume ${id}`;
+  const q = `'${cwd.replace(/'/g, "''")}'`;
+  return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; claude --resume ${id}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && claude --resume ${id}`;
+}
+// what the browser gets: no pids -- what to display, plus the working directory in the resume command.
+// Every session ever stored is listed (newest activity first); the ones the agent no longer reports are 'history'.
 function snapshot() {
+  const stored = store.sessions();
+  const names = new Set([...machines.keys(), ...Object.keys(stored)]);
   const out = [];
-  for (const m of machines.values()) {
+  for (const name of names) {
+    const m = machines.get(name) || { name, online: false, since: 0, sessions: new Map() };
     const ctl = CONTROL && m.online && !!m.control;
-    out.push({ machine: m.name, online: m.online, since: m.since, control: ctl,
-      sessions: [...m.sessions.values()].sort((a, b) => a.t0 - b.t0).map((s) => ({
-        id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: s.last,
-        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [],
-      })) });
+    const saved = new Map((stored[name] || []).map((e) => [e.id, e]));
+    const list = [...m.sessions.values()].map((s) => {
+      const e = saved.get(s.id);
+      return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
+        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id) };
+    });
+    for (const e of saved.values()) {
+      if (m.sessions.has(e.id)) continue;
+      list.push({ id: e.id, label: e.title || e.project || 'Claude', project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id) });
+    }
+    out.push({ machine: name, online: m.online, since: m.since, control: ctl, sessions: list.sort((a, b) => b.last - a.last) });
   }
   return out.sort((a, b) => a.machine.localeCompare(b.machine));
 }
@@ -148,6 +167,7 @@ function onAgentMessage(m, raw, ws) {
     if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
     return;
   }
+  if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200));
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
@@ -255,7 +275,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, 'index.html');
-  if (req.method === 'GET' && p === '/app.js') return serveFile(res, 'app.js');
+  if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
@@ -263,9 +283,10 @@ const server = http.createServer(async (req, res) => {
   return send(res, 404, 'not found');
 });
 
-function serveFile(res, name) {
+function serveFile(res, name, cache) {
   const f = path.join(PUBLIC, name);
-  fs.readFile(f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, TYPES[path.extname(f)] || 'application/octet-stream'));
+  if (!f.startsWith(PUBLIC + path.sep)) return send(res, 404, 'not found');
+  fs.readFile(f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, TYPES[path.extname(f)] || 'application/octet-stream', cache ? { 'Cache-Control': cache } : undefined));
 }
 function serveAsset(res, rel) {
   rel = rel.replace(/\\/g, '/');

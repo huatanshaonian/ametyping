@@ -8,7 +8,10 @@ let data = [], sel = null, ws = null, cards = new Map(), heads = new Map();
 const say = $('say'), sendBtn = $('sendbtn'), permsEl = $('perms'), note = $('note');
 
 const STATE = { message: ['working', '进行中'], thinking: ['working', '进行中'], reading: ['working', '进行中'],
-  error: ['working', '出错'], waiting: ['waiting', '等你确认'], done: ['done', '完成'], idle: ['idle', '空闲'], ended: ['idle', '已关闭'] };
+  error: ['working', '出错'], waiting: ['waiting', '等你确认'], done: ['done', '完成'], idle: ['idle', '空闲'], ended: ['idle', '已关闭'],
+  history: ['idle', '历史'] };
+const PAGE = 50;                    // sessions shown per machine before "显示更多"
+const shown = new Map();            // machine -> how many are shown
 const stateOf = (s) => STATE[s] || ['idle', s || '空闲'];
 const ago = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? `${s}秒` : s < 3600 ? `${Math.floor(s / 60)}分` : `${Math.floor(s / 3600)}时`; };
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -29,13 +32,14 @@ function renderList() {
   const order = [];                  // elements in display order; nodes are reused so a click is never lost to a rebuild
   for (const m of data) {
     if (!m.sessions.length) continue;
+    const limit = shown.get(m.machine) || PAGE;
     let mc = heads.get(m.machine);
     if (!mc) { mc = document.createElement('div'); heads.set(m.machine, mc); }
     mc.className = 'mc' + (m.online ? ' on' : '');
     const mtext = `<span class="dot"></span>${esc(m.machine)} · ${m.sessions.length} 个会话${m.online ? '' : '（离线）'}${m.online && !m.control ? ' · 只读' : ''}`;
     if (mc.innerHTML !== mtext) mc.innerHTML = mtext;
     order.push(mc);
-    for (const s of m.sessions) {
+    for (const s of m.sessions.slice(0, limit)) {
       const key = m.machine + '|' + s.id;
       wanted.add(key);
       let c = cards.get(key);
@@ -55,6 +59,13 @@ function renderList() {
       st.textContent = `${name}${s.project ? ' · ' + s.project : ''} · ${ago(s.last)}`;
       order.push(c);
     }
+    if (m.sessions.length > limit) {                 // older ones stay one click away
+      const key = 'more|' + m.machine;
+      let mo = heads.get(key);
+      if (!mo) { mo = document.createElement('div'); mo.className = 'more'; mo.dataset.machine = m.machine; heads.set(key, mo); }
+      mo.textContent = `显示更多（还有 ${m.sessions.length - limit} 个）`;
+      order.push(mo);
+    }
   }
   for (const [k, el] of cards) if (!wanted.has(k)) { el.remove(); cards.delete(k); }
   for (const [k, el] of heads) if (!order.includes(el)) { el.remove(); heads.delete(k); }
@@ -64,6 +75,8 @@ function renderList() {
 }
 
 listEl.addEventListener('click', (e) => {
+  const mo = e.target.closest('.more');
+  if (mo) { shown.set(mo.dataset.machine, (shown.get(mo.dataset.machine) || PAGE) + PAGE); renderList(); return; }
   const c = e.target.closest('.card'); if (!c) return;
   select(c.dataset.key);
 });
@@ -77,12 +90,24 @@ function select(key) {
   const s = allSessions().find((x) => x.machine === machine && x.id === id);
   $('hname').textContent = s ? s.label : '';
   $('hmeta').textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}` : '';
+  showResume(s);
   convEl.innerHTML = '<div id="pick">加载对话…</div>';
   permsEl.innerHTML = ''; permCards.clear(); showNote('');
   renderControls();
   wsSend({ t: 'watch', machine, id });
 }
 const current = () => { if (!sel) return null; const [machine, id] = sel.split('|'); return allSessions().find((x) => x.machine === machine && x.id === id) || null; };
+
+// --- how to continue the session on its machine ---
+function showResume(s) {
+  $('resume').hidden = !(s && s.resume);
+  if (s && s.resume && $('rcmd').textContent !== s.resume) $('rcmd').textContent = s.resume;
+}
+$('rcopy').addEventListener('click', async () => {
+  const text = $('rcmd').textContent;
+  try { await navigator.clipboard.writeText(text); showNote('已复制继续命令'); }
+  catch { const r = document.createRange(); r.selectNodeContents($('rcmd')); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(r); showNote('已选中，按 Ctrl+C 复制'); }
+});
 
 // --- actions: every request gets an id; the server answers with {t:'result', rid, ok, msg} ---
 const waiting = new Map();          // rid -> callback
@@ -149,6 +174,7 @@ function renderControls() {
   const via = s ? (s.online ? s.via || 'off' : 'off') : null;
   say.disabled = !s || sending || !['terminal', 'resume'].includes(via);
   say.placeholder = !s ? '先选一个会话' : s.online ? PLACEHOLDER[via] || PLACEHOLDER.off : '这台机器离线了';
+  if (s && s.state === 'history') say.placeholder = '历史会话（Claude Code 已不在运行）：用上面的命令在那台电脑上继续';
   if (s && (s.perms || []).length && via === 'terminal') say.placeholder = '它在等你确认，先处理上面的确认卡片';
   if (s && (s.perms || []).length) say.disabled = true;
   sendBtn.disabled = say.disabled || !say.value.trim();
@@ -264,6 +290,7 @@ function connect() {
         const [machine, id] = sel.split('|');
         const s = allSessions().find((x) => x.machine === machine && x.id === id);
         if (s) { $('hname').textContent = s.label; $('hmeta').textContent = `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}`; }
+        showResume(s);
       }
       renderControls();
     } else if (d.t === 'result') {
