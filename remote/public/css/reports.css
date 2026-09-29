@@ -66,3 +66,6 @@ a.rp-sess { text-decoration: none; display: inline-block; }
 .qa-answer { white-space: pre-wrap; line-height: 1.7; padding: 8px 10px; border: 1px solid var(--edge); background: #fff; }
 .rp-empty.bad { color: var(--bad); }
 .ri.week b { font-weight: bold; } .ri.week:not(.sel) { background: var(--tint-soft); }
+.rp-star { width: 20px; padding: 0; border: 0; background: none; color: var(--warn); font-size: 14px; line-height: 1; cursor: pointer; vertical-align: -1px; }
+.rp-star:hover { transform: scale(1.2); }
+.rp-open .st-done-ok .rp-mark { color: var(--ok); }

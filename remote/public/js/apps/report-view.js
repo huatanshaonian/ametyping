@@ -3,6 +3,7 @@
 // into 糖糖看板.
 import { h } from '../util.js';
 import * as dashboard from './dashboard.js';
+import * as todos from '../todos.js';
 
 const CAT = [['research', '科研'], ['personal', '个人小项目'], ['chore', '杂活']];
 const WEEK = '日一二三四五六';
@@ -41,7 +42,8 @@ export function renderWeek(w, { openReport }) {
     h('p', { class: 'rp-head', text: w.headline || '' }),
     (w.highlights || []).length ? sec('这周最值得记住的', h('ul', {}, ...w.highlights.map((x) => h('li', { text: x })))) : null,
     ...cats,
-    (w.open || []).length ? sec('周末时还没做的', h('ul', {}, ...w.open.map((o) => h('li', { text: `${o.text}${o.project ? '（' + o.project + '）' : ''}` })))) : null,
+    (w.todosDone || []).length ? sec('这周完成的重要计划', h('ul', {}, ...w.todosDone.map((t) => h('li', { text: `✓ ${t.text}（${md(t.date)}${t.evidence ? '，' + t.evidence : ''}）` })))) : null,
+    (w.open || []).length ? sec('还没完成的重要计划', h('ul', {}, ...w.open.map((o) => h('li', { text: `${o.text}${o.project ? '（' + o.project + '）' : ''}${o.due ? ' · ' + md(o.due) + ' 截止' : ''}` })))) : null,
     (w.artifacts || []).length ? sec(`这周的产出物（${w.artifacts.length}）`, h('ul', {}, ...w.artifacts.map((a) => h('li', {},
       h('code', { class: 'rp-ap', text: a.path }), h('small', { text: ` · ${a.machine} · ${md(a.date)}` }), a.note ? h('div', { class: 'rp-an', text: a.note }) : null)))) : null,
     sec('每天', h('ul', { class: 'rs-list' }, ...(w.days || []).map((d) => h('li', {},
@@ -75,11 +77,26 @@ export function render(r) {
     } else sections.push(h('section', { class: 'rp-sec' }, h('h3', { text: `${name} · ${minutes(mins)}` }), ...ps.map(project)));
   }
 
+  // the day's loose ends: ☆ makes one an important item (js/todos.js), checked by every report after
+  // (reports written before 重要计划 existed also carry done / dropped items from their rolling list)
   const open = (r.open || []);
-  const openBox = open.length ? h('section', { class: 'rp-sec rp-open' }, h('h3', { text: '计划了没做的' }),
-    h('ul', {}, ...open.map((o) => h('li', { class: 'st-' + o.status },
-      h('span', { class: 'rp-mark', text: o.status === 'done' ? '✓' : o.status === 'dropped' ? '✗' : '□' }),
-      h('span', { text: o.text }), h('small', { text: ` ${o.project ? o.project + ' · ' : ''}${o.since ? o.since.slice(5).replace('-', '/') + ' 记下' : ''}${o.status === 'done' ? ' · 已完成' : o.status === 'dropped' ? ' · 不做了' : ''}` }))))) : null;
+  const star = (o) => {
+    const b = h('button', { class: 'rp-star', type: 'button', title: '设为重要：加进「重要计划」，之后每天的日报会检查它做完没有', text: todos.starred(r.date, o.text) ? '★' : '☆' });
+    b.addEventListener('click', async () => {
+      if (b.textContent === '★') return;
+      b.disabled = true;
+      const res = await todos.add(o.text, { project: o.project, from: { date: r.date } });
+      b.disabled = false; if (res.ok) b.textContent = '★';
+    });
+    return b;
+  };
+  const openBox = open.length ? h('section', { class: 'rp-sec rp-open' }, h('h3', { text: '没做完的' }),
+    h('ul', {}, ...open.map((o) => h('li', { class: 'st-' + (o.status || 'open') },
+      o.status && o.status !== 'open' ? h('span', { class: 'rp-mark', text: o.status === 'done' ? '✓' : '✗' }) : star(o),
+      h('span', { text: o.text }), h('small', { text: ` ${o.project || ''}${o.status === 'done' ? ' · 已完成' : o.status === 'dropped' ? ' · 不做了' : ''}` }))))) : null;
+  const doneBox = (r.todosDone || []).length ? h('section', { class: 'rp-sec rp-open' }, h('h3', { text: '重要计划：这天做完了' }),
+    h('ul', {}, ...r.todosDone.map((t) => h('li', { class: 'st-done-ok' }, h('span', { class: 'rp-mark', text: '✓' }), h('span', { text: t.text }),
+      h('small', { text: `${t.project ? ' ' + t.project : ''}${t.evidence ? ' · ' + t.evidence : ''}` }))))) : null;
   // things made outside a tracked repository (remote/server/artifacts.js): the copy on the NAS when there is one
   const arts = r.artifacts || [];
   const artBox = arts.length ? h('section', { class: 'rp-sec rp-arts' }, h('h3', { text: `产出物（${arts.length}）` }),
@@ -104,6 +121,6 @@ export function render(r) {
       h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) + (r.brief ? '（补录，简略）' : '') }),
       h('div', { class: 'rp-meta', text: `${when(r.from)} – ${when(r.to)} · ${minutes(st.minutes || 0)} · ${st.sessions || 0} 个会话 · ${st.machines || 0} 台电脑` })),
     h('p', { class: 'rp-head', text: r.headline || '' }),
-    ...sections, openBox, plans, artBox, kw,
+    ...sections, doneBox, openBox, plans, artBox, kw,
     !sections.length && !openBox ? h('p', { class: 'rp-empty', text: '这段时间没有记录。' }) : null);
 }

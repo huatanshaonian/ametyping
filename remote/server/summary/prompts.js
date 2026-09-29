@@ -11,6 +11,7 @@ const DAY_SCHEMA = obj({
   headline: str,
   projects: { type: 'array', items: obj({ name: str, category: cat, summary: str, done: strs, decisions: strs, unfinished: strs, sessions: strs }) },
   open: { type: 'array', items: obj({ ref: str, text: str, project: str, status: { type: 'string', enum: ['open', 'done', 'dropped'] } }) },
+  todos: { type: 'array', items: obj({ ref: str, done: { type: 'boolean' }, evidence: str }) },
   plans: { type: 'array', items: obj({ title: str, project: str, session: str }) },
   keywords: strs,
   artifacts: { type: 'array', items: obj({ ref: str, note: str }) },
@@ -35,18 +36,19 @@ function sessionPrompt(d, hint) {
   ].join('\n');
 }
 
-// the day: sessions (condensed transcript, or their own summary when long) + what was still open before
+// the day: sessions (condensed transcript, or their own summary when long) + the important items still open
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
-function dayPrompt({ from, to, sessions, open, artifacts = [], brief = false }) {
+function dayPrompt({ from, to, sessions, todos = [], artifacts = [], brief = false }) {
   const parts = [
     ...(brief ? ['（这是补录的旧日报：写得简略些——每个项目 summary 一两句，done 最多 3 条，decisions 只写真正重要的；open 只列这一天新产生的未完成事项；产出物的说明照常写。）'] : []),
-    `下面是用户在 ${fmtTime(from)} 到 ${fmtTime(to)} 之间和 AI 编程助手（Claude Code / Codex）的全部会话摘录，以及之前记下的未完成事项。请写一份给用户自己看的工作日报。`,
+    `下面是用户在 ${fmtTime(from)} 到 ${fmtTime(to)} 之间和 AI 编程助手（Claude Code / Codex）的全部会话摘录${todos.length ? '，以及用户标记为重要、还没完成的计划' : ''}。请写一份给用户自己看的工作日报。`,
     '要求：',
     '- 按项目归类：同一个项目可能分散在多个会话、多台电脑，合并成一项；name 用简短好认的项目名。sessions 列出属于它的会话编号（如 S1）。',
     '- ' + CAT_HELP + ' 参考每个会话的「分类提示」，但以内容为准。杂活（chore）只写一句 summary，done / decisions / unfinished 留空。',
     '- done 写做成了什么（具体结果，不写过程）；decisions 写重要决定及原因；unfinished 写这次提到但没做完、推迟、打算以后做的事。',
-    '- open 是滚动的「计划了但还没做」清单：之前的每一条都要返回（ref 只填编号如 O1，若这次已完成 status=done，明确放弃 status=dropped，否则 open，text 可按新情况改写）；再加入这次新产生的未完成事项（ref 填空字符串）。每条写成一句可执行的话，不要重复。杂活里的小事不必进清单。之前事项的完成情况只写在 open 里，不要写进项目的 done。',
+    '- open：这段时间新产生的未完成事项（提到了但没做完、推迟、打算以后做的），每条写成一句可执行的话，ref 填空字符串、status 填 open，不要重复；杂活里的小事不必列。' + (todos.length ? '「重要计划」里已有的不要再放进 open。' : ''),
+    todos.length ? '- todos：逐条检查「重要计划」：这段时间的会话里明确做完了，done=true，evidence 写一句依据（在哪个会话做了什么）；没做、只做了一部分或看不出来，done=false、evidence 空。宁可不判完成，也不要误判。ref 只填编号如 T1。' : '- todos：返回空数组。',
     '- plans：只列摘录里明确出现「写了计划」的计划（标题、项目、会话编号），没有就返回空数组，不要把未完成事项当成计划。',
     '- 会话编号（sessions、plans 的 session）只填 S1 这样的编号本身。',
     '- artifacts：给「产出物」里的每个文件写一句用途说明（note，不超过 30 字，例如「画 RCS 对比图的脚本」），ref 填编号如 A1；看不出用途就写空字符串。没有产出物就返回空数组。',
@@ -54,9 +56,9 @@ function dayPrompt({ from, to, sessions, open, artifacts = [], brief = false }) 
     '- 用简体中文，简洁，不要客套；不要编造摘录里没有的内容。',
     '',
   ];
-  if (open.length) {
-    parts.push('## 之前的未完成事项');
-    open.forEach((o, i) => parts.push(`O${i + 1}. [${o.project || '未分类'}] ${o.text}（${o.since} 记下）`));
+  if (todos.length) {
+    parts.push('## 重要计划（用户标记为重要、还没完成的事）');
+    todos.forEach((t) => parts.push(`${t.ref}. [${t.project || '未分类'}] ${t.text}（${new Date(t.created).getMonth() + 1}月${new Date(t.created).getDate()}日记下${t.due ? '，' + t.due.slice(5) + ' 截止' : ''}）`));
     parts.push('');
   }
   parts.push('## 会话');

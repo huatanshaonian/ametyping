@@ -21,7 +21,8 @@ const datesOf = (start) => Array.from({ length: 7 }, (_, i) => { const d = new D
 // the Monday of the week `date` is in
 function mondayOf(date) { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return dayOf(d); }
 
-function createWeekly({ reports, ask, log = () => {} }) {
+// todos (server/todos.js, optional): the important items still open when the week is written
+function createWeekly({ reports, ask, todos = null, log = () => {} }) {
   function weekPrompt(start, dailies) {
     const parts = [
       `下面是用户 ${start} 这一周每天的工作日报（由 AI 根据他和编程助手的对话写成）。请写一份给他自己看的周报。`,
@@ -62,7 +63,8 @@ function createWeekly({ reports, ask, log = () => {} }) {
       start, end: dates[6], generatedAt: Date.now(), headline: ans.headline || '',
       projects: (ans.projects || []).filter((p) => p.category !== 'chore'), highlights: ans.highlights || [],
       days: dailies.map((r) => ({ date: r.date, headline: r.headline || '', minutes: r.stats ? r.stats.minutes : 0, brief: !!r.brief })),
-      open: (last.open || []).filter((o) => o.status === 'open'),
+      open: todos ? todos.open().map((t) => ({ text: t.text, project: t.project, due: t.due })) : (last.open || []).filter((o) => o.status === 'open'),
+      todosDone: dailies.flatMap((r) => (r.todosDone || []).map((t) => ({ ...t, date: r.date }))),
       artifacts: artifacts.slice(0, 40),
       stats: { minutes: dailies.reduce((n, r) => n + (r.stats ? r.stats.minutes : 0), 0), byCat, chores, days: dailies.filter((r) => r.stats && r.stats.sessions).length,
         sessions: dailies.reduce((n, r) => n + (r.stats ? r.stats.sessions : 0), 0), artifacts: artifacts.length },

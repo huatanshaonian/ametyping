@@ -12,6 +12,7 @@ import * as explorer from './apps/explorer.js';
 import * as sounds from './apps/sounds.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
+import * as todo from './apps/todo.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -37,6 +38,7 @@ const APPS = [
 desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
+  { icon: icon('sched_task'), label: '重要计划', action: todo.open },
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
   { icon: icon('computer_2'), label: '添加电脑', action: computers.open },
   { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
@@ -73,6 +75,7 @@ function render() {
 net.on('sessions', render);
 
 wallpaper.init();
+todo.initWidget(document.getElementById('desktop'));        // 重要计划, pinned to the desktop
 net.connect();
 openDashboard();
 // #report=<date | week-date | draft>: opened from the pet's morning bubble -- show that report (then forget the link)

@@ -15,7 +15,7 @@ const DAY_MAX = 150000;            // the day's prompt: summarize more sessions 
 const NOT_ARTIFACT = /[\\/](\.claude|\.codex|tmp|temp|node_modules|__pycache__|\.git)([\\/]|$)/i;
 const MAX_ARTIFACTS = 80;
 
-function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, backupBytes = 5e6 }) {
+function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, backupBytes = 5e6 }) {
   // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
   // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
   // offline: its files are listed unchecked.
@@ -98,8 +98,9 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     const { from, to, date } = job;
     const items = collect(from, to);
     if (job.brief && !items.length) return null;
-    const prev = job.brief ? null : reports.latest();
-    const open = prev ? (prev.open || []).filter((o) => o.status === 'open') : [];
+    // the important items still open are checked against these conversations (not for a backfilled past day: an
+    // item starred today cannot have been done back then); other loose ends are not carried from day to day
+    const important = todos && !job.brief ? todos.open().slice(0, 40).map((t, i) => ({ ...t, ref: 'T' + (i + 1) })) : [];
     for (const it of items) if (it.digest.text.length > SESSION_INLINE) await summarizeSession(it, from);
     const size = () => items.reduce((n, it) => n + (it.summary ? 800 : it.digest.text.length), 0);
     for (const it of [...items].sort((a, b) => b.digest.text.length - a.digest.text.length)) {
@@ -108,16 +109,18 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     }
     const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
-      ? await ask(dayPrompt({ from, to, sessions: items, open, artifacts: arts, brief: !!job.brief }), DAY_SCHEMA)
-      : { headline: '这段时间没有 AI 会话记录', projects: [], open: open.map((o, i) => ({ ref: 'O' + (i + 1), text: o.text, project: o.project, status: 'open' })), plans: [], keywords: [], artifacts: [] };
-    const report = assemble(job, items, open, ans, arts);
+      ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, brief: !!job.brief }), DAY_SCHEMA)
+      : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [] };
+    const report = assemble(job, items, ans, arts, important);
+    // what the model found done is ticked off the list, with its reason
+    for (const t of report.todosDone) todos.complete(t.id, date, t.evidence);
     reports.save(report);
     if (artifacts && report.artifacts.length) artifacts.record(date, report.artifacts);
     log(`日报 ${job.draft ? '（到现在）' : date}${job.brief ? '（补录）' : ''} 已生成：${items.length} 个会话，${report.stats.minutes} 分钟`);
     return report;
   }
 
-  function assemble({ from, to, date, draft, brief }, items, open, ans, arts = []) {
+  function assemble({ from, to, date, draft, brief }, items, ans, arts = [], important = []) {
     const byKey = new Map(items.map((it) => [it.key, it]));
     // the model sometimes decorates a reference ("S1：/home/u/x", "O2 整理…"): only the number counts
     const ref = (v, letter) => { const m = new RegExp(letter + '\\d+').exec(String(v || '')); return m ? m[0] : ''; };
@@ -130,15 +133,15 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
       return { name: p.name, category: p.category, summary: p.summary, done: p.done, decisions: p.decisions, unfinished: p.unfinished,
         sessions: its.map((it) => it.key), minutes: its.reduce((n, it) => n + it.digest.activeMin, 0), files: [...files.values()] };
     });
-    // the rolling open list: the model's answer, earlier items keep the day they were first written down; one the
-    // model left out stays open
-    const prevByRef = new Map(open.map((o, i) => ['O' + (i + 1), o]));
-    const seen = new Set();
-    const openOut = (ans.open || []).map((o) => {
-      const r = ref(o.ref, 'O'), p = prevByRef.get(r); if (p) seen.add(r);
-      return { text: o.text, project: o.project, status: o.status, since: p ? p.since : date };
-    });
-    for (const [ref, o] of prevByRef) if (!seen.has(ref)) openOut.push(o);
+    // the day's own loose ends (starring one makes it an important item: todos.js)
+    const openOut = (ans.open || []).map((o) => ({ text: o.text, project: o.project, status: 'open', since: date }));
+    // important items the model found done in these conversations
+    const byRef = new Map(important.map((t) => [t.ref, t]));
+    const todosDone = [];
+    for (const x of ans.todos || []) {
+      const t = byRef.get(ref(x.ref, 'T'));
+      if (t && x.done === true && !todosDone.some((y) => y.id === t.id)) todosDone.push({ id: t.id, text: t.text, project: t.project, evidence: x.evidence || '' });
+    }
     const sessions = items.map((it) => {
       const d = it.digest;
       return { key: it.key, machine: d.machine, id: d.id, title: d.title || d.project || '', project: d.project, cwd: d.cwd,
@@ -147,7 +150,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     });
     return {
       date, draft: !!draft, brief: !!brief, from, to, generatedAt: Date.now(),
-      headline: ans.headline || '', projects, open: openOut,
+      headline: ans.headline || '', projects, open: openOut, todosDone,
       plans: (ans.plans || []).map((p) => ({ title: p.title, project: p.project, session: ref(p.session, 'S') })),
       keywords: ans.keywords || [], sessions,
       artifacts: arts.map((a) => ({ ...a, note: ((ans.artifacts || []).find((x) => ref(x.ref, 'A') === a.ref) || {}).note || '' })),

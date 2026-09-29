@@ -6,7 +6,8 @@ window.morning.onNote((n) => {
   $('head').textContent = `${md(n.date)}：${n.headline || '这天没有记录'}`;
   const bits = [];
   if (n.projects.length) bits.push('做了 ' + n.projects.join('、'));
-  if (n.open) bits.push(`还有 ${n.open} 件没做`);
+  if (n.done) bits.push(`完成了 ${n.done} 件重要计划`);
+  if (n.open) bits.push(`重要计划还剩 ${n.open} 件`);
   if (n.chores) bits.push(`杂活 ${n.chores} 件`);
   $('more').textContent = bits.join(' · ');
   $('week').textContent = n.week ? `上周周报也好了：${n.week.headline}` : '';

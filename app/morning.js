@@ -22,7 +22,7 @@ function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, d
   function setNote(d) {
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return false;
     const note = { date: d.date, headline: str(d.headline, 200), projects: (Array.isArray(d.projects) ? d.projects : []).slice(0, 6).map((x) => str(x, 40)),
-      open: +d.open || 0, chores: +d.chores || 0 };
+      open: +d.open || 0, done: +d.done || 0, chores: +d.chores || 0 };
     if (d.week && /^\d{4}-\d{2}-\d{2}$/.test(d.week.start)) note.week = { start: d.week.start, end: str(d.week.end, 10), headline: str(d.week.headline, 200) };
     if (keyOf(note) === keyOf(st.note)) return true;
     st.note = note; save();

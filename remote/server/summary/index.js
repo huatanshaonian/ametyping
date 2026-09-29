@@ -29,7 +29,7 @@ function readBody(req, cap = 4096) {
 
 // onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
 // (the pet's morning bubble)
-function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, onNote = () => {}, log = console.log, audit = () => {} }) {
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, onNote = () => {}, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -42,8 +42,8 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, onNo
   };
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
   const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log,
-    artifacts, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
-  const weekly = createWeekly({ reports, ask: gen.ask, log });
+    artifacts, todos, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
+  const weekly = createWeekly({ reports, ask: gen.ask, todos, log });
   // the short note for the pet: the latest daily report that is not a backfill, and its week when that is written
   function latestNote() {
     const r = reports.latest();
@@ -51,7 +51,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, onNo
     const ps = r.projects || [];
     const w = reports.getWeek(mondayOf(r.date));
     return { date: r.date, headline: r.headline || '', projects: ps.filter((p) => p.category !== 'chore').map((p) => p.name).slice(0, 5),
-      open: (r.open || []).filter((o) => o.status === 'open').length, chores: ps.filter((p) => p.category === 'chore').length,
+      open: todos ? todos.open().length : 0, done: (r.todosDone || []).length, chores: ps.filter((p) => p.category === 'chore').length,
       week: w && w.end === r.date ? { start: w.start, end: w.end, headline: w.headline || '' } : undefined };
   }
   const [hh, mm] = String(cfg.at || '04:30').split(':').map(Number);
