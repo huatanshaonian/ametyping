@@ -6,10 +6,13 @@ const { randomUUID } = require('crypto');
 // long (answered either way; permission-hook.js gives up after 60 min) -- the card must not vanish while the
 // terminal still asks. Codex waits for the hook before it asks itself, so its cards stay short.
 const WAIT = { claude: 3590e3, codex: 105e3 };
+// onChange(session, end): end says why a card went away -- { why: 'decided' (choice from the panel / dashboard) | 'defer'
+// | 'closed' (the hook process ended: answered or interrupted in the terminal) | 'advanced' (a later hook event: it was
+// answered in the terminal) | 'timeout', choice, tool }; no end when a card was added
 function createPermissions(onChange, timeout = WAIT) {
   const waitFor = (provider) => (typeof timeout === 'number' ? timeout : timeout[provider] || timeout.claude);
   const pending = new Map();
-  function finish(id, choice) {
+  function finish(id, choice, why) {
     const p = pending.get(id);
     if (!p) return false;
     pending.delete(id);
@@ -20,7 +23,7 @@ function createPermissions(onChange, timeout = WAIT) {
       p.res.writeHead(200, { 'Content-Type': 'application/json' });
       p.res.end(JSON.stringify(choice ? { choice } : {}));
     }
-    onChange(p.session);
+    onChange(p.session, { why, choice, tool: p.tool });
     return live;
   }
   return {
@@ -30,8 +33,8 @@ function createPermissions(onChange, timeout = WAIT) {
       const p = { id, session: d.session, provider: d.provider || 'claude', tool: d.tool, input: d.input || {},
         cwd: d.cwd || '', agentId: d.agentId || '', subagent: d.subagent || '',
         started: Date.now(), res };
-      p.close = () => finish(id);
-      p.timer = setTimeout(() => finish(id), waitFor(p.provider));
+      p.close = () => finish(id, undefined, 'closed');
+      p.timer = setTimeout(() => finish(id, undefined, 'timeout'), waitFor(p.provider));
       pending.set(id, p);
       res.once('close', p.close);
       onChange(p.session);
@@ -42,8 +45,8 @@ function createPermissions(onChange, timeout = WAIT) {
         .map(({ id, provider, tool, input, cwd, subagent }) => ({ id, provider, tool, input, cwd, subagent }));
     },
     decide(id, choice) {
-      if (choice === 'defer' && pending.get(id)?.provider === 'codex') return finish(id);
-      return ['allow', 'deny'].includes(choice) && finish(id, choice);
+      if (choice === 'defer' && pending.get(id)?.provider === 'codex') return finish(id, undefined, 'defer');
+      return ['allow', 'deny'].includes(choice) && finish(id, choice, 'decided');
     },
     advance(d) {
       if (!['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'Interrupt'].includes(d.hookEvent)) return;
@@ -52,10 +55,10 @@ function createPermissions(onChange, timeout = WAIT) {
         if (d.hookEvent !== 'SessionEnd' && p.agentId !== (d.agentId || '')) continue;
         // Async relays can arrive out of order: the PreToolUse that preceded this prompt must not dismiss it.
         if (d.eventAt && d.eventAt < p.started) continue;
-        finish(p.id);
+        finish(p.id, undefined, 'advanced');
       }
     },
-    clear() { for (const id of [...pending.keys()]) finish(id); },
+    clear() { for (const id of [...pending.keys()]) finish(id, undefined, 'clear'); },
   };
 }
 module.exports = { createPermissions };
