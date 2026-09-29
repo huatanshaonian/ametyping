@@ -22,13 +22,14 @@ function firstCwd(file) {
   return null;
 }
 
-function createReader(file, offset) {
-  return { file, offset, skipping: false, cwd: firstCwd(file) };
+// parse: one parsed line -> records (Claude Code's recordsOf by default; codex-records.js for Codex sessions)
+function createReader(file, offset, parse = recordsOf) {
+  return { file, offset, skipping: false, parse, cwd: parse === recordsOf ? firstCwd(file) : null };
 }
 
-function slim(o) {
-  return recordsOf(o).map((r, i) => {
-    const rec = { u: o.uuid || null, i, role: r.role, t: r.t };
+function slim(o, parse) {
+  return parse(o).map((r, i) => {
+    const rec = { u: o.uuid || (o.payload && (o.payload.id || o.payload.call_id)) || null, i, role: r.role, t: r.t };
     if (r.text != null) rec.text = r.text.length > MAX_TEXT ? r.text.slice(0, MAX_TEXT) + '\n…（过长，已截断）' : r.text;
     if (r.items) rec.items = r.items;
     if (r.mid) rec.mid = r.mid;
@@ -60,7 +61,7 @@ function readNext(r) {
     if (line.trim()) try { o = JSON.parse(line); } catch {}
     // the directory the session was started in (later lines follow any cd): `claude --resume` looks it up from there
     if (!r.cwd && o && typeof o.cwd === 'string' && o.cwd) r.cwd = o.cwd;
-    const add = o ? slim(o) : [];
+    const add = o ? slim(o, r.parse || recordsOf) : [];
     const addSize = add.length ? JSON.stringify(add).length : 0;
     if (recs.length && size + addSize > MAX_BATCH) break;             // the rest goes in the next batch
     recs.push(...add); size += addSize; pos = nl + 1;

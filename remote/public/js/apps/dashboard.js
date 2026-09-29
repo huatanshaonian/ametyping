@@ -1,13 +1,13 @@
 // 糖糖看板 as a desktop window: every computer's sessions (newest first, the current computer on top), the chosen
 // session's conversation, its permission cards, navigation keys for the terminal's menus, and the reply box.
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
-import { $, h, esc, hhmm, ago, stateOf } from '../util.js';
+import { $, h, esc, hhmm, ago, stateOf, prefs } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
 
 const PAGE = 50;
 const PLACEHOLDER = {
-  terminal: '回复（Enter 发送，Shift+Enter 换行）— 会打进那台机器的终端',
+  terminal: '回复（Enter 发送，Shift+Enter 换行）；框为空时 方向键 / 回车 / Esc / Tab 直接发给终端',
   resume: '会话已关闭：发送会在那台机器后台用 claude -p --resume 续上',
   busy: '后台续聊进行中…',
   none: '这个会话不在终端里（IDE / 桌面 App），只能看',
@@ -16,6 +16,8 @@ const PLACEHOLDER = {
   off: '这台机器没开远程控制（或糖糖没在运行），只能看',
 };
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab']];
+// keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts)
+const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab' };
 const coarse = matchMedia('(pointer: coarse)').matches;      // phones: Enter is a newline, the button sends
 
 let app = null;                                              // the open instance
@@ -43,7 +45,11 @@ function mount(current) {
     h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）' }));
   const say = h('textarea', { class: 'say', rows: 1, placeholder: '先选一个会话', disabled: true });
   const sendBtn = h('button', { class: 'btn go', type: 'submit', text: '发送', disabled: true });
-  const compose = h('form', { class: 'compose', autocomplete: 'off' }, say, sendBtn);
+  // the key buttons are for touch screens; with a keyboard the keys themselves are enough (⌨ shows the buttons anyway)
+  const kbdBtn = h('button', { class: 'btn kbd', type: 'button', text: '⌨', title: '显示 / 隐藏按键（操作终端里的菜单）', hidden: true });
+  let showKeys = prefs.get('dash.keys', coarse);
+  kbdBtn.addEventListener('click', () => { showKeys = !showKeys; prefs.set('dash.keys', showKeys); renderControls(); });
+  const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, say, sendBtn);
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), hmeta),
     resume, convEl, permsEl, note, keys, compose);
   const root = h('div', { class: 'dash' }, list, right);
@@ -134,6 +140,7 @@ function mount(current) {
   }
 
   // ---- reply box + keys ----
+  let termOk = false;                              // the session runs in a terminal we can type / press keys into
   function renderControls() {
     const s = find(sel);
     const via = s ? (s.online ? s.via || 'off' : 'off') : null;
@@ -142,12 +149,28 @@ function mount(current) {
     if (s && s.state === 'history') say.placeholder = '历史会话（Claude Code 已不在运行）：用上面的命令在那台电脑上继续';
     if (s && (s.perms || []).length) { say.disabled = true; if (via === 'terminal') say.placeholder = '它在等你确认，先处理下面的确认卡片'; }
     sendBtn.disabled = say.disabled || !say.value.trim();
-    keys.hidden = !(s && s.online && via === 'terminal');
+    termOk = !!(s && s.online && via === 'terminal');
+    keys.hidden = !(termOk && showKeys);
+    kbdBtn.hidden = !termOk;
     renderPerms(s);
   }
   const fitSay = () => { say.style.height = 'auto'; say.style.height = Math.min(140, say.scrollHeight + 2) + 'px'; };
   say.addEventListener('input', () => { fitSay(); sendBtn.disabled = say.disabled || !say.value.trim(); });
-  say.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !coarse) { e.preventDefault(); compose.requestSubmit(); } });
+  say.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    // an empty box: the key goes to the terminal (Shift+Enter stays a newline)
+    if (termOk && !say.value && KEYMAP[e.key] && !(e.key === 'Enter' && e.shiftKey) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault(); pressKey(KEYMAP[e.key]); return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !coarse) { e.preventDefault(); compose.requestSubmit(); }
+  });
+  async function pressKey(key, b) {
+    const s = find(sel); if (!s) return;
+    if (b) b.disabled = true;
+    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key });
+    if (b) b.disabled = false;
+    if (!r.ok) showNote(r.msg || '按键失败', true);
+  }
   compose.addEventListener('submit', async (e) => {
     e.preventDefault();
     const s = find(sel), text = say.value;
@@ -158,14 +181,7 @@ function mount(current) {
     if (r.ok) { if (say.value === text) { say.value = ''; fitSay(); } showNote(r.msg || '已发送'); } else showNote(r.msg || '发送失败', true);
     renderControls();
   });
-  keys.addEventListener('click', async (e) => {
-    const b = e.target.closest('button[data-key]'), s = find(sel);
-    if (!b || !s) return;
-    b.disabled = true;
-    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key: b.dataset.key });
-    b.disabled = false;
-    if (!r.ok) showNote(r.msg || '按键失败', true);
-  });
+  keys.addEventListener('click', (e) => { const b = e.target.closest('button[data-key]'); if (b) pressKey(b.dataset.key, b); });
 
   // ---- permission cards (stable across updates) ----
   function renderPerms(s) {

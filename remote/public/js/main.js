@@ -10,6 +10,7 @@ import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
 import * as sounds from './apps/sounds.js';
+import * as computers from './apps/computers.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -35,6 +36,7 @@ desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
+  { icon: icon('computer_2'), label: '添加电脑', action: computers.open },
   { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
   'sep',
   { icon: icon('key_win'), label: '注销', action: logout },
@@ -52,6 +54,7 @@ function selectMachine(name) {
   dashboard.setCurrent(name);
 }
 netpanel.init(selectMachine);
+document.getElementById('addpc').addEventListener('click', (e) => { e.stopPropagation(); computers.open(); });
 
 function render() {
   const machines = net.state.sessions;

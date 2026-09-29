@@ -21,8 +21,9 @@ const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 // panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box;
 //            'off' = never pops up (e.g. when you follow everything on the Windose dashboard); still opens from the tray
 // dashboardUrl: the Windose web desktop, opened by double-clicking Ame or from the tray
+// petSound: the panel's chime when a session needs you / finishes (off when the Windose page does the sounds)
 // remoteControl: the dashboard may reply / answer permission cards through this pet (remote/agent needs "control": true too)
-let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org' };
+let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org', petSound: true };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
@@ -104,6 +105,8 @@ function buildMenu() {
       click: () => { settings.kbTheme = v; save(); win.webContents.send('config', cfg()); } })) },
     { label: '允许远程控制（看板回复 / 审批）', type: 'checkbox', checked: !!settings.remoteControl,
       click: (m) => { settings.remoteControl = m.checked; save(); } },
+    { label: '提示音', type: 'checkbox', checked: settings.petSound !== false,
+      click: (m) => { settings.petSound = m.checked; save(); pushBubble(null); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
     { label: '调试信息', type: 'checkbox', checked: settings.debug,
@@ -389,7 +392,7 @@ function pushBubble(changedId) {
     provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id),
   }));
   if (!list.length && !chatMode()) { hideBubble(); return; }
-  bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode });
+  bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode, sound: settings.petSound !== false });
   if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off)
     placeBubble();
     if (!bubbleWin.isVisible()) bubbleWin.showInactive();

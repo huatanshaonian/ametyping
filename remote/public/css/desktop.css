@@ -168,6 +168,21 @@ img { image-rendering: pixelated; }
 #gate .ga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 #gate .gm { min-height: 16px; margin-top: 6px; font-size: 12px; color: rgb(180, 50, 110); }
 
+/* ---------- 添加电脑 ---------- */
+.computers { padding-bottom: 10px; }
+.cmphead { padding: 8px 12px 4px; font-weight: bold; color: var(--border); }
+.cmplist { padding: 0 12px; }
+.cmp { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--edge); }
+.cmp img { width: 16px; height: 16px; } .cmp img.off { filter: grayscale(1); opacity: .5; }
+.cmp .cmpi { flex: 1; font-size: 12px; color: rgba(42, 31, 94, .6); }
+.cmp .btn { padding: 1px 10px; }
+.cmpresult { margin: 0 12px; padding: 8px 10px; border: 2px solid var(--pink); background: #fff; }
+.cmpresult p { margin: 4px 0; font-size: 12px; }
+.cmpcmd { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.cmpcmd > span { flex: none; width: 120px; color: var(--border); }
+.cmpcmd .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; background: rgba(240, 209, 241, .5); padding: 2px 6px; user-select: all; }
+#netpanel .ptitle .padd { margin-left: auto; padding: 0 7px; font-size: 12px; line-height: 18px; border: 1px solid var(--border); background: #fff; color: var(--border); }
+
 /* ---------- display properties ---------- */
 .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; padding: 12px; }
 .wall { position: relative; padding: 0; border: 2px solid var(--edge); background: #fff; text-align: center; }

@@ -159,7 +159,7 @@ $('permissions').addEventListener('click', (e) => {
   if (e.detail === 0 && e.target.matches('button')) decidePermission(e.target);
 });
 
-window.bubble.onState(({ sessions, changedId, mode }) => {
+window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
   const prev = data.find((s) => s.id === changedId);
   const prevSel = data.find((s) => s.id === selected);
   const prevSelState = prevSel && prevSel.state;
@@ -176,7 +176,7 @@ window.bubble.onState(({ sessions, changedId, mode }) => {
   if (sel) seen[sel.id] = sel.last;
   renderAll(changedId === selected);
   if (changed && (!prev || prev.state !== changed.state) && ['message', 'done', 'waiting'].includes(changed.state)) {
-    try { se.currentTime = 0; se.play(); } catch {}
+    if (sound) { try { se.currentTime = 0; se.play(); } catch {} }   // tray: 提示音
   }
   if (chatOn) { selectChat(); composeState(); }
 });

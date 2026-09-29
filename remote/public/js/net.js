@@ -58,6 +58,21 @@ function actOnce(o) {
   });
 }
 
+// a POST to the server that may need a recently entered code ({ need: 'totp' }): ask for it and retry
+export async function post(url, body) {
+  for (;;) {
+    let r;
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      if (res.status === 401) { location.href = '/login'; return { ok: false, msg: '需要重新登录' }; }
+      r = await res.json();
+    } catch { r = { ok: false, msg: '请求失败' }; }
+    if (r.need === 'totp') { if (await askCode()) continue; return { ok: false, msg: '已取消' }; }
+    if (!r.ok) sound.play('error');
+    return r;
+  }
+}
+
 export async function logout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch {}
   location.href = '/login';

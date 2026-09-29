@@ -62,3 +62,4 @@
 .dash.narrow.viewing .list { display: none; }
 .dash.narrow:not(.viewing) .right { display: none; }
 .dash.narrow .back { display: inline-block; }
+.dash .compose .kbd { padding: 3px 8px; font-size: 13px; }

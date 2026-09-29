@@ -22,6 +22,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
 const records = require('./records');
+const codex = require('./codex-records');
 const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
 
@@ -94,7 +95,20 @@ function scan() {
     c.mtime = f.mtime;
   }
   for (const id of [...sess.keys()]) if (!seen.has(id)) sess.delete(id);
+  // Codex CLI sessions: only stored on the server (the pet reports their live state); same idle rule
+  const cseen = new Set();
+  for (const f of codex.recentFiles(IDLE_DROP_MS)) {
+    let m = codexMeta.get(f.file);
+    if (!m) { m = codex.metaOf(f.file); if (m) codexMeta.set(f.file, m); }    // a brand-new file may not have its first line yet
+    if (!m || m.sub) continue;                                            // sub-threads (auto review...) are not sessions
+    const id = 'codex:' + m.id;
+    cseen.add(id);
+    codexSess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: codex.titleOf(m.id) });
+  }
+  for (const id of [...codexSess.keys()]) if (!cseen.has(id)) codexSess.delete(id);
 }
+const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
+const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
 
 // ---------- the local pet (control API on 127.0.0.1) ----------
 const pet = new Map();                               // id -> session as the pet sees it
@@ -204,10 +218,14 @@ function connect() {
       // sessions the server stores but nobody is streaming right now (long idle): still tell it where they live,
       // so the dashboard can say how to resume them -- once per connection
       const files = new Map(newestFiles().map((f) => [f.id, f.file]));
+      const cfiles = new Map();
+      if (Object.keys(d.offsets).some((id) => id.startsWith('codex:'))) {
+        for (const file of codex.allFiles()) { const m = codexMeta.get(file) || codex.metaOf(file); if (m && !m.sub) cfiles.set('codex:' + m.id, m); }
+      }
       for (const id of Object.keys(d.offsets)) {
-        if (metaSent.has(id) || readers.has(id) || !files.has(id)) continue;
+        if (metaSent.has(id) || readers.has(id) || (!files.has(id) && !cfiles.has(id))) continue;
         metaSent.add(id);
-        const cwd = records.firstCwd(files.get(id));
+        const cwd = files.has(id) ? records.firstCwd(files.get(id)) : cfiles.get(id).cwd;
         if (cwd) sendJSON({ t: 'meta', id, cwd });
       }
       pushRecords();
@@ -225,11 +243,13 @@ function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify
 // new transcript lines of every tracked session, as slim records (a few batches per session per tick)
 function pushRecords() {
   if (!serverOff || !ws || ws.readyState !== 1) return;
-  for (const id of [...readers.keys()]) if (!sess.has(id)) readers.delete(id);
-  for (const [id, c] of sess) {
+  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id)) readers.delete(id);
+  for (const [id, c] of [...sess, ...codexSess]) {
     let r = readers.get(id);
     if (!r || r.file !== c.file) {
-      r = records.createReader(c.file, serverOff[id] || 0); readers.set(id, r);
+      const isCodex = id.startsWith('codex:');
+      r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : undefined); readers.set(id, r);
+      if (isCodex) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
     }

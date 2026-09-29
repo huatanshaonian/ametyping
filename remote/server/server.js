@@ -21,6 +21,7 @@ const auth = require('./auth');
 const { createStore } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
+const { createAgentsAdmin } = require('./agents-admin');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -104,10 +105,12 @@ function machine(name) {
   return m;
 }
 // how to continue a session on its machine (Windows paths get PowerShell syntax)
+// (Codex sessions, "codex:<id>", continue with `codex resume`)
 function resumeCmd(cwd, id) {
-  if (!cwd) return `claude --resume ${id}`;
+  const cmd = id.startsWith('codex:') ? `codex resume ${id.slice(6)}` : `claude --resume ${id}`;
+  if (!cwd) return cmd;
   const q = `'${cwd.replace(/'/g, "''")}'`;
-  return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; claude --resume ${id}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && claude --resume ${id}`;
+  return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; ${cmd}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${cmd}`;
 }
 // what the browser gets: no pids -- what to display, plus the working directory in the resume command.
 // Every session ever stored is listed (newest activity first); the ones the agent no longer reports are 'history'.
@@ -126,7 +129,7 @@ function snapshot() {
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
-      list.push({ id: e.id, label: e.title || e.project || 'Claude', project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
+      list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
         lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id) });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
@@ -140,8 +143,15 @@ function broadcast(obj) {
   const s = JSON.stringify(obj);
   for (const c of clients) { try { c.ws.send(s); } catch {} }
 }
+// the session list, at most every 2 s (for changes that arrive in bursts)
+let listTimer = null;
+function broadcastSoon() {
+  if (listTimer) return;
+  listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
+}
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
+const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
@@ -170,6 +180,8 @@ function onAgentMessage(m, raw, ws) {
     const r = store.accept(m.name, d);
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
     if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
+    // a session only the store knows (e.g. Codex without the pet): the list would not refresh on its own
+    if (r.changed && !m.sessions.has(d.id)) broadcastSoon();
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
@@ -297,6 +309,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
+  // the machines allowed to connect (添加电脑): listing is free, changing needs a code entered within the hour
+  if (req.method === 'GET' && p === '/api/agents') return json(res, 200, { items: agentsAdmin.list() });
+  if (req.method === 'POST' && (p === '/api/agents/add' || p === '/api/agents/remove')) {
+    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
+    let d = {}; try { d = JSON.parse(await readBody(req)); } catch {}
+    const r = p.endsWith('/add') ? agentsAdmin.add(d.name, ip) : agentsAdmin.remove(String(d.name || ''), ip);
+    if (r.ok) broadcast({ t: 'sessions', data: snapshot() });
+    return json(res, 200, r);
+  }
   // wallpapers the server downloaded (display settings on the desktop)
   if (req.method === 'GET' && p === '/api/walls') return json(res, 200, { items: walls.list().map((w) => ({ name: w.name, url: '/wallpaper/' + w.name })) });
   if (req.method === 'POST' && p === '/api/wall/fetch') return apiWallFetch(req, res, ip);
