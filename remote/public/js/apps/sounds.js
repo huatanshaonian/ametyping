@@ -16,7 +16,7 @@ export function open() {
   all.addEventListener('change', () => sound.setMuted(all.checked));
   const off = sound.onChange(sync);
   const content = h('div', { class: 'sounds' },
-    h('label', {}, all, h('span', { text: '全部静音（任务栏右下角的喇叭也能切换）' })),
+    h('label', {}, all, h('span', { text: '全部静音（音量在任务栏右下角的喇叭里调）' })),
     ...rows,
     h('p', { class: 'notice', style: 'padding:8px 0 0;font-size:12px;opacity:.7', text: '设置只保存在这个浏览器里。浏览器要求页面先被点过一次才能出声，所以启动音可能在第一次点击时才响。' }));
   wm.open({ id: 'sounds', title: '声音', icon: icon('mixer_sound', true), content, width: 420, height: 380, onClose: off });

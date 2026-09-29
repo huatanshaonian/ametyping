@@ -12,6 +12,7 @@ import * as explorer from './apps/explorer.js';
 import * as sounds from './apps/sounds.js';
 import * as sound from './sound.js';
 import './alerts.js';
+import './volume.js';
 
 let current = prefs.get('machine', null);          // the computer whose desktop is shown
 
@@ -44,14 +45,6 @@ async function logout() {
   await Promise.race([sound.play('shutdown'), new Promise((r) => setTimeout(r, 4500))]);
   net.logout();
 }
-
-// tray speaker: click to mute / unmute
-const soundBtn = document.getElementById('soundbtn');
-soundBtn.addEventListener('click', () => sound.setMuted(!sound.muted()));
-sound.onChange(() => {
-  soundBtn.firstElementChild.src = icon(sound.muted() ? 'loudspeaker_muted' : 'loudspeaker_rays', true);
-  soundBtn.title = sound.muted() ? '声音已关闭（点击打开）' : '声音（点击静音）';
-});
 
 function selectMachine(name) {
   current = name; prefs.set('machine', name);
