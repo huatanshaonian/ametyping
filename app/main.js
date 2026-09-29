@@ -10,7 +10,7 @@ const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
 
-const VX = 190, ART_W = 1060, ART_H = 1080;  // visible slice of the art space (see renderer.js)
+const VX = 190, ART_W = 1060, ART_H = 1190;  // visible slice of the art space (see renderer.js)
 const SCALES = { 小: 0.28, 中: 0.36, 大: 0.46 };
 
 let win, tray;
@@ -23,11 +23,11 @@ const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 // dashboardUrl: the Windose web desktop, opened by double-clicking Ame or from the tray
 // petSound: the panel's chime when a session needs you / finishes (off when the Windose page does the sounds)
 // remoteControl: the dashboard may reply / answer permission cards through this pet (remote/agent needs "control": true too)
-let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org', petSound: true };
+let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org', petSound: true, kangel: false };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
-const save = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
+const save = () => { if (process.env.AME_DEMO_PANEL || process.env.AME_DEMO_PCHAN) return; try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
-const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo' });
+const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo', breakNag: settings.breakNag !== false, kangel: !!settings.kangel });
 
 function winSize() {
   return { width: Math.round(ART_W * settings.scale), height: Math.round(ART_H * settings.scale) };
@@ -57,6 +57,7 @@ function createWindow() {
   });
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('config', cfg());
+    sendPanel();
   });
   win.on('move', () => placeBubble());
   win.on('resize', () => placeBubble());
@@ -96,7 +97,7 @@ function buildMenu() {
     { label: '键盘朝向', submenu: [['her', '朝她（真实对坐）'], ['you', '朝你（布局和你的键盘一样）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.facing === v,
       click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
-    { label: '打开 Claude / Codex 面板', click: () => { if (sessions.size || chatMode()) { pushBubble(null); placeBubble(); bubbleWin.showInactive(); } } },
+    { label: '打开 Claude / Codex 面板', click: () => expandPanel() },
     { label: '打开 Windose 看板（双击糖糖）', click: openDashboard },
     { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）'], ['off', '关闭（不弹出面板）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.panelMode === v, click: () => setPanelMode(v) })) },
@@ -109,6 +110,11 @@ function buildMenu() {
       click: (m) => { settings.petSound = m.checked; save(); pushBubble(null); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
+    { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
+      click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
+    { label: '天使模式（常驻）', type: 'checkbox', checked: !!settings.kangel,
+      enabled: fs.existsSync(path.join(__dirname, 'assets', 'rig', 'kangel', 'kangel.js')),   // only when the art is installed
+      click: (m) => { settings.kangel = m.checked; save(); win.webContents.send('config', cfg()); } },
     { label: '调试信息', type: 'checkbox', checked: settings.debug,
       click: (m) => { settings.debug = m.checked; save(); win.webContents.send('config', cfg()); } },
     { label: '开机自动启动', type: 'checkbox', checked: app.getLoginItemSettings({ path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath }).openAtLogin,
@@ -134,7 +140,7 @@ app.whenReady().then(() => {
   buildMenu();
   if (chatMode()) {
     bridge.start();                          // warm up: the first hook event needs the process lookup fast
-    bubbleWin.webContents.once('did-finish-load', () => { pushBubble(null); placeBubble(); bubbleWin.showInactive(); });
+    bubbleWin.webContents.once('did-finish-load', () => { pushBubble(null); placeBubble(); if (!bubCollapsed) bubbleWin.showInactive(); });   // collapsed: P-chan stands in
   }
 
   if (process.env.AME_DEMO) return runDemo(process.env.AME_DEMO);
@@ -154,6 +160,47 @@ function runDemo(outDir) {
   win.webContents.once('did-finish-load', async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(800);
+    if (process.env.AME_DEMO_PANEL) {        // Claude panel: fake sessions, expanded / collapsed (via real clicks) / expanded -> panel_<n>.png (settings are not saved)
+      const shot = async (n) => { await wait(500); fs.writeFileSync(path.join(outDir, `panel_${n}.png`), (await bubbleWin.webContents.capturePage()).toPNG()); console.log(n, JSON.stringify(bubbleWin.getBounds())); };
+      const rect = (id) => bubbleWin.webContents.executeJavaScript(`(() => { const r = document.getElementById('${id}').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
+      const click = async ([x, y], n = 1) => { for (let i = 0; i < n; i++) { for (const type of ['mouseDown', 'mouseUp']) bubbleWin.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: i + 1 }); await wait(120); } };
+      setCollapsed(false);
+      const ev = (session, project, type, text) => onClaudeEvent(type, { session, project, text });
+      ev('a', 'ame-typing', 'message', '给进度面板加折叠按钮'); ev('a', 'ame-typing', 'reading', '读 main.js'); ev('a', 'ame-typing', 'thinking', '想想 placeBubble 怎么改');
+      ev('b', 'medstat', 'message', '跑 Table 1'); ev('b', 'medstat', 'waiting', '要不要覆盖旧结果？');
+      await shot('1_expanded');
+      await click(await rect('fold')); await shot('2_collapsed_by_button');
+      ev('a', 'ame-typing', 'reading', '读 bubble.js'); await shot('3_collapsed_new_activity');
+      await click(await rect('fold')); await shot('4_expanded_by_button');
+      await click(await rect('who'), 2); await shot('5_collapsed_by_dblclick');
+      await click(await rect('who'), 2); await shot('6_expanded_by_dblclick');
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_PCHAN) {        // P-chan: sleep / idle / alert (+badge) / hover / click -> panel expands -> pchan_<n>.png (settings are not saved)
+      const js = (s) => win.webContents.executeJavaScript(s);
+      const shot = async (n, w = win) => { await wait(450); fs.writeFileSync(path.join(outDir, `pchan_${n}.png`), (await w.webContents.capturePage()).toPNG()); console.log(n, JSON.stringify(bubbleWin.getBounds()), bubbleWin.isVisible()); };
+      const ev = (session, project, type, text) => onClaudeEvent(type, { session, project, text });
+      await js('window.__noPersist = true; window.__fakeHour = 14; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12; pch.blinkAt = 1e12;');
+      setScale(0.7, false); win.setPosition(20, 20); await wait(600);
+      setCollapsed(true); await shot('1_sleep');
+      ev('a', 'ame-typing', 'message', 'demo one'); ev('a', 'ame-typing', 'reading', 'demo two');
+      await wait(300); bubbleWin.webContents.send('bubble-collapsed', false); await wait(300); bubbleWin.webContents.send('bubble-collapsed', true); await wait(300);   // the panel has "looked" at session a
+      await shot('2_idle');
+      await js('pch.blinkAt = 1e12; pch.blinkUntil = now() + 3000;'); await wait(60); await shot('2b_blink');
+      await js('pch.blinkAt = 1e12; pch.blinkUntil = 0;');
+      ev('b', 'medstat', 'message', 'Table 1'); ev('b', 'medstat', 'waiting', 'overwrite?'); ev('a', 'ame-typing', 'thinking', 'more');
+      await wait(400);
+      for (const i of [0, 1, 2]) { await shot(`3_alert_${i}`); await wait(330); }
+      const c = await js('(() => { const r = pchRect(); return [Math.round((r.x + r.w / 2 - VX) * scale), Math.round((r.y + r.h * 0.6) * scale), pchState(), panel.unread, panel.n]; })()');
+      console.log('pchan click point', c);
+      const mv = (x, y) => win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+      mv(c[0], c[1]); await wait(150); mv(c[0] + 1, c[1]); await wait(400); await shot('4_hover');
+      for (const type of ['mouseDown', 'mouseUp']) { win.webContents.sendInputEvent({ type, x: c[0], y: c[1], button: 'left', clickCount: 1 }); await wait(100); }
+      await wait(600);
+      console.log('after click: collapsed', bubCollapsed, 'visible', bubbleWin.isVisible());
+      await shot('5_expanded'); await shot('5_expanded_panel', bubbleWin);
+      return app.quit();
+    }
     if (process.env.AME_DEMO_DRAG) {         // drag self-test: start a drag, log cursor-vs-window offset while an outside script moves the cursor
       ipcMain.emit('gesture', null, 'drag-start');
       const log = [];
@@ -177,6 +224,104 @@ function runDemo(outDir) {
         fs.writeFileSync(path.join(outDir, `kb_${f}.png`), img.toPNG());
       }
       settings.facing = 'her'; settings.scale = 0.36; save();
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_POP) {          // face-change pop: force a face sequence, capture frames right around every change -> pop_<n>_<face>_<i>.png
+      const js = (s) => win.webContents.executeJavaScript(s), nl = String.fromCharCode(10), log = [];
+      await js('window.__noPersist = true; window.__fakeHour = 14; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12;');
+      await wait(700);
+      const seq = ['surprised', 'happy', 'teary', 'angry', 'sparkle', 'half', 'neutral', 'BLINK', 'happy', 'sleep', 'neutral'];
+      const t0 = Date.now();
+      for (let n = 0; n < seq.length; n++) {
+        const f = seq[n];
+        await js('window.__popU = -1;'); const pre = await win.webContents.capturePage(); fs.writeFileSync(path.join(outDir, `pop_${n}_${f}_pre.png`), pre.toPNG());
+        if (f === 'BLINK') await js('mood.blinkAt = 0;');
+        else if (f === 'sleep') await js('mood.tempUntil = 0; mood.lastKeyT = performance.now() - 300000; mood.blinkAt = 1e12;');
+        else if (f === 'neutral') await js('mood.tempUntil = 0; mood.sleeping = false; mood.lastKeyT = performance.now(); mood.blinkAt = 1e12;');
+        else await js(`mood.lastKeyT = performance.now(); setTemp('${f}', 60000); mood.blinkAt = 1e12;`);
+        await wait(60);                        // frame the pop with the renderer's clock frozen at fixed phases u = i / 15 (capturePage is too slow for real time)
+        for (let i = 0; i < 16; i++) {
+          await js(`window.__popU = ${i / 15}`); await wait(110);
+          const img = await win.webContents.capturePage();
+          log.push(`${n} ${f} ${i} u=${(i / 15).toFixed(2)} ` + await js('[mood.face, mood.open, Math.round(facePop.t0)].join(" ")'));
+          fs.writeFileSync(path.join(outDir, `pop_${n}_${f}_${String(i).padStart(2, '0')}.png`), img.toPNG());
+        }
+        await js('window.__popU = undefined;');
+        if (f === 'BLINK') await js('mood.blinkAt = 1e12;');
+        await wait(600);
+      }
+      fs.writeFileSync(path.join(outDir, 'pop_log.txt'), log.join(nl));
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_PAT) {          // stroke her head with a fake cursor, then a happy wiggle + a carry swing
+      await win.webContents.executeJavaScript('mood.lastKeyT -= 10000; mood.blinkAt = 1e12; mouseFrozen = true;');
+      for (let f = 0; f < 40; f++) {
+        const x = 724 + Math.sin(f * 0.9) * 120;
+        if (f < 26) await win.webContents.executeJavaScript(`mouse.x = ${x}; mouse.y = 250; mouse.seen = true; detectPat({ x: ${x}, y: 250 });`);
+        else if (f === 26) await win.webContents.executeJavaScript('carry.vx = 380; carry.vy = -150;');
+        const img = await win.webContents.capturePage();
+        fs.writeFileSync(path.join(outDir, `p_${String(f).padStart(2, '0')}.png`), img.toPNG());
+        await wait(50);
+      }
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_KANGEL_FACES) { // every face in KAngel form -> k_face_<k>.png
+      const js = (s) => win.webContents.executeJavaScript(s);
+      await js('window.__noPersist = true; window.__fakeHour = 14; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12;');
+      await js('KA.ready && setKForm(true, 0, true)'); await wait(800);
+      for (const f of 'blink,half,focus,happy,annoyed,surprised,yandere,sleep,wink,smug,pout,teary,blush,angry,sparkle,dizzy,deadpan,sweat,yawn,sip,stretch'.split(',')) {
+        await js(`mood.sleeping = false; mood.lastKeyT = performance.now(); setTemp('${f}', 60000); mood.blinkAt = 1e12;`); await wait(700);
+        fs.writeFileSync(path.join(outDir, `k_face_${f}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_KANGEL) {       // KAngel form: typed trigger, flash frames, faces + fallback, back, timed expiry, tray lock
+      const js = (s) => win.webContents.executeJavaScript(s);
+      const shot = async (name) => fs.writeFileSync(path.join(outDir, `k_${name}.png`), (await win.webContents.capturePage()).toPNG());
+      const log = [], nl = String.fromCharCode(10);
+      const st = () => js("[KA.ready, KA.on, mood.face, Math.round(now() - KA.flashT), !!RIG.gaze, !!RIG.frontHair, Object.keys(RIG.faces).length].join(' ')");
+      const typeWord = async () => { for (const c of [37, 30, 49, 34, 18, 38]) { send(c, true); await wait(40); send(c, false); await wait(60); } };
+      const flash = async (tag, n) => { for (let i = 0; i < n; i++) { await shot(`${tag}_${String(i).padStart(2, '0')}`); log.push(`${tag} ${i} ${await st()}`); await wait(25); } };
+      await js('window.__noPersist = true; window.__fakeHour = 14; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12; window.__id0 = [img.head, img.torso, img.tailL, RIG.faces, RIG.gaze, RIG.frontHair, RIG.faceTop];');
+      await wait(400); await shot('a_before'); log.push('before ' + await st());
+      await typeWord(); await flash('b_flash', 14);
+      await wait(1900); await shot('c_kangel'); log.push('settled ' + await st());
+      for (const f of ['blink', 'happy', 'wink', 'surprised', 'annoyed', 'sleep', 'dizzy', 'sparkle', 'half']) {
+        await js(`setTemp('${f}', 60000); mood.blinkAt = 1e12;`); await wait(250); await shot(`d_face_${f}`);
+      }
+      await js('mood.tempUntil = 0; mood.lastKeyT = performance.now();');
+      await typeWord(); await flash('e_back', 10);
+      await wait(1900); await shot('f_ame_after'); log.push('back ' + await st());
+      log.push('ame identity ' + await js('[img.head, img.torso, img.tailL, RIG.faces, RIG.gaze, RIG.frontHair, RIG.faceTop].every((v, i) => v === window.__id0[i])'));
+      await typeWord(); await wait(1500); log.push('typed again ' + await st());
+      await js('KA.until = performance.now() + 200;'); await wait(1900); log.push('after timed expiry ' + await st()); await shot('g_expired');
+      settings.kangel = true; win.webContents.send('config', cfg()); await wait(1500); log.push('lock on ' + await st());
+      await typeWord(); await wait(1200); log.push('lock + typed ' + await st());
+      settings.kangel = false; win.webContents.send('config', cfg()); await wait(1500); log.push('lock off ' + await st());
+      fs.writeFileSync(path.join(outDir, 'k_log.txt'), log.join(nl));
+      return app.quit();
+    }
+    if (process.env.AME_DEMO_TIME) {         // time-of-day / wellbeing: fake clock hour, work-session length, long absence
+      const js = (s) => win.webContents.executeJavaScript(s);
+      const shot = async (name) => fs.writeFileSync(path.join(outDir, `t_${name}.png`), (await win.webContents.capturePage()).toPNG());
+      await js('window.__noPersist = true; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12;');
+      await js('window.__fakeHour = 14; mood.lastKeyT = performance.now() - 10000;');   // control: daytime, 10 s idle
+      await wait(500); await shot('day_idle');
+      await js('window.__fakeHour = 1; mood.lastKeyT = performance.now() - 10000;');    // 01:00, idle > 5 s -> sleepy
+      await wait(500); await shot('late_idle');
+      await js('window.__fakeHour = 3; mood.lastKeyT = performance.now() - 10000;');    // 03:00 keeps the yandere face
+      await wait(500); await shot('late3_idle');
+      await js('window.__fakeHour = 1; mood.lastKeyT = performance.now() - 100000;');   // 01:00, idle 100 s -> asleep (90 s rule)
+      await wait(500); await shot('late_sleep');
+      await js('window.__fakeHour = undefined; mood.lastKeyT = performance.now(); mood.sleeping = false; mood.tempUntil = 0;');
+      for (let i = 0; i < 6; i++) {            // every nag line: bubble layout check
+        await js(`fakeSession(95); work.nextNag = 1e15; showNag(NAG_LINES[${i}]); nag.t0 = performance.now() - 300; mood.lastKeyT = performance.now();`);
+        await wait(120); await shot(`nag_${i}`);
+      }
+      await js('mood.tempUntil = 0; nag.t0 = -1e9; fakeSession(89.9); work.nextNag = performance.now() + 500;');   // real trigger path
+      await wait(1000); await shot('nag_auto');
+      await js('nag.t0 = -1e9; mood.tempUntil = 0; mood.lastKeyT = performance.now() - 5000; lastActiveWall = Date.now() - 5 * 3600e3;');
+      send(33, true); await wait(1000); await shot('welcome'); send(33, false);
       return app.quit();
     }
     if (process.env.AME_DEMO_ACT) {          // record one idle action frame by frame
@@ -218,7 +363,7 @@ function runDemo(outDir) {
       const log = [];
       while (Date.now() < until) {
         log.push(await win.webContents.executeJavaScript(
-          "[Math.round(handCenter('L')), Math.round(handCenter('R')), hands.L.state, hands.R.state, lastKey || '-', mood.face].join(' ')"));
+          "[Math.round(handCenter('L')), Math.round(handCenter('R')), hands.L.state, hands.R.state, lastKey || '-', mood.face, Math.round(fhair.x)].join(' ')"));
         const img = await win.webContents.capturePage();
         fs.writeFileSync(path.join(outDir, `f_${String(f++).padStart(3, '0')}.png`), img.toPNG());
         await wait(45);
@@ -250,13 +395,16 @@ const sizeKeys = () => (chatMode() ? ['chatW', 'chatH', 680, 460] : ['panelW', '
 let bubW, bubH;
 function loadPanelSize() { const [kw, kh, dw, dh] = sizeKeys(); bubW = settings[kw] || dw; bubH = settings[kh] || dh; }
 loadPanelSize();
+const COLLAPSED_H = 42;                                          // collapsed: just the title bar (bubH keeps the saved full height)
+let bubCollapsed = !!settings.panelCollapsed;
+const curH = () => (bubCollapsed ? COLLAPSED_H : bubH);
 let bubbleWin = null;
 function setPanelMode(v) {
   settings.panelMode = v; save(); buildMenu();
   loadPanelSize();
   if (chatMode()) bridge.start();
   pushBubble(null);
-  if (chatMode()) { placeBubble(); bubbleWin.showInactive(); }
+  if (chatMode()) { setCollapsed(false); placeBubble(); bubbleWin.showInactive(); }
   else if (v === 'off') hideBubble();
   else if (bubbleWin.isVisible()) placeBubble();
 }
@@ -268,7 +416,7 @@ function openDashboard() {
 ipcMain.on('open-dashboard', (e) => { if (win && e.sender === win.webContents) openDashboard(); });
 function createBubble() {
   bubbleWin = new BrowserWindow({
-    width: bubW, height: bubH, transparent: true, frame: false, resizable: false, thickFrame: false,
+    width: bubW, height: curH(), transparent: true, frame: false, resizable: false, thickFrame: false,
     hasShadow: false, skipTaskbar: true, alwaysOnTop: true, show: false,
     // focusable (a focusable:false window on Windows stops getting mouse input after a click or two);
     // it is only ever shown with showInactive(), so it never steals focus unless you click it
@@ -278,6 +426,7 @@ function createBubble() {
   bubbleWin.loadFile('bubble.html');
   bubbleWin.webContents.on('did-finish-load', () => pushBubble(null));
   bubbleWin.on('focus', keepAmeOnTop);     // clicking the panel must not lift it above Ame
+  bubbleWin.webContents.on('did-finish-load', () => bubbleWin.webContents.send('bubble-collapsed', bubCollapsed));
   bubbleWin.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level < 1) return;
     try { fs.appendFileSync(path.join(app.getPath('userData'), 'renderer.log'), `${new Date().toISOString()} [panel] ${message} (${path.basename(source || '')}:${line})` + String.fromCharCode(10)); } catch {}
@@ -285,13 +434,38 @@ function createBubble() {
 }
 function hideBubble() { if (bubbleWin && bubbleWin.isVisible()) bubbleWin.hide(); }
 ipcMain.on('bubble-close', () => hideBubble());
+// "−" button / title double-click: fold the panel to its title bar (top-left stays put); remembered across restarts
+function setCollapsed(v) {
+  v = !!v;
+  if (v === bubCollapsed) return;
+  bubCollapsed = v; settings.panelCollapsed = v; save();
+  placeBubble();
+  if (bubbleWin) bubbleWin.webContents.send('bubble-collapsed', v);
+  if (v) hideBubble();                                           // collapsed = the window is gone, P-chan (in Ame's window) stands in for it
+  sendPanel();
+}
+ipcMain.on('bubble-collapse', (_e, v) => setCollapsed(v));
+// expand + show the panel (tray item, P-chan click); with no sessions there is nothing to show (except the chat panel)
+function expandPanel() {
+  if ((!sessions.size && !chatMode()) || !bubbleWin) return;
+  setCollapsed(false); pushBubble(null); placeBubble(); bubbleWin.showInactive(); keepAmeOnTop();
+}
+ipcMain.on('panel-expand', () => expandPanel());
+// P-chan (drawn by Ame's renderer while the panel is collapsed) mirrors the panel: unread count comes from the panel page
+let panelUnread = 0;
+ipcMain.on('bubble-unread', (_e, n) => { panelUnread = n | 0; sendPanel(); });
+function sendPanel() {
+  if (!win || win.isDestroyed()) return;
+  const all = [...sessions.values()];
+  win.webContents.send('panel', { collapsed: bubCollapsed, unread: all.length ? panelUnread : 0, waiting: all.some((s) => s.state === 'waiting'), n: all.length });
+}
 // The panel hangs under Ame. Horizontally it can slide on its own (settings.panelDX = offset of its centre
 // from Ame's centre), but never further than edge-to-edge: its right edge can reach Ame's left edge and
 // its left edge can reach Ame's right edge. Pulling past that drags Ame along. Vertically the same idea
 // (settings.panelDY = offset of its top from the "hanging just under the keyboard" spot): it can slide up
 // behind Ame until its bottom edge meets hers, and hangs no lower than just under the keyboard.
 const maxPanelDX = (b) => bubW / 2 + b.width / 2;
-const minPanelDY = () => 6 - bubH;
+const minPanelDY = () => 6 - curH();
 const clampDY = (dy) => Math.max(minPanelDY(), Math.min(0, dy || 0));
 function placeBubble() {
   if (!bubbleWin || !win || win.isDestroyed()) return;
@@ -302,12 +476,12 @@ function placeBubble() {
   const hang = b.y + b.height - 6;                              // just under the keyboard
   let x = Math.round(b.x + b.width / 2 - bubW / 2 + settings.panelDX);
   let y = hang + settings.panelDY;
-  if (y + bubH > wa.y + wa.height) y = wa.y + wa.height - bubH;  // no room: overlap Ame like a VN textbox
+  if (y + curH() > wa.y + wa.height) y = wa.y + wa.height - curH();  // no room: overlap Ame like a VN textbox
   x = Math.max(wa.x, Math.min(wa.x + wa.width - bubW, x));
   y = Math.max(wa.y, y);
   settings.panelDX = x + bubW / 2 - (b.x + b.width / 2);         // store where it really is (screen edge may push it)
   settings.panelDY = clampDY(y - hang);
-  bubbleWin.setBounds({ x, y: Math.round(y), width: bubW, height: bubH });
+  bubbleWin.setBounds({ x, y: Math.round(y), width: bubW, height: curH() });
   keepAmeOnTop();
 }
 // Ame's window always stays above the panel
@@ -391,11 +565,12 @@ function pushBubble(changedId) {
     id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last,
     provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id),
   }));
+  sendPanel();
   if (!list.length && !chatMode()) { hideBubble(); return; }
   bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode, sound: settings.petSound !== false });
-  if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off)
+  if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off; collapsed: only P-chan reacts)
     placeBubble();
-    if (!bubbleWin.isVisible()) bubbleWin.showInactive();
+    if (!bubCollapsed && !bubbleWin.isVisible()) bubbleWin.showInactive();
     keepAmeOnTop();
   }
   // popup mode: auto-hide once nothing is working or waiting (unless the mouse is on the panel)

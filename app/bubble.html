@@ -18,9 +18,16 @@
     gap: 8px; color: var(--blue); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: grab; }
   #who { flex: 1; overflow: hidden; text-overflow: ellipsis; }
   #meta { color: rgba(77, 35, 207, .6); }
-  #close { width: 16px; height: 16px; line-height: 14px; text-align: center; border: 1px solid var(--blue);
-    background: var(--pink); cursor: pointer; font-size: 12px; }
-  #close:hover { background: #fff; }
+  #close, #fold { width: 16px; height: 16px; line-height: 14px; text-align: center; border: 1px solid var(--blue);
+    background: var(--pink); cursor: pointer; font-size: 12px; flex: none; }
+  #close:hover, #fold:hover { background: #fff; }
+  /* collapsed: only the title bar (window is 42px tall); the unread badge is a red square + count */
+  #ub { display: none; align-items: center; gap: 4px; color: rgb(235, 40, 80); flex: none; }
+  #ub i { width: 7px; height: 7px; background: rgb(235, 40, 80); box-shadow: 0 0 0 1px #fff; }
+  body.collapsed #ub.on { display: flex; }
+  body.collapsed #wrap, body.collapsed #grip { display: none; }
+  body.collapsed #box { border-width: 42px 12px 0 12px; border-image-slice: 42 12 0 12 fill; }   /* top 42 rows of the frame = bar + closing line */
+  body.collapsed #title { top: -33px; }
   #wrap { display: flex; height: 100%; }
   #right { position: relative; }
   #list { width: 150px; flex: none; overflow-y: auto; border-right: 2px solid var(--blue); background: rgba(240, 209, 241, .35); }
@@ -100,7 +107,7 @@
 </head>
 <body>
 <div id="box">
-  <div id="title"><span id="who">Claude / Codex</span><span id="meta"></span><span id="close" title="收起">×</span></div>
+  <div id="title"><span id="who">Claude / Codex</span><span id="meta"></span><span id="ub"><i></i><b id="ubn"></b></span><span id="fold" title="折叠">&minus;</span><span id="close" title="收起">×</span></div>
   <div id="grip" title="拖动调整大小"></div>
   <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div>
     <div id="permissions" aria-live="polite"></div>

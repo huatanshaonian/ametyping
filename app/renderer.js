@@ -5,7 +5,7 @@ window.addEventListener('error', (e) => console.error('uncaught: ' + e.message +
 'use strict';
 
 // the window only shows the part of the scene she can ever occupy (tails swing, wave, zzz): x 190..1250
-const VX = 190, ART_W = 1060, ART_H = 1080;
+const VX = 190, ART_W = 1060, ART_H = 1190;   // keyboard on her lap: the knees and stockings show below it
 const DESK_Y = 803;                         // where the body is cut; kept hidden behind the keyboard
 const CS = 0.851, OX = 262, OY = -14;       // rig -> scene
 let HS = 0.95;                              // floating-hand sprite scale (overridden by rig.floatScale)
@@ -43,75 +43,276 @@ let topHand = 'R';                          // most recently active hand is draw
 const body = { x: 0, rot: 0, vx: 0, dip: 0, dipV: 0 };
 const head = { rot: 0, dy: 0, nodUntil: 0, vrot: 0 };
 const tails = { L: { a: 0, v: 0 }, R: { a: 0, v: 0 } };
+const fhair = { x: 0, v: 0 };             // front hair (bangs + side locks): sideways sway of the tips, rig px
 const mouse = { x: 724, y: 300, seen: false };   // cursor in art space (from the main process)
 const fx = [];                              // transient effects {type, x, y, t0}
+const lower = {                             // lower body: last happy / shy wiggle + one spring set per leg
+  wigT: -1e9, kickT: -1e9,                  // a = swing angle, q = squash (w / z / wq / zq = tuning, a bit different per leg)
+  L: { a: 0, v: 0, q: 0, qv: 0, w: 12, z: 0.45, wq: 15, zq: 0.45 },
+  R: { a: 0, v: 0, q: 0, qv: 0, w: 10.5, z: 0.5, wq: 13, zq: 0.5 },
+};
+const pat = { on: false, last: 0, dir: 0, px: null, revs: [], heartAt: 0, hearts: [] };   // stroking her head
 const pressTimes = [];
 
 // ---------- expressions (design: PLAN.md) ----------
 // face = which expression patch sits on the head; temp faces override the base one for a while
 const FACES = ['blink', 'half', 'focus', 'happy', 'annoyed', 'surprised', 'yandere', 'sleep'];
 const mood = {
-  face: 'neutral', prev: 'neutral', fadeT: 0, temp: null, tempUntil: 0,
+  face: 'neutral', prev: 'neutral', open: 'neutral', fadeT: 0, temp: null, tempUntil: 0,
   lastKeyT: performance.now(), sleeping: false, bksp: [], undo: [],
   blinkAt: performance.now() + 2500, blinkUntil: 0, doubleBlink: false,
 };
-function setTemp(face, ms) { mood.temp = face; mood.tempUntil = performance.now() + ms; }
+// how "strong" a face is: a new temp face may only cut short a running one of the same or lower strength
+const FACE_PRI = { sleep: 6, yandere: 5, angry: 5, teary: 5, surprised: 4, dizzy: 4, annoyed: 3, sweat: 3, deadpan: 3,
+  happy: 2, wink: 2, smug: 2, sparkle: 2, blush: 2, yawn: 2, sip: 2, stretch: 2, pout: 2, focus: 1, half: 1, neutral: 0, blink: 0 };
+const facePri = (f) => FACE_PRI[f] ?? 1;
+const TEMP_MIN = 1600;
+const FACE_ZH = { neutral: '普通', blink: '眨眼', half: '困倦', focus: '专注', happy: '开心', annoyed: '烦躁', surprised: '惊讶', yandere: '黑化', sleep: '睡着',
+  wink: '眨一只眼', smug: '得意', pout: '嘟嘴', teary: '含泪', blush: '害羞', angry: '生气', sparkle: '星星眼', dizzy: '眩晕', deadpan: '面无表情', sweat: '冒汗', yawn: '打哈欠', sip: '喝茶', stretch: '伸懒腰' };                                   // a temp face stays at least this long
+function setTemp(face, ms, why) {
+  const t = performance.now();
+  if (t < mood.tempUntil && mood.temp !== face && facePri(face) < facePri(mood.temp)) return;   // weaker: ignore
+  if (['happy', 'sparkle', 'blush'].includes(face) && mood.temp !== face) lower.wigT = t;
+  mood.temp = face; mood.tempUntil = t + Math.max(ms, TEMP_MIN); mood.tempWhy = why || face;
+}
 function recent(arr, t, win) { while (arr.length && t - arr[0] > win) arr.shift(); return arr.length; }
 
 // temp face only if its art exists (the second expression batch may not be installed yet)
-const hasFace = (f) => f === 'neutral' || !!(RIG && RIG.faces && RIG.faces[f]);
-function tryTemp(face, ms, fallback) {
-  if (hasFace(face)) setTemp(face, ms); else if (fallback) setTemp(fallback, ms);
+const hasFace = (f) => f === 'neutral' || !!(RIG && RIG.faces && RIG.faces[f]) || (KA.on && f in K_FACE);
+function tryTemp(face, ms, fallback, why) {
+  if (hasFace(face)) setTemp(face, ms, why); else if (fallback) setTemp(fallback, ms, why);
+}
+
+// ---------- KAngel form (easter egg): her streamer alter ego ----------
+// A pure data swap: while the form is on, img[head|tailL|tailR|torso|face_*] and RIG.faces / gaze / frontHair / faceTop
+// point at the KAngel art, so no draw call knows about it (drawRig('torso') just draws her torso). Faces she lacks map
+// to the nearest one she has (K_FACE). Triggers: type K A N G E L within 3 s (toggles; a typed switch lasts 3 min),
+// tray "天使模式（常驻）" (lock). The change: white flash that peaks at the swap, sparkle burst, surprised -> happy.
+// Art: assets/rig/kangel/ (kangel.js = KANGEL_DATA.faces boxes); if it is missing the form is simply unavailable.
+const KA = { ready: false, on: false, lock: false, until: 0, pending: null, fxTo: false, flashT: -1e9, swapT: -1e9, id: 0, seq: [], parts: [], img: {}, faces: null, ame: null };
+const K_FX = { swap: 300, flash: 800, sparks: 700, hold: 180000 };
+const K_WORD = [37, 30, 49, 34, 18, 38];                       // K A N G E L (uiohook keycodes)
+const K_IGNORE = new Set([42, 54, 29, 3613, 56, 3640, 3675, 3676, 58]);   // shift ctrl alt win caps: never break the word
+const K_FACE = {                                               // her missing faces -> nearest she has ('neutral' = no patch)
+  sparkle: 'happy', smug: 'happy', blush: 'happy', stretch: 'happy',
+  sleep: 'blink', yawn: 'blink', sip: 'blink',
+  dizzy: 'surprised', sweat: 'surprised',
+  half: 'neutral', focus: 'neutral', annoyed: 'neutral', angry: 'neutral', pout: 'neutral', deadpan: 'neutral', teary: 'neutral', yandere: 'neutral',
+};
+const kFace = (n) => (KA.on && !(RIG.faces && RIG.faces[n]) ? K_FACE[n] || 'neutral' : n);
+async function loadKangel() {
+  const D = window.KANGEL_DATA;
+  if (!D || !D.faces) return;
+  const load = (n) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = `assets/rig/kangel/${n}.png`; });
+  const parts = ['head', 'tailL', 'tailR', 'torso'], fn = Object.keys(D.faces);
+  const got = await Promise.all([...parts, ...fn.map((f) => 'face_' + f)].map(load));
+  if (parts.some((_, i) => !got[i])) return;                   // incomplete body art: the form stays unavailable
+  parts.forEach((n, i) => { KA.img[n] = got[i]; });
+  KA.faces = {};
+  fn.forEach((f, i) => { const im = got[parts.length + i]; if (im) { KA.img['face_' + f] = im; KA.faces[f] = D.faces[f]; } });
+  KA.gaze = null;                                              // eye directions (optional art)
+  if (D.gaze) {
+    const gd = Object.keys(D.gaze), gi = await Promise.all(gd.map((d) => load('gaze_' + d)));
+    if (gi.every(Boolean)) { KA.gaze = {}; gd.forEach((d, i) => { KA.img['gaze_' + d] = gi[i]; KA.gaze[d] = D.gaze[d]; }); }
+  }
+  KA.ready = true;
+}
+function swapKForm(on) {
+  if (!KA.ready || on === KA.on) return;
+  if (on) {
+    KA.ame = { img: {}, faces: RIG.faces, gaze: RIG.gaze, frontHair: RIG.frontHair, faceTop: RIG.faceTop };
+    for (const n in KA.img) { KA.ame.img[n] = img[n]; img[n] = KA.img[n]; }
+    Object.assign(RIG, { faces: KA.faces, gaze: KA.gaze, frontHair: null, faceTop: [] });
+    KA.on = true;
+  } else {
+    for (const n in KA.ame.img) { if (KA.ame.img[n]) img[n] = KA.ame.img[n]; else delete img[n]; }
+    Object.assign(RIG, { faces: KA.ame.faces, gaze: KA.ame.gaze, frontHair: KA.ame.frontHair, faceTop: KA.ame.faceTop });
+    KA.on = false;
+    if (boneTails()) { initTail('L'); initTail('R'); }         // the bone tails slept while she was KAngel: restart them at rest
+  }
+  gazeDir = null;
+}
+// start the change (flash now, swap at the flash peak); ms = how long a timed form lasts (0 = until switched back)
+function setKForm(on, ms = 0, instant = false) {
+  if (!KA.ready) return;
+  KA.until = on && ms ? now() + ms : 0;
+  if (on === (KA.pending ? KA.pending.on : KA.on)) return;
+  if (instant) { KA.pending = null; swapKForm(on); return; }
+  const t = now();
+  KA.flashT = t; KA.fxTo = on; KA.pending = { on, at: t + K_FX.swap };
+}
+function kSwapNow(on) {
+  swapKForm(on);
+  const id = ++KA.id, pal = on ? ['#ffb3d1', '#a8d4ff', '#ffffff', '#ffd6e8'] : ['#ff8fb0', '#d9b3ff', '#ffffff', '#ffc2d6'];
+  KA.swapT = now();
+  KA.parts = Array.from({ length: 9 }, (_, i) => ({ a: (i + Math.random() * 0.5) / 9 * Math.PI * 2 - 0.3, r: 190 + Math.random() * 170, s: 30 + Math.random() * 26,
+    rot: Math.random(), spin: (Math.random() - 0.5) * 3, c: pal[i % pal.length] }));
+  mood.tempUntil = 0; setTemp('surprised', 700, '变身');
+  setTimeout(() => { if (KA.id === id) { mood.tempUntil = 0; setTemp('happy', 1500, '变身完成'); } }, 700);
+  tails.L.v += 2.4; tails.R.v -= 2.4; body.dipV += 30; head.nodUntil = now() + 200;
+  for (const s of ['L', 'R']) if (tailSim[s]) tailSim[s].forEach((p, i) => { if (i) { p.px -= (s === 'L' ? -9 : 9) * i / TAIL_N; p.py += 5 * i / TAIL_N; } });
+}
+function updateKForm(t) {
+  const p = KA.pending;
+  if (p && t >= p.at) { KA.pending = null; kSwapNow(p.on); }
+  else if (KA.on && !KA.lock && KA.until && t > KA.until && !p) setKForm(false);
+}
+// K-A-N-G-E-L in a row within 3 s (modifiers ignored, OS auto-repeat ignored); only keycodes are compared, nothing is kept
+function kFormOnKey(code, down) {
+  if (!down || !KA.ready || K_IGNORE.has(code)) return;
+  const t = now(), s = KA.seq;
+  if (s.length && s[s.length - 1].code === code) return;       // auto-repeat of a held key
+  s.push({ code, t }); if (s.length > K_WORD.length) s.shift();
+  if (s.length < K_WORD.length || t - s[0].t > 3000 || !s.every((x, i) => x.code === K_WORD[i])) return;
+  s.length = 0;
+  if (KA.lock) return;                                         // the tray lock wins
+  const cur = KA.pending ? KA.pending.on : KA.on;
+  setKForm(!cur, cur ? 0 : K_FX.hold);
+}
+function kStar(x, y, r, rot) {                                 // 4-point sparkle
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) { const a = rot + i * Math.PI / 4, d = i % 2 ? r * 0.28 : r; ctx[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * d, y + Math.sin(a) * d); }
+  ctx.closePath();
+}
+function drawKForm() {
+  const t = now(), e = t - KA.flashT, ps = t - KA.swapT;
+  const flash = e >= 0 && e < K_FX.flash, sparks = ps >= 0 && ps < K_FX.sparks;
+  if (!flash && !sparks) return;
+  const c = toScene([543, 440]); c.x += body.x;                 // middle of her head
+  const tint = KA.fxTo ? '170,210,255' : '255,170,205';
+  ctx.save();
+  if (flash) {
+    const a = e < K_FX.swap ? easeIO(e / K_FX.swap) : 1 - easeIO((e - K_FX.swap) / (K_FX.flash - K_FX.swap));
+    ctx.globalCompositeOperation = 'source-atop'; ctx.globalAlpha = a; ctx.fillStyle = '#fff';   // whites out only what is drawn (the window stays see-through)
+    ctx.fillRect(VX, 0, ART_W, ART_H);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    const g = ctx.createRadialGradient(c.x, c.y, 10, c.x, c.y, 540);   // soft glow around her
+    g.addColorStop(0, `rgba(255,255,255,${0.8 * a})`); g.addColorStop(0.45, `rgba(${tint},${0.4 * a})`); g.addColorStop(1, `rgba(${tint},0)`);
+    ctx.fillStyle = g; ctx.fillRect(c.x - 540, c.y - 540, 1080, 1080);
+  }
+  if (sparks) {
+    const p = ps / K_FX.sparks;
+    ctx.lineJoin = 'round'; ctx.lineWidth = 6; ctx.shadowColor = `rgba(${tint},.9)`; ctx.shadowBlur = 14;
+    for (const s of KA.parts) {
+      const r = s.r * (1 - (1 - p) * (1 - p)), sz = s.s * Math.min(1, p / 0.15) * (1 - 0.55 * p);
+      ctx.globalAlpha = Math.min(1, (1 - p) * 1.6);
+      kStar(c.x + Math.cos(s.a) * r, c.y + Math.sin(s.a) * r * 0.85 - p * 30, sz, s.rot + p * s.spin);
+      ctx.strokeStyle = '#fff'; ctx.stroke(); ctx.fillStyle = s.c; ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// ---------- time of day / wellbeing ----------
+// tests can fake the clock hour (window.__fakeHour) and the length of the work session (fakeSession(min))
+const curHour = () => (typeof window.__fakeHour === 'number' ? window.__fakeHour : new Date().getHours());
+const lateNight = () => curHour() < 5;      // 00:00-05:00: sleepier, yawns more, dozes off sooner
+const ACTIVE_KEY = 'ame.lastActive', AWAY_MS = 4 * 3600e3, ACTIVE_SAVE_MS = 30000;
+let lastActiveWall = 0, activeSavedAt = 0, nagOn = true;     // wall clock of the last key press (persisted across restarts)
+try { lastActiveWall = Number(localStorage.getItem(ACTIVE_KEY)) || 0; } catch {}
+function saveActive(force) {
+  const w = Date.now();
+  if (window.__noPersist || (!force && w - activeSavedAt < ACTIVE_SAVE_MS)) return;
+  activeSavedAt = w;
+  try { localStorage.setItem(ACTIVE_KEY, String(lastActiveWall)); } catch {}
+}
+window.addEventListener('beforeunload', () => saveActive(true));
+// break reminder: a work session starts with a key and ends after a 5 min pause; nag after 90 min, then every 20 min
+const NAG = { after: 90 * 60e3, gap: 5 * 60e3, every: 20 * 60e3, face: 4000, bubble: 6000, fade: 250 };
+const NAG_LINES = ['休息一下嘛……', '陪我喝杯茶好不好', '眼睛会累坏的啦', '已经打了好久了诶', '理理我嘛～', '站起来伸个懒腰吧'];
+const work = { start: 0, last: 0, nextNag: 0 };
+const nag = { text: '', t0: -1e9 };
+function fakeSession(min) {                 // self-test: pretend the current work session began `min` minutes ago
+  const t = now();
+  work.start = t - min * 60e3; work.last = t; work.nextNag = work.start + NAG.after;
+}
+function showNag(text) {
+  const t = now();
+  let line = text;
+  while (!line) { line = NAG_LINES[Math.floor(Math.random() * NAG_LINES.length)]; if (line === nag.text) line = ''; }
+  nag.text = line; nag.t0 = t;
+  tryTemp('pout', NAG.face, 'annoyed', '连续工作太久，劝你休息');
+}
+function updateNag(t) {
+  if (!nagOn || mood.sleeping || !work.start || t < work.nextNag) return;
+  if (t - work.last > 60000) return;         // she only nags while you are actually typing; a pause waits for the next key
+  work.nextNag = t + NAG.every;
+  showNag();
 }
 
 function moodOnKey(k, t) {
   const idle = t - mood.lastKeyT;
   mood.lastKeyT = t;
   mood.pouted = false;
-  if (mood.sleeping) { mood.sleeping = false; setTemp('surprised', 1400); setTimeout(() => wave('L', 1400), 500); }  // woken up
-  else if (idle > 20000) setTemp('surprised', 900);                               // sudden burst
+  const wall = Date.now(), away = lastActiveWall ? wall - lastActiveWall : 0;
+  lastActiveWall = wall; saveActive(false);
+  if (!work.start || t - work.last >= NAG.gap) { work.start = t; work.nextNag = t + NAG.after; }   // new work session
+  work.last = t;
+  if (away >= AWAY_MS) { mood.sleeping = false; mood.tempUntil = 0; setTemp('happy', 2000, '久别回来'); setTimeout(() => wave('L', 1600), 400); }   // welcome back
+  else if (mood.sleeping) { mood.sleeping = false; mood.tempUntil = 0; setTemp('surprised', 1400, '被吵醒'); setTimeout(() => wave('L', 1400), 500); }  // woken up
+  else if (idle > 20000) setTemp('surprised', 1600, '闲了很久突然打字');          // sudden burst
   const ctrl = byCode.get(29)?.down;
   // same key over and over -> deadpan
   mood.repeat = k.label === mood.lastLabel ? (mood.repeat || 1) + 1 : 1;
   mood.lastLabel = k.label;
-  if (mood.repeat >= 6 && !ctrl && k.label !== 'Bksp') tryTemp('deadpan', 2000);
+  if (mood.repeat >= 6 && !ctrl && k.label !== 'Bksp') tryTemp('deadpan', 2000, null, `同一个键连按 ${mood.repeat} 次`);
   // mashing: 4+ keys held at once -> dizzy
-  if (keys.filter((x) => x.down).length >= 4) tryTemp('dizzy', 1600);
+  if (keys.filter((x) => x.down).length >= 4) tryTemp('dizzy', 1800, null, '同时按住 4 个键');
   if (k.label === 'Bksp') {
     mood.bksp.push(t);
-    if (recent(mood.bksp, t, 6000) >= 10) tryTemp('teary', 3000, 'annoyed');
-    else if (recent(mood.bksp, t, 2000) >= 4) setTemp('annoyed', 2500);
+    if (recent(mood.bksp, t, 6000) >= 10) tryTemp('teary', 3000, 'annoyed', '6 秒内删了 10 次');
+    else if (recent(mood.bksp, t, 2000) >= 4) setTemp('annoyed', 2500, '2 秒内连删 4 次');
   }
-  if (k.label === 'Esc') { mood.esc = (mood.esc || []); mood.esc.push(t); if (recent(mood.esc, t, 2000) >= 4) tryTemp('angry', 2000, 'annoyed'); }
+  if (k.label === 'Esc') { mood.esc = (mood.esc || []); mood.esc.push(t); if (recent(mood.esc, t, 2000) >= 4) tryTemp('angry', 2200, 'annoyed', '连按 Esc'); }
   if (ctrl && k.label === 'Z') {
     mood.undo.push(t);
     const n = recent(mood.undo, t, 3000);
-    if (n >= 5) setTemp('yandere', 3000); else if (n >= 3) tryTemp('sweat', 1800);
+    if (n >= 5) setTemp('yandere', 3000, `3 秒内撤销 ${n} 次`); else if (n >= 3) tryTemp('sweat', 1800, null, `连按撤销 ${n} 次`);
   }
   if (ctrl && k.label === 'C') mood.copyT = t;
-  if (ctrl && k.label === 'V' && t - (mood.copyT || -1e9) < 3000) tryTemp('wink', 1200, 'happy');
-  if (ctrl && k.label === 'S') tryTemp('smug', 1500, 'happy');
-  if (k.label === 'Enter' && pressTimes.length >= 20) setTemp('happy', 1300);
+  if (ctrl && k.label === 'V' && t - (mood.copyT || -1e9) < 3000) tryTemp('wink', 1600, 'happy', '复制后粘贴');
+  if (ctrl && k.label === 'S') tryTemp('smug', 1800, 'happy', 'Ctrl+S 保存');
+  if (k.label === 'Enter' && pressTimes.length >= 20) setTemp('happy', 1800, '打完一段按回车');
 }
 
+// typing-speed face with hysteresis: goes up at once, comes down only after the speed stayed low for 2 s
+const speed = { face: null, lowT: 0 };
+function speedFace(t) {
+  const k = kpm(), up = k > 320 && hasFace('sparkle') ? 'sparkle' : k > 200 ? 'focus' : null;
+  if (up === 'sparkle' || (up === 'focus' && speed.face !== 'sparkle')) { speed.face = up; speed.lowT = 0; return speed.face; }
+  const keep = speed.face === 'sparkle' ? k >= 260 : speed.face === 'focus' ? k >= 150 : false;
+  if (speed.face && !keep) {
+    if (!speed.lowT) speed.lowT = t;
+    if (t - speed.lowT > 2000) { speed.face = speed.face === 'sparkle' && k >= 150 ? 'focus' : null; speed.lowT = 0; }
+  } else speed.lowT = 0;
+  return speed.face;
+}
 function baseFace(t) {
-  if (t < mood.tempUntil) return mood.temp;
+  const why = (w) => { mood.baseWhy = w; };
+  if (t < mood.tempUntil) { why(mood.tempWhy); return mood.temp; }
   const idle = t - mood.lastKeyT;
-  if (idle > 180000) { mood.sleeping = true; return 'sleep'; }
-  if (idle > 60000) return 'half';
-  if (idle > 30000 && idle < 33000 && !mood.pouted && hasFace('pout')) return 'pout';   // ignored for a while
+  if (idle > (lateNight() ? 90000 : 180000)) { mood.sleeping = true; why(`${Math.round(idle / 1000)} 秒没打字，睡着了`); return 'sleep'; }
+  if (idle > 60000) { why('闲置超过 1 分钟'); return 'half'; }
+  if (idle > 30000 && idle < 33000 && !mood.pouted && hasFace('pout')) { why('被冷落 30 秒'); return 'pout'; }   // ignored for a while
   if (idle >= 33000) mood.pouted = true;
-  if (kpm() > 320 && hasFace('sparkle')) return 'sparkle';
-  if (kpm() > 200) return 'focus';
+  const sf = speedFace(t);
+  if (sf) { why(`打字速度 ${kpm()} 键/分`); return sf; }
   // watching Claude work with a focused face -- unless you are moving the mouse, then she follows it
-  if (claude.state === 'working' && idle > 1500 && now() - (mouse.movedAt || 0) > 4000) return 'focus';
-  const hr = new Date().getHours();
-  if (hr >= 2 && hr < 5) return 'yandere';
+  if (claude.state === 'working' && idle > 3000 && now() - (mouse.movedAt || 0) > 4000) { why('在看 Claude 干活'); return 'focus'; }
+  const hr = curHour();
+  if (hr >= 2 && hr < 5) { why('凌晨 2–5 点'); return 'yandere'; }
+  if (hr < 2 && idle > 5000) { why('过了午夜，犯困'); return 'half'; }      // past midnight: sleepy eyes once you stop typing
+  why('');
   return 'neutral';
 }
 
 function updateMood(t) {
+  updateKForm(t);
   let f = baseFace(t);
+  // hold: a face that just appeared stays at least HOLD ms, unless the newcomer is stronger (or she falls asleep)
+  const HOLD = 1200;
+  if (f !== mood.open && f !== 'sleep' && t - (mood.openT || 0) < HOLD && facePri(f) <= facePri(mood.open)) { f = mood.open; }
+  else if (f !== mood.open) { startPop(mood.open, f, t); mood.open = f; mood.openT = t; mood.why = mood.baseWhy; }   // the open face changes here
   // blinking (not while asleep / surprised)
   if (f !== 'sleep' && f !== 'surprised') {
     if (t >= mood.blinkAt) {
@@ -124,7 +325,28 @@ function updateMood(t) {
   if (f !== mood.face) {
     mood.prev = mood.face; mood.face = f;
     mood.fadeT = 0;                        // faces switch instantly (a crossfade ghosts the eyes)
+    // (the pop starts above when the open face changes; blink <-> open never pops)
   }
+}
+
+// face-change "pop": instant pixel switch + a short squash/stretch, nod or tilt, and a hair kick (blinks never pop)
+const POP_KIND = { surprised: 'up', sparkle: 'up', angry: 'up', teary: 'down', half: 'down', sleep: 'down', pout: 'down', sweat: 'down', yawn: 'down', deadpan: 'down' };
+const POP_GAIN = { neutral: 0.6, focus: 0.7, yandere: 0.7 };
+const facePop = { t0: -1e9, dur: 300, g: 1, kind: 'tilt', dir: 1 };
+function startPop(from, to, t) {
+  if (t - facePop.t0 < 200) return;                                     // fast typing: don't restart the pop
+  const slow = from === 'sleep' || to === 'sleep' || from === 'half' || to === 'half';   // long states: gentler, slower
+  const g = (POP_GAIN[to] || 1) * (slow ? 0.55 : 1), kind = POP_KIND[to] || 'tilt', nd = kind === 'up' ? -1 : kind === 'down' ? 1 : 0;
+  facePop.t0 = t; facePop.dur = slow ? 520 : 300; facePop.g = g; facePop.kind = kind; facePop.dir = -facePop.dir;
+  const d = facePop.dir, tk = nd ? -nd * 1.1 : -d * 0.9;
+  tails.L.v += tk * g; tails.R.v += tk * g; fhair.v += (nd ? d * 45 : -d * 70) * g;
+}
+// current pop offsets (null when idle): squash first, then stretch, settle; one smooth hump for nod / tilt
+function popVals(t) {
+  const u = window.__popU !== undefined ? window.__popU : (t - facePop.t0) / facePop.dur;   // __popU: demo freeze
+  if (!(u >= 0 && u < 1)) return null;
+  const g = facePop.g, k = facePop.kind, w = -Math.sin(u * 2 * Math.PI) * (1 - u * u), h = Math.sin(Math.PI * u) * (1 - 0.4 * u);
+  return { sy: 1 + 0.04 * g * w, sx: 1 - 0.025 * g * w, dy: (k === 'up' ? -6 : k === 'down' ? 7 : 0) * g * h, rot: (k === 'tilt' ? 0.04 : 0.012) * g * h * facePop.dir };
 }
 
 let lastKey = '', breathPhase = 0;
@@ -194,6 +416,7 @@ function wave(side = 'L', ms = 1600) {
 }
 
 function onKey({ code, down }) {
+  kFormOnKey(code, down);
   if (down && code in KNOB_DIR) knob.vel += KNOB_DIR[code] * 14;
   code = KEY_ALIASES[code] ?? code;
   const k = byCode.get(code);
@@ -205,7 +428,7 @@ function onKey({ code, down }) {
     return;
   }
   k.down = true;
-  if (act.kind) stopAct(); else act.next = Math.max(act.next, t + 20000);
+  if (act.kind) stopAct(); else act.next = Math.max(act.next, t + (lateNight() ? 12000 : 20000));
   pressTimes.push(t);
   lastKey = k.label;
   moodOnKey(k, t);
@@ -336,6 +559,7 @@ function update(dt) {
   body.rot = ease(body.rot, (bx / BODY_MAX_X) * 0.07 - Math.max(-0.12, Math.min(0.12, carry.vx * 0.004)), 7, dt);
   body.dipV += (-420 * body.dip - 26 * body.dipV) * dt;
   body.dip += body.dipV * dt;
+  stepLegs(dt);
 
   // head: looks at you; glances down when a hand works on the rows nearest the viewer
   const farY = KB.y + KB.padY + KB.v * 3.5;
@@ -348,9 +572,10 @@ function update(dt) {
   const gy = gazeOn ? Math.max(-1, Math.min(1, (mouse.y - (NECK.y - 120)) / 500)) : 0;
   head.gx = ease(head.gx || 0, gx, 5, dt); head.gy = ease(head.gy || 0, gy, 5, dt);
   const idleRot = mood.sleeping ? 0.09 : mood.face === 'half' ? 0.04 : Math.sin(t / 2100) * 0.02 + head.gx * 0.075;
-  head.rot = ease(head.rot, lookDown ? side * 0.07 : idleRot, mood.sleeping ? 1.5 : 8, dt);
+  const patRot = pat.on ? Math.max(-0.06, Math.min(0.06, (mouse.x - NECK.x - body.x) / 2500)) : 0;
+  head.rot = ease(head.rot, lookDown ? side * 0.07 : idleRot + patRot, mood.sleeping ? 1.5 : 8, dt);
   head.vrot = (head.rot - pr) / Math.max(dt, 1e-3);
-  head.dy = ease(head.dy, (lookDown ? 12 : 0) + (t < head.nodUntil ? 16 : 0) + (mood.sleeping ? 14 : mood.face === 'half' ? 5 : 0) + head.gy * 7, mood.sleeping ? 2 : 14, dt);
+  head.dy = ease(head.dy, (pat.on ? 9 : 0) + (lookDown ? 12 : 0) + (t < head.nodUntil ? 16 : 0) + (mood.sleeping ? 14 : mood.face === 'half' ? 5 : 0) + head.gy * 7, mood.sleeping ? 2 : 14, dt);
 
   // twin tails: damped springs kicked by body sway, dips and head turns
   for (const s of ['L', 'R']) {
@@ -360,8 +585,17 @@ function update(dt) {
     tl.a += tl.v * dt;
     tl.a = Math.max(-0.45, Math.min(0.45, tl.a));
   }
+  // front hair: a quicker, lighter spring than the tails; hangs a little against the head tilt (gravity)
+  {
+    const kick = (-body.vx * 0.0012 - head.vrot * 0.35 - body.dipV * 0.0006) * 60 + Math.sin(t / 1300) * 0.8;
+    const target = -head.rot * 110;
+    fhair.v += (-90 * (fhair.x - target) - 16 * fhair.v + kick * 90) * dt;
+    fhair.x += fhair.v * dt;
+    fhair.x = Math.max(-14, Math.min(14, fhair.x));
+  }
   if (boneTails()) { stepTail('L', dt); stepTail('R', dt); }
   updateAct();
+  updateNag(t);
   if (mood.carried && now() - carry.t > 350) mood.carried = false;
   carry.vx = ease(carry.vx, 0, 8, dt); carry.vy = ease(carry.vy, 0, 8, dt);
   kbShake = ease(kbShake, 0, 16, dt);
@@ -389,13 +623,78 @@ function applyBody() {
   ctx.translate(HIP.x, HIP.y); ctx.rotate(body.rot); ctx.scale(1, breath()); ctx.translate(-HIP.x, -HIP.y);
 }
 function actHeadDy() { return act.kind === 'stretch' || act.kind === 'yawn' ? -10 * easeIO(actEnv()) : act.kind === 'sip' ? 4 * sipState().lift + 6 * sipBeat() : 0; }
+// lower body (below the keyboard): squashes a little with each keystroke (body.dip), dangles behind
+// when she is carried around, and wiggles for a moment when she is happy or shy. The seam with the
+// upper body is hidden behind the keyboard.
+const LEG_FLOOR = () => OY + 1398 * CS;
+// Two legs = two underdamped spring sets (swing angle a, squash q), split at the knee gap. Drag velocity pulls
+// the legs behind (they swing back with ~20% overshoot), key dips squash them softly, a wiggle is an impulse.
+const LEG_GAP = () => OX + 543 * CS;           // knee gap (rig x 543)
+function stepLegs(dt) {
+  if (lower.wigT !== lower.kickT) {            // happy / shy wiggle starts: opposite kicks, then it rings out
+    lower.kickT = lower.wigT; lower.kick2 = true;
+    lower.L.v += 1.0; lower.R.v -= 0.85; lower.L.qv += 1.0; lower.R.qv += 0.8;
+  } else if (lower.kick2 && now() - lower.wigT > 330) {   // a smaller answering kick the other way
+    lower.kick2 = false; lower.L.v -= 0.6; lower.R.v += 0.7;
+  }
+  const ta = Math.max(-0.045, Math.min(0.045, carry.vx * 0.00016));
+  const stretch = Math.max(0, Math.min(0.03, -carry.vy * 0.0002));
+  const tq = Math.max(-0.035, Math.min(0.035, body.dip / 28 - stretch));
+  const n = Math.max(1, Math.ceil(dt / 0.012)), h = dt / n;
+  for (const s of [lower.L, lower.R]) {
+    for (let i = 0; i < n; i++) {
+      s.v += (-s.w * s.w * (s.a - ta) - 2 * s.z * s.w * s.v) * h; s.a += s.v * h;
+      s.qv += (-s.wq * s.wq * (s.q - tq) - 2 * s.zq * s.wq * s.qv) * h; s.q += s.qv * h;
+    }
+    s.a = Math.max(-0.05, Math.min(0.05, s.a)); s.q = Math.max(-0.04, Math.min(0.04, s.q));
+    if (Math.abs(s.a) < 1e-4 && Math.abs(s.v) < 2e-3 && Math.abs(ta) < 1e-4) s.a = s.v = 0;   // settle exactly at rest
+    if (Math.abs(s.q) < 1e-4 && Math.abs(s.qv) < 2e-3 && Math.abs(tq) < 1e-4) s.q = s.qv = 0;
+  }
+}
+function drawLowerBody() {
+  const gx = LEG_GAP(), top = CLIP_Y, floor = LEG_FLOOR(), L = lower.L, R = lower.R;
+  if (!(L.a || L.q || R.a || R.q)) {           // at rest: one plain draw, identical to the static torso
+    ctx.save(); ctx.beginPath(); ctx.rect(0, top, 99999, 99999); ctx.clip(); drawRig('torso'); ctx.restore(); return;
+  }
+  for (const side of [-1, 1]) {
+    const s = side < 0 ? L : R;
+    ctx.save(); ctx.beginPath();
+    if (side < 0) ctx.rect(0, top, gx + 2, 99999); else ctx.rect(gx, top, 99999, 99999);   // 2px overlap: no AA seam
+    ctx.clip();
+    const px = gx + side * 30;                 // hip pivot just below the seam line, on this side
+    ctx.translate(px, top); ctx.rotate(s.a); ctx.translate(-px, -top);
+    ctx.translate(gx, floor); ctx.scale(1 + s.q * 0.6, 1 - s.q); ctx.translate(-gx, -floor);
+    drawRig('torso'); ctx.restore();
+  }
+}
+function drawHearts() {                      // little hearts popping out of her head while patted
+  const t = now();
+  pat.hearts = pat.hearts.filter((h) => t - h.t0 < 1300);
+  if (!pat.hearts.length) return;
+  ctx.save();
+  ctx.font = 'bold 72px "Segoe UI Symbol", "Segoe UI", sans-serif'; ctx.textAlign = 'center';
+  ctx.lineWidth = 6; ctx.lineJoin = 'round';
+  for (const h of pat.hearts) {
+    const p = (t - h.t0) / 1300;
+    ctx.globalAlpha = p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85;
+    const x = h.x + Math.sin(p * 7 + h.ph) * 14, y = h.y - p * 150, sz = 0.7 + p * 0.5;
+    ctx.save(); ctx.translate(x, y); ctx.scale(sz, sz);
+    ctx.strokeStyle = '#ffffff'; ctx.strokeText('♥', 0, 0);
+    ctx.fillStyle = '#ff6fa8'; ctx.fillText('♥', 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
 function applyHead() {
   ctx.translate(0, head.dy + actHeadDy() - Math.sin(breathPhase) * 3.5 * idleAmt());
-  ctx.translate(NECK.x, NECK.y); ctx.rotate(head.rot); ctx.translate(-NECK.x, -NECK.y);
+  const pv = popVals(now());
+  if (pv) ctx.translate(0, pv.dy);
+  ctx.translate(NECK.x, NECK.y); ctx.rotate(head.rot + (pv ? pv.rot : 0)); if (pv) ctx.scale(pv.sx, pv.sy); ctx.translate(-NECK.x, -NECK.y);
 }
 const drawRig = (name) => ctx.drawImage(img[name], OX, OY, RIG.size[0] * CS, RIG.size[1] * CS);
 
 function drawFacePatch(name, alpha) {
+  name = kFace(name);
   if (name === 'neutral' || alpha <= 0 || !RIG.faces || !RIG.faces[name]) return;
   const f = RIG.faces[name];
   ctx.globalAlpha = alpha;
@@ -430,6 +729,47 @@ function drawFace() {
   if (p < 1) drawFacePatch(mood.prev, 1 - p);
   drawFacePatch(mood.face, p);
 }
+// front hair (bangs + side locks, cut out of the head): drawn over the face with a shear about its root line,
+// so the roots stay put (the cut never shows) and the tips swing sideways by fhair.x
+function drawFrontHair() {
+  const fh = RIG.frontHair;
+  if (!fh || !img.front_hair) return;
+  const y0 = OY + fh.y0 * CS, k = fhair.x / (fh.y1 - fh.y0);
+  ctx.save();
+  ctx.translate(0, y0); ctx.transform(1, 0, k, 1, 0, 0); ctx.translate(0, -y0);
+  drawRig('front_hair');
+  ctx.restore();
+}
+// the bits of an expression that sit on top of the bangs (brows, sweat drop, shading)
+function drawFaceTop() {
+  const k = mood.face;
+  if (!RIG.faceTop || !RIG.faceTop.includes(k) || !img['face_' + k + '_top']) return;
+  const f = RIG.faces[k];
+  ctx.drawImage(img['face_' + k + '_top'], OX + f.x * CS, OY + f.y * CS, f.w * CS, f.h * CS);
+}
+
+// break-reminder speech bubble above her head (scene space, kept inside the visible canvas)
+function drawNagBubble() {
+  const p = now() - nag.t0;
+  if (p < 0 || p > NAG.bubble || !nag.text) return;
+  const a = Math.min(1, p / NAG.fade, (NAG.bubble - p) / NAG.fade), e = easeIO(a);
+  ctx.save();
+  ctx.globalAlpha = e;
+  ctx.font = '40px "Microsoft YaHei", "Segoe UI", sans-serif';
+  const bw = Math.min(ART_W - 40, Math.ceil(ctx.measureText(nag.text).width) + 72), bh = 84;
+  const hx = NECK.x + body.x, bob = Math.sin(p / 420) * 3 + (1 - e) * 10;
+  const bx = Math.max(VX + 12, Math.min(VX + ART_W - 12 - bw, hx - bw / 2)), by = 12 + bob;
+  const tx = Math.max(bx + 44, Math.min(bx + bw - 44, hx)), tipY = by + bh + 30;
+  ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = '#c2255f'; ctx.fillStyle = '#ffffff';
+  roundRect(bx, by, bw, bh, 34); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx - 15, by + bh); ctx.lineTo(hx > tx + 10 ? tx + 10 : hx < tx - 10 ? tx - 10 : hx, tipY); ctx.lineTo(tx + 15, by + bh);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx - 13, by + bh); ctx.lineTo(tx + 13, by + bh);
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5; ctx.stroke();      // hide the bubble outline under the tail
+  ctx.fillStyle = '#4a2338'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(nag.text, bx + bw / 2, by + bh / 2 + 2);
+  ctx.restore();
+}
 
 function drawZzz() {                     // floating Z's while asleep
   if (!mood.sleeping) return;
@@ -455,7 +795,7 @@ function withCharacterClip(fn) {
   try { applyBody(); fn(); } finally { ctx.restore(); }   // a throw must never leave the clip on the canvas
 }
 
-const boneTails = () => RIG && RIG.tail && tailTex.L;
+const boneTails = () => RIG && RIG.tail && tailTex.L && !KA.on;   // KAngel has plain rotating tails (tailL / tailR)
 function drawTails() {
   if (boneTails()) {                     // bone-chain tails: already in screen space, just clip at the keyboard
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, 99999, CLIP_Y); ctx.clip();
@@ -538,10 +878,11 @@ function drawEffects() {                  // only a faint, quick ring on the pre
 }
 
 function drawDebug() {
-  ctx.fillStyle = 'rgba(30,20,40,.75)'; ctx.fillRect(10, 10, 460, 110);
+  ctx.fillStyle = 'rgba(30,20,40,.75)'; ctx.fillRect(10, 10, 760, 156);
   ctx.fillStyle = '#fff'; ctx.font = '34px sans-serif';
   ctx.fillText(`KPM ${kpm()}  key ${lastKey}`, 24, 54);
   ctx.fillText(`face ${mood.face}  L ${hands.L.state}  R ${hands.R.state}`, 24, 100);
+  ctx.fillText(`${FACE_ZH[mood.open] || mood.open} ← ${mood.why || '默认'}`, 24, 146);
 }
 
 function resize() {
@@ -575,13 +916,20 @@ function drawFrame() {
   drawKeyboardShadow(ctx, breathPhase);
   drawTails();
   withCharacterClip(() => drawRig('torso'));
+  // keyboard on her lap: the lower body (skirt, knees, stockings) is drawn below the keyboard's clip line and
+  // stays put (no breathing / lean); the seam between the two halves is hidden behind the keyboard
+  drawLowerBody();
   drawKeyboard(ctx, scale * dpr, breathPhase);
-  withCharacterClip(() => { applyHead(); drawRig('head'); drawFace(); });
+  withCharacterClip(() => { applyHead(); drawRig('head'); drawFace(); drawFrontHair(); drawFaceTop(); });
   drawHandShadow(hands.L); drawHandShadow(hands.R);
   for (const sd of topHand === 'L' ? ['R', 'L'] : ['L', 'R']) drawHand(sd);
   drawActProps();
   drawEffects();
   drawZzz();
+  drawHearts();
+  drawNagBubble();
+  drawKForm();
+  drawPchan();
   drawGrip();
   if (debug) drawDebug();
 }
@@ -610,9 +958,10 @@ window.addEventListener('mousemove', (e) => {
   overGrip = inGrip(e);
   hover = overGrip || opaqueAt(e);
   setHit(hover);
-  canvas.style.cursor = overGrip ? 'nwse-resize' : 'default';
+  pch.target = overPchan(e) ? 1 : 0;
+  canvas.style.cursor = overGrip ? 'nwse-resize' : pch.target ? 'pointer' : 'default';
 });
-document.addEventListener('mouseleave', () => { if (!drag && !sizing) { hover = false; overGrip = false; setHit(false); } });
+document.addEventListener('mouseleave', () => { pch.target = 0; if (!drag && !sizing) { hover = false; overGrip = false; setHit(false); } });
 
 let lastClickAt = 0;
 canvas.addEventListener('pointerdown', (e) => {
@@ -632,15 +981,86 @@ canvas.addEventListener('pointerup', (e) => {
   if (sizing) window.pet.gesture('resize-end');     // commit (saves + updates the tray menu)
   else if (drag) window.pet.gesture('drag-end');
   if (!wasSizing && moved < 4 && downAt.oy / scale < NECK.y + 20) {
-    tryTemp('blush', 2000, 'happy'); head.nodUntil = now() + 200;                 // a click (no drag) on her head: pat
+    tryTemp('blush', 2000, 'happy', '被点了一下头'); head.nodUntil = now() + 200;                 // a click (no drag) on her head: pat
   }
-  // a double click (two clicks without dragging) anywhere on her: open the Windose web desktop
   if (!wasSizing && moved < 4) {
-    const t = performance.now();
-    if (t - lastClickAt < 400) { lastClickAt = 0; window.pet.openDashboard(); } else lastClickAt = t;
+    if (downAt && overPchan({ offsetX: downAt.ox, offsetY: downAt.oy })) { pch.hop = now(); window.pet.panelExpand(); }   // click on P-chan: open the panel
+    else {                               // a double click (two clicks without dragging) anywhere on her: open the Windose web desktop
+      const t = performance.now();
+      if (t - lastClickAt < 400) { lastClickAt = 0; window.pet.openDashboard(); } else lastClickAt = t;
+    }
   }
   downAt = null; drag = null; sizing = null;
 });
+
+// ---------- P-chan (ピーちゃん): stands in for the Claude panel while it is collapsed ----------
+// Sits on the floor at Ame's right (past the keyboard's right end). Main process tells us the panel state.
+// sleep = no sessions, alert = unread lines or a session waiting for you (bounce + red badge), idle = otherwise.
+const PCH = { x: 1105, y: 1180, h: 118 };            // bottom-centre of the sprite (art px) and its height (the game's pixel pien-cat head)
+const panel = { collapsed: false, unread: 0, waiting: false, n: 0 };
+const pch = { target: 0, hover: 0, hop: -1e9, blinkAt: now() + 2200, blinkUntil: 0 };
+window.pet.onPanel((s) => Object.assign(panel, s));
+const pchState = () => (panel.n === 0 ? 'sleep' : panel.unread > 0 || panel.waiting ? 'alert' : 'idle');
+function pchRect() {
+  const im = img.pchan_idle;
+  if (!im) return null;
+  const w = PCH.h * im.width / im.height;
+  return { x: PCH.x - w / 2, y: PCH.y - PCH.h, w, h: PCH.h };
+}
+function overPchan(e) {                               // e.offsetX / offsetY in CSS px; the pixel test (opaqueAt) is done by the caller's `hit`
+  const r = pchRect();
+  if (!panel.collapsed || !r) return false;
+  const x = e.offsetX / scale + VX, y = e.offsetY / scale;
+  return x >= r.x && x < r.x + r.w && y >= r.y - 20 && y < r.y + r.h + 10;
+}
+function drawPchan() {
+  const r = pchRect();
+  if (!panel.collapsed || !r) return;
+  const st = pchState(), t = now();
+  let name = st;
+  if (st === 'idle') {
+    if (t >= pch.blinkAt) { pch.blinkUntil = t + 130; pch.blinkAt = t + 2500 + Math.random() * 3500; }
+    if (t < pch.blinkUntil) name = 'blink';
+  }
+  const im = img['pchan_' + name];
+  if (!im) return;
+  pch.hover += (pch.target - pch.hover) * 0.25;
+  const br = Math.sin(t / (st === 'sleep' ? 1100 : 750));                // breathing squash, anchored at the floor
+  let sy = 1 + br * (st === 'sleep' ? 0.025 : 0.016), dy = 0;
+  const rot = st === 'sleep' ? 0 : Math.sin(t / 1700) * 0.018;             // slow sway (the sprite has no separate ears / tail)
+  if (st === 'alert') {                                                    // small hop every ~2 s, squash on landing
+    const p = (t % 2000) / 2000;
+    if (p < 0.3) dy = -22 * Math.sin(Math.PI * p / 0.3);
+    else if (p < 0.4) sy *= 1 - 0.08 * Math.sin(Math.PI * (p - 0.3) / 0.1);
+  }
+  const hp = (t - pch.hop) / 380;
+  if (hp >= 0 && hp < 1) dy -= 16 * Math.sin(Math.PI * hp);                // clicked: hop
+  const hs = 1 + 0.08 * pch.hover, sx = (1 - (sy - 1) * 0.6) * hs;
+  ctx.save();
+  ctx.fillStyle = 'rgba(30,20,40,0.16)';                                   // contact shadow shrinks while she is up
+  ctx.beginPath(); ctx.ellipse(PCH.x, PCH.y - 3, r.w * 0.3 * (1 + dy / 150), 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(PCH.x, PCH.y + dy); ctx.rotate(rot); ctx.scale(sx, sy * hs);
+  ctx.imageSmoothingEnabled = false;                                       // pixel art: keep it crisp
+  ctx.drawImage(im, -r.w / 2, -r.h, r.w, r.h);
+  ctx.restore();
+  if (st === 'sleep') {                                                    // a tiny drifting z
+    ctx.save(); ctx.font = 'bold 34px "Segoe UI", sans-serif'; ctx.lineWidth = 6; ctx.lineJoin = 'round';
+    for (let i = 0; i < 2; i++) {
+      const p = ((t / 2600) + i / 2) % 1;
+      ctx.globalAlpha = p < 0.2 ? p / 0.2 : 1 - (p - 0.2) / 0.8;
+      const x = PCH.x + 52 + p * 22, y = PCH.y - r.h * 0.55 - p * 46, z = 0.7 + p * 0.5;
+      ctx.save(); ctx.translate(x, y); ctx.scale(z, z); ctx.strokeStyle = '#fff'; ctx.strokeText('z', 0, 0); ctx.fillStyle = '#6d5a67'; ctx.fillText('z', 0, 0); ctx.restore();
+    }
+    ctx.restore();
+  }
+  if (st === 'alert' && panel.unread > 0) {                                // red unread count above her right ear
+    const bx = PCH.x + r.w * 0.36, by = PCH.y + dy - r.h * 0.84, txt = panel.unread > 9 ? '9+' : String(panel.unread);
+    ctx.save(); ctx.lineWidth = 5; ctx.strokeStyle = '#fff'; ctx.fillStyle = '#e0243d';
+    ctx.beginPath(); ctx.arc(bx, by, 25, 0, Math.PI * 2); ctx.stroke(); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 32px "Segoe UI", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, bx, by + 2); ctx.restore();
+  }
+}
 
 function drawGrip() {                              // three diagonal ticks on the keyboard corner, while hovering her
   if (!hover && !sizing) return;
@@ -651,15 +1071,43 @@ function drawGrip() {                              // three diagonal ticks on th
   ctx.restore();
 }
 
+let mouseFrozen = false;                     // self-test only: ignore the real cursor
 window.pet.onMouse((m) => {
+  if (mouseFrozen) return;
   if (Math.hypot(m.x - mouse.x, m.y - mouse.y) > 3) mouse.movedAt = now();
   mouse.x = m.x; mouse.y = m.y; mouse.seen = true;
+  detectPat(m);
 });
+// stroking her head: the cursor (no button) goes back and forth over the top of her head a few times
+function detectPat(m) {
+  const t = now(), hx = NECK.x + body.x;
+  const onHead = !drag && Math.abs(m.x - hx) < 240 && m.y > 60 && m.y < NECK.y - 230;
+  if (!onHead) { pat.px = null; if (pat.on && t - pat.last > 700) pat.on = false; return; }
+  if (pat.px !== null) {
+    const dx = m.x - pat.px;
+    if (Math.abs(dx) > 5) {
+      const d = Math.sign(dx);
+      if (pat.dir && d !== pat.dir) pat.revs.push(t);
+      pat.dir = d;
+      fhair.v += dx * 1.2;                                  // the hand drags the bangs along
+    }
+  }
+  pat.px = m.x;
+  pat.revs = pat.revs.filter((r) => t - r < 1500);
+  if (pat.revs.length >= 3) {
+    pat.on = true; pat.last = pat.revs[pat.revs.length - 1];
+    if (!mood.sleeping) tryTemp('happy', 1600, 'blush', '被摸头');
+    if (t - pat.heartAt > 380) { pat.heartAt = t; pat.hearts.push({ x: hx + (Math.random() - 0.5) * 220, y: 150 + Math.random() * 60, t0: t, ph: Math.random() * 6 }); }
+  }
+  if (pat.on && t - pat.last > 700) pat.on = false;
+}
 
 window.pet.onConfig((c) => {
-  scale = c.scale; debug = c.debug;
+  scale = c.scale; debug = c.debug; nagOn = c.breakNag !== false;
   if (c.facing && c.facing !== facing) { facing = c.facing; buildKeys(); }
   if (c.kbTheme && c.kbTheme !== KB_PAINT.theme) loadKbTheme(c.kbTheme);
+  const kl = !!c.kangel;                       // tray lock "天使模式（常驻）"
+  if (kl !== KA.lock) { KA.lock = kl; if (KA.ready) { if (kl) setKForm(true, 0); else if (!KA.until) setKForm(false); } }
   resize();
 });
 window.pet.onKey(onKey);
@@ -674,15 +1122,18 @@ function startAct(kind) {
   const face = { yawn: ['yawn', 'half'], stretch: ['stretch', 'happy'], sip: ['sip', 'happy'] }[kind];
   if (kind === 'sip') {                    // close her eyes only once the cup reaches her mouth
     const t0 = act.t0;
-    setTimeout(() => { if (act.kind === 'sip' && act.t0 === t0) tryTemp('sip', SIP.down - SIP.atMouth, 'happy'); }, SIP.atMouth);
-  } else tryTemp(face[0], ACTS[kind], face[1]);
+    setTimeout(() => { if (act.kind === 'sip' && act.t0 === t0) tryTemp('sip', SIP.down - SIP.atMouth, 'happy', '喝茶'); }, SIP.atMouth);
+  } else tryTemp(face[0], ACTS[kind], face[1], '闲着的小动作');
 }
-function stopAct() { if (act.kind) { act.kind = null; mood.tempUntil = 0; } act.next = now() + 25000 + Math.random() * 35000; }
+function stopAct() {
+  if (act.kind) { act.kind = null; mood.tempUntil = 0; }
+  act.next = now() + (lateNight() ? 12000 + Math.random() * 13000 : 25000 + Math.random() * 35000);
+}
 function updateAct() {
   const t = now(), idle = t - mood.lastKeyT;
   if (act.kind && t - act.t0 > act.dur) stopAct();
   if (!act.kind && idle > 6000 && t > act.next && !mood.sleeping) {
-    startAct(Math.random() < 0.5 ? 'yawn' : 'sip');
+    startAct(Math.random() < (lateNight() ? 0.8 : 0.5) ? 'yawn' : 'sip');   // late at night: mostly yawns
   }
 }
 const actP = () => (act.kind ? Math.min(1, (now() - act.t0) / act.dur) : 0);
@@ -752,7 +1203,8 @@ window.pet.onWinMove((dx, dy) => {
   const k = 1 / Math.max(scale, 0.1);                    // screen px -> art px
   carry.vx += dx * k; carry.vy += dy * k; carry.t = now();
   for (const s of ['L', 'R']) tails[s].v -= dx * k * 0.004 + (s === 'L' ? 1 : -1) * dy * k * 0.002;
-  if (!mood.carried) { mood.carried = true; tryTemp('surprised', 700); }
+  fhair.v -= dx * k * 0.5;
+  if (!mood.carried) { mood.carried = true; tryTemp('surprised', 1600, null, '被拖着走'); }
 });
 
 // ---------- Claude Code companion ----------
@@ -762,9 +1214,9 @@ window.pet.onClaude((type) => {
   const t = now();
   if (type === 'message') { claude.state = 'working'; head.nodUntil = t + 220; }
   else if (type === 'thinking' || type === 'reading') claude.state = 'working';
-  else if (type === 'error') { claude.state = 'working'; tryTemp('sweat', 1800); }
-  else if (type === 'waiting') { claude.state = 'waiting'; tryTemp('surprised', 1200); wave('R', 1500); }
-  else if (type === 'done') { claude.state = 'idle'; tryTemp('happy', 2500); head.nodUntil = t + 260; }
+  else if (type === 'error') { claude.state = 'working'; tryTemp('sweat', 1800, null, 'Claude 报错了'); }
+  else if (type === 'waiting') { claude.state = 'waiting'; tryTemp('surprised', 1600, null, 'Claude 在等你确认'); wave('R', 1500); }
+  else if (type === 'done') { claude.state = 'idle'; tryTemp('happy', 2500, null, 'Claude 做完了'); head.nodUntil = t + 260; }
   else if (type === 'done-partial') { head.nodUntil = t + 200; }        // one session done, others still busy
   else if (type === 'idle' || type === 'quit') claude.state = 'idle';
   claude.t = t;
@@ -800,10 +1252,14 @@ function drawClaudeBubble() {
   TIE = { L: toScene(RIG.tie.L), R: toScene(RIG.tie.R) };
   if (RIG.props && RIG.props.mug) loadImg('mug', 'assets/rig/mug_hands.png').catch(() => {});
   const names = ['head', 'tailL', 'tailR', 'torso', ...Object.keys(RIG.faces || {}).map((f) => 'face_' + f),
-    ...Object.keys(RIG.gaze || {}).map((g) => 'gaze_' + g)];
+    ...Object.keys(RIG.gaze || {}).map((g) => 'gaze_' + g), ...(RIG.faceTop || []).map((f) => 'face_' + f + '_top'),
+    ...(RIG.frontHair ? ['front_hair'] : [])];
   for (const k of Object.keys(RIG.float)) names.push(`float_${k}`);
   await Promise.all(names.map((n) => loadImg(n, `assets/rig/${n}.png`)));
+  await loadKangel().catch(() => {});
+  if (KA.lock) setKForm(true, 0, true);
   for (const s of ['L', 'R']) { const r = restPoint(s); Object.assign(hands[s], { gx: r.x, gy: r.y }); }
+  for (const s of ['idle', 'alert', 'sleep', 'blink']) loadImg('pchan_' + s, `assets/pchan/pchan_${s}.png`).catch(() => {});   // P-chan (optional art)
   if (RIG.tail) loadTailTextures();
   resize();
   requestAnimationFrame(frame);

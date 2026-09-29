@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('bubble', {
   size: (h) => ipcRenderer.send('bubble-size', h),
   close: () => ipcRenderer.send('bubble-close'),
   decidePermission: (id, choice) => ipcRenderer.invoke('permission-decide', id, choice),
+  collapse: (v) => ipcRenderer.send('bubble-collapse', v),
+  onCollapsed: (fn) => ipcRenderer.on('bubble-collapsed', (_e, v) => fn(v)),
+  unread: (n) => ipcRenderer.send('bubble-unread', n),
   gesture: (k) => ipcRenderer.send('bubble-gesture', k),
   // chat mode
   onChat: (fn) => ipcRenderer.on('chat-log', (_e, d) => fn(d)),
