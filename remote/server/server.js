@@ -22,6 +22,7 @@ const { createStore } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createAgentsAdmin } = require('./agents-admin');
+const { createSummary } = require('./summary');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -153,6 +154,8 @@ const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'dat
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
+const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
+  resumeCmd, audit: (...a) => audit(...a) });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -331,6 +334,8 @@ const server = http.createServer(async (req, res) => {
     if (!w) return send(res, 404, 'not found');
     return fs.readFile(w.f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, w.type, { 'Cache-Control': 'max-age=86400' }));
   }
+  // 日报 (summary/index.js)
+  if (summary && p.startsWith('/api/report') && await summary.handle(req, res, url, ip, json)) return;
 
   return send(res, 404, 'not found');
 });

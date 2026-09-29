@@ -24,8 +24,27 @@ function toolLine(name, i) {
     case 'WebFetch': return `打开 ${cut(i.url, 70)}`;
     case 'Agent': case 'Task': return `子代理 ${cut(i.description || i.prompt, 60)}`;
     case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': return '更新任务列表';
+    case 'ExitPlanMode': return '提交计划';
     case 'Skill': return `技能 ${cut(i.skill, 30)}`;
     default: return name && name.startsWith('mcp__') ? `调用 ${name.split('__').slice(1).join('/')}` : `使用 ${name}`;
+  }
+}
+
+// Detail kept next to a tool call's one-line description (x on the record): the full path of a file written or
+// edited, the whole command, the task list, a plan's text. The daily summary reads it (what was made where, what was
+// planned); the panel ignores it. Reads and tool output are still left out.
+const clip = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+function toolExtra(name, i) {
+  i = i || {};
+  switch (name) {
+    case 'Edit': case 'MultiEdit': case 'NotebookEdit': { const p = i.file_path || i.notebook_path; return p ? { op: 'edit', p: [String(p)] } : undefined; }
+    case 'Write': return i.file_path ? { op: 'write', p: [String(i.file_path)] } : undefined;
+    case 'Bash': case 'PowerShell': return i.command ? { op: 'cmd', cmd: clip(i.command, 600) } : undefined;
+    case 'TodoWrite': return Array.isArray(i.todos) ? { op: 'todo', todos: i.todos.slice(0, 40).map((t) => [clip(t && t.content, 200), String((t && t.status) || '')]) } : undefined;
+    case 'TaskCreate': return { op: 'task', task: [clip(i.subject || i.description, 200), 'pending'] };
+    case 'TaskUpdate': return { op: 'task', task: [clip(i.subject || `#${i.taskId || ''}`, 200), String(i.status || '')] };
+    case 'ExitPlanMode': return i.plan ? { op: 'plan', plan: clip(i.plan, 30000) } : undefined;
+    default: return undefined;
   }
 }
 
@@ -62,7 +81,10 @@ function recordsOf(o) {
   } else if (o.type === 'assistant' && m && Array.isArray(m.content)) {
     for (const b of m.content) {
       if (b.type === 'text' && b.text && b.text.trim()) out.push({ role: 'assistant', text: b.text.trim(), t, mid: m.id });
-      else if (b.type === 'tool_use') out.push({ role: 'tool', items: [toolLine(b.name, b.input)], t });
+      else if (b.type === 'tool_use') {
+        const x = toolExtra(b.name, b.input);
+        out.push(x ? { role: 'tool', items: [toolLine(b.name, b.input)], t, x } : { role: 'tool', items: [toolLine(b.name, b.input)], t });
+      }
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
     const title = o.aiTitle || o.customTitle || o.title;

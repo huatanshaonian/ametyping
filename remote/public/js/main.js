@@ -11,6 +11,7 @@ import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
 import * as sounds from './apps/sounds.js';
 import * as computers from './apps/computers.js';
+import * as reports from './apps/reports.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -30,6 +31,7 @@ function openMyComputer() {
 const APPS = [
   { id: 'dashboard', label: '糖糖看板', icon: '/asset/icon256.png', open: openDashboard },
   { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '浏览这台电脑的文件' },
+  { id: 'reports', label: '工作日报', icon: icon('notepad_file'), open: reports.open, hint: '每天早上自动总结前一天做了什么' },
   { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
 ];
 desktop.setIcons(APPS);

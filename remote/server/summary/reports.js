@@ -1,0 +1,42 @@
+// Daily reports on disk, next to the conversation store:
+//   <dir>/<YYYY-MM-DD>.json   one report (the day it is filed under: the day that ended at 4:30 the next morning)
+//   <dir>/draft.json          the latest 「总结到现在」 (manual, does not move the schedule on)
+//   <dir>/state.json          { lastTo }: where the last scheduled report ended -- the next one starts there
+//   <dir>/cache/              summaries of long sessions, so a retry does not ask again
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function createReports(dir) {
+  fs.mkdirSync(path.join(dir, 'cache'), { recursive: true, mode: 0o700 });
+  const file = (name) => path.join(dir, name + '.json');
+  const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
+  const writeJson = (f, v) => { fs.writeFileSync(f + '.tmp', JSON.stringify(v), { mode: 0o600 }); fs.renameSync(f + '.tmp', f); };
+
+  const get = (date) => (date === 'draft' || DAY.test(String(date))) ? readJson(file(date), null) : null;
+  function save(r) {
+    if (!r.draft && !DAY.test(r.date)) throw new Error('bad report date');
+    writeJson(file(r.draft ? 'draft' : r.date), r);
+  }
+  // newest first: what the list shows
+  function list() {
+    let names = []; try { names = fs.readdirSync(dir); } catch {}
+    return names.filter((n) => DAY.test(n.slice(0, -5)) && n.endsWith('.json')).map((n) => n.slice(0, -5)).sort().reverse()
+      .map((date) => { const r = get(date) || {}; return { date, headline: r.headline || '', from: r.from, to: r.to, minutes: r.stats ? r.stats.minutes : 0 }; });
+  }
+  // the report the next one continues from (its open items carry over)
+  function latest() { const l = list(); return l.length ? get(l[0].date) : null; }
+
+  const state = () => readJson(path.join(dir, 'state.json'), {});
+  const setState = (patch) => writeJson(path.join(dir, 'state.json'), { ...state(), ...patch });
+
+  const cacheFile = (key) => path.join(dir, 'cache', key.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 150) + '.json');
+  const cacheGet = (key) => readJson(cacheFile(key), null);
+  const cachePut = (key, v) => writeJson(cacheFile(key), v);
+
+  return { get, save, list, latest, state, setState, cacheGet, cachePut };
+}
+
+module.exports = { createReports };

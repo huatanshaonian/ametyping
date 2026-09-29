@@ -33,6 +33,7 @@ function slim(o, parse) {
     if (r.text != null) rec.text = r.text.length > MAX_TEXT ? r.text.slice(0, MAX_TEXT) + '\n…（过长，已截断）' : r.text;
     if (r.items) rec.items = r.items;
     if (r.mid) rec.mid = r.mid;
+    if (r.x) rec.x = r.x;
     return rec;
   });
 }

@@ -36,6 +36,20 @@ function clean(r) {
   if (typeof r.text === 'string') o.text = r.text.slice(0, 250e3);
   if (Array.isArray(r.items)) o.items = r.items.slice(0, 200).map((x) => String(x).slice(0, 300));
   if (typeof r.mid === 'string') o.mid = r.mid.slice(0, 64);
+  const x = cleanX(r.x);
+  if (x) o.x = x;
+  return o;
+}
+// a tool record's detail (see app/transcript.js toolExtra), size-capped
+const s = (v, n) => String(v == null ? '' : v).slice(0, n);
+function cleanX(x) {
+  if (!x || typeof x !== 'object' || typeof x.op !== 'string') return null;
+  const o = { op: s(x.op, 8) };
+  if (Array.isArray(x.p)) o.p = x.p.slice(0, 50).map((v) => s(v, 500)).filter(Boolean);
+  if (typeof x.cmd === 'string') o.cmd = s(x.cmd, 1000);
+  if (Array.isArray(x.todos)) o.todos = x.todos.slice(0, 50).map((t) => [s(t && t[0], 300), s(t && t[1], 20)]);
+  if (Array.isArray(x.task)) o.task = [s(x.task[0], 300), s(x.task[1], 20)];
+  if (typeof x.plan === 'string') o.plan = s(x.plan, 40000);
   return o;
 }
 
@@ -59,6 +73,8 @@ function createStore(dir) {
     if (d.from !== e.off) return { resync: e.off };
     const recs = (Array.isArray(d.recs) ? d.recs : []).map(clean).filter(Boolean);
     for (const r of recs) {
+      // Claude Code writes the same title line again and again; only a change is worth keeping
+      if (r.role === 'title' && (!r.text || r.text.slice(0, 80) === e.title)) continue;
       const day = dayOf(r.t);
       if (!e.days.includes(day)) { e.days.push(day); e.days.sort(); }
       const f = fileOf(day, m, d.id);
@@ -146,9 +162,30 @@ function createStore(dir) {
     return out;
   }
 
+  // the stored records of one session said in [from, to), oldest first (for the daily summary)
+  function records(m, id, from, to) {
+    const e = state[m] && state[m][id];
+    if (!e || e.last < from || (e.first || e.last) >= to) return [];
+    flush();
+    const out = [];
+    for (const day of e.days) {
+      if (day < dayOf(from) || day > dayOf(to)) continue;
+      let lines = [];
+      try { lines = fs.readFileSync(fileOf(day, m, id), 'utf8').split('\n'); } catch {}
+      for (const l of lines) {
+        if (!l) continue;
+        let r; try { r = JSON.parse(l); } catch { continue; }
+        if (r.t >= from && r.t < to) out.push(r);
+      }
+    }
+    return out.sort((a, b) => a.t - b.t);
+  }
+  // the newest record time over every machine and session
+  const lastActivity = () => Math.max(0, ...Object.values(state).flatMap((ids) => Object.values(ids).map((e) => e.last || 0)));
+
   const offsets = (m) => Object.fromEntries(Object.entries(state[m] || {}).map(([id, e]) => [id, e.off]));
   const has = (m, id) => !!(state[m] && state[m][id]);
-  return { accept, meta, flush, tail, offsets, has, sessions };
+  return { accept, meta, flush, tail, offsets, has, sessions, records, lastActivity };
 }
 
 module.exports = { createStore };

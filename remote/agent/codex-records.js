@@ -23,8 +23,29 @@ function toolLine(name, args) {
     const files = [...String(args || '').matchAll(/\*\*\* (?:Update|Add|Delete) File: (.+)/g)].map((m) => path.basename(m[1].trim()));
     return `修改 ${cut(files.join(' '), 80) || '文件'}`;
   }
+  if (name === 'update_plan') return '更新计划';
   return `使用 ${name}`;
 }
+// the structured detail next to the line (as in app/transcript.js toolExtra): full command, patched files (paths as
+// Codex wrote them, often relative to the session's folder), the plan's steps
+function toolExtra(name, args) {
+  if (name === 'shell' || name === 'exec_command' || name === 'shell_command') {
+    let a = args; try { a = typeof args === 'string' ? JSON.parse(args) : args; } catch {}
+    const cmd = Array.isArray(a && a.command) ? a.command[a.command.length - 1] : (a && (a.command || a.cmd)) || '';
+    return cmd ? { op: 'cmd', cmd: String(cmd).slice(0, 600) } : undefined;
+  }
+  if (name === 'apply_patch') {
+    const p = [...String(args || '').matchAll(/\*\*\* (?:Update|Add) File: (.+)/g)].map((m) => m[1].trim());
+    return p.length ? { op: 'edit', p: p.slice(0, 50) } : undefined;
+  }
+  if (name === 'update_plan') {
+    let a = null; try { a = JSON.parse(args); } catch {}
+    const steps = a && Array.isArray(a.plan) ? a.plan : [];
+    return steps.length ? { op: 'todo', todos: steps.slice(0, 40).map((s) => [String(s.step || '').slice(0, 200), String(s.status || '')]) } : undefined;
+  }
+  return undefined;
+}
+const toolRec = (name, args, t) => { const x = toolExtra(name, args); return x ? { role: 'tool', items: [toolLine(name, args)], t, x } : { role: 'tool', items: [toolLine(name, args)], t }; };
 
 // the records one rollout line contributes
 function recordsOf(o) {
@@ -36,11 +57,11 @@ function recordsOf(o) {
     if (!text || (p.role === 'user' && HARNESS.test(text))) return out;
     out.push(p.role === 'user' ? { role: 'user', text, t } : { role: 'assistant', text, t, mid: p.id || undefined });
   } else if (o.type === 'response_item' && p.type === 'function_call') {
-    out.push({ role: 'tool', items: [toolLine(p.name, p.arguments)], t });
+    out.push(toolRec(p.name, p.arguments, t));
   } else if (o.type === 'response_item' && p.type === 'custom_tool_call') {
-    out.push({ role: 'tool', items: [toolLine(p.name, p.input)], t });
+    out.push(toolRec(p.name, p.input, t));
   } else if (o.type === 'response_item' && p.type === 'local_shell_call') {
-    out.push({ role: 'tool', items: [toolLine('shell', p.action)], t });
+    out.push(toolRec('shell', p.action, t));
   } else if (o.type === 'compacted') {
     out.push({ role: 'sys', text: '（上下文已压缩）', t });
   } else if (o.type === 'event_msg' && p.type === 'turn_aborted') {

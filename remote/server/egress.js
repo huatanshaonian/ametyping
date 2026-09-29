@@ -1,13 +1,12 @@
-// Which proxy the NAS uses to reach the internet (OpenAI for summaries, Google later): the PC's v2rayN on the LAN
-// first, then the AWS way out (deploy/nas/egress.sh). Each candidate is probed with a CONNECT to the target host;
-// the first that answers wins and is remembered for a few minutes.
+// Which proxy the NAS uses to reach the internet (OpenAI for summaries, Google later), from config.json -- e.g. the
+// PC's v2rayN on the LAN first, then the AWS way out (deploy/nas/egress.sh). Each candidate is probed with a CONNECT
+// to the target host; the first that answers wins and is remembered for a few minutes.
 'use strict';
 const net = require('net');
 
-const DEFAULT = ['http://192.168.1.7:10810', 'http://127.0.0.1:1057'];
 const KEEP_MS = 5 * 60e3;
 
-function createEgress({ proxies = DEFAULT, log = () => {} } = {}) {
+function createEgress({ proxies = [], log = () => {} } = {}) {
   let cached = null; // { url, host, at }
 
   // CONNECT host:443 through an HTTP proxy; true when it answers 200

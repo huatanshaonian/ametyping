@@ -29,6 +29,8 @@ export function open(current) {
     onClose: () => { app.destroy(); app = null; } });
 }
 export function setCurrent(current) { if (app) app.setCurrent(current); }
+// open the window on one session (from the daily report)
+export function openSession(machine, id) { open(machine); app.select(machine + '|' + id); }
 
 function mount(current) {
   // ---- markup ----
@@ -253,6 +255,7 @@ function mount(current) {
   return {
     root,
     setCurrent(c) { current = c; renderList(); list.scrollTop = 0; },
+    select,
     destroy() { for (const off of offs) off(); clearInterval(tickT); ro.disconnect(); net.send({ t: 'unwatch' }); },
   };
 }
