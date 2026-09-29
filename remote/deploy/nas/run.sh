@@ -3,6 +3,7 @@
 # "start" is run once at boot (DSM Task Scheduler, triggered task "Boot-up", user huatanshaonian). It launches a small
 # supervisor loop that restarts the server when it exits (3 s, backing off to 60 s when it keeps dying right away).
 ROOT=$(cd "$(dirname "$0")" && pwd)
+SELF=$ROOT/$(basename "$0")      # this script by absolute path (it may have been started as "sh run.sh")
 D=$ROOT/remote
 NODE=/var/packages/Node.js_v22/target/usr/local/bin/node
 SUP=$ROOT/supervisor.pid
@@ -30,14 +31,14 @@ case "$1" in
     [ -f "$D/server/config.json" ] || { echo "no config.json yet (run setup.js init)"; exit 1; }
     cd "$D" && umask 077
     # setsid: the loop outlives the task scheduler / ssh session that started it
-    setsid sh "$ROOT/$(basename "$0")" _supervise < /dev/null > /dev/null 2>&1 &
+    setsid sh "$SELF" _supervise < /dev/null > /dev/null 2>&1 &
     echo $! > "$SUP"; echo "started" ;;
   _supervise) supervise ;;
   stop)
     running || { echo "not running"; exit 0; }
     pgid=$(ps -o pgid= -p "$(cat "$SUP")" | tr -d " ")
     kill -TERM -- "-$pgid" 2>/dev/null; rm -f "$SUP"; echo "stopped" ;;
-  restart) "$0" stop; sleep 1; "$0" start ;;
+  restart) sh "$SELF" stop; sleep 1; sh "$SELF" start ;;
   status) running && echo "running (supervisor $(cat "$SUP"))" || echo "not running" ;;
   *) echo "usage: $0 start|stop|restart|status"; exit 1 ;;
 esac

@@ -9,6 +9,7 @@
 #   egress.sh start|stop|restart|status     egress.sh login   (once: prints a URL to approve the new node)
 # "start" runs at boot next to run.sh (DSM Task Scheduler, user huatanshaonian).
 ROOT=$(cd "$(dirname "$0")" && pwd)
+SELF=$ROOT/$(basename "$0")      # this script by absolute path (it may have been started as "sh egress.sh")
 DIR=$ROOT/egress
 BIN=/volume2/@appstore/Tailscale/bin
 SOCK=$DIR/tailscaled.sock
@@ -60,14 +61,14 @@ case "$1" in
   start)
     running && { echo "already running"; exit 0; }
     mkdir -p "$DIR" && chmod 700 "$DIR" && cd "$DIR" && umask 077
-    setsid sh "$ROOT/$(basename "$0")" _supervise < /dev/null > /dev/null 2>&1 &
+    setsid sh "$SELF" _supervise < /dev/null > /dev/null 2>&1 &
     echo $! > "$SUP"; echo "started" ;;
   _supervise) supervise ;;
   stop)
     running || { echo "not running"; exit 0; }
     pgid=$(ps -o pgid= -p "$(cat "$SUP")" | tr -d " ")
     kill -TERM -- "-$pgid" 2>/dev/null; rm -f "$SUP"; echo "stopped" ;;
-  restart) "$0" stop; sleep 1; "$0" start ;;
+  restart) sh "$SELF" stop; sleep 1; sh "$SELF" start ;;
   login)
     # shields-up: this node accepts no incoming connections; it only carries the NAS's outgoing traffic
     ts up --hostname=huatan-balcony-egress --shields-up --accept-dns=false --accept-routes=false && ts status ;;
