@@ -1,0 +1,64 @@
+/* 糖糖看板 as a desktop window: session list (left) + conversation, permission cards, keys and reply box (right).
+   Everything is scoped under .dash; narrow windows (.dash.narrow) show one side at a time. */
+.dash { position: absolute; inset: 0; display: flex; color: var(--ink); font-size: 13px; }
+.dash .list { width: 250px; flex: none; overflow-y: auto; border-right: 2px solid var(--border); background: rgba(240, 209, 241, .3); }
+.dash .list::-webkit-scrollbar, .dash .conv::-webkit-scrollbar { width: 7px; }
+.dash .list::-webkit-scrollbar-thumb, .dash .conv::-webkit-scrollbar-thumb { background: var(--border); }
+.dash .mc { padding: 4px 10px; font-size: 11px; color: rgba(42, 31, 94, .55); background: #f1e6fb;
+  border-top: 1px solid var(--edge); border-bottom: 1px dotted var(--edge); position: sticky; top: 0; z-index: 1; }
+.dash .mc .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; background: #b9a; }
+.dash .mc.on .dot { background: rgb(60, 170, 120); }
+.dash .mc.cur { color: var(--border); font-weight: bold; }
+.dash .card { padding: 6px 10px 7px; border-bottom: 1px dotted var(--edge); cursor: pointer; }
+.dash .card:hover { background: rgba(255, 255, 255, .6); }
+.dash .card.sel { background: #fff; box-shadow: inset 3px 0 0 var(--border); }
+.dash .card .nm { color: var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash .card .sm { font-size: 11.5px; color: rgba(42, 31, 94, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.dash .card .st { font-size: 10.5px; margin-top: 2px; }
+.dash .card .pb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: #fff; background: rgb(208, 82, 28); }
+.dash .st.working { color: rgb(60, 140, 120); } .dash .st.waiting { color: rgb(208, 82, 28); }
+.dash .st.done { color: rgb(180, 50, 110); } .dash .st.idle { color: rgba(42, 31, 94, .4); }
+.dash .more { padding: 5px 10px; font-size: 11.5px; color: var(--border); cursor: pointer; border-bottom: 1px dotted var(--edge); }
+.dash .more:hover { background: rgba(255, 255, 255, .6); }
+.dash .empty, .dash .pick { padding: 20px 12px; color: rgba(42, 31, 94, .5); font-size: 12px; }
+.dash .right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dash .head { padding: 6px 12px; border-bottom: 1px dotted var(--edge); color: var(--border); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.dash .head b { font-weight: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dash .head .meta { color: rgba(77, 35, 207, .55); font-size: 12px; flex: none; }
+.dash .back { display: none; margin-right: 4px; padding: 1px 8px; font-size: 12px; }
+.dash .resume { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: rgba(42, 31, 94, .6); }
+.dash .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; color: var(--ink); background: rgba(240, 209, 241, .5); padding: 2px 6px; user-select: all; }
+.dash .conv { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.dash .perms { flex: none; max-height: 45%; overflow-y: auto; }
+.dash .perms:empty { display: none; }
+.dash .perm { margin: 6px 12px; padding: 6px 9px; background: #fff; border: 2px solid rgb(208, 82, 28); }
+.dash .perm .pt { color: rgb(208, 82, 28); margin-bottom: 4px; }
+.dash .perm pre { margin: 0 0 6px; max-height: 180px; overflow: auto; padding: 5px 7px; background: rgba(240, 209, 241, .5);
+  white-space: pre-wrap; word-break: break-all; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+.dash .perm .pa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dash .perm .ps { font-size: 11px; color: rgba(42, 31, 94, .55); }
+.dash .note { flex: none; font-size: 11.5px; padding: 3px 12px; color: var(--border); background: rgba(77, 35, 207, .08); display: none; }
+.dash .note.show { display: block; } .dash .note.bad { color: rgb(180, 50, 110); }
+.dash .keys { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 10px; border-top: 1px dotted var(--edge); background: rgba(240, 209, 241, .25); }
+.dash .keys .btn { padding: 1px 9px; font-size: 12px; min-width: 32px; }
+.dash .keys .kh { font-size: 11px; color: rgba(42, 31, 94, .5); margin-left: 4px; }
+.dash .compose { flex: none; display: flex; gap: 6px; align-items: flex-end; padding: 6px 10px; border-top: 2px solid var(--border); background: rgba(240, 209, 241, .4); }
+.dash .say { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 13px; line-height: 18px; color: var(--ink); max-height: 140px;
+  padding: 5px 8px; border: 1px solid var(--edge); background: #fff; outline: none; }
+.dash .say:focus { border-color: var(--border); }
+.dash .say:disabled { background: rgba(255, 255, 255, .5); }
+.dash .m { margin: 5px 0 10px; max-width: 90%; word-break: break-word; }
+.dash .m.user { margin-left: auto; width: fit-content; background: var(--title); border: 1px solid var(--edge); padding: 4px 9px; white-space: pre-wrap; }
+.dash .m.assistant { background: #fff; border: 1px solid var(--edge); padding: 5px 10px; }
+.dash .m.assistant p { margin: 0 0 6px; white-space: pre-wrap; } .dash .m.assistant p:last-child { margin: 0; }
+.dash .m pre { margin: 5px 0; padding: 5px 7px; background: rgba(240, 209, 241, .5); border-left: 2px solid var(--border);
+  white-space: pre-wrap; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+.dash .m code { font: 12px Consolas, monospace; background: rgba(240, 209, 241, .6); padding: 0 2px; }
+.dash .m.tool { font-size: 11.5px; color: rgba(42, 31, 94, .5); } .dash .m.tool b { color: rgba(77, 35, 207, .55); font-weight: normal; }
+.dash .m.sys { font-size: 11px; color: rgba(42, 31, 94, .45); text-align: center; max-width: none; }
+.dash .m .tm { font-size: 10px; color: rgba(77, 35, 207, .4); margin-left: 6px; }
+/* a narrow window: the list, or (after picking a session) the conversation */
+.dash.narrow .list { width: 100%; }
+.dash.narrow.viewing .list { display: none; }
+.dash.narrow:not(.viewing) .right { display: none; }
+.dash.narrow .back { display: inline-block; }

@@ -1,0 +1,160 @@
+/* Win98 / NGO desktop shell: tokens, window frame (the game's 9-slice bitmap), taskbar, start menu, desktop icons,
+   the network-neighbourhood panel and the small dialogs. Colours sampled from NEEDY GIRL OVERDOSE (see amedesktop). */
+@font-face { font-family: "PixelMplus"; src: url(/asset/dialog/PixelMplus12-Regular.ttf); }
+:root {
+  --border: #4d23cf; --border-d: #3a17a8; --title: #f0d1f1; --title-2: #f7c9ec; --body: #fff8ff;
+  --cyan: #90f4e4; --cyan-d: #6fd8dd; --pink: #ff7fc4; --pink-d: #e84fa8; --ink: #2a1f5e;
+  --gamepink: #f7e1fb; --panel: #efe6ff; --edge: rgba(77, 35, 207, .3);
+  --tbh: 40px;                              /* taskbar */
+  --npw: 250px;                             /* network panel */
+  --wt: 32px; --wr: 10px; --wb: 16px; --wl: 6px;   /* window frame bands (9-slice widths) */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: #241640; color: var(--ink); font: 13px/1.35 "PixelMplus", "Microsoft YaHei UI", system-ui, sans-serif; }
+button { font: inherit; color: inherit; cursor: pointer; }
+img { image-rendering: pixelated; }
+[hidden] { display: none !important; }
+
+/* ---------- desktop ---------- */
+#desktop { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbh); overflow: hidden;
+  background: #f7e1fb url(/wall/pc_wallpaper.png) center top / cover no-repeat; }
+#icons { position: absolute; left: 12px; top: 12px; bottom: 12px; display: grid; grid-auto-flow: column;
+  grid-template-rows: repeat(auto-fill, 84px); grid-auto-columns: 84px; gap: 6px; }
+.dicon { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border: 1px dotted transparent;
+  background: none; color: inherit; user-select: none; -webkit-tap-highlight-color: transparent; }
+.dicon img { width: 32px; height: 32px; }
+.dicon span { max-width: 100%; padding: 0 3px; font-size: 12px; font-weight: bold; color: var(--border); text-align: center; line-height: 1.15;
+  text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; overflow-wrap: anywhere; }
+.dicon.sel { border-color: var(--border); }
+.dicon.sel span { background: var(--border); color: #fff; text-shadow: none; }
+.dicon.sel img { filter: drop-shadow(0 0 0 var(--border)) brightness(.85) sepia(.4) hue-rotate(200deg); }
+.dicon.off { opacity: .55; }
+#mark { position: absolute; right: 14px; bottom: 10px; text-align: right; color: var(--border); pointer-events: none;
+  text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; }
+#mark b { display: block; font-size: 22px; }
+#mark small { font-size: 12px; }
+
+/* ---------- windows ---------- */
+#windows { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbh); pointer-events: none; overflow: hidden; }
+.win { position: absolute; pointer-events: auto; min-width: 240px; min-height: 160px;
+  border-style: solid; border-width: var(--wt) var(--wr) var(--wb) var(--wl);
+  border-image: url(/img/windowbase_active_clean.png) 42 14 22 8 fill;
+  filter: drop-shadow(4px 4px 0 rgba(20, 10, 90, .35)); }
+.win.inactive { border-image-source: url(/img/windowbase_inactive_clean.png); }
+.win.minimized { display: none; }
+.win .titlebar { position: absolute; top: calc(-1 * var(--wt)); left: calc(-1 * var(--wl)); right: calc(-1 * var(--wr)); height: var(--wt);
+  display: flex; align-items: center; gap: 6px; padding: 0 92px 0 10px; cursor: grab; touch-action: none; user-select: none; }
+.win .titlebar img { width: 16px; height: 16px; }
+.win .title { flex: 1; min-width: 0; font-weight: bold; color: var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.win.inactive .title { color: #8a8a8a; }
+.win .tbtns { position: absolute; top: calc(-1 * var(--wt)); right: calc(-1 * var(--wr)); height: var(--wt); display: flex; align-items: center; gap: 3px; padding-right: 8px; }
+.win .tbtn { width: 24px; height: 20px; padding: 0; border: 2px solid var(--border); background: var(--cyan); color: var(--border);
+  font-weight: bold; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.win .tbtn:active { background: var(--cyan-d); }
+.win .tbtn.close { background: var(--pink); color: #fff; border-color: var(--pink-d); }
+.win .content { position: absolute; inset: 0; overflow: auto; background: var(--body); }
+.win .content::-webkit-scrollbar { width: 12px; height: 12px; }
+.win .content::-webkit-scrollbar-track { background: var(--gamepink); }
+.win .content::-webkit-scrollbar-thumb { background: var(--border); border: 2px solid var(--gamepink); }
+.win .resize { position: absolute; right: calc(-1 * var(--wr)); bottom: calc(-1 * var(--wb)); width: var(--wb); height: var(--wb); cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 45%, var(--border) 45%, var(--border) 55%, transparent 55%, transparent 70%, var(--border) 70%, var(--border) 80%, transparent 80%); }
+.win.max .resize { display: none; }
+.win.max .titlebar { cursor: default; }
+
+/* ---------- network neighbourhood (right) ---------- */
+#netpanel { position: absolute; right: 0; top: 0; bottom: var(--tbh); width: var(--npw); display: flex; flex-direction: column;
+  background: var(--body); border-left: 3px solid var(--border); }
+#netpanel .ptitle { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-weight: bold; color: var(--border);
+  background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
+#machines { flex: 1; overflow-y: auto; padding: 4px; }
+.mach { display: flex; gap: 8px; width: 100%; padding: 7px 6px; border: 1px solid transparent; background: none; text-align: left; align-items: flex-start; }
+.mach img { flex: none; width: 32px; height: 32px; }
+.mach.off img { filter: grayscale(1); opacity: .5; }
+.mach .mn { font-weight: bold; color: var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mach .mi { font-size: 11.5px; color: rgba(42, 31, 94, .65); }
+.mach .mb { display: inline-block; margin-top: 2px; padding: 0 4px; font-size: 10.5px; color: #fff; background: rgb(208, 82, 28); }
+.mach:hover { background: rgba(255, 255, 255, .7); border-color: var(--edge); }
+.mach.sel { background: var(--border); border-color: var(--border); }
+.mach.sel .mn, .mach.sel .mi { color: #fff; }
+.mach .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; background: #b9a; vertical-align: middle; }
+.mach.on .dot { background: rgb(60, 170, 120); }
+#machines .empty { padding: 14px 8px; color: rgba(42, 31, 94, .5); font-size: 12px; }
+
+/* ---------- taskbar ---------- */
+#taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--tbh); z-index: 50; display: flex; align-items: stretch;
+  background: var(--gamepink); border-top: 3px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
+#startbtn { flex: none; margin: 4px; padding: 0 10px 0 6px; display: flex; align-items: center; gap: 6px; font-weight: bold; color: var(--border);
+  background: var(--gamepink); border: 2px solid; border-color: #fff var(--border) var(--border) #fff; }
+#startbtn.on, #startbtn:active { border-color: var(--border) #fff #fff var(--border); background: #e6d6f4; }
+#startbtn img { height: 18px; }
+.tb-sep { width: 2px; background: var(--border); margin: 7px 3px; }
+#dock { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 4px; overflow-x: auto; scrollbar-width: none; }
+#dock::-webkit-scrollbar { display: none; }
+.dockbtn { flex: 0 1 170px; min-width: 60px; height: 28px; display: flex; align-items: center; gap: 5px; padding: 0 8px 0 6px;
+  border: 2px solid var(--border); background: var(--gamepink); color: var(--border); font-weight: bold; font-size: 12px;
+  box-shadow: inset -2px -2px 0 rgba(77, 35, 207, .15), inset 2px 2px 0 rgba(255, 255, 255, .65); }
+.dockbtn img { width: 16px; height: 16px; flex: none; }
+.dockbtn span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dockbtn.active { background: #fff; box-shadow: inset 2px 2px 0 rgba(77, 35, 207, .35); }
+.dockbtn.min { opacity: .6; }
+#tray { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-left: 2px solid var(--border); color: var(--border); font-weight: bold; }
+#conn { font-size: 11px; }
+#conn.bad { color: rgb(180, 50, 110); }
+#netbtn { display: none; border: 0; background: none; padding: 0; }
+#netbtn img { width: 16px; height: 16px; }
+
+/* ---------- start menu ---------- */
+#startmenu { position: absolute; left: 4px; bottom: calc(var(--tbh) + 2px); z-index: 60; width: 240px; display: flex;
+  background: var(--body); border: 3px solid var(--border); box-shadow: 5px 5px 0 rgba(20, 10, 90, .45); }
+#startmenu .band { flex: 0 0 28px; background: linear-gradient(180deg, #7a3ff0, #4d23cf); display: flex; align-items: flex-end; justify-content: center; padding: 8px 0; }
+#startmenu .band span { writing-mode: vertical-rl; transform: rotate(180deg); color: #fff; font-weight: bold; font-size: 16px; letter-spacing: 2px; }
+#startmenu .items { flex: 1; padding: 4px 0; }
+.smi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; border: 0; background: none; text-align: left; }
+.smi img { width: 24px; height: 24px; }
+.smi:hover:not(:disabled) { background: url(/img/button_startmenu_selected.png) center / 100% 100%; color: #fff; }
+.smi:disabled { opacity: .45; cursor: default; }
+.smsep { height: 2px; margin: 4px 8px; background: var(--edge); }
+
+/* ---------- common controls inside windows ---------- */
+.btn { font: inherit; font-size: 12.5px; padding: 3px 12px; cursor: pointer; border: 1px solid var(--border); background: var(--title); color: var(--border); }
+.btn:hover:not(:disabled) { background: #fff; }
+.btn.go { background: var(--border); color: #fff; }
+.btn.no { border-color: rgb(180, 50, 110); color: rgb(180, 50, 110); background: #fff; }
+.btn:disabled { opacity: .45; cursor: default; }
+.field { font: inherit; padding: 4px 6px; border: 1px solid var(--border); background: #fff; color: var(--ink); min-width: 0; }
+.notice { padding: 16px; line-height: 1.6; }
+
+/* ---------- step-up dialog ---------- */
+#gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(42, 31, 94, .35); }
+#gate form { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: 6px 6px 0 rgba(77, 35, 207, .3); }
+#gate .gt { padding: 5px 10px; font-weight: bold; color: var(--border); background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
+#gate .gb { padding: 12px 14px 14px; }
+#gate p { margin: 0 0 10px; font-size: 12px; color: rgba(42, 31, 94, .7); }
+#gate input { width: 100%; padding: 7px; font: inherit; font-size: 20px; letter-spacing: 6px; text-align: center; border: 1px solid var(--border); color: var(--ink); }
+#gate .ga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+#gate .gm { min-height: 16px; margin-top: 6px; font-size: 12px; color: rgb(180, 50, 110); }
+
+/* ---------- display properties ---------- */
+.walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; padding: 12px; }
+.wall { position: relative; padding: 0; border: 2px solid var(--edge); background: #fff; text-align: center; }
+.wall .th { height: 66px; background-size: cover; background-position: center; }
+.wall .nm { padding: 3px 4px; font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wall.sel { border-color: var(--border); box-shadow: 0 0 0 2px var(--pink); }
+.wall .del { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: 1px solid var(--pink-d); background: var(--pink); color: #fff; font-size: 11px; line-height: 1; }
+.wallbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-top: 1px dotted var(--edge); }
+.wallbar .field { flex: 1 1 200px; }
+.wallmsg { padding: 0 12px 10px; font-size: 12px; color: var(--border); min-height: 16px; }
+.wallmsg.bad { color: rgb(180, 50, 110); }
+
+/* ---------- narrow screens (phones): windows fill the desktop, the panel becomes a sheet ---------- */
+@media (max-width: 700px) {
+  :root { --npw: 0px; }
+  #netpanel { width: min(300px, 86vw); z-index: 55; display: none; box-shadow: -4px 0 0 rgba(20, 10, 90, .3); }
+  #netpanel.open { display: flex; }
+  #netbtn { display: block; }
+  #mark b { font-size: 18px; }
+  .dockbtn { flex-basis: 110px; }
+  .dockbtn span { display: none; }
+  .dockbtn.active span { display: inline; }
+}

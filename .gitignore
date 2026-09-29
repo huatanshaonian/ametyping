@@ -4,3 +4,4 @@ release/
 *.log
 remote/server/config.json
 remote/agent/agent.json
+windows98-icons/

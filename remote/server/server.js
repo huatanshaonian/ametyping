@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const auth = require('./auth');
 const { createStore } = require('./store');
+const { createWalls } = require('./walls');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -139,6 +140,7 @@ function broadcast(obj) {
   for (const c of clients) { try { c.ws.send(s); } catch {} }
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -284,6 +286,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
+  // wallpapers the server downloaded (display settings on the desktop)
+  if (req.method === 'GET' && p === '/api/walls') return json(res, 200, { items: walls.list().map((w) => ({ name: w.name, url: '/wallpaper/' + w.name })) });
+  if (req.method === 'POST' && p === '/api/wall/fetch') return apiWallFetch(req, res, ip);
+  if (req.method === 'POST' && p === '/api/wall/delete') {
+    let d = {}; try { d = JSON.parse(await readBody(req)); } catch {}
+    const ok = walls.remove(d.name); if (ok) audit('wall-delete', ip, String(d.name));
+    return json(res, ok ? 200 : 404, { ok });
+  }
+  if (req.method === 'GET' && p.startsWith('/wallpaper/')) {
+    const w = walls.file(p.slice('/wallpaper/'.length));
+    if (!w) return send(res, 404, 'not found');
+    return fs.readFile(w.f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, w.type, { 'Cache-Control': 'max-age=86400' }));
+  }
 
   return send(res, 404, 'not found');
 });
@@ -322,6 +337,19 @@ async function apiLogin(req, res, ip) {
   setCookie(res, SID, sid, 24 * 3600);
   audit('login-ok', ip);
   return json(res, 200, { ok: true });
+}
+let wallBusy = 0;
+async function apiWallFetch(req, res, ip) {
+  let d = {}; try { d = JSON.parse(await readBody(req)); } catch {}
+  if (wallBusy >= 2) return json(res, 429, { ok: false, msg: '正在下载别的图片，稍后再试' });
+  wallBusy++;
+  try {
+    const name = await walls.fetchUrl(d.url);
+    audit('wall-fetch', ip, name);
+    return json(res, 200, { ok: true, name, url: '/wallpaper/' + name });
+  } catch (e) {
+    return json(res, 200, { ok: false, msg: String(e && e.message || '下载失败').slice(0, 120) });
+  } finally { wallBusy--; }
 }
 // re-enter the code before acting on a machine (see auth.FRESH_MS)
 async function apiStepUp(req, res, ip, sess) {
