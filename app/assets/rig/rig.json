@@ -482,5 +482,31 @@
   "mugScale": 0.52,
   "rimY": 175,
   "mouthY": 648
+ },
+ "faceTop": [
+  "blink",
+  "half",
+  "focus",
+  "happy",
+  "annoyed",
+  "surprised",
+  "yandere",
+  "sleep",
+  "wink",
+  "smug",
+  "pout",
+  "teary",
+  "blush",
+  "angry",
+  "dizzy",
+  "deadpan",
+  "sweat",
+  "yawn",
+  "sip",
+  "stretch"
+ ],
+ "frontHair": {
+  "y0": 390,
+  "y1": 785
  }
 }

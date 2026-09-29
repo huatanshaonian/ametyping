@@ -4,7 +4,7 @@
 const $ = (id) => document.getElementById(id);
 const list = $('list'), log = $('log'), se = $('se');
 se.volume = 0.45;
-let data = [], selected = null, pinned = false, typeTimer = null, lastTypedKey = '';
+let data = [], selected = null, pinned = false, typeTimer = null, lastTypedKey = '', collapsed = false, sentUnread = -1;
 const seen = {};                       // session id -> last activity time the user has looked at
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
@@ -14,10 +14,16 @@ const ago = (t0) => { const s = Math.round((Date.now() - t0) / 1000); return s <
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const lastText = (s) => { for (let i = s.lines.length - 1; i >= 0; i--) if (!s.lines[i].sep) return s.lines[i].text; return '…'; };
 
+// unread = new activity you have not looked at; while collapsed nothing is being looked at, so the selected one counts too
+const isUnread = (s) => (seen[s.id] || 0) < s.last && (collapsed || s.id !== selected);
+
 function header() {
   const running = data.filter((s) => WORKING.has(s.state)).length, waiting = data.filter((s) => s.state === 'waiting').length;
   $('who').textContent = `Claude ─ ${data.length} 个会话`;
   $('meta').textContent = [running && `${running} 个在跑`, waiting && `${waiting} 个等你`].filter(Boolean).join(' · ') || '都停下了';
+  const nUnread = data.filter(isUnread).length;
+  $('ub').classList.toggle('on', nUnread > 0); $('ubn').textContent = nUnread;
+  if (nUnread !== sentUnread) { sentUnread = nUnread; window.bubble.unread(nUnread); }   // P-chan's badge (main forwards it to Ame)
   const s = data.find((x) => x.id === selected);
   if (s) {
     $('hname').textContent = s.project && s.project !== s.label ? `${s.label}  ─ ${s.project}` : s.label;
@@ -40,7 +46,7 @@ function renderList() {
     }
     if (list.children[i] !== c) list.insertBefore(c, list.children[i] || null);
     const [cls, name] = stateName(s.state);
-    c.className = 'card' + (s.id === selected ? ' sel' : '') + ((seen[s.id] || 0) < s.last && s.id !== selected ? ' unread' : '');
+    c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
     c.querySelector('.nm').textContent = s.label;
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
@@ -105,22 +111,42 @@ window.bubble.onState(({ sessions, changedId }) => {
   if (changed && (!cur || changed.state === 'waiting' || (!pinned && !WORKING.has(cur.state) && cur.state !== 'waiting'))) selected = changedId;
   if (!selected && data.length) selected = data[0].id;
   const sel = data.find((s) => s.id === selected);
-  if (sel) seen[sel.id] = sel.last;
+  if (sel && !collapsed) seen[sel.id] = sel.last;
   renderAll(changedId === selected);
   if (changed && (!prev || prev.state !== changed.state) && ['message', 'done', 'waiting'].includes(changed.state)) {
     try { se.currentTime = 0; se.play(); } catch {}
   }
 });
 window.bubble.onHide(() => {});
+// the main process owns the collapsed flag (window height, settings); this just mirrors it
+window.bubble.onCollapsed((v) => {
+  collapsed = !!v;
+  document.body.classList.toggle('collapsed', collapsed);
+  $('fold').textContent = collapsed ? '□' : '−'; $('fold').title = collapsed ? '展开' : '折叠';
+  const sel = data.find((x) => x.id === selected);
+  if (!collapsed && sel) seen[sel.id] = sel.last;      // expanding = looking at the selected session
+  renderAll(false);
+});
+let lastTitleDown = { t: 0, x: 0, y: 0 };
 document.addEventListener('pointerdown', (e) => {
   const hit = document.elementFromPoint(e.clientX, e.clientY);
   if (hit && hit.id === 'close') window.bubble.close();
+  else if (hit && hit.id === 'fold') window.bubble.collapse(!collapsed);
 });
 const grip = $('grip');
 document.addEventListener('pointerdown', (e) => {
   const hit = document.elementFromPoint(e.clientX, e.clientY);
   if (hit === grip) { grip.setPointerCapture(e.pointerId); window.bubble.gesture('resize-start'); }
-  else if (hit && hit.closest && hit.closest('#title') && hit.id !== 'close') window.bubble.gesture('drag-start');   // drag by the title bar
+  else if (hit && hit.closest && hit.closest('#title') && hit.id !== 'close' && hit.id !== 'fold') {
+    // double-click on the title bar folds / unfolds (checked by hand: the panel gets no reliable dblclick events)
+    const d = lastTitleDown, now = Date.now();
+    if (now - d.t < 450 && Math.abs(e.clientX - d.x) < 6 && Math.abs(e.clientY - d.y) < 6) {
+      lastTitleDown = { t: 0, x: 0, y: 0 }; window.bubble.collapse(!collapsed);
+    } else {
+      lastTitleDown = { t: now, x: e.clientX, y: e.clientY };
+      window.bubble.gesture('drag-start');   // drag by the title bar
+    }
+  }
 });
 const endResize = () => { window.bubble.gesture('resize-end'); window.bubble.gesture('drag-end'); };
 document.addEventListener('pointerup', endResize);
