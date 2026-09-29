@@ -1,4 +1,4 @@
-// Step-up: re-enter the authenticator code before acting on a machine (valid 10 minutes on the server).
+// Step-up: re-enter the authenticator code before acting on a machine (valid 1 hour on the server).
 import { $ } from './util.js';
 
 const gate = $('#gate'), form = $('form', gate), input = $('input', gate), msg = $('.gm', gate), okBtn = $('button[type=submit]', gate);

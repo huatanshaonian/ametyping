@@ -80,7 +80,7 @@ const clearFails = (ip) => fails.delete(ip);
 // Logged in: 8 h idle, 24 h max. Acting on a machine (reply / permission) also needs a TOTP code entered
 // within the last FRESH_MS -- logging in counts -- so a stolen cookie alone can read but not act.
 const sids = new Map();
-const IDLE_MS = 8 * 3600e3, MAX_MS = 24 * 3600e3, FRESH_MS = +process.env.AME_FRESH_MS || 10 * 60e3;   // env: tests only
+const IDLE_MS = 8 * 3600e3, MAX_MS = 24 * 3600e3, FRESH_MS = +process.env.AME_FRESH_MS || 60 * 60e3;   // env: tests only
 const token = () => crypto.randomBytes(32).toString('base64url');
 function newSession(ip, ua) { const t = token(), now = Date.now(); sids.set(t, { ip, ua, born: now, seen: now, fresh: now }); return t; }
 function checkSession(t) {

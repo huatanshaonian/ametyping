@@ -27,7 +27,7 @@
 | `remote/agent/agent.js` | 扫描 transcript + 轮询糖糖；只执行 `send` / `decide` 两种指令；`control` 默认关 |
 | `remote/agent/agent.example.json` | agent 配置示例 |
 | `remote/server/server.js` | 一步登录、再次验证（step-up）、来源校验、agent 单独监听、限频、审计 |
-| `remote/server/auth.js` | scrypt 密码、TOTP（一次一用）、IP/全局锁定、会话（空闲 8h / 最长 24h / 10 分钟内验证过才可操作） |
+| `remote/server/auth.js` | scrypt 密码、TOTP（一次一用）、IP/全局锁定、会话（空闲 8h / 最长 24h / 1 小时内验证过才可操作） |
 | `remote/server/setup.js` | `init` / `password` / `totp` / `add-agent` / `remove-agent` / `production <域名> [VPN地址]` / `list` |
 | `remote/public/login.*` | 粉色 Win98 风格登录框，不出现任何名字或图片 |
 | `remote/public/index.html`, `app.js` | 会话列表、对话、权限卡片、回复框、「再次验证」弹框 |
@@ -40,7 +40,7 @@
 - 登录前：通用登录框、素材需登录、`noindex` + `robots.txt`。
 - 登录：用户名 + 密码 + 验证码一次提交，任何错误都返回同一句 `{"error":"failed"}`；验证码只在密码正确时才校验。
 - 防爆破：同 IP 15 分钟错 5 次锁 15 分钟；全局 1 小时错 20 次锁 30 分钟；IP 取 `X-Forwarded-For` **最右**一项。
-- 操作前再验证：发回复 / 批准权限需 10 分钟内输过验证码（登录也算）；否则返回 `need:'totp'`，页面弹框 → `POST /api/stepup`。
+- 操作前再验证：发回复 / 批准权限需 1 小时内输过验证码（登录也算）；否则返回 `need:'totp'`，页面弹框 → `POST /api/stepup`。
 - 会话：cookie 在 HTTPS 下为 `__Host-sid`；HSTS；登出立即断开已打开的 WebSocket；每分钟复查一次过期。
 - 跨站：所有 `POST /api/*` 和 `/ws` 校验 Origin；CSP 只允许本站。
 - 审计：`server/audit.log` 记录登录、验证、每次操作（机器、会话、字数，不记内容）。
