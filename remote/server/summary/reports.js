@@ -1,6 +1,7 @@
 // Daily reports on disk, next to the conversation store:
 //   <dir>/<YYYY-MM-DD>.json   one report (the day it is filed under: the day that ended at 4:30 the next morning)
 //   <dir>/draft.json          the latest 「总结到现在」 (manual, does not move the schedule on)
+//   <dir>/week-<Monday>.json  the weekly report of Monday..Sunday (summary/weekly.js)
 //   <dir>/state.json          { lastTo }: where the last scheduled report ended -- the next one starts there
 //   <dir>/cache/              summaries of long sessions, so a retry does not ask again
 'use strict';
@@ -15,7 +16,17 @@ function createReports(dir) {
   const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
   const writeJson = (f, v) => { fs.writeFileSync(f + '.tmp', JSON.stringify(v), { mode: 0o600 }); fs.renameSync(f + '.tmp', f); };
 
-  const get = (date) => (date === 'draft' || DAY.test(String(date))) ? readJson(file(date), null) : null;
+  const WEEK = /^week-\d{4}-\d{2}-\d{2}$/;
+  const get = (date) => (date === 'draft' || DAY.test(String(date)) || WEEK.test(String(date))) ? readJson(file(date), null) : null;
+  // weekly reports: week-<Monday>.json
+  const getWeek = (start) => get('week-' + start);
+  const hasWeek = (start) => DAY.test(String(start)) && fs.existsSync(file('week-' + start));
+  function saveWeek(w) { if (!DAY.test(w.start)) throw new Error('bad week'); writeJson(file('week-' + w.start), w); }
+  function listWeeks() {
+    let names = []; try { names = fs.readdirSync(dir); } catch {}
+    return names.filter((n) => WEEK.test(n.slice(0, -5)) && n.endsWith('.json')).map((n) => n.slice(5, -5)).sort().reverse()
+      .map((start) => { const w = getWeek(start) || {}; return { start, end: w.end, headline: w.headline || '', minutes: w.stats ? w.stats.minutes : 0 }; });
+  }
   function save(r) {
     if (!r.draft && !DAY.test(r.date)) throw new Error('bad report date');
     writeJson(file(r.draft ? 'draft' : r.date), r);
@@ -41,7 +52,7 @@ function createReports(dir) {
   const cacheGet = (key) => readJson(cacheFile(key), null);
   const cachePut = (key, v) => writeJson(cacheFile(key), v);
 
-  return { get, save, list, latest, has, state, setState, cacheGet, cachePut };
+  return { get, save, list, latest, has, getWeek, hasWeek, saveWeek, listWeeks, state, setState, cacheGet, cachePut };
 }
 
 module.exports = { createReports };

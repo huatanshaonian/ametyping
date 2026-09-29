@@ -17,6 +17,7 @@ const { createClassifier } = require('./classify');
 const { createEgress } = require('../egress');
 const { createSearch } = require('./search');
 const { createQA } = require('./qa');
+const { createWeekly, mondayOf } = require('./weekly');
 
 function readBody(req, cap = 4096) {
   return new Promise((resolve, reject) => {
@@ -26,7 +27,9 @@ function readBody(req, cap = 4096) {
   });
 }
 
-function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log = console.log, audit = () => {} }) {
+// onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
+// (the pet's morning bubble)
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, onNote = () => {}, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -40,9 +43,20 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log 
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
   const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log,
     artifacts, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
+  const weekly = createWeekly({ reports, ask: gen.ask, log });
+  // the short note for the pet: the latest daily report that is not a backfill, and its week when that is written
+  function latestNote() {
+    const r = reports.latest();
+    if (!r) return null;
+    const ps = r.projects || [];
+    const w = reports.getWeek(mondayOf(r.date));
+    return { date: r.date, headline: r.headline || '', projects: ps.filter((p) => p.category !== 'chore').map((p) => p.name).slice(0, 5),
+      open: (r.open || []).filter((o) => o.status === 'open').length, chores: ps.filter((p) => p.category === 'chore').length,
+      week: w && w.end === r.date ? { start: w.start, end: w.end, headline: w.headline || '' } : undefined };
+  }
   const [hh, mm] = String(cfg.at || '04:30').split(':').map(Number);
-  const scheduler = createScheduler({ reports, store, generate: gen.generate, log, at: [hh || 0, mm || 0],
-    quietMs: (cfg.quietMin != null ? +cfg.quietMin : 30) * 60e3, tickMs: +process.env.AME_SUMMARY_TICK_MS || 60e3 });
+  const scheduler = createScheduler({ reports, store, generate: gen.generate, weekly, notify: () => { const n = latestNote(); if (n) onNote(n); }, log,
+    at: [hh || 0, mm || 0], quietMs: (cfg.quietMin != null ? +cfg.quietMin : 30) * 60e3, tickMs: +process.env.AME_SUMMARY_TICK_MS || 60e3 });
 
   // search over reports, artifacts and every stored conversation; 问一问 on top of it
   const search = createSearch({ storeDir: path.dirname(dir), reports, artifacts, sessions: () => store.sessions() });
@@ -65,7 +79,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log 
     }
     if (req.method === 'GET' && p === '/api/reports') {
       const d = reports.get('draft');
-      json(res, 200, { items: reports.list(), status: scheduler.status(), draft: d ? { headline: d.headline, from: d.from, to: d.to } : null });
+      json(res, 200, { items: reports.list(), weeks: reports.listWeeks(), status: scheduler.status(), draft: d ? { headline: d.headline, from: d.from, to: d.to } : null });
       return true;
     }
     if (req.method === 'GET' && p === '/api/report') {
@@ -92,7 +106,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log 
     return false;
   }
 
-  return { handle, scheduler, reports, generate: gen.generate };
+  return { handle, scheduler, reports, generate: gen.generate, latestNote };
 }
 
 module.exports = { createSummary };

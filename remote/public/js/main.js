@@ -75,5 +75,10 @@ net.on('sessions', render);
 wallpaper.init();
 net.connect();
 openDashboard();
+// #report=<date | week-date | draft>: opened from the pet's morning bubble -- show that report (then forget the link)
+{
+  const m = /^#report=(draft|week-\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2})$/.exec(location.hash);
+  if (m) { reports.open(m[1]); history.replaceState(null, '', location.pathname); }
+}
 // just logged in (the login page leaves a mark): the start-up sound, once
 try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

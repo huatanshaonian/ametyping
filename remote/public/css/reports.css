@@ -65,3 +65,4 @@ a.rp-sess { text-decoration: none; display: inline-block; }
 .rs-snip { font-size: 12.5px; color: var(--muted); margin: 1px 0 0 12px; word-break: break-all; }
 .qa-answer { white-space: pre-wrap; line-height: 1.7; padding: 8px 10px; border: 1px solid var(--edge); background: #fff; }
 .rp-empty.bad { color: var(--bad); }
+.ri.week b { font-weight: bold; } .ri.week:not(.sel) { background: var(--tint-soft); }

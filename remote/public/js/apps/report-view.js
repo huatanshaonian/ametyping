@@ -17,6 +17,38 @@ const list = (title, items, cls) => (items && items.length
   ? h('div', { class: 'rp-list ' + (cls || '') }, h('div', { class: 'rp-lt', text: title }), h('ul', {}, ...items.map((t) => h('li', { text: t }))))
   : null);
 
+// ISO week number of a date (weeks start on Monday)
+export function weekNo(date) {
+  const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const w1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d - w1) / 86400e3 - 3 + ((w1.getDay() + 6) % 7)) / 7);
+}
+const md = (d) => d.slice(5).replace('-', '/');
+
+// the weekly report (remote/server/summary/weekly.js); openReport(date) opens one of its days
+export function renderWeek(w, { openReport }) {
+  const s = w.stats || {}, c = s.byCat || {};
+  const sec = (title, ...kids) => h('section', { class: 'rp-sec' }, h('h3', { text: title }), ...kids);
+  const cats = CAT.filter(([k]) => k !== 'chore').map(([k, name]) => {
+    const ps = (w.projects || []).filter((p) => p.category === k);
+    return ps.length ? sec(`${name} · ${minutes(c[k] || 0)}`, ...ps.map((p) => h('div', { class: 'rp-proj' },
+      h('div', { class: 'rp-ph' }, h('b', { text: p.name })), p.summary ? h('p', { class: 'rp-sum', text: p.summary }) : null, list('进展', p.progress)))) : null;
+  });
+  return h('article', { class: 'rp' },
+    h('div', { class: 'rp-top' },
+      h('div', { class: 'rp-day', text: `第 ${weekNo(w.start)} 周周报 · ${md(w.start)} – ${md(w.end)}` }),
+      h('div', { class: 'rp-meta', text: `${minutes(s.minutes || 0)} · 工作 ${s.days || 0} 天 · ${s.sessions || 0} 个会话 · 杂活 ${s.chores || 0} 件${s.artifacts ? ' · 产出物 ' + s.artifacts + ' 个' : ''}` })),
+    h('p', { class: 'rp-head', text: w.headline || '' }),
+    (w.highlights || []).length ? sec('这周最值得记住的', h('ul', {}, ...w.highlights.map((x) => h('li', { text: x })))) : null,
+    ...cats,
+    (w.open || []).length ? sec('周末时还没做的', h('ul', {}, ...w.open.map((o) => h('li', { text: `${o.text}${o.project ? '（' + o.project + '）' : ''}` })))) : null,
+    (w.artifacts || []).length ? sec(`这周的产出物（${w.artifacts.length}）`, h('ul', {}, ...w.artifacts.map((a) => h('li', {},
+      h('code', { class: 'rp-ap', text: a.path }), h('small', { text: ` · ${a.machine} · ${md(a.date)}` }), a.note ? h('div', { class: 'rp-an', text: a.note }) : null)))) : null,
+    sec('每天', h('ul', { class: 'rs-list' }, ...(w.days || []).map((d) => h('li', {},
+      h('button', { class: 'rs-link', type: 'button', text: dayName(d.date) + (d.brief ? '（补录）' : ''), onclick: () => openReport(d.date) }),
+      h('small', { text: ` ${minutes(d.minutes || 0)} · ${d.headline}` }))))));
+}
+
 export function render(r) {
   const byKey = new Map((r.sessions || []).map((s) => [s.key, s]));
   const sessLink = (key) => {

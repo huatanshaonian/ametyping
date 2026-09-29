@@ -156,8 +156,11 @@ const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
+// a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
+const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, audit: (...a) => audit(...a) });
+  resumeCmd, artifacts, audit: (...a) => audit(...a),
+  onNote: (n) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n); } });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -180,7 +183,11 @@ const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
-  if (d.t === 'hello') { m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() }); return; }
+  if (d.t === 'hello') {
+    m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() });
+    const n = summary && summary.latestNote(); if (n) sendNote(ws, n);          // the pet may have missed it while off
+    return;
+  }
   if (d.t === 'rec') {
     const r = store.accept(m.name, d);
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }

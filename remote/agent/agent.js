@@ -253,6 +253,8 @@ function connect() {
       pushRecords();
     }
     else if (typeof d.t === 'string' && d.t.startsWith('fs')) fsServe.handle(d);
+    // a new daily report: its note goes to the local pet for the morning bubble (information, not remote control)
+    else if (d.t === 'report-note' && typeof d.date === 'string') petCall('POST', '/control/report', d);
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));

@@ -7,8 +7,10 @@
 const pad = (n) => String(n).padStart(2, '0');
 const dayOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
-function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30], quietMs = 30 * 60e3, retryMs = 30 * 60e3,
-  tickMs = 60e3, now = () => Date.now() }) {
+// weekly (weekly.js, optional): after a Sunday's report, the week's; notify(): a new report or week is there
+// (the pet's morning bubble hears of it)
+function createScheduler({ reports, store, generate, weekly = null, notify = () => {}, log = () => {}, at = [4, 30], quietMs = 30 * 60e3,
+  retryMs = 30 * 60e3, tickMs = 60e3, now = () => Date.now() }) {
   let running = null, lastError = null, lastErrorAt = 0;
 
   // the latest 4:30 at or before t
@@ -27,8 +29,9 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
     running = { ...job, started: now() };
     try {
       const r = await generate(job);
-      if (!job.draft) reports.setState({ lastTo: job.to });
+      if (!job.draft) { reports.setState({ lastTo: job.to }); notify(); }
       lastError = null;
+      if (!job.draft && weekly && weekly.pendingWeek()) await makeWeek(weekly.pendingWeek());   // Sunday done: the week
       return r;
     } catch (e) {
       lastError = e.message; lastErrorAt = now();
@@ -37,11 +40,25 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
     } finally { running = null; }
   }
 
+  // the weekly report of the week starting on `start` (errors are kept like a daily report's)
+  async function makeWeek(start) {
+    if (running) running.week = start;
+    try { const w = await weekly.generateWeek(start); if (w) notify(); lastError = null; return w; }
+    catch (e) { lastError = `周报 ${start}：${e.message}`; lastErrorAt = now(); log(`周报 ${start} 失败：${e.message}`); return null; }
+  }
+
   async function tick() {
     const t = now();
     if (running) return 'running';
     const d = due(t);
-    if (!d) return 'done';
+    if (!d) {
+      // the daily report is done; a finished week still without its weekly report (a failure, a restart) gets it now
+      const w = weekly && weekly.pendingWeek();
+      if (!w || (lastError && t - lastErrorAt < retryMs)) return 'done';
+      running = { weekly: true, started: t };
+      try { await makeWeek(w); } finally { running = null; }
+      return 'week';
+    }
     if (store.lastActivity() > t - quietMs) return 'busy';          // still working: wait for a quiet half hour
     if (lastError && t - lastErrorAt < retryMs) return 'retry-wait';
     const from = reports.state().lastTo || d.cut - 24 * 3600e3;
@@ -87,6 +104,13 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
           }
           running.done++;
         }
+        // and the weeks those days make up (a week still running on into the scheduled reports is left to them)
+        if (weekly && failures < 2) {
+          const until = dayOf(reports.state().lastTo || cutoff(now()));
+          for (const start of [...new Set(jobs.map((j) => weekly.mondayOf(j.date)))]) {
+            if (!reports.hasWeek(start) && weekly.datesOf(start)[6] < until) await makeWeek(start);
+          }
+        }
       } finally { running = null; }
     })();
     return { ok: true, total: jobs.length };
@@ -94,7 +118,8 @@ function createScheduler({ reports, store, generate, log = () => {}, at = [4, 30
 
   function status() {
     const t = now(), d = due(t);
-    return { running: running ? { draft: !!running.draft, since: running.started, backfill: !!running.backfill, done: running.done, total: running.total, date: running.date } : null,
+    return { running: running ? { draft: !!running.draft, since: running.started, backfill: !!running.backfill, done: running.done, total: running.total, date: running.date,
+      weekly: !!running.weekly, week: running.week || '' } : null,
       lastError, lastErrorAt, lastTo: reports.state().lastTo || 0, waiting: !!d && !running,
       next: d ? t : cutoff(t) + 24 * 3600e3 };
   }

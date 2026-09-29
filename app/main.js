@@ -6,6 +6,7 @@ const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
 const bridge = require('./bridge');
 const { createRemoteControl } = require('./remote-control');
+const { createMorning } = require('./morning');
 const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -107,6 +108,8 @@ function buildMenu() {
       click: (m) => { settings.remoteControl = m.checked; save(); } },
     { label: '提示音', type: 'checkbox', checked: settings.petSound !== false,
       click: (m) => { settings.petSound = m.checked; save(); pushBubble(null); } },
+    { label: '早安日报（每天第一次打字时说昨天做了什么）', type: 'checkbox', checked: settings.morningBubble !== false,
+      click: (m) => { settings.morningBubble = m.checked; save(); if (!m.checked) morning.hide(); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
     { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
@@ -145,7 +148,7 @@ app.whenReady().then(() => {
   }
 
   if (process.env.AME_DEMO) return runDemo(process.env.AME_DEMO);
-  uIOhook.on('keydown', (e) => win && win.webContents.send('key', { code: e.keycode, down: true }));
+  uIOhook.on('keydown', (e) => { if (win) win.webContents.send('key', { code: e.keycode, down: true }); morning.onKey(); });
   uIOhook.on('keyup', (e) => win && win.webContents.send('key', { code: e.keycode, down: false }));
   // any mouse release ends a drag / resize, even if the page never saw the pointerup
   uIOhook.on('mouseup', () => { endGesture(); endPanelResize(); });
@@ -700,8 +703,10 @@ async function onControl(req, res, body) {
   const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (!controlOk(req)) return out(403, { ok: false });
   if (req.method === 'GET' && req.url === '/control/state') return out(200, { control: !!settings.remoteControl, sessions: controlState() });
-  if (!settings.remoteControl) return out(200, { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' });
   let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
+  // the NAS wrote a daily report: a note for the morning bubble (information only -- not remote control)
+  if (req.method === 'POST' && req.url === '/control/report') return out(200, { ok: morning.setNote(d) });
+  if (!settings.remoteControl) return out(200, { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' });
   if (req.method === 'POST' && req.url === '/control/send') {
     const text = typeof d.text === 'string' ? d.text : '';
     if (typeof d.id !== 'string' || !text.trim() || text.length > 8000) return out(400, { ok: false, msg: '内容为空或太长' });
@@ -795,6 +800,8 @@ setInterval(() => pushChat(false), 1000);
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
 // replies and navigation keys into a session's terminal (or a background resume): remote-control.js
+const morning = createMorning({ app, BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
+  enabled: () => settings.morningBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const { chatSend, chatKey, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
