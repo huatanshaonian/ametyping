@@ -80,7 +80,14 @@ function createFiles(cfg) {
     return { path: real, size: st.size, stream: fs.createReadStream(real, { highWaterMark: chunk }) };
   }
 
-  return { enabled, roots, list, open };
+  // the real path of a folder inside the roots (where the dashboard may start Claude Code)
+  async function folder(p) {
+    const real = await resolve(p);
+    if (!(await fsp.stat(real)).isDirectory()) throw new Error('这不是文件夹');
+    return real;
+  }
+
+  return { enabled, roots, list, open, folder };
 }
 
 module.exports = { createFiles, denied, MAX };

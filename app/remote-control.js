@@ -1,6 +1,7 @@
 // Replying to a session from the panel or the dashboard: type text into its terminal, press a navigation key
 // there (the terminal's own menus -- /model, /resume, prompts), or, when its process is gone, continue it in the
-// background with `claude -p --resume`. Windows only (console input via bridge.js).
+// background with `claude -p --resume`. Also starts Claude Code in a folder, in a new console window.
+// Windows only (console input via bridge.js).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -74,7 +75,38 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     return r.ok ? { ok: true } : { ok: false, msg: '按键失败：' + r.err };
   }
 
-  return { chatSend, chatKey, KEYS };
+  // a new Claude Code session in a folder (checked by the agent), in its own console window; its hooks make it
+  // appear on the panel and the dashboard like any session you started yourself. A folder Claude Code has not seen
+  // asks whether to trust it before any hook runs (so the dashboard could not see it): starting it from the dashboard
+  // is that choice, so the prompt is answered here by reading the window's screen for a little while.
+  function answerTrust(pid) {
+    let n = 0;
+    const tick = async () => {
+      if (++n > 35) return;
+      const text = await bridge.screen(pid);
+      if (text == null) return;                                    // the window is gone
+      if (/Yes, I trust this folder/.test(text)) {
+        if (/❯\s*(\d\.\s*)?No, exit/.test(text)) await bridge.key(pid, 'down');
+        await bridge.key(pid, 'enter');
+        return;
+      }
+      setTimeout(tick, 700);
+    };
+    setTimeout(tick, 1000);
+  }
+  async function launch(cwd, prompt) {
+    let st; try { st = fs.statSync(cwd); } catch { return { ok: false, msg: '找不到这个文件夹' }; }
+    if (!st.isDirectory()) return { ok: false, msg: '这不是文件夹' };
+    const exe = claudeExe();
+    if (!exe) return { ok: false, msg: '找不到 claude.exe' };
+    const first = String(prompt || '').trim();
+    const pid = await bridge.launch(exe, first ? [first] : [], cwd);
+    if (!pid) return { ok: false, msg: '启动失败' };
+    answerTrust(pid);
+    return { ok: true, msg: '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
+  }
+
+  return { chatSend, chatKey, launch, KEYS };
 }
 
 module.exports = { createRemoteControl };

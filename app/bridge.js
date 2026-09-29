@@ -41,6 +41,8 @@ async function call(cmd, timeout = 8000) {
 }
 
 const b64 = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+// one argument for a Windows command line (CommandLineToArgvW rules)
+const winArg = (a) => (a && !/[\s"]/.test(a) ? a : '"' + String(a).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"');
 
 module.exports = {
   start,
@@ -50,6 +52,12 @@ module.exports = {
   },
   alive: async (pid) => { const r = await call(`alive ${pid | 0}`, 3000); return r.ok && r.v === '1'; },
   send: (pid, text) => call(`send ${pid | 0} ${b64(text)}`, 15000),
+  screen: async (pid) => { const r = await call(`screen ${pid | 0}`, 5000); return r.ok ? Buffer.from(r.v || '', 'base64').toString('utf8') : null; },
+  // start exe in a new console window (in cwd); resolves the pid or null
+  launch: async (exe, args, cwd) => {
+    const r = await call(`launch ${b64(JSON.stringify({ exe, args: args.map(winArg).join(' '), cwd }))}`, 10000);
+    return r.ok ? +r.v : null;
+  },
   key: (pid, name) => (/^(up|down|left|right|enter|esc|tab)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
   stop: () => { try { ps && ps.stdin.end(); ps && ps.kill(); } catch {} ps = null; },
 };

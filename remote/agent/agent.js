@@ -122,7 +122,8 @@ async function pollPet() {
   petUp = !!r; petAllows = !!r && r.control !== false;
   if (r && Array.isArray(r.sessions)) for (const s of r.sessions) if (s && typeof s.id === 'string') pet.set(s.id, s);
 }
-// the only things the agent does for the server: type a reply, press a navigation key, answer a permission card
+// the only things the agent does for the server: type a reply, press a navigation key, answer a permission card,
+// start Claude Code in a folder (one the file explorer may browse)
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
   let r;
@@ -130,6 +131,10 @@ async function control(d) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
   } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab)$/.test(d.key)) {
     r = await petCall('POST', '/control/key', { id: d.id, key: d.key });
+  } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
+    if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
+    let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
+    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'deny', 'defer'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice });
   } else return { ok: false, msg: '无效请求' };
@@ -208,7 +213,7 @@ function connect() {
       pushRecords();
     }
     else if (typeof d.t === 'string' && d.t.startsWith('fs')) fsServe.handle(d);
-    else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide') && typeof d.rid === 'string') {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide' || d.t === 'launch') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });

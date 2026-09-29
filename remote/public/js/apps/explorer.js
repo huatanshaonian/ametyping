@@ -1,8 +1,10 @@
 // 我的电脑 / 资源管理器 for one remote computer: its roots (drives or allowed folders), then folder listings.
-// Double-click (a tap on touch screens) opens a folder, or a file in a viewer window.
-import { h, icon } from '../util.js';
+// Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code can be
+// started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows).
+import { h, icon, $ as $q } from '../util.js';
 import * as wm from '../wm.js';
 import * as fsc from '../fs.js';
+import * as net from '../net.js';
 import * as rpath from '../rpath.js';
 import { iconOf, size } from '../filetypes.js';
 import { openFile } from './viewer.js';
@@ -30,12 +32,18 @@ function create(machine, startPath) {
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
+  const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 会话' },
+    h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动 Claude');
+  const first = h('input', { class: 'field', type: 'text', placeholder: '第一句话（可不填）' });
+  const go = h('button', { class: 'btn go', type: 'submit', text: '启动' });
+  const launchBar = h('form', { class: 'xlaunch', hidden: true, autocomplete: 'off' }, h('span', { class: 'xlh' }), first, go,
+    h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
-  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, up, refresh, addr), body, status);
+  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, up, refresh, addr, launchBtn), launchBar, body, status);
   let cur = null, parent = null, seq = 0;
 
-  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; }
+  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; }
   async function load(path) {
     const my = ++seq;
     status.textContent = '读取中…';
@@ -76,6 +84,18 @@ function create(machine, startPath) {
     status.textContent = `${entries.length} 个项目${truncated ? '（太多了，只显示前 5000 个）' : ''}`;
   }
 
+  launchBtn.addEventListener('click', () => {
+    if (cur == null) return;
+    launchBar.hidden = false; $q('.xlh', launchBar).textContent = `在 ${cur} 启动 Claude：`; first.focus();
+  });
+  launchBar.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    go.disabled = true; status.textContent = '启动中…';
+    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value });
+    go.disabled = false;
+    status.textContent = r.ok ? (r.msg || '已启动') + ' —— 会话出现后可在糖糖看板里查看和回复' : r.msg || '启动失败';
+    if (r.ok) { launchBar.hidden = true; first.value = ''; }
+  });
   up.addEventListener('click', () => load(parent));      // the parent of a root is the root list (null)
   refresh.addEventListener('click', () => load(cur));
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = addr.value.trim(); load(p || null); } });

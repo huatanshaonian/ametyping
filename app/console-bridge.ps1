@@ -3,6 +3,8 @@
 #   alive <pid>           -> "ok 1" | "ok 0"
 #   send <pid> <base64>   -> "ok" | "err <reason>"   types UTF-8 text, then Enter, into the console <pid> is attached to
 #   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab
+#   screen <pid>          -> "ok <base64>" | "err <reason>"   the visible text of that console window (UTF-8)
+#   launch <base64 json>  -> "ok <pid>" | "err <reason>"   {exe, args, cwd}: start a program in a new console window
 # Input goes through WriteConsoleInput, i.e. the terminal's own input buffer: Claude Code reads it exactly like
 # keystrokes. Nothing global is simulated (no SendInput), so whatever window has the focus is never touched.
 $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
@@ -102,6 +104,27 @@ public static class AmeCon {
       return Write(h, e);
     });
   }
+  // the visible text of a console window (to see a prompt in a session this app started, e.g. folder trust)
+  [StructLayout(LayoutKind.Sequential)] public struct COORD { public short X, Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct SMALL_RECT { public short Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct CSBI { public COORD Size, Cursor; public ushort Attr; public SMALL_RECT Window; public COORD MaxSize; }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetConsoleScreenBufferInfo(IntPtr h, out CSBI info);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool ReadConsoleOutputCharacterW(IntPtr h, StringBuilder buf, uint len, COORD at, out uint read);
+  public static string Screen(uint pid) {
+    return WithConsole(pid, "CONOUT$", h => {
+      CSBI info;
+      if (!GetConsoleScreenBufferInfo(h, out info)) return "!info " + Marshal.GetLastWin32Error();
+      var sb = new StringBuilder();
+      int w = info.Window.Right - info.Window.Left + 1;
+      for (short y = info.Window.Top; y <= info.Window.Bottom; y++) {
+        var line = new StringBuilder(w); uint got;
+        var at = new COORD(); at.X = info.Window.Left; at.Y = y;
+        if (ReadConsoleOutputCharacterW(h, line, (uint)w, at, out got)) sb.Append(line.ToString(0, (int)Math.Min(got, (uint)line.Length)).TrimEnd()).Append('\n');
+      }
+      return "=" + sb.ToString();
+    });
+  }
   // one navigation key (for the terminal's own menus: /model, /resume, prompts): up down left right enter esc tab
   public static string KeyPress(uint pid, string name) {
     ushort vk, scan, ch = 0;
@@ -129,6 +152,13 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     switch ($p[0]) {
       'anc'    { $r = 'ok ' + [AmeCon]::Ancestors([uint32]$p[1]) }
       'alive'  { $r = 'ok ' + [int][AmeCon]::Alive([uint32]$p[1]) }
+      'screen' { $t = [AmeCon]::Screen([uint32]$p[1]); if ($t.StartsWith('=')) { $r = 'ok ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t.Substring(1))) } else { $r = 'err ' + $t.TrimStart('!') } }
+      'launch' {
+        $j = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[1])) | ConvertFrom-Json
+        $si = New-Object Diagnostics.ProcessStartInfo
+        $si.FileName = $j.exe; $si.Arguments = $j.args; $si.WorkingDirectory = $j.cwd; $si.UseShellExecute = $true   # its own console window
+        $r = 'ok ' + [Diagnostics.Process]::Start($si).Id
+      }
       'key'    { $r = & $res ([AmeCon]::KeyPress([uint32]$p[1], [string]$p[2])) }
       'send'   { $r = & $res ([AmeCon]::Send([uint32]$p[1], [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[2])), $true)) }
       default  { $r = 'err unknown' }

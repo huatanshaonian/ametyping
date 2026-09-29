@@ -4,7 +4,7 @@
 // and the dashboard agent (../remote/agent/agent.js) drives it through the same /control/* endpoints.
 //   POST /event/<type>   session progress (hook-relay.js)
 //   POST /permission     a permission prompt, held open until answered from the dashboard (permission-hook.js)
-//   /control/state|send|key|decide   for the agent; token in ~/.ametyping/control-token-<port>, requests with Origin refused
+//   /control/state|send|key|decide|launch   for the agent; token in ~/.ametyping/control-token-<port>, requests with Origin refused
 // Replies are typed into the session's tmux pane; a session whose process is gone is resumed with `claude -p --resume`.
 'use strict';
 const http = require('http');
@@ -18,6 +18,7 @@ const { createSessions } = require('./sessions');
 const proc = require('./proc-linux');
 const tmux = require('./tmux');
 const { resume } = require('./resume');
+const { launch } = require('./launch');
 
 const PORT = +process.env.AME_PORT || 3940;
 const sessions = createSessions();
@@ -112,6 +113,12 @@ async function onControl(req, res, body) {
   if (req.method === 'POST' && req.url === '/control/key') {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
     return out(200, await chatKey(d.id, d.key));
+  }
+  if (req.method === 'POST' && req.url === '/control/launch') {
+    if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
+    // the environment of the most recently active session you started yourself (proxy, API settings)
+    const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', env: withEnv ? withEnv.env : process.env }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

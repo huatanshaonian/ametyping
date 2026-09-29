@@ -505,6 +505,10 @@ async function onControl(req, res, body) {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
     return out(200, await chatKey(d.id, d.key));
   }
+  if (req.method === 'POST' && req.url === '/control/launch') {
+    if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
+    return out(200, await launch(d.cwd, d.prompt || ''));
+  }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
     return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
@@ -585,7 +589,7 @@ setInterval(() => pushChat(false), 1000);
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
 // replies and navigation keys into a session's terminal (or a background resume): remote-control.js
-const { chatSend, chatKey } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
+const { chatSend, chatKey, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.
