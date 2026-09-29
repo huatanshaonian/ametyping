@@ -6,6 +6,7 @@
 //               then the AWS way out, deploy/nas/egress.sh); none = direct
 //   categories  [{ match, cat }] folder rules for 科研 / 个人小项目 / 杂活 (see classify.js)
 //   at "04:30", quietMin 30: when the morning report is written
+//   backupMaxMB 5: artifacts (files made outside a tracked repository) up to this size are copied to the NAS
 'use strict';
 const os = require('os');
 const path = require('path');
@@ -15,7 +16,7 @@ const { createScheduler } = require('./scheduler');
 const { createClassifier } = require('./classify');
 const { createEgress } = require('../egress');
 
-function createSummary({ store, dir, cfg = {}, resumeCmd, log = console.log, audit = () => {} }) {
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -27,7 +28,8 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, log = console.log, aud
     timeoutMs: (+cfg.timeoutMin || 20) * 60e3,
   };
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
-  const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log });
+  const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log,
+    artifacts, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
   const [hh, mm] = String(cfg.at || '04:30').split(':').map(Number);
   const scheduler = createScheduler({ reports, store, generate: gen.generate, log, at: [hh || 0, mm || 0],
     quietMs: (cfg.quietMin != null ? +cfg.quietMin : 30) * 60e3, tickMs: +process.env.AME_SUMMARY_TICK_MS || 60e3 });

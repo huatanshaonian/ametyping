@@ -11,7 +11,44 @@ const SESSION_INLINE = 20000;      // a session longer than this (chars) is summ
 const SESSION_MAX = 120000;        // what one session summary may be given at most
 const DAY_MAX = 150000;            // the day's prompt: summarize more sessions until it fits
 
-function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {} }) {
+// not artifacts: scratch space and the assistants' own folders (plans, memory, sessions)
+const NOT_ARTIFACT = /[\\/](\.claude|\.codex|tmp|temp|node_modules|__pycache__|\.git)([\\/]|$)/i;
+const MAX_ARTIFACTS = 80;
+
+function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, backupBytes = 5e6 }) {
+  // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
+  // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
+  // offline: its files are listed unchecked.
+  async function findArtifacts(items) {
+    const byPath = new Map();
+    for (const it of items) for (const f of it.digest.files) {
+      if (NOT_ARTIFACT.test(f.path)) continue;
+      const k = it.s.machine + '|' + f.path;
+      let a = byPath.get(k);
+      if (!a) { a = { machine: it.s.machine, path: f.path, op: f.op, keys: new Set(), ids: new Set() }; byPath.set(k, a); }
+      if (f.op === 'write') a.op = 'write';
+      a.keys.add(it.key); a.ids.add(it.s.id);
+    }
+    const out = [];
+    const machinesOf = new Map();
+    for (const a of byPath.values()) { if (!machinesOf.has(a.machine)) machinesOf.set(a.machine, []); machinesOf.get(a.machine).push(a); }
+    for (const [machine, list] of machinesOf) {
+      const res = artifacts ? await artifacts.check(machine, list.map((a) => ({ id: [...a.ids][0], path: a.path })), { maxBytes: backupBytes }) : null;
+      const got = new Map((res || []).map((r) => [r.path, r]));
+      let refused = 0;
+      for (const a of list) {
+        const r = got.get(a.path);
+        if (res && (!r || !r.ok)) { refused++; continue; }             // not that session's, a secret, or unreadable
+        if (r && !r.exists) continue;                                  // written and gone again
+        if (r && r.repo && r.repo.remote && r.repo.tracked) continue;  // committed to a repository with a remote
+        out.push({ machine, path: a.path, op: a.op, sessions: [...a.keys], sessionIds: [...a.ids], unchecked: !res,
+          size: r ? r.size : 0, mtime: r ? r.mtime : 0, exists: r ? r.exists : null, sha: r ? r.sha : '', backed: !!(r && r.backed),
+          repo: r && r.repo ? { root: r.repo.root, remote: r.repo.remote, tracked: r.repo.tracked } : null });
+      }
+      if (refused) log(`日报：${machine} 有 ${refused} 个文件没通过检查（不是该会话写的 / 敏感文件）`);
+    }
+    return out.slice(0, MAX_ARTIFACTS).map((a, i) => ({ ref: 'A' + (i + 1), ...a }));
+  }
   // one question to the model, through whichever proxy gets through (none configured: direct)
   async function ask(prompt, schema) {
     let env = { ...process.env };
@@ -67,16 +104,18 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
       if (size() <= DAY_MAX) break;
       if (!it.summary && it.digest.text.length > 3000) await summarizeSession(it, from);
     }
+    const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
-      ? await ask(dayPrompt({ from, to, sessions: items, open }), DAY_SCHEMA)
-      : { headline: '这段时间没有 AI 会话记录', projects: [], open: open.map((o, i) => ({ ref: 'O' + (i + 1), text: o.text, project: o.project, status: 'open' })), plans: [], keywords: [] };
-    const report = assemble(job, items, open, ans);
+      ? await ask(dayPrompt({ from, to, sessions: items, open, artifacts: arts }), DAY_SCHEMA)
+      : { headline: '这段时间没有 AI 会话记录', projects: [], open: open.map((o, i) => ({ ref: 'O' + (i + 1), text: o.text, project: o.project, status: 'open' })), plans: [], keywords: [], artifacts: [] };
+    const report = assemble(job, items, open, ans, arts);
     reports.save(report);
+    if (artifacts && report.artifacts.length) artifacts.record(date, report.artifacts);
     log(`日报 ${job.draft ? '（到现在）' : date} 已生成：${items.length} 个会话，${report.stats.minutes} 分钟`);
     return report;
   }
 
-  function assemble({ from, to, date, draft }, items, open, ans) {
+  function assemble({ from, to, date, draft }, items, open, ans, arts = []) {
     const byKey = new Map(items.map((it) => [it.key, it]));
     // the model sometimes decorates a reference ("S1：/home/u/x", "O2 整理…"): only the number counts
     const ref = (v, letter) => { const m = new RegExp(letter + '\\d+').exec(String(v || '')); return m ? m[0] : ''; };
@@ -109,8 +148,9 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
       headline: ans.headline || '', projects, open: openOut,
       plans: (ans.plans || []).map((p) => ({ title: p.title, project: p.project, session: ref(p.session, 'S') })),
       keywords: ans.keywords || [], sessions,
+      artifacts: arts.map((a) => ({ ...a, note: ((ans.artifacts || []).find((x) => ref(x.ref, 'A') === a.ref) || {}).note || '' })),
       stats: { minutes: sessions.reduce((n, s) => n + s.minutes, 0), sessions: sessions.length,
-        machines: new Set(sessions.map((s) => s.machine)).size, files: sessions.reduce((n, s) => n + s.files.length, 0) },
+        machines: new Set(sessions.map((s) => s.machine)).size, files: sessions.reduce((n, s) => n + s.files.length, 0), artifacts: arts.length },
     };
   }
 

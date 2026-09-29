@@ -23,6 +23,7 @@ const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
+const { createArtifacts } = require('./artifacts');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -154,8 +155,9 @@ const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'dat
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
+const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, audit: (...a) => audit(...a) });
+  resumeCmd, artifacts, audit: (...a) => audit(...a) });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -189,6 +191,7 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode);
   if (d.t === 'state' && Array.isArray(d.sessions)) {
@@ -339,6 +342,20 @@ const server = http.createServer(async (req, res) => {
   }
   // 日报 (summary/index.js)
   if (summary && p.startsWith('/api/report') && await summary.handle(req, res, url, ip, json)) return;
+  // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
+  if (req.method === 'GET' && p === '/api/artifact') {
+    const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));
+    if (!f) return send(res, 404, 'not found');
+    const name = path.basename(String(url.searchParams.get('name') || 'file')).replace(/[^\w.\-一-龥 ]/g, '_').slice(0, 120) || 'file';
+    const ext = path.extname(name).toLowerCase();
+    const IMG = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+    const TXT = /^\.(txt|md|py|js|ts|m|json|csv|log|sh|ps1|bat|tex|c|cpp|h|java|go|rs|yaml|yml|toml|ini|cfg)$/;
+    const type = IMG[ext] || (TXT.test(ext) ? 'text/plain; charset=utf-8' : 'application/octet-stream');
+    const disp = IMG[ext] || TXT.test(ext) ? 'inline' : 'attachment';
+    audit('artifact-read', ip, url.searchParams.get('sha').slice(0, 16));
+    return fs.readFile(f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, type,
+      { 'Content-Disposition': `${disp}; filename*=UTF-8''${encodeURIComponent(name)}`, 'Cache-Control': 'private, max-age=86400' }));
+  }
 
   return send(res, 404, 'not found');
 });

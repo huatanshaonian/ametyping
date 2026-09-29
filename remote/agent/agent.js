@@ -26,6 +26,7 @@ const codex = require('./codex-records');
 const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
+const { createArtifacts } = require('./artifacts');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -113,6 +114,22 @@ const codexMeta = new Map();                         // rollout file -> { id, cw
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
 const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, projectOf,
   live: (id) => sess.has(id) || codexSess.has(id), stored: (id) => serverOff && serverOff[id] });
+// the transcript of a session id (Claude Code or "codex:<id>"), for checking which files it wrote
+function sessionFile(id) {
+  if (id.startsWith('codex:')) {
+    const c = codexSess.get(id) || archive.map.get(id);
+    if (c) return { file: c.file, codex: true, cwd: c.cwd };
+    for (const file of codex.allFiles()) {
+      let m = codexMeta.get(file); if (!m) { m = codex.metaOf(file); if (m) codexMeta.set(file, m); }
+      if (m && 'codex:' + m.id === id) return { file, codex: true, cwd: m.cwd };
+    }
+    return null;
+  }
+  const f = newestFiles().find((x) => x.id === id);
+  return f ? { file: f.file, codex: false } : null;
+}
+// files made in sessions, checked and backed up when the server's daily summary asks (agent.json "artifacts": false = off)
+const artifacts = createArtifacts({ sessionFile, send: (o) => sendJSON(o) });
 
 // ---------- the local pet (control API on 127.0.0.1) ----------
 const pet = new Map();                               // id -> session as the pet sees it
@@ -236,6 +253,10 @@ function connect() {
       pushRecords();
     }
     else if (typeof d.t === 'string' && d.t.startsWith('fs')) fsServe.handle(d);
+    else if (d.t === 'art-check' && typeof d.rid === 'string') {
+      if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
+      else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide' || d.t === 'launch') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }

@@ -9,6 +9,8 @@ const WEEK = '日一二三四五六';
 const pad = (n) => String(n).padStart(2, '0');
 const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 export const dayName = (date) => { const d = new Date(date + 'T12:00:00'); return `${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`; };
+const IMG = /\.(png|jpe?g|gif|webp)$/i;
+const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 export const minutes = (m) => (m >= 60 ? `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m % 60} 分` : ''}` : `${m} 分钟`);
 
 const list = (title, items, cls) => (items && items.length
@@ -46,6 +48,20 @@ export function render(r) {
     h('ul', {}, ...open.map((o) => h('li', { class: 'st-' + o.status },
       h('span', { class: 'rp-mark', text: o.status === 'done' ? '✓' : o.status === 'dropped' ? '✗' : '□' }),
       h('span', { text: o.text }), h('small', { text: ` ${o.project ? o.project + ' · ' : ''}${o.since ? o.since.slice(5).replace('-', '/') + ' 记下' : ''}${o.status === 'done' ? ' · 已完成' : o.status === 'dropped' ? ' · 不做了' : ''}` }))))) : null;
+  // things made outside a tracked repository (remote/server/artifacts.js): the copy on the NAS when there is one
+  const arts = r.artifacts || [];
+  const artBox = arts.length ? h('section', { class: 'rp-sec rp-arts' }, h('h3', { text: `产出物（${arts.length}）` }),
+    h('ul', {}, ...arts.map((a) => {
+      const name = a.path.split(/[\\/]/).pop();
+      const url = a.backed && a.sha ? `/api/artifact?sha=${a.sha}&name=${encodeURIComponent(name)}` : null;
+      const where = a.unchecked ? '电脑离线，未检查' : !a.repo ? '不在任何仓库里' : !a.repo.remote ? '本地仓库（没有远程）' : a.repo.tracked === false ? '在仓库里但没提交' : '';
+      return h('li', {},
+        h('div', {}, h('code', { class: 'rp-ap', text: a.path }), h('small', { text: ` · ${a.machine}${a.size ? ' · ' + size(a.size) : ''}${where ? ' · ' + where : ''}` })),
+        a.note ? h('div', { class: 'rp-an', text: a.note }) : null,
+        url && IMG.test(name) ? h('a', { href: url, target: '_blank', rel: 'noopener' }, h('img', { class: 'rp-thumb', src: url, alt: name, loading: 'lazy' })) : null,
+        h('div', { class: 'rp-sl' }, url ? h('a', { class: 'rp-sess', href: url, target: '_blank', rel: 'noopener', text: '打开群晖上的副本' }) : null,
+          ...(a.sessions || []).map(sessLink)));
+    }))) : null;
   const plans = (r.plans || []).length ? h('section', { class: 'rp-sec' }, h('h3', { text: '新写的计划' }),
     h('ul', {}, ...r.plans.map((p) => h('li', {}, `「${p.title}」${p.project ? ' · ' + p.project : ''} `, sessLink(p.session))))) : null;
   const kw = (r.keywords || []).length ? h('div', { class: 'rp-kw' }, ...r.keywords.map((k) => h('span', { text: k }))) : null;
@@ -56,6 +72,6 @@ export function render(r) {
       h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) }),
       h('div', { class: 'rp-meta', text: `${when(r.from)} – ${when(r.to)} · ${minutes(st.minutes || 0)} · ${st.sessions || 0} 个会话 · ${st.machines || 0} 台电脑` })),
     h('p', { class: 'rp-head', text: r.headline || '' }),
-    ...sections, openBox, plans, kw,
+    ...sections, openBox, plans, artBox, kw,
     !sections.length && !openBox ? h('p', { class: 'rp-empty', text: '这段时间没有记录。' }) : null);
 }

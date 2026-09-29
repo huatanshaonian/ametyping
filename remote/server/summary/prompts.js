@@ -13,6 +13,7 @@ const DAY_SCHEMA = obj({
   open: { type: 'array', items: obj({ ref: str, text: str, project: str, status: { type: 'string', enum: ['open', 'done', 'dropped'] } }) },
   plans: { type: 'array', items: obj({ title: str, project: str, session: str }) },
   keywords: strs,
+  artifacts: { type: 'array', items: obj({ ref: str, note: str }) },
 });
 const SESSION_SCHEMA = obj({ summary: str, category: cat, done: strs, decisions: strs, unfinished: strs });
 
@@ -35,7 +36,9 @@ function sessionPrompt(d, hint) {
 }
 
 // the day: sessions (condensed transcript, or their own summary when long) + what was still open before
-function dayPrompt({ from, to, sessions, open }) {
+const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+
+function dayPrompt({ from, to, sessions, open, artifacts = [] }) {
   const parts = [
     `下面是用户在 ${fmtTime(from)} 到 ${fmtTime(to)} 之间和 AI 编程助手（Claude Code / Codex）的全部会话摘录，以及之前记下的未完成事项。请写一份给用户自己看的工作日报。`,
     '要求：',
@@ -45,6 +48,7 @@ function dayPrompt({ from, to, sessions, open }) {
     '- open 是滚动的「计划了但还没做」清单：之前的每一条都要返回（ref 只填编号如 O1，若这次已完成 status=done，明确放弃 status=dropped，否则 open，text 可按新情况改写）；再加入这次新产生的未完成事项（ref 填空字符串）。每条写成一句可执行的话，不要重复。杂活里的小事不必进清单。之前事项的完成情况只写在 open 里，不要写进项目的 done。',
     '- plans：只列摘录里明确出现「写了计划」的计划（标题、项目、会话编号），没有就返回空数组，不要把未完成事项当成计划。',
     '- 会话编号（sessions、plans 的 session）只填 S1 这样的编号本身。',
+    '- artifacts：给「产出物」里的每个文件写一句用途说明（note，不超过 30 字，例如「画 RCS 对比图的脚本」），ref 填编号如 A1；看不出用途就写空字符串。没有产出物就返回空数组。',
     '- headline：一句话概括这段时间做了什么（不超过 40 字）。keywords：10～20 个方便以后搜索的关键词（项目名、文件名、技术名词，中英文都可以）。',
     '- 用简体中文，简洁，不要客套；不要编造摘录里没有的内容。',
     '',
@@ -67,6 +71,10 @@ function dayPrompt({ from, to, sessions, open }) {
       if (m.unfinished.length) parts.push('未完成：' + m.unfinished.join('；'));
       if (d.plans.length) parts.push('写了计划：' + d.plans.map((p) => `「${p.title}」`).join('、'));
     } else parts.push(d.text);
+  }
+  if (artifacts.length) {
+    parts.push('', '## 产出物（写在 Git 仓库之外、或还没提交的文件）');
+    for (const a of artifacts) parts.push(`${a.ref}. ${a.path}（电脑 ${a.machine}，${a.sessions.join('、')}，${a.op === 'write' ? '新写' : '修改'}${a.size ? '，' + kb(a.size) : ''}）`);
   }
   return parts.join('\n');
 }
