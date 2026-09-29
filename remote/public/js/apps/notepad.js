@@ -4,6 +4,7 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import * as google from './google.js';
 
 let app = null;
 const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -25,6 +26,9 @@ function mount(first) {
   const driveBtn = h('button', { class: 'btn', type: 'button', text: '转存到 Google 云端硬盘', disabled: true, title: '连上 Google 账户后可用' });
   const root = h('div', { class: 'notepad' }, h('div', { class: 'np-bar' }, back, newBtn, delBtn, driveBtn, status), h('div', { class: 'np-main' }, listEl, text));
   let items = [], cur = null, saveT = null, saving = false, dirty = false;      // cur: { id, updated } (id null = not saved yet)
+  let googleOk = false;
+  const offG = google.onStatus((s) => { googleOk = !!(s && s.connected); driveBtn.disabled = !(googleOk && cur && cur.id); driveBtn.title = googleOk ? '存为「Windose 记事本」文件夹里的 txt（再转存会更新同一个文件）' : '连上 Google 账户后可用（开始菜单 →「Google 账户」）'; });
+  google.status();
 
   const say = (s, bad) => { status.textContent = s || ''; status.classList.toggle('bad', !!bad); };
   async function loadList() {
@@ -39,7 +43,7 @@ function mount(first) {
     let n = null; try { const r = await fetch('/api/note?id=' + encodeURIComponent(id)); if (r.ok) n = await r.json(); } catch {}
     if (!n) return say('打不开这篇笔记', true);
     cur = { id: n.id, updated: n.updated }; dirty = false;
-    text.disabled = false; text.value = n.text; delBtn.disabled = false; driveBtn.disabled = !window.__googleOk;
+    text.disabled = false; text.value = n.text; delBtn.disabled = false; driveBtn.disabled = !googleOk;
     root.classList.add('editing');
     for (const el of listEl.children) el.classList.toggle('sel', el.dataset.id === id);
     if (!quiet) { say(''); text.focus(); }
@@ -53,6 +57,7 @@ function mount(first) {
     saving = false;
     if (!r.ok) { dirty = true; return say(r.msg || '保存失败，稍后会再试', true); }
     cur = { id: r.id, updated: r.updated };
+    driveBtn.disabled = !googleOk;
     say(r.conflict ? '这篇在别处也改过：你的版本另存成了「冲突副本」' : '已保存 ' + when(r.updated).split(' ')[1], r.conflict);
     if (dirty) saveT = setTimeout(flush, 1000);                                   // typed on while it was saving
   }
@@ -89,5 +94,5 @@ function mount(first) {
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 520));
   ro.observe(root);
   loadList().then(() => { if (first) select(first); else if (items[0]) select(items[0].id, true); });
-  return { root, select: (id) => select(id), destroy() { flush(); off(); ro.disconnect(); } };
+  return { root, select: (id) => select(id), destroy() { flush(); off(); offG(); ro.disconnect(); } };
 }

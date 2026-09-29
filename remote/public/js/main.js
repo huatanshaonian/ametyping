@@ -14,6 +14,8 @@ import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
 import * as notepad from './apps/notepad.js';
+import * as calendar from './apps/calendar.js';
+import * as google from './apps/google.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -35,6 +37,7 @@ const APPS = [
   { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '浏览这台电脑的文件' },
   { id: 'reports', label: '工作日报', icon: icon('history'), open: reports.open, hint: '每天早上自动总结前一天做了什么' },
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
+  { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
   { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
 ];
 desktop.setIcons(APPS);
@@ -43,6 +46,7 @@ taskbar.setMenu([
   { icon: icon('sched_task'), label: '重要计划', action: todo.open },
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
   { icon: icon('computer_2'), label: '添加电脑', action: computers.open },
+  { icon: icon('key_win'), label: 'Google 账户', action: () => google.open() },
   { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
   'sep',
   { icon: icon('key_win'), label: '注销', action: logout },
@@ -84,6 +88,9 @@ openDashboard();
 {
   const m = /^#report=(draft|week-\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2})$/.exec(location.hash);
   if (m) { reports.open(m[1]); history.replaceState(null, '', location.pathname); }
+  // back from Google's consent screen (google/index.js handleCallback)
+  const g = /^#google=(ok|fail)$/.exec(location.hash);
+  if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }
 }
 // just logged in (the login page leaves a mark): the start-up sound, once
 try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

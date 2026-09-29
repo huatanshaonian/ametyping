@@ -26,6 +26,9 @@ const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
+const { createGoogle } = require('./google');
+const { createCalendarView } = require('./calendar');
+const { createEgress } = require('./egress');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -162,11 +165,19 @@ const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.
 const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'todos' }), audit: (...a) => audit(...a) });
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
+// Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
+const gProxies = (cfg.summary && cfg.summary.proxies) || [];
+const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes,
+  egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a) });
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
   resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a),
-  onNote: (n) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n); } });
+  onNote: (n) => {
+    for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n);
+    google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
+  } });
+const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -308,6 +319,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (p === '/login' || p === '/login.html')) return serveFile(res, 'login.html');
   if (req.method === 'GET' && p === '/login.js') return serveFile(res, 'login.js');
   if (req.method === 'GET' && p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
+  // Google's consent screen sends the browser back here without the (SameSite=Strict) login cookie: the one-time
+  // state it carries is the check (google/account.js)
+  if (req.method === 'GET' && p === '/api/google/callback') return google.handleCallback(req, res, url, send);
 
   // --- state-changing API: same-origin only ---
   if (req.method === 'POST' && p.startsWith('/api/') && !sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
@@ -357,6 +371,8 @@ const server = http.createServer(async (req, res) => {
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
+  if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
+  if (await calendarView.handle(req, res, url, json)) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));
