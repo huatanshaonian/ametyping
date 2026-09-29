@@ -34,6 +34,7 @@ export function connect() {
     else if (d.t === 'result') { const f = waiting.get(d.rid); if (f) { waiting.delete(d.rid); f(d); } }
     else if (typeof d.t === 'string' && d.t.startsWith('fs-')) emit('fs', d);     // file explorer (fs.js)
     else if (d.t === 'todos') emit('todos');                                       // the important list changed
+    else if (d.t === 'notes') emit('notes');                                       // a note was saved / deleted
   };
 }
 

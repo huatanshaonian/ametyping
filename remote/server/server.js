@@ -25,6 +25,7 @@ const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
+const { createNotes } = require('./notes');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -159,10 +160,12 @@ const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
 // 重要计划: every open browser refreshes its list / desktop widget on a change
 const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'todos' }), audit: (...a) => audit(...a) });
+// 记事本 (open notepads refresh their list on a change)
+const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, audit: (...a) => audit(...a),
+  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a),
   onNote: (n) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n); } });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
@@ -353,6 +356,7 @@ const server = http.createServer(async (req, res) => {
   // 日报 (summary/index.js)
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
+  if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));

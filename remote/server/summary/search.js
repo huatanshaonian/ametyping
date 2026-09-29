@@ -18,7 +18,8 @@ function snippet(text, terms) {
 const matches = (low, terms) => terms.every((t) => low.includes(t));
 
 // deps: storeDir (data/), reports (reports.js), artifacts (server/artifacts.js or null), sessions() -> store.sessions()
-function createSearch({ storeDir, reports, artifacts, sessions }) {
+// notes (server/notes.js, optional): the notepad's notes are searched too
+function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) {
   const cache = new Map();                            // file -> { key, lines: [{ t, role, text, low }] }
 
   // a stored conversation file as searchable lines (what was said, tool lines, full commands and paths)
@@ -50,12 +51,16 @@ function createSearch({ storeDir, reports, artifacts, sessions }) {
   // q -> { reports: [{ date, headline, snippet }], artifacts: [index entries + snippet], sessions: [{ machine, id, title, hits: [{ t, role, snippet }] }] }
   function search(q, { maxSessions = 30, hitsPerSession = 3 } = {}) {
     const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-    const out = { reports: [], artifacts: [], sessions: [] };
+    const out = { reports: [], artifacts: [], sessions: [], notes: [] };
     if (!terms.length) return out;
     for (const it of reports.list()) {
       const r = reports.get(it.date); if (!r) continue;
       const text = reportText(r);
       if (matches(text.toLowerCase(), terms)) out.reports.push({ date: it.date, headline: r.headline || '', brief: !!r.brief, snippet: snippet(text, terms) });
+    }
+    for (const e of notes ? notes.list() : []) {
+      const n = notes.get(e.id); if (!n) continue;
+      if (matches(n.text.toLowerCase(), terms)) out.notes.push({ id: e.id, title: e.title, updated: e.updated, snippet: snippet(n.text, terms) });
     }
     for (const a of artifacts ? artifacts.list() : []) {
       const text = `${a.path} ${a.note || ''} ${a.machine}`;

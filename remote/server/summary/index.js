@@ -29,7 +29,7 @@ function readBody(req, cap = 4096) {
 
 // onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
 // (the pet's morning bubble)
-function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, onNote = () => {}, log = console.log, audit = () => {} }) {
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, notes = null, onNote = () => {}, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -59,8 +59,8 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
     at: [hh || 0, mm || 0], quietMs: (cfg.quietMin != null ? +cfg.quietMin : 30) * 60e3, tickMs: +process.env.AME_SUMMARY_TICK_MS || 60e3 });
 
   // search over reports, artifacts and every stored conversation; 问一问 on top of it
-  const search = createSearch({ storeDir: path.dirname(dir), reports, artifacts, sessions: () => store.sessions() });
-  const qa = createQA({ search, reports, ask: gen.ask, log });
+  const search = createSearch({ storeDir: path.dirname(dir), reports, artifacts, notes, sessions: () => store.sessions() });
+  const qa = createQA({ search, reports, notes, ask: gen.ask, log });
 
   // the web API; true when the request was one of ours
   async function handle(req, res, url, ip, json) {
