@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('pet', {
   onMouse: (fn) => ipcRenderer.on('mouse', (_e, m) => fn(m)),
   setHit: (v) => ipcRenderer.send('hit', v),
   gesture: (kind) => ipcRenderer.send('gesture', kind),
+  openDashboard: () => ipcRenderer.send('open-dashboard'),
   onClaude: (fn) => ipcRenderer.on('claude', (_e, t) => fn(t)),
   onWinMove: (fn) => ipcRenderer.on('winmove', (_e, dx, dy) => fn(dx, dy)),
 });

@@ -614,6 +614,7 @@ window.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mouseleave', () => { if (!drag && !sizing) { hover = false; overGrip = false; setHit(false); } });
 
+let lastClickAt = 0;
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !hit) return;
   downAt = { x: e.screenX, y: e.screenY, ox: e.offsetX, oy: e.offsetY };
@@ -632,6 +633,11 @@ canvas.addEventListener('pointerup', (e) => {
   else if (drag) window.pet.gesture('drag-end');
   if (!wasSizing && moved < 4 && downAt.oy / scale < NECK.y + 20) {
     tryTemp('blush', 2000, 'happy'); head.nodUntil = now() + 200;                 // a click (no drag) on her head: pat
+  }
+  // a double click (two clicks without dragging) anywhere on her: open the Windose web desktop
+  if (!wasSizing && moved < 4) {
+    const t = performance.now();
+    if (t - lastClickAt < 400) { lastClickAt = 0; window.pet.openDashboard(); } else lastClickAt = t;
   }
   downAt = null; drag = null; sizing = null;
 });

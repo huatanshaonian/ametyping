@@ -1,6 +1,6 @@
 // Ame typing pet — main process.
 // Global keyboard hook -> renderer. Only keycodes are forwarded; nothing is logged or stored.
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
@@ -18,9 +18,11 @@ let win, tray;
 if (process.env.AME_PROFILE) app.setPath('userData', process.env.AME_PROFILE);
 const PORT = +process.env.AME_PORT || 3940;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
-// panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box
+// panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box;
+//            'off' = never pops up (e.g. when you follow everything on the Windose dashboard); still opens from the tray
+// dashboardUrl: the Windose web desktop, opened by double-clicking Ame or from the tray
 // remoteControl: the dashboard may reply / answer permission cards through this pet (remote/agent needs "control": true too)
-let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false };
+let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org' };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
@@ -94,7 +96,8 @@ function buildMenu() {
       label: l, type: 'radio', checked: settings.facing === v,
       click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
     { label: '打开 Claude / Codex 面板', click: () => { if (sessions.size || chatMode()) { pushBubble(null); placeBubble(); bubbleWin.showInactive(); } } },
-    { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）']].map(([v, l]) => ({
+    { label: '打开 Windose 看板（双击糖糖）', click: openDashboard },
+    { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）'], ['off', '关闭（不弹出面板）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.panelMode === v, click: () => setPanelMode(v) })) },
     { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
       label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
@@ -250,8 +253,16 @@ function setPanelMode(v) {
   loadPanelSize();
   if (chatMode()) bridge.start();
   pushBubble(null);
-  if (chatMode()) { placeBubble(); bubbleWin.showInactive(); } else if (bubbleWin.isVisible()) placeBubble();
+  if (chatMode()) { placeBubble(); bubbleWin.showInactive(); }
+  else if (v === 'off') hideBubble();
+  else if (bubbleWin.isVisible()) placeBubble();
 }
+// the Windose web desktop in the default browser (https only: the address comes from settings.json)
+function openDashboard() {
+  const u = String(settings.dashboardUrl || '');
+  if (/^https:\/\/\S+$/.test(u)) shell.openExternal(u);
+}
+ipcMain.on('open-dashboard', (e) => { if (win && e.sender === win.webContents) openDashboard(); });
 function createBubble() {
   bubbleWin = new BrowserWindow({
     width: bubW, height: bubH, transparent: true, frame: false, resizable: false, thickFrame: false,
@@ -379,7 +390,7 @@ function pushBubble(changedId) {
   }));
   if (!list.length && !chatMode()) { hideBubble(); return; }
   bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode });
-  if (changedId) {                               // new activity: show the panel
+  if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off)
     placeBubble();
     if (!bubbleWin.isVisible()) bubbleWin.showInactive();
     keepAmeOnTop();

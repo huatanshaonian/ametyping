@@ -5,3 +5,4 @@ release/
 remote/server/config.json
 remote/agent/agent.json
 windows98-icons/
+remote/test/
