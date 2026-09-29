@@ -5,12 +5,23 @@ import * as wm from './wm.js';
 import * as sound from './sound.js';
 
 const desktop = $('#desktop');
-// illustrations: fan art from the game's ego-search screen, credited by artist handle (see wall credits)
+// All from NEEDY GIRL OVERDOSE (as in amedesktop): the boot screen, and fan art the game shows on its ego-search
+// screen -- named after the artist's handle, keep them credited. "たて" is portrait (@eight_illust): shown at full
+// height with the side colours sampled from its edges filling the rest.
+const cover = (color, url, pos = 'center') => `${color} url("${url}") ${pos} / cover no-repeat`;
+const TATE_L = '#d3a1a1 8%,#865e66 25%,#915355 42%,#5b2323 58%,#3a262a 75%,#877d7d 92%';
+const TATE_R = '#a25051 8%,#808f7f 25%,#6f9075 42%,#657264 58%,#3e383b 75%,#733a3a 92%';
 const BUILTIN = [
-  { id: 'pc', name: 'ぴんく', url: '/wall/pc_wallpaper.png', color: '#f7e1fb', pos: 'center top' },
-  { id: 'inaba', name: '@bike_inaba', url: '/wall/illust_bike_inaba.webp', color: '#fdf6dc' },
-  { id: 'furagumi', name: '@furagumi1112', url: '/wall/illust_furagumi.webp', color: '#f4b8d2' },
-  { id: 'plain', name: '纯色', url: null, color: '#f7e1fb' },
+  { id: 'pc', name: 'ぴんく', css: cover('#f7e1fb', '/wall/pc_wallpaper.png', 'center top') },
+  { id: 'boot', name: 'Windose20', css: cover('#7a5aa8', '/wall/windose20.webp') },
+  { id: 'soda', name: '@sleep_soda_', css: cover('#8e8a99', '/wall/illust_sleep_soda.webp') },
+  { id: 'inaba', name: '@bike_inaba', css: cover('#fdf6dc', '/wall/illust_bike_inaba.webp') },
+  { id: 'usagi', name: '@kusari_usagi', css: cover('#6f6a66', '/wall/illust_kusari_usagi.webp') },
+  { id: 'mashiro', name: '@ma_shiro0268', css: cover('#d9d6ec', '/wall/illust_mashiro.webp') },
+  { id: 'haru', name: '@haru000000man', css: cover('#f4eee3', '/wall/illust_haru.webp') },
+  { id: 'furagumi', name: '@furagumi1112', css: cover('#f4b8d2', '/wall/illust_furagumi.webp') },
+  { id: 'tate', name: 'たて（@eight_illust）', css: `url("/wall/tate_eight_illust.png") center / auto 100% no-repeat, linear-gradient(180deg, ${TATE_L}) left center / 50.5% 100% no-repeat, #3a262a linear-gradient(180deg, ${TATE_R}) right center / 50.5% 100% no-repeat` },
+  { id: 'plain', name: '纯色', css: '#f7e1fb' },
 ];
 let server = [];                           // [{ name, url }] downloaded by the server
 let customUrl = null;                      // object URL of the local picture
@@ -36,14 +47,14 @@ async function loadCustom() {
 
 function catalog() {
   const out = BUILTIN.slice();
-  if (customUrl) out.push({ id: 'custom', name: '我的图片', url: customUrl, color: '#222' });
-  for (const s of server) out.push({ id: 'srv:' + s.name, name: s.name.replace(/^(\d{4})(\d{2})(\d{2})-.*/, '网络 $2-$3'), url: s.url, color: '#241640', server: s.name });
+  if (customUrl) out.push({ id: 'custom', name: '我的图片', css: cover('#222', customUrl) });
+  for (const s of server) out.push({ id: 'srv:' + s.name, name: s.name.replace(/^(\d{4})(\d{2})(\d{2})-.*/, '网络 $2-$3'), css: cover('#241640', s.url), server: s.name });
   return out;
 }
 export function apply() {
   const id = prefs.get('wall', 'pc');
   const w = catalog().find((x) => x.id === id) || BUILTIN[0];
-  desktop.style.background = w.url ? `${w.color} url("${w.url}") ${w.pos || 'center'} / cover no-repeat` : w.color;
+  desktop.style.background = w.css;
 }
 async function refreshServer() {
   try { const r = await fetch('/api/walls'); if (r.ok) server = (await r.json()).items || []; } catch {}
@@ -67,7 +78,7 @@ export function openSettings() {
     const cur = prefs.get('wall', 'pc');
     grid.replaceChildren(...catalog().map((w) => h('div', { class: 'wall' + (w.id === cur ? ' sel' : ''), role: 'button', tabindex: 0, title: w.name,
       onclick: () => { prefs.set('wall', w.id); apply(); render(); } },
-    h('div', { class: 'th', style: w.url ? `background:${w.color} url("${w.url}") center / cover` : `background:${w.color}` }),
+    h('div', { class: 'th', style: `background:${w.css}` }),
     h('div', { class: 'nm', text: w.name }),
     w.server ? h('button', { class: 'del', type: 'button', title: '从服务器删除', text: '×', onclick: (e) => { e.stopPropagation(); del(w); } }) : null)));
   }
