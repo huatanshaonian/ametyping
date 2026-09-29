@@ -23,4 +23,11 @@ async function send(target, text) {
   return tmux(target.socket, ['send-keys', '-t', target.pane, 'Enter']);
 }
 
-module.exports = { send };
+// one navigation key (the terminal's own menus: /model, /resume, prompts)
+const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab' };
+function key(target, name) {
+  if (!KEYS[name]) return Promise.resolve({ ok: false, err: 'unknown key' });
+  return tmux(target.socket, ['send-keys', '-t', target.pane, KEYS[name]]);
+}
+
+module.exports = { send, key, KEYS };

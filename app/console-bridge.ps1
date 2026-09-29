@@ -2,6 +2,7 @@
 #   anc <pid>             -> "ok <pid>:<name>|<pid>:<name>|..."  the process and its ancestors (Toolhelp snapshot)
 #   alive <pid>           -> "ok 1" | "ok 0"
 #   send <pid> <base64>   -> "ok" | "err <reason>"   types UTF-8 text, then Enter, into the console <pid> is attached to
+#   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab
 # Input goes through WriteConsoleInput, i.e. the terminal's own input buffer: Claude Code reads it exactly like
 # keystrokes. Nothing global is simulated (no SendInput), so whatever window has the focus is never touched.
 $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
@@ -101,6 +102,21 @@ public static class AmeCon {
       return Write(h, e);
     });
   }
+  // one navigation key (for the terminal's own menus: /model, /resume, prompts): up down left right enter esc tab
+  public static string KeyPress(uint pid, string name) {
+    ushort vk, scan, ch = 0;
+    switch (name) {
+      case "up": vk = 0x26; scan = 0x48; break;
+      case "down": vk = 0x28; scan = 0x50; break;
+      case "left": vk = 0x25; scan = 0x4B; break;
+      case "right": vk = 0x27; scan = 0x4D; break;
+      case "enter": vk = 0x0D; scan = 0x1C; ch = 13; break;
+      case "esc": vk = 0x1B; scan = 0x01; ch = 27; break;
+      case "tab": vk = 0x09; scan = 0x0F; ch = 9; break;
+      default: return "!unknown key";
+    }
+    return WithConsole(pid, "CONIN$", h => { var l = new List<INPUT_RECORD>(); Key(l, ch, vk, scan); return Write(h, l); });
+  }
 }
 '@
 
@@ -113,6 +129,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     switch ($p[0]) {
       'anc'    { $r = 'ok ' + [AmeCon]::Ancestors([uint32]$p[1]) }
       'alive'  { $r = 'ok ' + [int][AmeCon]::Alive([uint32]$p[1]) }
+      'key'    { $r = & $res ([AmeCon]::KeyPress([uint32]$p[1], [string]$p[2])) }
       'send'   { $r = & $res ([AmeCon]::Send([uint32]$p[1], [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[2])), $true)) }
       default  { $r = 'err unknown' }
     }

@@ -2,7 +2,8 @@
 // Ame remote dashboard -- server. Shows Claude Code sessions and their conversations from every machine,
 // and lets the logged-in user reply to a session or answer a permission card on it:
 //   agent (per machine, connects out; token auth)  <--->  server  <--->  browser (login + TOTP)
-// Down the agent socket go exactly two actions, `send` (type a reply) and `decide` (allow / deny a permission).
+// Down the agent socket go exactly three actions, `send` (type a reply), `key` (one navigation key for the
+// terminal's own menus) and `decide` (allow / deny a permission).
 // Both need: control enabled here (config "control", default on), enabled on that machine (its agent.json
 // "control": true -- off by default), and the pet running there, which does the actual work just like its
 // own panel. Every action is written to the audit log (never the text itself).
@@ -206,7 +207,7 @@ function onAgentMessage(m, raw, ws) {
 // ---------- browser -> machine actions ----------
 // A browser action gets a server-side rid; the agent's `result` is routed back to that browser only.
 const pending = new Map();         // rid -> { c, crid, machine, timer }
-const ACTION_MAX = 30, ACTION_WIN = 60e3;
+const ACTION_MAX = 60, ACTION_WIN = 60e3;
 function finishAction(rid, machineName, ok, msg) {
   const p = pending.get(rid);
   if (!p || p.machine !== machineName) return;
@@ -233,6 +234,10 @@ function onBrowserAction(c, d) {
     if (!text.trim() || text.length > 8000) return reply(false, '内容为空或太长（最多 8000 字）');
     out = { t: 'send', id: s.id, text };
     audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
+  } else if (d.t === 'key') {
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab)$/.test(d.key)) return reply(false, '不支持的按键');
+    out = { t: 'key', id: s.id, key: d.key };
+    audit('control-key', c.ip, m.name, s.id, d.key);
   } else {
     if (typeof d.perm !== 'string' || !['allow', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
     if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
@@ -379,7 +384,7 @@ wssBrowser.on('connection', (ws, req, sid) => {
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
     } else if (d.t === 'unwatch') c.sub = null;
-    else if ((d.t === 'send' || d.t === 'decide') && typeof d.rid === 'string' && d.rid.length < 40) {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide') && typeof d.rid === 'string' && d.rid.length < 40) {
       // the login may have expired or been logged out while the socket stayed open
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
       onBrowserAction(c, d);

@@ -4,7 +4,7 @@
 // and the dashboard agent (../remote/agent/agent.js) drives it through the same /control/* endpoints.
 //   POST /event/<type>   session progress (hook-relay.js)
 //   POST /permission     a permission prompt, held open until answered from the dashboard (permission-hook.js)
-//   /control/state|send|decide   for the agent; token in ~/.ametyping/control-token-<port>, requests with Origin refused
+//   /control/state|send|key|decide   for the agent; token in ~/.ametyping/control-token-<port>, requests with Origin refused
 // Replies are typed into the session's tmux pane; a session whose process is gone is resumed with `claude -p --resume`.
 'use strict';
 const http = require('http');
@@ -41,6 +41,13 @@ function locate(s, pid) {
 }
 
 // ---- reply to a session ----
+// a permission prompt is open in the terminal: pasted text would land in it and pick options.
+// ("waiting" alone is not enough: Claude also notifies "waiting for your input" when it is simply idle)
+function asking(s) {
+  if (permissions.list(s.id).length) return true;
+  const last = [...s.lines].reverse()[0];
+  return s.state === 'waiting' && !!last && /确认/.test(last.text);
+}
 async function chatSend(id, text) {
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
@@ -48,8 +55,7 @@ async function chatSend(id, text) {
   if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
   if (s.claudePid && proc.alive(s.claudePid, s.claudeComm)) {
     if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 claude 就可以）' };
-    // the terminal is showing a prompt (permission, question): pasted text would land in it and pick options
-    if (s.state === 'waiting' || permissions.list(s.id).length) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
+    if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
     const r = await tmux.send(s.target, text);
     return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
   }
@@ -60,6 +66,17 @@ async function chatSend(id, text) {
   if (!r.ok) return r;
   Object.assign(s, { headless: true, state: 'message', last: Date.now() });
   return { ok: true, msg: '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
+}
+
+// one navigation key into the session's tmux pane (menus and prompts are what it is for)
+async function chatKey(id, key) {
+  if (!tmux.KEYS[key]) return { ok: false, msg: '不支持的按键' };
+  const s = sessions.map.get(id);
+  if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
+  if (!s.claudePid || !proc.alive(s.claudePid, s.claudeComm)) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
+  if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里操作' };
+  const r = await tmux.key(s.target, key);
+  return r.ok ? { ok: true } : { ok: false, msg: '按键失败：' + r.err };
 }
 
 // ---- control API for the agent ----
@@ -91,6 +108,10 @@ async function onControl(req, res, body) {
     const text = typeof d.text === 'string' ? d.text : '';
     if (typeof d.id !== 'string' || !text.trim() || text.length > 8000) return out(400, { ok: false, msg: '内容为空或太长' });
     return out(200, await chatSend(d.id, text));
+  }
+  if (req.method === 'POST' && req.url === '/control/key') {
+    if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
+    return out(200, await chatKey(d.id, d.key));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

@@ -89,6 +89,10 @@
   #resume { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: rgba(58,34,84,.6); }
   #resume[hidden] { display: none; }
   #rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; color: var(--ink); background: rgba(240,209,241,.5); padding: 2px 6px; user-select: all; }
+  #keys { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 10px; border-top: 1px dotted var(--edge); background: rgba(240,209,241,.25); }
+  #keys[hidden] { display: none; }
+  #keys .btn { padding: 1px 9px; font-size: 12px; min-width: 32px; }
+  #keys .kh { font-size: 11px; color: rgba(58,34,84,.5); margin-left: 4px; }
   .more { padding: 5px 10px; font-size: 11.5px; color: var(--blue); cursor: pointer; border-bottom: 1px dotted var(--edge); }
   .more:hover { background: rgba(255,255,255,.6); }
   @media (max-width: 620px) {
@@ -116,6 +120,12 @@
     <div id="conv"><div id="pick">从左边选一个会话查看完整对话。</div></div>
     <div id="perms"></div>
     <div id="note"></div>
+    <div id="keys" hidden>
+      <button class="btn" type="button" data-key="up" title="上">↑</button><button class="btn" type="button" data-key="down" title="下">↓</button>
+      <button class="btn" type="button" data-key="left" title="左">←</button><button class="btn" type="button" data-key="right" title="右">→</button>
+      <button class="btn" type="button" data-key="enter">回车</button><button class="btn" type="button" data-key="esc">Esc</button><button class="btn" type="button" data-key="tab">Tab</button>
+      <span class="kh">操作终端里的菜单（如 /model、/resume）</span>
+    </div>
     <form id="compose" autocomplete="off">
       <textarea id="say" rows="1" placeholder="先选一个会话" disabled></textarea>
       <button id="sendbtn" class="btn go" type="submit" disabled>发送</button>

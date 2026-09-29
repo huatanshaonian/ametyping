@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
 const bridge = require('./bridge');
+const { createRemoteControl } = require('./remote-control');
 const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -500,6 +501,10 @@ async function onControl(req, res, body) {
     if (typeof d.id !== 'string' || !text.trim() || text.length > 8000) return out(400, { ok: false, msg: '内容为空或太长' });
     return out(200, await chatSend(d.id, text));
   }
+  if (req.method === 'POST' && req.url === '/control/key') {
+    if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
+    return out(200, await chatKey(d.id, d.key));
+  }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
     return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
@@ -579,45 +584,8 @@ function pushChat(force) {
 setInterval(() => pushChat(false), 1000);
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
-function claudeExe() {
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    const f = path.join(dir, 'claude.exe'); if (dir && fs.existsSync(f)) return f;
-  }
-  const f = path.join(app.getPath('home'), '.local', 'bin', 'claude.exe');
-  return fs.existsSync(f) ? f : null;
-}
-// the session's process is gone: continue it in the background (`claude -p --resume <id>`); its hooks report
-// back like any other session, and the transcript it appends to is the same file the panel shows
-function resumeHeadless(s, text) {
-  const exe = claudeExe();
-  if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
-  const { spawn } = require('child_process');
-  const p = spawn(exe, ['-p', '--resume', s.id], { cwd: s.cwd && fs.existsSync(s.cwd) ? s.cwd : app.getPath('home'),
-    windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
-  p.on('error', () => {});
-  p.stdin.on('error', () => {});
-  p.stdin.end(text);                                               // prompt on stdin: never parsed as an option
-  p.on('exit', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
-  s.headless = true; s.state = 'message'; s.last = Date.now();
-  pushBubble(null);
-  return { ok: true, msg: '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
-}
-
-async function chatSend(id, text) {
-  const s = sessions.get(id);
-  if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
-  if (s.provider === 'codex') return { ok: false, msg: '请在 Codex 中继续对话；这里可以查看进度和处理权限' };
-  if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
-  if (s.claudePid && await procAlive(s.claudePid)) {
-    if (!s.terminal) return { ok: false, msg: '这个会话不在终端里（IDE 插件 / 桌面 App），没法从这里回复' };
-    // the terminal is showing a prompt (permission, question): typed text would land in it and pick options
-    if (s.state === 'waiting' || permissions.list(s.id).length) return { ok: false, msg: '它在等你确认，先处理确认（面板卡片或终端里）' };
-    const r = await bridge.send(s.claudePid, text);
-    return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
-  }
-  if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
-  return resumeHeadless(s, text);
-}
+// replies and navigation keys into a session's terminal (or a background resume): remote-control.js
+const { chatSend, chatKey } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.

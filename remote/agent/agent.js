@@ -117,12 +117,14 @@ async function pollPet() {
   petUp = !!r; petAllows = !!r && r.control !== false;
   if (r && Array.isArray(r.sessions)) for (const s of r.sessions) if (s && typeof s.id === 'string') pet.set(s.id, s);
 }
-// the only two things the agent does for the server
+// the only things the agent does for the server: type a reply, press a navigation key, answer a permission card
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
+  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab)$/.test(d.key)) {
+    r = await petCall('POST', '/control/key', { id: d.id, key: d.key });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'deny', 'defer'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice });
   } else return { ok: false, msg: '无效请求' };
@@ -200,7 +202,7 @@ function connect() {
       }
       pushRecords();
     }
-    else if ((d.t === 'send' || d.t === 'decide') && typeof d.rid === 'string') {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });

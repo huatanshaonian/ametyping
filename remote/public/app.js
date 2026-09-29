@@ -178,6 +178,7 @@ function renderControls() {
   if (s && (s.perms || []).length && via === 'terminal') say.placeholder = '它在等你确认，先处理上面的确认卡片';
   if (s && (s.perms || []).length) say.disabled = true;
   sendBtn.disabled = say.disabled || !say.value.trim();
+  $('keys').hidden = !(s && s.online && via === 'terminal');
   renderPerms(s);
 }
 function fitSay() { say.style.height = 'auto'; say.style.height = Math.min(140, say.scrollHeight + 2) + 'px'; }
@@ -196,6 +197,17 @@ $('compose').addEventListener('submit', (e) => {
     if (r.ok) { if (say.value === text) { say.value = ''; fitSay(); } showNote(r.msg || '已发送'); }
     else showNote(r.msg || '发送失败', true);
     renderControls();
+  });
+});
+
+// --- navigation keys for the terminal's own menus (/model, /resume, prompts) ---
+$('keys').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-key]'); const s = current();
+  if (!b || !s) return;
+  b.disabled = true;
+  act({ t: 'key', machine: s.machine, id: s.id, key: b.dataset.key }, (r) => {
+    b.disabled = false;
+    if (!r.ok) showNote(r.msg || '按键失败', true);
   });
 });
 
