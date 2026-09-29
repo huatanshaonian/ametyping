@@ -5,7 +5,8 @@ window.addEventListener('error', (e) => console.error('uncaught: ' + e.message +
 'use strict';
 
 // the window only shows the part of the scene she can ever occupy (tails swing, wave, zzz): x 190..1250
-const VX = 190, ART_W = 1060, ART_H = 1190;   // keyboard on her lap: the knees and stockings show below it
+const VX = 190, ART_W = 1060;
+let ART_H = 1190, legs = true;              // keyboard on her lap: the knees and stockings show below it (tray 显示腿部 off: 1080, cut at the keyboard)
 const DESK_Y = 803;                         // where the body is cut; kept hidden behind the keyboard
 const CS = 0.851, OX = 262, OY = -14;       // rig -> scene
 let HS = 0.95;                              // floating-hand sprite scale (overridden by rig.floatScale)
@@ -918,7 +919,7 @@ function drawFrame() {
   withCharacterClip(() => drawRig('torso'));
   // keyboard on her lap: the lower body (skirt, knees, stockings) is drawn below the keyboard's clip line and
   // stays put (no breathing / lean); the seam between the two halves is hidden behind the keyboard
-  drawLowerBody();
+  if (legs) drawLowerBody();
   drawKeyboard(ctx, scale * dpr, breathPhase);
   withCharacterClip(() => { applyHead(); drawRig('head'); drawFace(); drawFrontHair(); drawFaceTop(); });
   drawHandShadow(hands.L); drawHandShadow(hands.R);
@@ -996,7 +997,7 @@ canvas.addEventListener('pointerup', (e) => {
 // ---------- P-chan (ピーちゃん): stands in for the Claude panel while it is collapsed ----------
 // Sits on the floor at Ame's right (past the keyboard's right end). Main process tells us the panel state.
 // sleep = no sessions, alert = unread lines or a session waiting for you (bounce + red badge), idle = otherwise.
-const PCH = { x: 1105, y: 1180, h: 118 };            // bottom-centre of the sprite (art px) and its height (the game's pixel pien-cat head)
+const PCH = { x: 1105, y: 1180, h: 118 };            // bottom-centre of the sprite (art px, y = ART_H - 10) and its height (the game's pixel pien-cat head)
 const panel = { collapsed: false, unread: 0, waiting: false, n: 0 };
 const pch = { target: 0, hover: 0, hop: -1e9, blinkAt: now() + 2200, blinkUntil: 0 };
 window.pet.onPanel((s) => Object.assign(panel, s));
@@ -1108,6 +1109,7 @@ window.pet.onConfig((c) => {
   if (c.kbTheme && c.kbTheme !== KB_PAINT.theme) loadKbTheme(c.kbTheme);
   const kl = !!c.kangel;                       // tray lock "天使模式（常驻）"
   if (kl !== KA.lock) { KA.lock = kl; if (KA.ready) { if (kl) setKForm(true, 0); else if (!KA.until) setKForm(false); } }
+  legs = c.legs !== false; ART_H = legs ? 1190 : 1080; PCH.y = ART_H - 10;   // same heights as main.js artH()
   resize();
 });
 window.pet.onKey(onKey);

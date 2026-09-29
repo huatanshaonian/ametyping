@@ -191,7 +191,7 @@ window.bubble.onHide(() => {});
 window.bubble.onCollapsed((v) => {
   collapsed = !!v;
   document.body.classList.toggle('collapsed', collapsed);
-  $('fold').textContent = collapsed ? '□' : '−'; $('fold').title = collapsed ? '展开' : '折叠';
+  $('fold').textContent = collapsed ? '□' : '−'; $('fold').title = collapsed ? '展开' : '收成 P 酱';
   const sel = data.find((x) => x.id === selected);
   if (!collapsed && sel) seen[sel.id] = sel.last;      // expanding = looking at the selected session
   renderAll(false);

@@ -10,7 +10,8 @@ const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
 
-const VX = 190, ART_W = 1060, ART_H = 1190;  // visible slice of the art space (see renderer.js)
+const VX = 190, ART_W = 1060;  // visible slice of the art space (see renderer.js)
+const artH = () => (settings.legs === false ? 1080 : 1190);   // tray 显示腿部: the knees and stockings below the keyboard need 110 more
 const SCALES = { 小: 0.28, 中: 0.36, 大: 0.46 };
 
 let win, tray;
@@ -20,17 +21,17 @@ const PORT = +process.env.AME_PORT || 3940;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 // panelMode: 'popup' = progress log that pops up and hides again; 'chat' = always-on full conversation + reply box;
 //            'off' = never pops up (e.g. when you follow everything on the Windose dashboard); still opens from the tray
-// dashboardUrl: the Windose web desktop, opened by double-clicking Ame or from the tray
+// dashboardUrl: the Windose web desktop, opened by double-clicking Ame
 // petSound: the panel's chime when a session needs you / finishes (off when the Windose page does the sounds)
 // remoteControl: the dashboard may reply / answer permission cards through this pet (remote/agent needs "control": true too)
 let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: false, facing: 'her', panelMode: 'popup', remoteControl: false, dashboardUrl: 'https://win98.huatan.org', petSound: true, kangel: false };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { if (process.env.AME_DEMO_PANEL || process.env.AME_DEMO_PCHAN) return; try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
-const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo', breakNag: settings.breakNag !== false, kangel: !!settings.kangel });
+const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo', breakNag: settings.breakNag !== false, kangel: !!settings.kangel, legs: settings.legs !== false });
 
 function winSize() {
-  return { width: Math.round(ART_W * settings.scale), height: Math.round(ART_H * settings.scale) };
+  return { width: Math.round(ART_W * settings.scale), height: Math.round(artH() * settings.scale) };
 }
 
 function createWindow() {
@@ -97,9 +98,7 @@ function buildMenu() {
     { label: '键盘朝向', submenu: [['her', '朝她（真实对坐）'], ['you', '朝你（布局和你的键盘一样）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.facing === v,
       click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
-    { label: '打开 Claude / Codex 面板', click: () => expandPanel() },
-    { label: '打开 Windose 看板（双击糖糖）', click: openDashboard },
-    { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）'], ['off', '关闭（不弹出面板）']].map(([v, l]) => ({
+    { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）'], ['pchan', 'P 酱（收成 P 酱，有动静它会跳，点它看面板）'], ['off', '关闭（不弹出面板）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.panelMode === v, click: () => setPanelMode(v) })) },
     { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
       label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
@@ -112,6 +111,8 @@ function buildMenu() {
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
     { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
       click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
+    { label: '显示腿部（跪坐全身）', type: 'checkbox', checked: settings.legs !== false,
+      click: (m) => { settings.legs = m.checked; setScale(settings.scale); } },   // the window grows / shrinks at the bottom
     { label: '天使模式（常驻）', type: 'checkbox', checked: !!settings.kangel,
       enabled: fs.existsSync(path.join(__dirname, 'assets', 'rig', 'kangel', 'kangel.js')),   // only when the art is installed
       click: (m) => { settings.kangel = m.checked; save(); win.webContents.send('config', cfg()); } },
@@ -140,7 +141,7 @@ app.whenReady().then(() => {
   buildMenu();
   if (chatMode()) {
     bridge.start();                          // warm up: the first hook event needs the process lookup fast
-    bubbleWin.webContents.once('did-finish-load', () => { pushBubble(null); placeBubble(); if (!bubCollapsed) bubbleWin.showInactive(); });   // collapsed: P-chan stands in
+    bubbleWin.webContents.once('did-finish-load', () => { pushBubble(null); placeBubble(); bubbleWin.showInactive(); });
   }
 
   if (process.env.AME_DEMO) return runDemo(process.env.AME_DEMO);
@@ -164,7 +165,7 @@ function runDemo(outDir) {
       const shot = async (n) => { await wait(500); fs.writeFileSync(path.join(outDir, `panel_${n}.png`), (await bubbleWin.webContents.capturePage()).toPNG()); console.log(n, JSON.stringify(bubbleWin.getBounds())); };
       const rect = (id) => bubbleWin.webContents.executeJavaScript(`(() => { const r = document.getElementById('${id}').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
       const click = async ([x, y], n = 1) => { for (let i = 0; i < n; i++) { for (const type of ['mouseDown', 'mouseUp']) bubbleWin.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: i + 1 }); await wait(120); } };
-      setCollapsed(false);
+      setPanelMode('popup');
       const ev = (session, project, type, text) => onClaudeEvent(type, { session, project, text });
       ev('a', 'ame-typing', 'message', '给进度面板加折叠按钮'); ev('a', 'ame-typing', 'reading', '读 main.js'); ev('a', 'ame-typing', 'thinking', '想想 placeBubble 怎么改');
       ev('b', 'medstat', 'message', '跑 Table 1'); ev('b', 'medstat', 'waiting', '要不要覆盖旧结果？');
@@ -182,7 +183,7 @@ function runDemo(outDir) {
       const ev = (session, project, type, text) => onClaudeEvent(type, { session, project, text });
       await js('window.__noPersist = true; window.__fakeHour = 14; mouseFrozen = true; mood.blinkAt = 1e12; act.next = 1e12; pch.blinkAt = 1e12;');
       setScale(0.7, false); win.setPosition(20, 20); await wait(600);
-      setCollapsed(true); await shot('1_sleep');
+      setPanelMode('pchan'); await shot('1_sleep');
       ev('a', 'ame-typing', 'message', 'demo one'); ev('a', 'ame-typing', 'reading', 'demo two');
       await wait(300); bubbleWin.webContents.send('bubble-collapsed', false); await wait(300); bubbleWin.webContents.send('bubble-collapsed', true); await wait(300);   // the panel has "looked" at session a
       await shot('2_idle');
@@ -197,7 +198,7 @@ function runDemo(outDir) {
       mv(c[0], c[1]); await wait(150); mv(c[0] + 1, c[1]); await wait(400); await shot('4_hover');
       for (const type of ['mouseDown', 'mouseUp']) { win.webContents.sendInputEvent({ type, x: c[0], y: c[1], button: 'left', clickCount: 1 }); await wait(100); }
       await wait(600);
-      console.log('after click: collapsed', bubCollapsed, 'visible', bubbleWin.isVisible());
+      console.log('after click: folded', folded(), 'visible', bubbleWin.isVisible());
       await shot('5_expanded'); await shot('5_expanded_panel', bubbleWin);
       return app.quit();
     }
@@ -395,17 +396,21 @@ const sizeKeys = () => (chatMode() ? ['chatW', 'chatH', 680, 460] : ['panelW', '
 let bubW, bubH;
 function loadPanelSize() { const [kw, kh, dw, dh] = sizeKeys(); bubW = settings[kw] || dw; bubH = settings[kh] || dh; }
 loadPanelSize();
-const COLLAPSED_H = 42;                                          // collapsed: just the title bar (bubH keeps the saved full height)
-let bubCollapsed = !!settings.panelCollapsed;
-const curH = () => (bubCollapsed ? COLLAPSED_H : bubH);
+// 'pchan' mode: the panel stays folded away and P-chan (drawn in Ame's window) stands in for it;
+// clicking P-chan opens the panel for a look (panelPeek) until it is closed or auto-hides again
+const pchanMode = () => settings.panelMode === 'pchan';
+if (settings.panelCollapsed) { if (settings.panelMode === 'popup') settings.panelMode = 'pchan'; delete settings.panelCollapsed; }   // upstream's old fold flag
+let panelPeek = false;
+const folded = () => pchanMode() && !panelPeek;
 let bubbleWin = null;
 function setPanelMode(v) {
   settings.panelMode = v; save(); buildMenu();
   loadPanelSize();
   if (chatMode()) bridge.start();
+  panelPeek = false; sendFolded();
   pushBubble(null);
-  if (chatMode()) { setCollapsed(false); placeBubble(); bubbleWin.showInactive(); }
-  else if (v === 'off') hideBubble();
+  if (chatMode()) { placeBubble(); bubbleWin.showInactive(); }
+  else if (v === 'off' || v === 'pchan') hideBubble();
   else if (bubbleWin.isVisible()) placeBubble();
 }
 // the Windose web desktop in the default browser (https only: the address comes from settings.json)
@@ -416,7 +421,7 @@ function openDashboard() {
 ipcMain.on('open-dashboard', (e) => { if (win && e.sender === win.webContents) openDashboard(); });
 function createBubble() {
   bubbleWin = new BrowserWindow({
-    width: bubW, height: curH(), transparent: true, frame: false, resizable: false, thickFrame: false,
+    width: bubW, height: bubH, transparent: true, frame: false, resizable: false, thickFrame: false,
     hasShadow: false, skipTaskbar: true, alwaysOnTop: true, show: false,
     // focusable (a focusable:false window on Windows stops getting mouse input after a click or two);
     // it is only ever shown with showInactive(), so it never steals focus unless you click it
@@ -426,29 +431,33 @@ function createBubble() {
   bubbleWin.loadFile('bubble.html');
   bubbleWin.webContents.on('did-finish-load', () => pushBubble(null));
   bubbleWin.on('focus', keepAmeOnTop);     // clicking the panel must not lift it above Ame
-  bubbleWin.webContents.on('did-finish-load', () => bubbleWin.webContents.send('bubble-collapsed', bubCollapsed));
+  bubbleWin.webContents.on('did-finish-load', () => sendFolded());
   bubbleWin.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level < 1) return;
     try { fs.appendFileSync(path.join(app.getPath('userData'), 'renderer.log'), `${new Date().toISOString()} [panel] ${message} (${path.basename(source || '')}:${line})` + String.fromCharCode(10)); } catch {}
   });
 }
-function hideBubble() { if (bubbleWin && bubbleWin.isVisible()) bubbleWin.hide(); }
+function hideBubble() {
+  if (bubbleWin && bubbleWin.isVisible()) bubbleWin.hide();
+  if (panelPeek) { panelPeek = false; sendFolded(); }             // P-chan mode: the look is over, P-chan is back
+}
 ipcMain.on('bubble-close', () => hideBubble());
-// "−" button / title double-click: fold the panel to its title bar (top-left stays put); remembered across restarts
-function setCollapsed(v) {
-  v = !!v;
-  if (v === bubCollapsed) return;
-  bubCollapsed = v; settings.panelCollapsed = v; save();
-  placeBubble();
-  if (bubbleWin) bubbleWin.webContents.send('bubble-collapsed', v);
-  if (v) hideBubble();                                           // collapsed = the window is gone, P-chan (in Ame's window) stands in for it
+// the panel page and P-chan mirror the folded state (the panel counts unread differently while folded)
+function sendFolded() {
+  if (bubbleWin) bubbleWin.webContents.send('bubble-collapsed', folded());
   sendPanel();
 }
-ipcMain.on('bubble-collapse', (_e, v) => setCollapsed(v));
-// expand + show the panel (tray item, P-chan click); with no sessions there is nothing to show (except the chat panel)
+// "−" button / title double-click: fold the panel into P-chan (switches to P-chan mode, or ends the look in it)
+ipcMain.on('bubble-collapse', (_e, v) => {
+  if (!v) expandPanel();
+  else if (!pchanMode()) setPanelMode('pchan');
+  else hideBubble();
+});
+// expand + show the panel (P-chan click); with no sessions there is nothing to show (except the chat panel)
 function expandPanel() {
   if ((!sessions.size && !chatMode()) || !bubbleWin) return;
-  setCollapsed(false); pushBubble(null); placeBubble(); bubbleWin.showInactive(); keepAmeOnTop();
+  if (pchanMode()) { panelPeek = true; sendFolded(); }
+  pushBubble(null); placeBubble(); bubbleWin.showInactive(); keepAmeOnTop();
 }
 ipcMain.on('panel-expand', () => expandPanel());
 // P-chan (drawn by Ame's renderer while the panel is collapsed) mirrors the panel: unread count comes from the panel page
@@ -457,7 +466,7 @@ ipcMain.on('bubble-unread', (_e, n) => { panelUnread = n | 0; sendPanel(); });
 function sendPanel() {
   if (!win || win.isDestroyed()) return;
   const all = [...sessions.values()];
-  win.webContents.send('panel', { collapsed: bubCollapsed, unread: all.length ? panelUnread : 0, waiting: all.some((s) => s.state === 'waiting'), n: all.length });
+  win.webContents.send('panel', { collapsed: folded(), unread: all.length ? panelUnread : 0, waiting: all.some((s) => s.state === 'waiting'), n: all.length });
 }
 // The panel hangs under Ame. Horizontally it can slide on its own (settings.panelDX = offset of its centre
 // from Ame's centre), but never further than edge-to-edge: its right edge can reach Ame's left edge and
@@ -465,7 +474,7 @@ function sendPanel() {
 // (settings.panelDY = offset of its top from the "hanging just under the keyboard" spot): it can slide up
 // behind Ame until its bottom edge meets hers, and hangs no lower than just under the keyboard.
 const maxPanelDX = (b) => bubW / 2 + b.width / 2;
-const minPanelDY = () => 6 - curH();
+const minPanelDY = () => 6 - bubH;
 const clampDY = (dy) => Math.max(minPanelDY(), Math.min(0, dy || 0));
 function placeBubble() {
   if (!bubbleWin || !win || win.isDestroyed()) return;
@@ -476,12 +485,12 @@ function placeBubble() {
   const hang = b.y + b.height - 6;                              // just under the keyboard
   let x = Math.round(b.x + b.width / 2 - bubW / 2 + settings.panelDX);
   let y = hang + settings.panelDY;
-  if (y + curH() > wa.y + wa.height) y = wa.y + wa.height - curH();  // no room: overlap Ame like a VN textbox
+  if (y + bubH > wa.y + wa.height) y = wa.y + wa.height - bubH;  // no room: overlap Ame like a VN textbox
   x = Math.max(wa.x, Math.min(wa.x + wa.width - bubW, x));
   y = Math.max(wa.y, y);
   settings.panelDX = x + bubW / 2 - (b.x + b.width / 2);         // store where it really is (screen edge may push it)
   settings.panelDY = clampDY(y - hang);
-  bubbleWin.setBounds({ x, y: Math.round(y), width: bubW, height: curH() });
+  bubbleWin.setBounds({ x, y: Math.round(y), width: bubW, height: bubH });
   keepAmeOnTop();
 }
 // Ame's window always stays above the panel
@@ -546,9 +555,21 @@ function sessionLabel(s) {
   return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
 }
 const permissions = createPermissions(() => pushBubble(null));
+// answered here (panel / dashboard): the session is working again. Left "waiting" with 需要确认 as its last line,
+// the panel would take the vanished card for a timed-out one (and the reply box would stay blocked) until the next hook event
+function decidePermission(id, choice) {
+  const sid = [...sessions.keys()].find((k) => permissions.list(k).some((p) => p.id === id));
+  const p = sid && permissions.list(sid).find((x) => x.id === id);
+  const ok = permissions.decide(id, choice);
+  const s = sid && sessions.get(sid);
+  if (ok && p && ['allow', 'deny'].includes(choice) && s && s.state === 'waiting' && !permissions.list(sid).length) {
+    onClaudeEvent('thinking', { session: sid, text: `${choice === 'allow' ? '已允许' : '已拒绝'}：${p.tool}` });
+  }
+  return ok;
+}
 ipcMain.handle('permission-decide', (e, id, choice) => {
   if (!bubbleWin || e.sender !== bubbleWin.webContents) return { ok: false };
-  return { ok: permissions.decide(id, choice) };
+  return { ok: decidePermission(id, choice) };
 });
 app.on('before-quit', () => permissions.clear());
 // how a reply typed in the panel reaches this session
@@ -568,9 +589,9 @@ function pushBubble(changedId) {
   sendPanel();
   if (!list.length && !chatMode()) { hideBubble(); return; }
   bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode, sound: settings.petSound !== false });
-  if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off; collapsed: only P-chan reacts)
+  if (changedId && settings.panelMode !== 'off') {   // new activity: show the panel (unless panels are off; P-chan mode: only P-chan reacts)
     placeBubble();
-    if (!bubCollapsed && !bubbleWin.isVisible()) bubbleWin.showInactive();
+    if (!folded() && !bubbleWin.isVisible()) bubbleWin.showInactive();
     keepAmeOnTop();
   }
   // popup mode: auto-hide once nothing is working or waiting (unless the mouse is on the panel)
@@ -700,7 +721,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
-    return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
+    return out(200, decidePermission(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
   }
   return out(404, { ok: false });
 }
