@@ -7,7 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab']);
+const { modeFromScreen } = require('./permission-mode');
+
+const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab']);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // deps: { sessions, permissions, bridge, procAlive, pushBubble, home }
 function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home }) {
@@ -72,7 +75,12 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
     const r = await bridge.key(t.pid, key);
-    return r.ok ? { ok: true } : { ok: false, msg: '按键失败：' + r.err };
+    if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
+    if (key !== 'btab') return { ok: true };
+    // Shift+Tab: the mode it switched to, read once from the redrawn status line (the transcript only records the
+    // mode with the next message)
+    await sleep(350);
+    return { ok: true, mode: modeFromScreen(await bridge.screen(t.pid)) };
   }
 
   // a new Claude Code session in a folder (checked by the agent), in its own console window; its hooks make it

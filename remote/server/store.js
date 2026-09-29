@@ -21,7 +21,7 @@ const dayOf = (t) => { const d = new Date(Number.isFinite(t) ? t : Date.now()); 
 // tool calls one group; title records are metadata
 function merge(out, recs) {
   for (const r of recs) {
-    if (r.role === 'title') continue;
+    if (r.role === 'title' || r.role === 'mode') continue;
     const last = out[out.length - 1];
     if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid && last.mid === r.mid) last.text += '\n\n' + r.text;
     else if (r.role === 'tool' && last && last.role === 'tool') { last.items = last.items.concat(r.items || []); last.t = r.t; }
@@ -29,7 +29,7 @@ function merge(out, recs) {
   }
   if (out.length > TAIL) out.splice(0, out.length - TAIL);
 }
-const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title']);
+const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title', 'mode']);
 function clean(r) {
   if (!r || !ROLES.has(r.role)) return null;
   const o = { u: typeof r.u === 'string' ? r.u.slice(0, 64) : null, i: +r.i || 0, role: r.role, t: +r.t || Date.now() };
@@ -72,9 +72,12 @@ function createStore(dir) {
     if (d.reset) e.off = d.from;
     if (d.from !== e.off) return { resync: e.off };
     const recs = (Array.isArray(d.recs) ? d.recs : []).map(clean).filter(Boolean);
+    let modeChanged = false;
     for (const r of recs) {
       // Claude Code writes the same title line again and again; only a change is worth keeping
       if (r.role === 'title' && (!r.text || r.text.slice(0, 80) === e.title)) continue;
+      // the permission mode is written around every message: keep only changes
+      if (r.role === 'mode') { if (!r.text || r.text === e.mode) continue; e.mode = r.text.slice(0, 24); modeChanged = true; }
       const day = dayOf(r.t);
       if (!e.days.includes(day)) { e.days.push(day); e.days.sort(); }
       const f = fileOf(day, m, d.id);
@@ -93,7 +96,7 @@ function createStore(dir) {
     dirty = true;
     const tail = tails.get(`${m}|${d.id}`);
     if (tail) merge(tail.msgs, recs);
-    return { ok: true, changed: recs.length > 0 };
+    return { ok: true, changed: recs.length > 0, modeChanged };
   }
 
   function flush() {
@@ -157,7 +160,7 @@ function createStore(dir) {
     const out = {};
     for (const [m, ids] of Object.entries(state)) {
       out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
-        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last }));
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '' }));
     }
     return out;
   }

@@ -17,6 +17,7 @@ const { normalizeSession } = require('../app/session-source');
 const { createSessions } = require('./sessions');
 const proc = require('./proc-linux');
 const tmux = require('./tmux');
+const { modeFromScreen } = require('../app/permission-mode');
 const { resume } = require('./resume');
 const { launch } = require('./launch');
 
@@ -77,7 +78,12 @@ async function chatKey(id, key) {
   if (!s.claudePid || !proc.alive(s.claudePid, s.claudeComm)) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
   if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里操作' };
   const r = await tmux.key(s.target, key);
-  return r.ok ? { ok: true } : { ok: false, msg: '按键失败：' + r.err };
+  if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
+  if (key !== 'btab') return { ok: true };
+  // Shift+Tab: the mode it switched to, read once from the redrawn status line (the transcript only records the
+  // mode with the next message)
+  await new Promise((res) => setTimeout(res, 350));
+  return { ok: true, mode: modeFromScreen(await tmux.screen(s.target)) };
 }
 
 // ---- control API for the agent ----

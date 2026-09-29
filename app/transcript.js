@@ -89,6 +89,10 @@ function recordsOf(o) {
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
     const title = o.aiTitle || o.customTitle || o.title;
     if (title) out.push({ role: 'title', text: String(title), t });
+  } else if (o.type === 'permission-mode' && typeof o.permissionMode === 'string' && o.permissionMode) {
+    // the permission mode (auto / manual / acceptEdits / plan ...): written when the session starts, around every
+    // message and on exit -- not on each Shift+Tab. A metadata record like the title (the line has no timestamp).
+    out.push({ role: 'mode', text: o.permissionMode.slice(0, 24), t });
   }
   return out;
 }
@@ -99,6 +103,7 @@ function mergeRecords(out, recs) {
   for (const r of recs) {
     const last = out[out.length - 1];
     if (r.role === 'title') out.title = r.text;
+    else if (r.role === 'mode') out.mode = r.text;
     else if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid === r.mid) last.text += '\n\n' + r.text;
     else if (r.role === 'tool' && last && last.role === 'tool') { last.items.push(...r.items); last.t = r.t; }
     else out.push(r.role === 'tool' ? { ...r, items: [...r.items] } : { ...r });

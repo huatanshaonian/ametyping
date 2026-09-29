@@ -7,7 +7,7 @@ import * as wm from '../wm.js';
 
 const PAGE = 50;
 const PLACEHOLDER = {
-  terminal: '回复（Enter 发送，Shift+Enter 换行）；框为空时 方向键 / 回车 / Esc / Tab 直接发给终端',
+  terminal: '回复（Enter 发送，Shift+Enter 换行）；框为空时 方向键 / 回车 / Esc / Tab / Shift+Tab 直接发给终端',
   resume: '会话已关闭：发送会在那台机器后台用 claude -p --resume 续上',
   busy: '后台续聊进行中…',
   none: '这个会话不在终端里（IDE / 桌面 App），只能看',
@@ -15,9 +15,14 @@ const PLACEHOLDER = {
   codex: 'Codex 会话请在 Codex 里继续；这里可以处理权限',
   off: '这台机器没开远程控制（或糖糖没在运行），只能看',
 };
-const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab']];
-// keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts)
+const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
+// keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts;
+// Shift+Tab cycles Claude Code's permission mode)
 const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab' };
+const keyOf = (e) => (e.key === 'Tab' && e.shiftKey ? 'btab' : KEYMAP[e.key]);
+// Claude Code's permission mode, as its transcript records it with every message (the store keeps the latest)
+const MODE = { default: '手动', auto: '自动', manual: '手动', acceptEdits: '接受编辑', plan: '计划', bypassPermissions: '跳过权限', dontAsk: '不询问' };
+const ENTER_GRACE = 600;           // a card must have been on screen this long before Enter allows it
 const coarse = matchMedia('(pointer: coarse)').matches;      // phones: Enter is a newline, the button sends
 
 let app = null;                                              // the open instance
@@ -51,7 +56,9 @@ function mount(current) {
   const kbdBtn = h('button', { class: 'btn kbd', type: 'button', text: '⌨', title: '显示 / 隐藏按键（操作终端里的菜单）', hidden: true });
   let showKeys = prefs.get('dash.keys', coarse);
   kbdBtn.addEventListener('click', () => { showKeys = !showKeys; prefs.set('dash.keys', showKeys); renderControls(); });
-  const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, say, sendBtn);
+  // the session's permission mode; a click cycles it like Shift+Tab in the terminal
+  const modeBtn = h('button', { class: 'btn mode', type: 'button', hidden: true, text: '模式？' });
+  const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn);
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), hmeta),
     resume, convEl, permsEl, note, keys, compose);
   const root = h('div', { class: 'dash' }, list, right);
@@ -154,24 +161,46 @@ function mount(current) {
     termOk = !!(s && s.online && via === 'terminal');
     keys.hidden = !(termOk && showKeys);
     kbdBtn.hidden = !termOk;
+    renderMode(s);
     renderPerms(s);
   }
+
+  // ---- permission mode ----
+  // What the transcript last recorded (s.mode, updated with every message); right after a Shift+Tab from here, the
+  // mode the terminal switched to -- until the next record replaces it.
+  const pressed = new Map();                        // "machine|id" -> { mode, base: s.mode when it was pressed }
+  function renderMode(s) {
+    const p = pressed.get(sel);
+    if (p && s && s.mode !== p.base) pressed.delete(sel);
+    const m = pressed.has(sel) ? p.mode : s && s.mode;
+    modeBtn.hidden = !(s && (m || termOk));
+    modeBtn.disabled = !termOk;
+    modeBtn.textContent = m ? MODE[m] || m : '模式？';
+    modeBtn.dataset.mode = m || '';
+    modeBtn.title = (m ? `权限模式：${MODE[m] || m}（发消息时记录）` : '权限模式：发一条消息后才知道') + (termOk ? '；点击或 Shift+Tab 轮转' : '');
+  }
+  modeBtn.addEventListener('click', () => pressKey('btab', modeBtn));
   const fitSay = () => { say.style.height = 'auto'; say.style.height = Math.min(140, say.scrollHeight + 2) + 'px'; };
   say.addEventListener('input', () => { fitSay(); sendBtn.disabled = say.disabled || !say.value.trim(); });
   say.addEventListener('keydown', (e) => {
     if (e.isComposing) return;
     // an empty box: the key goes to the terminal (Shift+Enter stays a newline)
-    if (termOk && !say.value && KEYMAP[e.key] && !(e.key === 'Enter' && e.shiftKey) && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault(); pressKey(KEYMAP[e.key]); return;
+    if (termOk && !say.value && keyOf(e) && !(e.key === 'Enter' && e.shiftKey) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault(); pressKey(keyOf(e)); return;
     }
     if (e.key === 'Enter' && !e.shiftKey && !coarse) { e.preventDefault(); compose.requestSubmit(); }
   });
   async function pressKey(key, b) {
     const s = find(sel); if (!s) return;
+    const at = sel;
     if (b) b.disabled = true;
     const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key });
     if (b) b.disabled = false;
-    if (!r.ok) showNote(r.msg || '按键失败', true);
+    if (!r.ok) return showNote(r.msg || '按键失败', true);
+    if (key === 'btab' && r.mode) {
+      pressed.set(at, { mode: r.mode, base: s.mode });
+      if (at === sel) { renderMode(find(sel)); showNote('权限模式：' + (MODE[r.mode] || r.mode)); }
+    }
   }
   compose.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -200,7 +229,8 @@ function mount(current) {
         h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
           (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }),
         h('div', { class: 'pa' }, ...choices.map(([c, l, cls]) => h('button', { class: cls, type: 'button', dataset: { choice: c }, text: l })),
-          h('span', { class: 'ps', text: '也可在那台机器上回答' })));
+          h('span', { class: 'ps', text: '回车 = 允许 · 也可在那台机器上回答' })));
+      card.dataset.shown = Date.now();
       permCards.set(p.id, card); permsEl.append(card);
     }
   }
@@ -213,6 +243,21 @@ function mount(current) {
     st.textContent = r.ok ? '已提交' : (r.msg || '提交失败');
     if (!r.ok) for (const x of card.querySelectorAll('button')) x.disabled = false;
   });
+  // Enter allows the oldest open card -- when this window is the active one and no other control has the focus
+  // (the reply box is disabled while a card is open, so the key arrives at the page). Not a held-down Enter, and not
+  // a card that only just appeared (an Enter meant for something else).
+  function onEnter(e) {
+    if (e.key !== 'Enter' || e.repeat || e.isComposing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const win = root.closest('.win');
+    if (!win || win.classList.contains('inactive') || win.classList.contains('minimized')) return;
+    const t = document.activeElement;
+    if (t && t !== document.body && (!root.contains(t) || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName))) return;
+    const card = [...permsEl.querySelectorAll('.perm')].find((c) => c.querySelector('button[data-choice="allow"]:not(:disabled)'));
+    if (!card || Date.now() - card.dataset.shown < ENTER_GRACE) return;
+    e.preventDefault();
+    card.querySelector('button[data-choice="allow"]').click();
+  }
+  document.addEventListener('keydown', onEnter);
 
   // ---- conversation ----
   const inline = (s) => esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
@@ -256,6 +301,6 @@ function mount(current) {
     root,
     setCurrent(c) { current = c; renderList(); list.scrollTop = 0; },
     select,
-    destroy() { for (const off of offs) off(); clearInterval(tickT); ro.disconnect(); net.send({ t: 'unwatch' }); },
+    destroy() { for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); },
   };
 }

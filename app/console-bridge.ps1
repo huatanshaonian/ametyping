@@ -2,7 +2,7 @@
 #   anc <pid>             -> "ok <pid>:<name>|<pid>:<name>|..."  the process and its ancestors (Toolhelp snapshot)
 #   alive <pid>           -> "ok 1" | "ok 0"
 #   send <pid> <base64>   -> "ok" | "err <reason>"   types UTF-8 text, then Enter, into the console <pid> is attached to
-#   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab
+#   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab btab (Shift+Tab)
 #   screen <pid>          -> "ok <base64>" | "err <reason>"   the visible text of that console window (UTF-8)
 #   launch <base64 json>  -> "ok <pid>" | "err <reason>"   {exe, args, cwd}: start a program in a new console window
 # Input goes through WriteConsoleInput, i.e. the terminal's own input buffer: Claude Code reads it exactly like
@@ -73,9 +73,9 @@ public static class AmeCon {
     try { return fn(h); } finally { CloseHandle(h); FreeConsole(); }
   }
 
-  static void Key(List<INPUT_RECORD> l, ushort ch, ushort vk, ushort scan) {
+  static void Key(List<INPUT_RECORD> l, ushort ch, ushort vk, ushort scan, uint ctrl = 0) {
     foreach (int down in new[] { 1, 0 }) {
-      var r = new INPUT_RECORD(); r.EventType = 1; r.KeyDown = down; r.Repeat = 1; r.VK = vk; r.Scan = scan; r.Ch = ch;
+      var r = new INPUT_RECORD(); r.EventType = 1; r.KeyDown = down; r.Repeat = 1; r.VK = vk; r.Scan = scan; r.Ch = ch; r.Ctrl = ctrl;
       l.Add(r);
     }
   }
@@ -125,10 +125,12 @@ public static class AmeCon {
       return "=" + sb.ToString();
     });
   }
-  // one navigation key (for the terminal's own menus: /model, /resume, prompts): up down left right enter esc tab
+  // one navigation key (for the terminal's own menus: /model, /resume, prompts): up down left right enter esc tab,
+  // btab = Shift+Tab (Claude Code: cycle the permission mode)
   public static string KeyPress(uint pid, string name) {
-    ushort vk, scan, ch = 0;
+    ushort vk, scan, ch = 0; uint ctrl = 0;
     switch (name) {
+      case "btab": vk = 0x09; scan = 0x0F; ch = 9; ctrl = 0x0010; break;   // SHIFT_PRESSED
       case "up": vk = 0x26; scan = 0x48; break;
       case "down": vk = 0x28; scan = 0x50; break;
       case "left": vk = 0x25; scan = 0x4B; break;
@@ -138,7 +140,7 @@ public static class AmeCon {
       case "tab": vk = 0x09; scan = 0x0F; ch = 9; break;
       default: return "!unknown key";
     }
-    return WithConsole(pid, "CONIN$", h => { var l = new List<INPUT_RECORD>(); Key(l, ch, vk, scan); return Write(h, l); });
+    return WithConsole(pid, "CONIN$", h => { var l = new List<INPUT_RECORD>(); Key(l, ch, vk, scan, ctrl); return Write(h, l); });
   }
 }
 '@

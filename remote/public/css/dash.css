@@ -63,3 +63,9 @@
 .dash.narrow:not(.viewing) .right { display: none; }
 .dash.narrow .back { display: inline-block; }
 .dash .compose .kbd { padding: 3px 8px; font-size: 13px; }
+/* the permission mode button next to the reply box (click = Shift+Tab) */
+.dash .compose .mode { padding: 3px 8px; font-size: 12px; white-space: nowrap; min-width: 58px; }
+.dash .compose .mode[data-mode="auto"] { color: var(--ok-text); }
+.dash .compose .mode[data-mode="acceptEdits"] { color: var(--warn); }
+.dash .compose .mode[data-mode="plan"] { color: var(--border); font-weight: bold; }
+.dash .compose .mode[data-mode="bypassPermissions"] { color: var(--bad); font-weight: bold; }

@@ -6,8 +6,8 @@ const crypto = require('crypto');
 
 function tmux(socket, args, input) {
   return new Promise((resolve) => {
-    const p = execFile('tmux', ['-S', socket, ...args], { timeout: 5000 }, (err, _out, stderr) =>
-      resolve(err ? { ok: false, err: String(stderr || err.message).trim().slice(0, 200) } : { ok: true }));
+    const p = execFile('tmux', ['-S', socket, ...args], { timeout: 5000 }, (err, out, stderr) =>
+      resolve(err ? { ok: false, err: String(stderr || err.message).trim().slice(0, 200) } : { ok: true, out: String(out || '') }));
     if (input != null) { p.stdin.on('error', () => {}); p.stdin.end(input); }
   });
 }
@@ -23,11 +23,17 @@ async function send(target, text) {
   return tmux(target.socket, ['send-keys', '-t', target.pane, 'Enter']);
 }
 
-// one navigation key (the terminal's own menus: /model, /resume, prompts)
-const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab' };
+// one navigation key (the terminal's own menus: /model, /resume, prompts); btab = Shift+Tab (permission mode)
+const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab', btab: 'BTab' };
 function key(target, name) {
   if (!KEYS[name]) return Promise.resolve({ ok: false, err: 'unknown key' });
   return tmux(target.socket, ['send-keys', '-t', target.pane, KEYS[name]]);
 }
 
-module.exports = { send, key, KEYS };
+// the visible text of the pane (null when it cannot be read)
+async function screen(target) {
+  const r = await tmux(target.socket, ['capture-pane', '-p', '-t', target.pane]);
+  return r.ok ? r.out : null;
+}
+
+module.exports = { send, key, screen, KEYS };

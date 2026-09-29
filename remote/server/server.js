@@ -126,12 +126,12 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id) };
+        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '' };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id) });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -184,12 +184,13 @@ function onAgentMessage(m, raw, ws) {
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
     if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
     // a session only the store knows (e.g. Codex without the pet): the list would not refresh on its own
-    if (r.changed && !m.sessions.has(d.id)) broadcastSoon();
+    // (and a new permission mode is shown in the list's session details)
+    if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
-  if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200));
+  if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode);
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
@@ -229,11 +230,13 @@ function onAgentMessage(m, raw, ws) {
 // A browser action gets a server-side rid; the agent's `result` is routed back to that browser only.
 const pending = new Map();         // rid -> { c, crid, machine, timer }
 const ACTION_MAX = 60, ACTION_WIN = 60e3;
-function finishAction(rid, machineName, ok, msg) {
+// Claude Code permission modes (app/permission-mode.js): a Shift+Tab's result carries the one it switched to
+const MODES = new Set(['auto', 'manual', 'acceptEdits', 'plan', 'bypassPermissions']);
+function finishAction(rid, machineName, ok, msg, mode) {
   const p = pending.get(rid);
   if (!p || p.machine !== machineName) return;
   pending.delete(rid); clearTimeout(p.timer);
-  try { p.c.ws.send(JSON.stringify({ t: 'result', rid: p.crid, ok, msg })); } catch {}
+  try { p.c.ws.send(JSON.stringify({ t: 'result', rid: p.crid, ok, msg, mode: MODES.has(mode) ? mode : undefined })); } catch {}
 }
 function onBrowserAction(c, d) {
   const reply = (ok, msg, need) => { try { c.ws.send(JSON.stringify({ t: 'result', rid: d.rid, ok, msg, need })); } catch {} };
@@ -263,7 +266,7 @@ function onBrowserAction(c, d) {
     out = { t: 'send', id: s.id, text };
     audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
   } else if (d.t === 'key') {
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab)$/.test(d.key)) return reply(false, '不支持的按键');
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab)$/.test(d.key)) return reply(false, '不支持的按键');
     out = { t: 'key', id: s.id, key: d.key };
     audit('control-key', c.ip, m.name, s.id, d.key);
   } else {

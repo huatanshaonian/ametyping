@@ -58,6 +58,6 @@ module.exports = {
     const r = await call(`launch ${b64(JSON.stringify({ exe, args: args.map(winArg).join(' '), cwd }))}`, 10000);
     return r.ok ? +r.v : null;
   },
-  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
+  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab|btab)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
   stop: () => { try { ps && ps.stdin.end(); ps && ps.kill(); } catch {} ps = null; },
 };

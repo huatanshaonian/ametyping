@@ -143,7 +143,7 @@ async function control(d) {
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
-  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab)$/.test(d.key)) {
+  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab)$/.test(d.key)) {
     r = await petCall('POST', '/control/key', { id: d.id, key: d.key });
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
@@ -155,7 +155,8 @@ async function control(d) {
   if (!r) return { ok: false, msg: '本机糖糖没在运行，没法操作' };
   if (r.ok === false && !petAllows) return { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' };
   setTimeout(() => tick(true), 300);
-  return { ok: !!r.ok, msg: typeof r.msg === 'string' ? r.msg.slice(0, 200) : '' };
+  // a Shift+Tab reports the permission mode it switched to
+  return { ok: !!r.ok, msg: typeof r.msg === 'string' ? r.msg.slice(0, 200) : '', mode: typeof r.mode === 'string' ? r.mode : undefined };
 }
 
 // ---------- shape for the server ----------
