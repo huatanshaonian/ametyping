@@ -25,6 +25,7 @@ const records = require('./records');
 const codex = require('./codex-records');
 const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
+const { createArchive } = require('./archive');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -109,6 +110,9 @@ function scan() {
 }
 const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
 const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
+// older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
+const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, projectOf,
+  live: (id) => sess.has(id) || codexSess.has(id), stored: (id) => serverOff && serverOff[id] });
 
 // ---------- the local pet (control API on 127.0.0.1) ----------
 const pet = new Map();                               // id -> session as the pet sees it
@@ -201,7 +205,7 @@ function connect() {
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled }));
     lastConv.clear();
-    serverOff = null; readers.clear(); metaSent.clear();   // wait for the server's offsets before streaming
+    serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     tick(true);
   });
   ws.on('message', (raw) => {
@@ -244,8 +248,10 @@ function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify
 // new transcript lines of every tracked session, as slim records (a few batches per session per tick)
 function pushRecords() {
   if (!serverOff || !ws || ws.readyState !== 1) return;
-  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id)) readers.delete(id);
-  for (const [id, c] of [...sess, ...codexSess]) {
+  archive.scan();
+  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !archive.map.has(id)) readers.delete(id);
+  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id));
+  for (const [id, c] of [...sess, ...codexSess, ...old]) {
     let r = readers.get(id);
     if (!r || r.file !== c.file) {
       const isCodex = id.startsWith('codex:');
@@ -257,7 +263,7 @@ function pushRecords() {
     for (let k = 0; k < 8; k++) {
       if (ws.bufferedAmount > 8e6) return;                             // let the socket drain first
       let b; try { b = records.readNext(r); } catch { b = null; }
-      if (!b) break;
+      if (!b) { if (archive.map.has(id) && !sess.has(id) && !codexSess.has(id)) { archive.done(id); readers.delete(id); } break; }
       sendJSON({ t: 'rec', id, from: b.from, to: b.to, reset: b.reset || undefined, recs: b.recs,
         project: c.project || '', title: c.title || '', cwd: b.cwd || undefined });
       r.offset = b.to;

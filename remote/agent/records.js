@@ -27,9 +27,11 @@ function createReader(file, offset, parse = recordsOf) {
   return { file, offset, skipping: false, parse, cwd: parse === recordsOf ? firstCwd(file) : null };
 }
 
-function slim(o, parse) {
+// t0: for a line without its own timestamp (title, permission mode), the time of the line before it in the file --
+// not "now", which would make an old session look active when its history is streamed later
+function slim(o, parse, t0) {
   return parse(o).map((r, i) => {
-    const rec = { u: o.uuid || (o.payload && (o.payload.id || o.payload.call_id)) || null, i, role: r.role, t: r.t };
+    const rec = { u: o.uuid || (o.payload && (o.payload.id || o.payload.call_id)) || null, i, role: r.role, t: o.timestamp || !t0 ? r.t : t0 };
     if (r.text != null) rec.text = r.text.length > MAX_TEXT ? r.text.slice(0, MAX_TEXT) + '\n…（过长，已截断）' : r.text;
     if (r.items) rec.items = r.items;
     if (r.mid) rec.mid = r.mid;
@@ -53,6 +55,8 @@ function readNext(r) {
   const from = r.offset;
   let pos = 0, size = 0;
   const recs = [];
+  // lines before the first timestamped one (a transcript starts with its permission mode) take that first timestamp
+  if (!r.lastT) { const m = /"timestamp":"([^"]+)"/.exec(buf.toString('utf8', 0, Math.min(n, 1e6))); if (m && Number.isFinite(Date.parse(m[1]))) r.lastT = Date.parse(m[1]); }
   for (;;) {
     const nl = buf.indexOf(10, pos);
     if (nl < 0) break;
@@ -62,7 +66,8 @@ function readNext(r) {
     if (line.trim()) try { o = JSON.parse(line); } catch {}
     // the directory the session was started in (later lines follow any cd): `claude --resume` looks it up from there
     if (!r.cwd && o && typeof o.cwd === 'string' && o.cwd) r.cwd = o.cwd;
-    const add = o ? slim(o, r.parse || recordsOf) : [];
+    if (o && o.timestamp) { const t = Date.parse(o.timestamp); if (Number.isFinite(t)) r.lastT = t; }
+    const add = o ? slim(o, r.parse || recordsOf, r.lastT) : [];
     const addSize = add.length ? JSON.stringify(add).length : 0;
     if (recs.length && size + addSize > MAX_BATCH) break;             // the rest goes in the next batch
     recs.push(...add); size += addSize; pos = nl + 1;
