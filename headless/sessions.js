@@ -2,6 +2,7 @@
 // session, fed by hook events), minus everything about windows. Always in "chat mode": an ended session is
 // kept for a while so it can still be resumed from the dashboard.
 'use strict';
+const proc = require('./proc-linux');
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, KEEP_MS = 12 * 3600e3;
@@ -50,7 +51,8 @@ function createSessions() {
     for (const [id, s] of map) {
       if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) s.state = 'idle';
       if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) s.state = 'idle';
-      if (t - s.last > KEEP_MS) map.delete(id);
+      // long quiet, but its Claude is still open in the terminal: still an active session
+      if (t - s.last > KEEP_MS && !(s.claudePid && proc.alive(s.claudePid, s.claudeComm))) map.delete(id);
     }
   }
 

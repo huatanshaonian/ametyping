@@ -547,7 +547,8 @@ ipcMain.on('bubble-size', (_e, h) => {
 // is still working, and waves whenever any session needs you.
 const sessions = new Map();     // id -> { id, project, state, lines[], steps, t0, last, transcript, cwd, claudePid, terminal }
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
-const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, KEEP_MS = 20 * 60e3, AUTOHIDE_MS = 25e3;
+const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, AUTOHIDE_MS = 25e3;
+const KEEP_MS = +process.env.AME_KEEP_MS || 20 * 60e3;            // (tests shorten it)
 const CHAT_KEEP_MS = 12 * 3600e3;                                 // chat mode keeps ended sessions around (to resume them)
 let hideTimer = null;
 
@@ -640,6 +641,7 @@ function onClaudeEvent(type, d) {
   }
   let s = sessions.get(id);
   if (!s) { s = { id, provider: d.provider || 'claude', rawSession: d.rawSession || id, project: '', state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t }; sessions.set(id, s); }
+  s.dormant = false;                                             // activity again: the usual quiet timer starts over
   if (d.project) s.project = String(d.project).slice(0, 40);
   if (d.title) s.title = String(d.title).slice(0, 60);
   if (d.transcript) s.transcript = String(d.transcript);
@@ -666,7 +668,23 @@ setInterval(() => {
   for (const [id, s] of sessions) {
     if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) { s.state = 'idle'; changed = true; }
     if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) { s.state = 'idle'; changed = true; }
-    if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS)) { sessions.delete(id); chats.delete(id); changed = true; }
+    if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS) && !s.dormant && !s.checking) {
+      // long quiet: gone from the list only when its Claude process is gone too. One still open in its terminal stays
+      // an active session (here and on the dashboard, where it can still be replied to); its process is looked at
+      // once a minute from then on
+      if (!s.claudePid) { sessions.delete(id); chats.delete(id); changed = true; continue; }
+      s.checking = true;
+      procAlive(s.claudePid).then((alive) => {
+        s.checking = false;
+        if (sessions.get(id) !== s) return;
+        if (alive) s.dormant = true; else { sessions.delete(id); chats.delete(id); }
+        pushBubble(null);
+      });
+    }
+    if (s.dormant && s.claudePid && !s.checking && t - (s.aliveAt || 0) > 60e3) {        // a dormant one: gone when its process ends
+      s.checking = true; s.aliveAt = t;
+      procAlive(s.claudePid).then((alive) => { s.checking = false; if (!alive && sessions.get(id) === s) { sessions.delete(id); chats.delete(id); pushBubble(null); } });
+    }
   }
   if (changed) {
     if (![...sessions.values()].some((s) => WORKING.has(s.state))) win.webContents.send('claude', 'idle');
