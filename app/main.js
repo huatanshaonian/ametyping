@@ -549,6 +549,7 @@ const sessions = new Map();     // id -> { id, project, state, lines[], steps, t
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, AUTOHIDE_MS = 25e3;
 const KEEP_MS = +process.env.AME_KEEP_MS || 20 * 60e3;            // (tests shorten it)
+const ALIVE_CHECK_MS = +process.env.AME_ALIVE_CHECK_MS || 30 * 60e3;   // a long-quiet session's process: looked at this often
 const CHAT_KEEP_MS = 12 * 3600e3;                                 // chat mode keeps ended sessions around (to resume them)
 let hideTimer = null;
 
@@ -671,17 +672,17 @@ setInterval(() => {
     if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS) && !s.dormant && !s.checking) {
       // long quiet: gone from the list only when its Claude process is gone too. One still open in its terminal stays
       // an active session (here and on the dashboard, where it can still be replied to); its process is looked at
-      // once a minute from then on
+      // every 30 minutes from then on (a reply meanwhile to one that has ended goes the claude -p --resume way)
       if (!s.claudePid) { sessions.delete(id); chats.delete(id); changed = true; continue; }
       s.checking = true;
       procAlive(s.claudePid).then((alive) => {
         s.checking = false;
         if (sessions.get(id) !== s) return;
-        if (alive) s.dormant = true; else { sessions.delete(id); chats.delete(id); }
+        if (alive) { s.dormant = true; s.aliveAt = Date.now(); } else { sessions.delete(id); chats.delete(id); }
         pushBubble(null);
       });
     }
-    if (s.dormant && s.claudePid && !s.checking && t - (s.aliveAt || 0) > 60e3) {        // a dormant one: gone when its process ends
+    if (s.dormant && s.claudePid && !s.checking && t - (s.aliveAt || 0) > ALIVE_CHECK_MS) {   // a dormant one: gone when its process ends
       s.checking = true; s.aliveAt = t;
       procAlive(s.claudePid).then((alive) => { s.checking = false; if (!alive && sessions.get(id) === s) { sessions.delete(id); chats.delete(id); pushBubble(null); } });
     }
