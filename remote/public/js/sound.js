@@ -27,6 +27,13 @@ export function setEnabled(ev, on) {
 }
 export function onChange(fn) { listeners.add(fn); fn(); return () => listeners.delete(fn); }
 
+// 振动: a new permission card buzzes the phone as well -- whatever the volume (like a phone on silent). Only browsers
+// with the Vibration API can (Android; not iPhone), and only while the page is open and has been touched once.
+export const canVibrate = typeof navigator.vibrate === 'function' && matchMedia('(pointer: coarse)').matches;   // (desktop Chrome has it, doing nothing)
+export const vibrates = () => canVibrate && prefs.get('sound.vibrate', true);
+export function setVibrate(v) { prefs.set('sound.vibrate', !!v); for (const fn of listeners) fn(); }
+export function buzz(pattern = [180, 90, 180]) { if (vibrates()) { try { navigator.vibrate(pattern); } catch {} } }
+
 // play an event's sound; resolves when it has finished (at once when switched off or refused)
 export function play(ev, { force = false } = {}) {
   const e = EVENTS.find((x) => x[0] === ev);

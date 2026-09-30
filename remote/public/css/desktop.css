@@ -12,6 +12,8 @@
   --warn: rgb(208, 82, 28); --bad: rgb(180, 50, 110); --ok: rgb(60, 170, 120); --ok-text: rgb(60, 140, 120); --off: #b9a;
   /* the other colour scheme (Windows 标准) is css/theme-win98.css, switched by html[data-theme] */
   --tbh: 40px;                              /* taskbar */
+  --sab: env(safe-area-inset-bottom, 0px);  /* a phone's gesture bar under the page (viewport-fit=cover) */
+  --tbb: calc(var(--tbh) + var(--sab));     /* the taskbar block: bar + that space below it */
   --npw: 250px;                             /* network panel */
   --wt: 32px; --wr: 10px; --wb: 16px; --wl: 6px;   /* window frame bands (9-slice widths) */
 }
@@ -23,7 +25,7 @@ img { image-rendering: pixelated; }
 [hidden] { display: none !important; }
 
 /* ---------- desktop ---------- */
-#desktop { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbh); overflow: hidden;
+#desktop { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbb); overflow: hidden;
   background: #f7e1fb url(/wall/pc_wallpaper.png) center top / cover no-repeat; }
 #icons { position: absolute; left: 12px; top: 12px; bottom: 12px; display: grid; grid-auto-flow: column;
   grid-template-rows: repeat(auto-fill, 84px); grid-auto-columns: 84px; gap: 6px; }
@@ -42,7 +44,7 @@ img { image-rendering: pixelated; }
 #mark small { font-size: 12px; }
 
 /* ---------- windows ---------- */
-#windows { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbh); pointer-events: none; overflow: hidden; }
+#windows { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbb); pointer-events: none; overflow: hidden; }
 .win { position: absolute; pointer-events: auto; min-width: 240px; min-height: 160px;
   border-style: solid; border-width: var(--wt) var(--wr) var(--wb) var(--wl);
   border-image: url(/img/windowbase_active_clean.png) 42 14 22 8 fill;
@@ -82,7 +84,7 @@ img { image-rendering: pixelated; }
 .win.max .titlebar { cursor: default; }
 
 /* ---------- network neighbourhood (right) ---------- */
-#netpanel { position: absolute; right: 0; top: 0; bottom: var(--tbh); width: var(--npw); display: flex; flex-direction: column;
+#netpanel { position: absolute; right: 0; top: 0; bottom: var(--tbb); width: var(--npw); display: flex; flex-direction: column;
   background: var(--body); border-left: 3px solid var(--border); }
 #netpanel .ptitle { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-weight: bold; color: var(--border);
   background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
@@ -101,8 +103,10 @@ img { image-rendering: pixelated; }
 #machines .empty { padding: 14px 8px; color: var(--faint); font-size: 12px; }
 
 /* ---------- taskbar ---------- */
-#taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--tbh); z-index: 50; display: flex; align-items: stretch;
-  background: var(--gamepink); border-top: 3px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
+/* the gesture bar's space is extra height under the buttons (it used to be taken out of the 40 px, squeezing the
+   buttons into each other on phones with gesture navigation) */
+#taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--tbb); z-index: 50; display: flex; align-items: stretch;
+  background: var(--gamepink); border-top: 3px solid var(--border); padding-bottom: var(--sab); }
 #startbtn { flex: none; margin: 4px; padding: 0 10px 0 6px; display: flex; align-items: center; gap: 6px; font-weight: bold; color: var(--border);
   background: var(--gamepink); border: 2px solid; border-color: #fff var(--border) var(--border) #fff; }
 #startbtn.on, #startbtn:active { border-color: var(--border) #fff #fff var(--border); background: #e6d6f4; }
@@ -123,7 +127,7 @@ img { image-rendering: pixelated; }
 #netbtn { display: none; border: 0; background: none; padding: 0; }
 #soundbtn { border: 0; background: none; padding: 0; display: flex; }
 /* the old tray volume popup: raised panel, vertical slider in a sunken groove with ticks, a mute box */
-#volpop { position: absolute; right: 8px; bottom: calc(var(--tbh) + 4px); z-index: 70; width: 86px; padding: 6px 8px 8px;
+#volpop { position: absolute; right: 8px; bottom: calc(var(--tbb) + 4px); z-index: 70; width: 86px; padding: 6px 8px 8px;
   display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--gamepink);
   border: 2px solid; border-color: #fff var(--border) var(--border) #fff; box-shadow: 3px 3px 0 rgba(20, 10, 90, .35); }
 #volpop .vt { font-size: 12px; font-weight: bold; color: var(--border); }
@@ -144,7 +148,7 @@ img { image-rendering: pixelated; }
 #netbtn img { width: 16px; height: 16px; }
 
 /* ---------- start menu ---------- */
-#startmenu { position: absolute; left: 4px; bottom: calc(var(--tbh) + 2px); z-index: 60; width: 240px; display: flex;
+#startmenu { position: absolute; left: 4px; bottom: calc(var(--tbb) + 2px); z-index: 60; width: 240px; display: flex;
   background: var(--body); border: 3px solid var(--border); box-shadow: 5px 5px 0 rgba(20, 10, 90, .45); }
 #startmenu .band { flex: 0 0 28px; background: linear-gradient(180deg, #7a3ff0, #4d23cf); display: flex; align-items: flex-end; justify-content: center; padding: 8px 0; }
 #startmenu .band span { writing-mode: vertical-rl; transform: rotate(180deg); color: #fff; font-weight: bold; font-size: 16px; letter-spacing: 2px; }
@@ -208,7 +212,12 @@ img { image-rendering: pixelated; }
   #netpanel.open { display: flex; }
   #netbtn { display: block; }
   #mark b { font-size: 18px; }
-  .dockbtn { flex-basis: 110px; }
+  /* a compact taskbar: the start button's logo only, window buttons as icons, the connection as a dot */
+  #startbtn { padding: 0 6px; } #startbtn span { display: none; }
+  #dock { gap: 3px; padding: 0 3px; }
+  .dockbtn { flex: 0 0 40px; min-width: 40px; padding: 0; justify-content: center; }
   .dockbtn span { display: none; }
-  .dockbtn.active span { display: inline; }
+  #tray { gap: 7px; padding: 0 7px; }
+  #conn { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--ok); font-size: 0; overflow: hidden; }
+  #conn.bad { background: var(--bad); }
 }

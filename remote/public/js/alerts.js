@@ -22,6 +22,6 @@ net.on('sessions', (machines) => {
   perms.clear(); for (const k of nowPerms) perms.add(k);
   working.clear(); for (const k of nowWorking) working.add(k);
   if (first) { first = false; return; }
-  if (newPerm) sound.play('perm');                    // one sound per update, the one that needs you first
+  if (newPerm) { sound.play('perm'); sound.buzz(); }   // one sound per update, the one that needs you first; phones buzz too
   else if (finished) sound.play('done');
 });
