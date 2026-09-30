@@ -18,6 +18,7 @@ const { createSessions } = require('./sessions');
 const proc = require('./proc-linux');
 const tmux = require('./tmux');
 const { modeFromScreen } = require('../app/permission-mode');
+const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
 const { resume } = require('./resume');
 const { launch } = require('./launch');
 
@@ -166,5 +167,23 @@ server.on('error', (e) => { console.error(`监听 127.0.0.1:${PORT} 失败：${e
 server.listen(PORT, '127.0.0.1', () => {
   writeToken();
   console.log(`Ame 无头服务监听 127.0.0.1:${PORT}；控制令牌 ${tokenFile}`);
+  adoptRunning();
 });
+
+// Claude Code sessions already open when the service starts (restart, update): on the list at once instead of only
+// with their next hook event. The record's pid must be that Claude process itself (not a reused pid).
+function adoptRunning() {
+  let n = 0;
+  for (const r of listRunning(os.homedir())) {
+    if (sessions.map.has(r.sessionId)) continue;
+    const c = proc.findClaude(r.pid);
+    if (!c || c.pid !== r.pid) continue;
+    const s = sessions.ensure(r.sessionId, {});
+    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, transcript: transcriptOf(os.homedir(), r.cwd, r.sessionId) || undefined });
+    if (r.name) s.title = r.name;
+    locate(s, r.pid);                                                 // its tmux pane and environment, as for a hook
+    n++;
+  }
+  if (n) console.log(`接回了 ${n} 个已在运行的 Claude 会话`);
+}
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { permissions.clear(); removeToken(); process.exit(0); });
