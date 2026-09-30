@@ -8,11 +8,12 @@
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 无人值守：设了下面这些环境变量就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
 #   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
-param(
-  [string]$Dir = "$env:USERPROFILE\ametyping",
-  [string]$Branch = 'main',
-  [string]$Server = 'ws://100.65.10.90:8788/agent'
-)
+#   另外 AME_DIR（装到哪）、AME_BRANCH（用哪个分支）、AME_SERVER（看板地址）可以覆盖下面三个默认值。
+# 不用 param()：本文件带 UTF-8 BOM（PS 5.1 靠它把中文提示显示对），而 irm | iex 会把 BOM 当普通字符
+# 一起送进解析器，跨行的 param 块会因此报「赋值表达式无效」；普通赋值不受影响，两条运行路径都通。
+$Dir    = if ($env:AME_DIR)    { $env:AME_DIR }    else { "$env:USERPROFILE\ametyping" }
+$Branch = if ($env:AME_BRANCH) { $env:AME_BRANCH } else { 'main' }
+$Server = if ($env:AME_SERVER) { $env:AME_SERVER } else { 'ws://100.65.10.90:8788/agent' }
 $ErrorActionPreference = 'Stop'
 $Repo = 'https://github.com/huatanshaonian/ametyping.git'
 function Step($m) { Write-Host "`n== $m" -ForegroundColor Magenta }
