@@ -87,6 +87,11 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
       json(res, r ? 200 : 404, r || { error: 'not found' });
       return true;
     }
+    if (req.method === 'GET' && p === '/api/report/session') {        // one conversation's daily notes
+      const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');
+      json(res, 200, { items: machine && id ? reports.sessionNotes(machine, id) : [] });
+      return true;
+    }
     if (req.method === 'GET' && p === '/api/report/backfill') {       // what a backfill would do (asked before starting it)
       json(res, 200, { days: scheduler.backfillDays(30).map((j) => j.date) });
       return true;

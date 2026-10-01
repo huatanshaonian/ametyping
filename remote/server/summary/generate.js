@@ -110,7 +110,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
       ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, brief: !!job.brief }), DAY_SCHEMA)
-      : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [] };
+      : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [], notes: [] };
     const report = assemble(job, items, ans, arts, important);
     // what the model found done is ticked off the list, with its reason
     for (const t of report.todosDone) todos.complete(t.id, date, t.evidence);
@@ -142,9 +142,16 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
       const t = byRef.get(ref(x.ref, 'T'));
       if (t && x.done === true && !todosDone.some((y) => y.id === t.id)) todosDone.push({ id: t.id, text: t.text, project: t.project, evidence: x.evidence || '' });
     }
+    // each conversation's own short note (the model's, matched by its S number)
+    const notes = new Map();
+    for (const n of ans.notes || []) {
+      const k = ref(n.session, 'S');
+      if (!byKey.has(k) || notes.has(k)) continue;
+      notes.set(k, { did: n.did || '', open: n.open || [], status: ['done', 'ongoing', 'paused'].includes(n.status) ? n.status : '', ideas: n.ideas || [] });
+    }
     const sessions = items.map((it) => {
       const d = it.digest;
-      return { key: it.key, machine: d.machine, id: d.id, title: d.title || d.project || '', project: d.project, cwd: d.cwd,
+      return { note: notes.get(it.key) || null, key: it.key, machine: d.machine, id: d.id, title: d.title || d.project || '', project: d.project, cwd: d.cwd,
         minutes: d.activeMin, first: d.first, last: d.last, category: catOf.get(it.key) || it.hint.cat || '',
         files: d.files, cmds: d.cmds, resume: resumeCmd ? resumeCmd(d.cwd, d.id) : '' };
     });

@@ -39,6 +39,24 @@
 .dash .head { padding: 6px 12px; border-bottom: 1px dotted var(--edge); color: var(--border); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .dash .head b { font-weight: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dash .head .meta { color: var(--accent-muted); font-size: 12px; flex: none; }
+.dash .head .hr { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dash .head .snbtn { padding: 0 8px; font-size: 11.5px; }
+.dash .head .snbtn.on { background: var(--border); color: #fff; }
+/* 对话摘要 (dash-notes.js) */
+.dash .snotes { flex: 0 1 auto; max-height: 40%; min-height: 0; overflow-y: auto; padding: 4px 12px 6px; border-bottom: 1px dotted var(--edge); background: var(--tint-soft); font-size: 12px; }
+.dash .sn-empty { padding: 4px 0; color: var(--faint); }
+.dash .sn-day { padding: 5px 0; border-bottom: 1px dotted var(--edge); }
+.dash .sn-day:last-of-type { border-bottom: 0; }
+.dash .sn-head { display: flex; align-items: center; gap: 8px; color: var(--border); }
+.dash .sn-head a { color: var(--border); }
+.dash .sn-min { color: var(--faint); font-size: 11px; }
+.dash .sn-st { padding: 0 5px; font-size: 10.5px; border: 1px solid; }
+.dash .sn-st.done { color: var(--ok-text); } .dash .sn-st.ongoing { color: var(--border); } .dash .sn-st.paused { color: var(--faint); }
+.dash .sn-did { margin: 3px 0 0; color: var(--ink); }
+.dash .sn-row { display: flex; gap: 6px; margin-top: 2px; }
+.dash .sn-row b { flex: none; font-weight: normal; color: var(--muted); }
+.dash .sn-row ul { margin: 0; padding-left: 16px; }
+.dash .sn-more { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--border); font-size: 11.5px; text-decoration: underline; }
 .dash .back { display: none; margin-right: 4px; padding: 1px 8px; font-size: 12px; }
 .dash .resume { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: var(--muted); }
 .dash .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; color: var(--ink); background: var(--tint); padding: 2px 6px; user-select: all; }

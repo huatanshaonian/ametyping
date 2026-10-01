@@ -5,6 +5,7 @@ import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { createList } from './dash-list.js';
+import { createNotes } from './dash-notes.js';
 
 // the reply box's hint, by how the session can be reached
 const PLACEHOLDER = {
@@ -45,6 +46,12 @@ function mount(current) {
   const back = h('button', { class: 'btn back', type: 'button', text: '‹ 返回' });
   const rcmd = h('code', { class: 'rcmd' });
   const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume }));
+  // 对话摘要 (dash-notes.js): the conversation's daily notes, above it while the 摘要 button is on
+  const notes = createNotes();
+  let showNotes = prefs.get('dash.notes', false);
+  const notesBtn = h('button', { class: 'btn snbtn', type: 'button', text: '摘要', title: '这个对话每天的摘要（来自工作日报）', hidden: true });
+  notesBtn.addEventListener('click', () => { showNotes = !showNotes; prefs.set('dash.notes', showNotes); renderNotes(); });
+  const renderNotes = () => { notesBtn.hidden = !sel; notesBtn.classList.toggle('on', showNotes); notes.show(showNotes, sel); };
   const convEl = h('div', { class: 'conv' }, h('div', { class: 'pick', text: '从左边选一个会话查看完整对话。' }));
   const permsEl = h('div', { class: 'perms' });
   const note = h('div', { class: 'note' });
@@ -60,8 +67,8 @@ function mount(current) {
   // the session's permission mode; a click cycles it like Shift+Tab in the terminal
   const modeBtn = h('button', { class: 'btn mode', type: 'button', hidden: true, text: '模式？' });
   const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn);
-  const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), hmeta),
-    resume, convEl, permsEl, note, keys, compose);
+  const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
+    resume, notes.el, convEl, permsEl, note, keys, compose);
   const root = h('div', { class: 'dash' }, list, right);
 
   let sel = null;                                   // "machine|id"
@@ -99,6 +106,7 @@ function mount(current) {
     if (cached) renderConv(cached); else convEl.replaceChildren(h('div', { class: 'pick', text: '加载对话…' }));
     permsEl.replaceChildren(); permCards.clear(); showNote('');
     header(s);
+    renderNotes();
     say.value = drafts.get(key) || '';
     renderControls();
     fitSay();
