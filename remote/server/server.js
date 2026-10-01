@@ -29,6 +29,7 @@ const { createNotes } = require('./notes');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
+const { createMail } = require('./mail');
 const { createEgress } = require('./egress');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
@@ -184,6 +185,9 @@ const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), c
     if (n.week) google.onWeek(summary.reports.getWeek(n.week.start));         // and the week's, after a Sunday
   } });
 const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
+// 邮件: the mailboxes kept in step on the NAS (mail/index.js); open pages are told about new mail / account changes
+const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
+  audit: (...a) => audit(...a) });
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup, log: console.log });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
@@ -381,6 +385,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
+  if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));

@@ -1,0 +1,43 @@
+/* 邮件 window: toolbar, message list (left), the message (right); a narrow window shows one side at a time.
+   邮箱设置 window (.mla). */
+.mail { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.ml-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
+.ml-bar .btn { padding: 2px 10px; }
+.ml-acc { max-width: 260px; }
+.ml-st { font-size: 12px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; flex: 1; } .ml-st.bad { color: var(--bad); }
+.ml-back { display: none; }
+.ml-main { flex: 1; min-height: 0; display: flex; }
+.ml-list { width: 330px; flex: none; overflow-y: auto; border-right: 1px solid var(--edge); background: var(--body); }
+.ml-i { padding: 5px 9px; border-bottom: 1px dotted var(--edge); cursor: pointer; font-size: 12.5px; }
+.ml-i:hover { background: var(--hover); }
+.ml-i.sel { background: var(--border); } .ml-i.sel * { color: #fff !important; }
+.ml-i.bulk { opacity: .75; }
+.ml-l1 { display: flex; gap: 6px; } .ml-l1 b { flex: 1; min-width: 0; color: var(--border); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ml-l1 small { flex: none; font-size: 11px; color: var(--muted); }
+.ml-l2 { display: flex; align-items: center; gap: 3px; color: var(--ink); } .ml-l2 span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ml-l3 { font-size: 11.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ml-i .tag { flex: none; font-style: normal; font-size: 10.5px; line-height: 14px; padding: 0 3px; border: 1px solid; }
+.ml-i .tag.d { color: var(--bad); } .ml-i .tag.c { color: var(--warn); } .ml-i .tag.b { color: var(--faint); } .ml-i .tag.a { color: var(--accent-muted); }
+.ml-more { display: block; margin: 8px auto; }
+.ml-empty { padding: 12px; font-size: 12px; color: var(--muted); }
+.ml-view { flex: 1; min-width: 0; overflow-y: auto; background: #fff; }
+.ml-head { padding: 8px 12px; border-bottom: 1px solid var(--edge); background: var(--body); font-size: 12.5px; }
+.ml-head h3 { margin: 2px 0 6px; font-size: 15px; color: var(--border); }
+.ml-hl { display: flex; gap: 8px; } .ml-hl b { flex: none; width: 48px; color: var(--muted); font-weight: normal; } .ml-hl span { min-width: 0; word-break: break-all; }
+.ml-text { margin: 0; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font: 14px/1.6 "Microsoft YaHei UI", system-ui, sans-serif; color: var(--ink); }
+.mail.narrow .ml-list { width: 100%; border-right: 0; }
+.mail.narrow.reading .ml-list, .mail.narrow:not(.reading) .ml-view { display: none; }
+.mail.narrow .ml-back { display: inline-block; }
+.mail.narrow:not(.reading) .ml-back { display: none; }
+
+.mla { padding: 10px 14px; font-size: 13px; line-height: 1.6; overflow-y: auto; position: absolute; inset: 0; }
+.mla .field { display: block; width: 100%; margin: 5px 0; }
+.mla-i { padding: 6px 0; border-bottom: 1px dotted var(--edge); }
+.mla-addr { color: var(--muted); font-size: 12px; }
+.mla-i .gbtns { margin: 4px 0; }
+.mla-form { margin-top: 10px; }
+.mla-adv summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.mla-srv { display: flex; align-items: center; gap: 6px; } .mla-srv span { flex: none; width: 110px; font-size: 12px; }
+.mla-srv .field:nth-of-type(2) { width: 70px; flex: none; }
+.mla-help p { margin: 6px 0; }
+#mwarn { border: 0; background: none; padding: 0; display: flex; cursor: pointer; } #mwarn img { width: 16px; height: 16px; filter: drop-shadow(0 0 2px var(--bad)); }   /* the tray: a mailbox password refused */

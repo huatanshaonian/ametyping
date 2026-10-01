@@ -16,6 +16,7 @@ import * as todo from './apps/todo.js';
 import * as notepad from './apps/notepad.js';
 import * as calendar from './apps/calendar.js';
 import * as google from './apps/google.js';
+import * as mail from './apps/mail.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -38,6 +39,7 @@ const APPS = [
   { id: 'reports', label: '工作日报', icon: icon('history'), open: reports.open, hint: '每天早上自动总结前一天做了什么' },
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
   { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
+  { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
   { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
 ];
 desktop.setIcons(APPS);

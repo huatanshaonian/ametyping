@@ -7,6 +7,9 @@
     "agent": "node agent/agent.js"
   },
   "dependencies": {
+    "imapflow": "^2.2.1",
+    "mailparser": "^3.9.33",
+    "nodemailer": "^10.0.13",
     "qrcode": "^1.5.4",
     "ws": "^8.18.0"
   }
