@@ -886,8 +886,12 @@ function drawDebug() {
   ctx.fillText(`${FACE_ZH[mood.open] || mood.open} ← ${mood.why || '默认'}`, 24, 146);
 }
 
+// Windows 每块屏的缩放可以不同，把她拖过去 devicePixelRatio 就变了；drawFrame 每帧
+// 都用最新的 dpr 算 transform，所以后备画布必须跟着重建，否则画出来的比画布大（裁切）或小（缩在角里）。
+let sizedForDpr = 0;
 function resize() {
   const dpr = window.devicePixelRatio || 1;
+  sizedForDpr = dpr;
   canvas.style.width = Math.round(ART_W * scale) + 'px';
   canvas.style.height = Math.round(ART_H * scale) + 'px';
   canvas.width = Math.round(ART_W * scale * dpr);
@@ -909,6 +913,7 @@ function drawFrame() {
   const t = now(), dt = Math.min(0.05, (t - last) / 1000); last = t;
   update(dt);
   const dpr = window.devicePixelRatio || 1;
+  if (dpr !== sizedForDpr) resize();                      // 被拖到了缩放不同的屏幕上
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, -VX * scale * dpr, 0);
   ctx.clearRect(VX, 0, ART_W, ART_H);
   ctx.imageSmoothingQuality = 'high';

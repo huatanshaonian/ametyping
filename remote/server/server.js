@@ -29,6 +29,7 @@ const { createNotes } = require('./notes');
 const { createMarks } = require('./session-marks');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
+const { createBackup } = require('./backup');
 const { createEgress } = require('./egress');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
@@ -163,24 +164,31 @@ const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (..
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
 // 重要计划: every open browser refreshes its list / desktop widget on a change
-const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'todos' }), audit: (...a) => audit(...a) });
+// (and Google Tasks follows: google/tasks-sync.js)
+const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => { broadcast({ t: 'todos' }); google.onTodos(); }, audit: (...a) => audit(...a) });
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
-const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes,
-  egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a) });
+const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos, reports: () => summary && summary.reports,
+  egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a),
+  onChange: () => broadcast({ t: 'google' }) });                              // (the tray's Google warning)
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
+// with today's agenda (Google events and tasks, 重要计划 due) for the morning bubble; without it if that fails
+const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today }), () => n);
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a),
+  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
-    for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n);
+    withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
+    if (n.week) google.onWeek(summary.reports.getWeek(n.week.start));         // and the week's, after a Sunday
   } });
 const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
+// a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
+if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup, log: console.log });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
@@ -205,7 +213,7 @@ function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
     m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() });
-    const n = summary && summary.latestNote(); if (n) sendNote(ws, n);          // the pet may have missed it while off
+    const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
   }
   if (d.t === 'rec') {

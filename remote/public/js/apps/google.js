@@ -1,5 +1,7 @@
-// Google 账户: set up once with your own OAuth client (steps below), then connect; afterwards the daily reports become
-// diary events in Google Calendar (switchable), the calendar window shows your events, notes can be copied to Drive.
+// Google 账户: set up once with your own OAuth client (steps below), then connect; afterwards the daily and weekly
+// reports become events in a calendar of their own, "Windose 日报" (switchable; past ones on request), 重要计划 are mirrored to a Google Tasks list (switchable), the calendar
+// window shows your events and tasks, notes can be copied to Drive. A sign-in from before a feature's permission was
+// added is asked to connect once more.
 // Anything that changes the account asks for the code again (js/net.js post()).
 import { h } from '../util.js';
 import * as wm from '../wm.js';
@@ -14,6 +16,29 @@ export async function status() {
   return st;
 }
 export function onStatus(fn) { listeners.add(fn); if (st) fn(st); return () => listeners.delete(fn); }
+
+// the tray: a warning while something needs you -- the sign-in ran out, reports waiting to go into the calendar, the
+// tasks sync failing (the server says when that changes: net 'google'); a click opens this window
+function problems(s) {
+  if (!s || !s.configured) return [];
+  const p = [];
+  if (s.error) p.push(s.error);
+  if (s.pending && s.pending.length) p.push(`${s.pending.length} 份日报 / 周报还没写进日历（会自动重试）`);
+  if (s.connected && s.tasks && s.sync && s.sync.error) p.push('Google 任务同步失败：' + s.sync.error);
+  return p;
+}
+let warn = null;
+onStatus((s) => {
+  const p = problems(s), tray = document.getElementById('tray');
+  if (!p.length || !tray) { if (warn) { warn.remove(); warn = null; } return; }
+  if (!warn) {
+    warn = h('button', { id: 'gwarn', type: 'button', onclick: () => open() }, h('img', { src: '/icons/msg_warning-16.png', alt: 'Google' }));
+    tray.insertBefore(warn, document.getElementById('conn'));
+  }
+  warn.title = 'Google：' + p.join('；') + '（点这里处理）';
+});
+net.on('google', () => status());
+net.on('status', (up) => { if (up) status(); });
 
 let win = null;
 export function open(message) {
@@ -32,25 +57,49 @@ function mount() {
     if (message) parts.push(note(message, /失败|没能/.test(message)));
     if (s.error) parts.push(note(s.error, true));
     if (s.connected) {
-      const diary = h('input', { type: 'checkbox', checked: s.diary });
-      diary.addEventListener('change', async () => { const r = await net.post('/api/google/diary', { on: diary.checked }); if (!r.ok) { diary.checked = !diary.checked; } });
+      const toggle = (what, on, label) => {
+        const box = h('input', { type: 'checkbox', checked: on });
+        box.addEventListener('change', async () => { const r = await net.post('/api/google/' + what, { on: box.checked }); if (!r.ok) box.checked = !box.checked; else if (what === 'tasks') setTimeout(() => render(), 8000); });
+        return h('label', { class: 'gline' }, box, ' ' + label);
+      };
+      const missing = s.missing || [];
+      const sync = s.sync || {};
+      const synced = sync.last ? new Date(sync.last) : null;
+      const FEATURES = { tasks: 'Google 任务', calendar: '单独的「Windose 日报」日历' };
+      const last = s.diaryLast, bf = s.backfill || {};
+      if (bf.running) setTimeout(() => { if (root.isConnected) render(); }, 2000);        // the backfill's progress
       parts.push(h('p', {}, '已连接：', h('b', { text: s.email || 'Google 账户' })),
-        h('label', { class: 'gline' }, diary, ' 每天的日报写进 Google 日历（全天事件，标为空闲）'),
-        h('p', { class: 'ghint', text: '日历窗口会显示 Google 日历上的日程；记事本里可以「转存到 Google 云端硬盘」（只能访问本程序自己建的文件）。' }),
+        missing.length ? h('div', { class: 'gnote' }, `新功能${missing.map((f) => '「' + FEATURES[f] + '」').join('、')}需要多授权权限，请重新连接一次（不用重填客户端）：`,
+          h('div', { class: 'gbtns' }, connectBtn('重新授权'))) : null,
+        toggle('diary', s.diary, `日报、周报写进 Google 日历（${s.ownCalendar ? '「Windose 日报」日历' : missing.includes('calendar') ? '主日历' : '「Windose 日报」日历'}，全天事件，标为空闲）`),
+        s.diary && last ? h('p', { class: 'ghint' + (last.ok ? '' : ' bad'), text: `最近一次写入：${when(last.at)} · ${last.what} · ${last.ok ? '成功' : '失败：' + last.error}` }) : null,
+        s.diary && s.pending && s.pending.length ? h('p', { class: 'ghint bad', text: `等待重试（每小时一次）：${s.pending.map((x) => x.kind === 'week' ? x.key + ' 这一周' : x.key).join('、')}；原因：${s.pending[s.pending.length - 1].error}` }) : null,
+        s.diary ? h('div', { class: 'gline' }, h('button', { class: 'btn', type: 'button', text: '把过去的日报补进日历', disabled: !!bf.running, onclick: async () => {
+          const r = await net.post('/api/google/backfill', {}); if (r.ok) render(); else if (r.msg) render(r.msg);
+        } }), h('span', { class: 'ghint' + (bf.failed ? ' bad' : ''), text: bf.running ? `正在补写 ${bf.done}/${bf.total || '…'}`
+          : bf.at ? `上次补写：${bf.done - bf.failed}/${bf.total} 份${bf.failed ? `，失败 ${bf.failed} 份（${bf.error}）` : ''}` : '已经写过的会更新，不会重复' })) : null,
+        missing.includes('tasks') ? null : toggle('tasks', s.tasks, `重要计划同步到 Google 任务（列表「${sync.list || 'Windose 重要计划'}」，双向）`),
+        !missing.includes('tasks') && s.tasks ? h('p', { class: 'ghint' + (sync.error ? ' bad' : ''),
+          text: sync.error ? '上次同步失败：' + sync.error : synced ? `上次同步：${when(synced)}` : '还没有同步过（几秒后开始）' }) : null,
+        h('p', { class: 'ghint', text: '日历窗口会显示 Google 日历上的日程和 Google 任务；记事本里可以「转存到 Google 云端硬盘」（只能访问本程序自己建的文件）。' }),
         h('div', { class: 'gbtns' }, h('button', { class: 'btn', type: 'button', text: '断开', onclick: async () => {
           if (!confirm('断开 Google？（授权会被撤销，之后要用需重新连接）')) return;
           await net.post('/api/google/disconnect', {}); render('已断开');
         } })));
+      for (let i = parts.length - 1; i >= 0; i--) if (!parts[i]) parts.splice(i, 1);     // (replaceChildren would print null)
     } else if (s.configured) {
       parts.push(h('p', { text: '客户端已设置。点下面的按钮去 Google 授权（会跳到 Google 的页面，授权后自动回来）。' }),
-        h('div', { class: 'gbtns' },
-          h('button', { class: 'btn go', type: 'button', text: '连接 Google', onclick: async () => {
-            const r = await net.post('/api/google/connect', {});
-            if (r.ok && r.url) location.href = r.url; else if (r.msg) render(r.msg);
-          } }),
+        h('div', { class: 'gbtns' }, connectBtn('连接 Google'),
           h('button', { class: 'btn', type: 'button', text: '换一个客户端', onclick: () => { root.replaceChildren(...setup(s)); } })));
     } else parts.push(...setup(s));
     root.replaceChildren(...parts);
+  }
+  const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  function connectBtn(text) {
+    return h('button', { class: 'btn go', type: 'button', text, onclick: async () => {
+      const r = await net.post('/api/google/connect', {});
+      if (r.ok && r.url) location.href = r.url; else if (r.msg) render(r.msg);
+    } });
   }
   function setup(s) {
     const id = h('input', { class: 'field', placeholder: '客户端 ID（…apps.googleusercontent.com）', value: s.clientId || '' });

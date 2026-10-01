@@ -15,7 +15,9 @@ const DAY_MAX = 150000;            // the day's prompt: summarize more sessions 
 const NOT_ARTIFACT = /[\\/](\.claude|\.codex|tmp|temp|node_modules|__pycache__|\.git)([\\/]|$)/i;
 const MAX_ARTIFACTS = 80;
 
-function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, backupBytes = 5e6 }) {
+// calendar(from, to): the Google Calendar events in the window (google/index.js forReport; it also syncs 重要计划 ticked
+// off in Google Tasks first), background for the report; none when Google is not connected
+function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, backupBytes = 5e6 }) {
   // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
   // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
   // offline: its files are listed unchecked.
@@ -98,6 +100,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     const { from, to, date } = job;
     const items = collect(from, to);
     if (job.brief && !items.length) return null;
+    const events = calendar && !job.brief ? await calendar(from, to).catch(() => []) : [];
     // the important items still open are checked against these conversations (not for a backfilled past day: an
     // item starred today cannot have been done back then); other loose ends are not carried from day to day
     const important = todos && !job.brief ? todos.open().slice(0, 40).map((t, i) => ({ ...t, ref: 'T' + (i + 1) })) : [];
@@ -109,9 +112,10 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     }
     const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
-      ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, brief: !!job.brief }), DAY_SCHEMA)
+      ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, events, brief: !!job.brief }), DAY_SCHEMA)
       : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [], notes: [] };
     const report = assemble(job, items, ans, arts, important);
+    if (events.length) report.events = events;
     // what the model found done is ticked off the list, with its reason
     for (const t of report.todosDone) todos.complete(t.id, date, t.evidence);
     reports.save(report);

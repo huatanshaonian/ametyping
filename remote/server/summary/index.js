@@ -29,7 +29,8 @@ function readBody(req, cap = 4096) {
 
 // onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
 // (the pet's morning bubble)
-function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, notes = null, onNote = () => {}, log = console.log, audit = () => {} }) {
+// calendar(from, to): Google Calendar events for a report's window (google/index.js forReport), or null
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, notes = null, calendar = null, onNote = () => {}, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -42,7 +43,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   };
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
   const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log,
-    artifacts, todos, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
+    artifacts, todos, calendar, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
   const weekly = createWeekly({ reports, ask: gen.ask, todos, log });
   // the short note for the pet: the latest daily report that is not a backfill, and its week when that is written
   function latestNote() {
