@@ -27,6 +27,7 @@ const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
 const { createMarks } = require('./session-marks');
+const { createExport } = require('./session-export');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
@@ -169,6 +170,7 @@ const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
+const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
@@ -382,6 +384,13 @@ const server = http.createServer(async (req, res) => {
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
+  if (req.method === 'GET' && p === '/api/session/export') {
+    const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');
+    const x = machine && id ? exporter.build(machine, id, url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md') : null;
+    if (!x) return send(res, 404, 'not found');
+    audit('session-export', ip, `${machine}|${id}`.slice(0, 160));
+    return send(res, 200, x.body, x.type, { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(x.name)}`, 'Cache-Control': 'no-store' });
+  }
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;

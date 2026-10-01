@@ -154,7 +154,14 @@ export function createList({ el, current, selected, onSelect, onNote }) {
       { label: mk.hidden ? '取消隐藏' : '隐藏', onClick: () => marks.set(key, { hidden: !mk.hidden }).then(done) },
       '-',
       { label: '移到群组', sub },
+      { label: '导出', sub: [{ label: 'Markdown（.md）', onClick: () => download(key, 'md') }, { label: '纯文本（.txt）', onClick: () => download(key, 'txt') }] },
     ];
+  }
+  // the whole conversation as a file (server/session-export.js), downloaded by the browser
+  function download(key, fmt) {
+    const [machine, id] = key.split('|');
+    const a = h('a', { href: `/api/session/export?machine=${encodeURIComponent(machine)}&id=${encodeURIComponent(id)}&fmt=${fmt}`, download: '' });
+    document.body.append(a); a.click(); a.remove();
   }
   function groupMenu(id, sk) {
     const g = marks.groups().find((x) => x.id === id);
