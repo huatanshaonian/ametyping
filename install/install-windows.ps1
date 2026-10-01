@@ -1,7 +1,8 @@
 ﻿# AmeTyping 一键安装（Windows）：糖糖桌宠 + 看板 agent + Claude Code hooks + 开机自启
 #
 # 运行（任选其一）：
-#   irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1 | iex
+#   iex (irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1).TrimStart([char]0xFEFF)
+#     （TrimStart 不能省：本文件带 BOM，irm 会把它当普通字符留在字符串里，iex 拿它当命令名用，报「无法将“#”项识别为 cmdlet」）
 #   powershell -ExecutionPolicy Bypass -File install\install-windows.ps1        （在已克隆的仓库里）
 #
 # 需要：Node.js 18+、git（没有会提示用 winget 安装），这台电脑已加入 Tailscale（agent 经它连群晖）。
