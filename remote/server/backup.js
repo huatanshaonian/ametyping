@@ -15,6 +15,7 @@ const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 // serverDir: where config.json is; dataDir: the data folder (inside serverDir)
 // firstMs: the first look after starting (a minute; tests shorter)
 function createBackup({ serverDir, dataDir, dir, keep = 14, at = '05:30', firstMs = 60e3, log = () => {} }) {
+  serverDir = path.resolve(serverDir); dataDir = path.resolve(dataDir); dir = path.resolve(dir);   // (tar runs in `dir`)
   const [hh, mm] = String(at).split(':').map(Number);
   let last = null, running = false;                   // last: { at, file, size } | { at, error }
 
