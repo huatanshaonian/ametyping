@@ -1,11 +1,11 @@
 // Google Calendar for the connected account (primary calendar):
 //   - diary(report): the day's report as an all-day event on its date ("日报：…", free time, a link back to Windose);
 //     found again by a private property, so a regenerated report updates its event instead of adding another
-//   - events(from, to): what is on the calendar, for the Windose calendar window (kept for a few minutes)
+//   - events(from, to): what is on the calendar, for the Windose calendar window and the daily report (kept a minute)
 'use strict';
 
 const BASE = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
-const CACHE_MS = 5 * 60e3;
+const CACHE_MS = 60e3;                                // only for loads in a row; opening the window / 刷新 asks again
 const NAMES = { research: '科研', personal: '个人小项目', chore: '杂活' };
 
 function createCalendar({ account, origin, log = () => {} }) {

@@ -162,17 +162,18 @@ const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (..
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
 // 重要计划: every open browser refreshes its list / desktop widget on a change
-const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'todos' }), audit: (...a) => audit(...a) });
+// (and Google Tasks follows: google/tasks-sync.js)
+const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => { broadcast({ t: 'todos' }); google.onTodos(); }, audit: (...a) => audit(...a) });
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
-const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes,
+const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos,
   egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a) });
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a),
+  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n);
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar

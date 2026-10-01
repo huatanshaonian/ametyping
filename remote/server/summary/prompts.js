@@ -39,7 +39,9 @@ function sessionPrompt(d, hint) {
 // the day: sessions (condensed transcript, or their own summary when long) + the important items still open
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
-function dayPrompt({ from, to, sessions, todos = [], artifacts = [], brief = false }) {
+const hm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+function dayPrompt({ from, to, sessions, todos = [], artifacts = [], events = [], brief = false }) {
   const parts = [
     ...(brief ? ['（这是补录的旧日报：写得简略些——每个项目 summary 一两句，done 最多 3 条，decisions 只写真正重要的；open 只列这一天新产生的未完成事项；产出物的说明照常写。）'] : []),
     `下面是用户在 ${fmtTime(from)} 到 ${fmtTime(to)} 之间和 AI 编程助手（Claude Code / Codex）的全部会话摘录${todos.length ? '，以及用户标记为重要、还没完成的计划' : ''}。请写一份给用户自己看的工作日报。`,
@@ -53,9 +55,15 @@ function dayPrompt({ from, to, sessions, todos = [], artifacts = [], brief = fal
     '- 会话编号（sessions、plans 的 session）只填 S1 这样的编号本身。',
     '- artifacts：给「产出物」里的每个文件写一句用途说明（note，不超过 30 字，例如「画 RCS 对比图的脚本」），ref 填编号如 A1；看不出用途就写空字符串。没有产出物就返回空数组。',
     '- headline：一句话概括这段时间做了什么（不超过 40 字）。keywords：10～20 个方便以后搜索的关键词（项目名、文件名、技术名词，中英文都可以）。',
+    ...(events.length ? ['- 「日程」来自用户的 Google 日历，只作背景：和某个项目相关的（会议、汇报、截止等）可以在那个项目的 summary 里顺带提到；没有会话记录对应的日程不要编造工作内容，也不要为日程单独列项目。'] : []),
     '- 用简体中文，简洁，不要客套；不要编造摘录里没有的内容。',
     '',
   ];
+  if (events.length) {
+    parts.push('## 日程（Google 日历）');
+    for (const e of events.slice(0, 30)) parts.push(`- ${e.allDay ? '全天' : `${fmtTime(e.start)}–${hm(e.end)}`} ${e.title}${e.location ? '（' + e.location + '）' : ''}`);
+    parts.push('');
+  }
   if (todos.length) {
     parts.push('## 重要计划（用户标记为重要、还没完成的事）');
     todos.forEach((t) => parts.push(`${t.ref}. [${t.project || '未分类'}] ${t.text}（${new Date(t.created).getMonth() + 1}月${new Date(t.created).getDate()}日记下${t.due ? '，' + t.due.slice(5) + ' 截止' : ''}）`));

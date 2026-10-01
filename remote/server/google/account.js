@@ -8,7 +8,10 @@ const path = require('path');
 const crypto = require('crypto');
 const { request } = require('./http');
 
-const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/drive.file'];
+const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/tasks'];
+// what each feature needs; a sign-in from before a scope was added lacks it until you connect again
+const NEEDS = { tasks: 'https://www.googleapis.com/auth/tasks' };
 const STATE_MS = 10 * 60e3;
 
 function createAccount({ dataDir, origin, egress, log = () => {} }) {
@@ -18,8 +21,10 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
   const redirect = () => String(origin || '').replace(/\/$/, '') + '/api/google/callback';
   const states = new Map();                            // state -> { sid, at }: one sign-in in progress each
 
+  const has = (feature) => !!(st.token && st.token.refresh && String(st.token.scope || '').split(/\s+/).includes(NEEDS[feature]));
   const status = () => ({ configured: !!(st.clientId && st.clientSecret), connected: !!(st.token && st.token.refresh), email: st.email || '',
-    diary: st.diary !== false, redirect: redirect(), clientId: st.clientId || '', error: st.error || '' });
+    diary: st.diary !== false, tasks: st.tasks !== false, missing: st.token && st.token.refresh ? Object.keys(NEEDS).filter((f) => !has(f)) : [],
+    redirect: redirect(), clientId: st.clientId || '', error: st.error || '' });
 
   function setClient(clientId, clientSecret) {
     clientId = String(clientId || '').trim(); clientSecret = String(clientSecret || '').trim();
@@ -30,6 +35,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
     return { ok: true };
   }
   function setDiary(on) { st.diary = !!on; save(); return { ok: true }; }
+  function setTasks(on) { st.tasks = !!on; save(); return { ok: true }; }
 
   // the consent-screen address for the browser to go to
   function authUrl(sid) {
@@ -85,7 +91,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
       const headers = { Authorization: 'Bearer ' + token, ...(opts.json !== undefined ? { 'Content-Type': 'application/json; charset=utf-8' } : {}), ...(opts.headers || {}) };
       const r = await request(url, { method: opts.method || 'GET', headers, body: opts.json !== undefined ? JSON.stringify(opts.json) : opts.body }, egress);
       if (r.status === 401 && attempt === 0) { st.token.expiry = 0; continue; }
-      if (r.status >= 400) throw new Error(`Google API ${r.status}：${(r.json && r.json.error && (r.json.error.message || r.json.error)) || r.body.toString('utf8').slice(0, 200)}`);
+      if (r.status >= 400) throw Object.assign(new Error(`Google API ${r.status}：${(r.json && r.json.error && (r.json.error.message || r.json.error)) || r.body.toString('utf8').slice(0, 200)}`), { status: r.status });
       return r.json;
     }
   }
@@ -100,7 +106,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
   // small things worth keeping next to the account (the Drive folder's id)
   const get = (k) => st[k];
   const remember = (k, v) => { st[k] = v; save(); };
-  return { status, setClient, setDiary, authUrl, callback, api, disconnect, get, remember };
+  return { status, has, setClient, setDiary, setTasks, authUrl, callback, api, disconnect, get, remember };
 }
 
 module.exports = { createAccount, SCOPES };
