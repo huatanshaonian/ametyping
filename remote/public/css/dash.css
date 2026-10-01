@@ -18,6 +18,17 @@
 .dash .card .pb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: #fff; background: var(--warn); }
 .dash .st.working { color: var(--ok-text); } .dash .st.waiting { color: var(--warn); }
 .dash .st.done { color: var(--bad); } .dash .st.idle { color: var(--faint); }
+/* groups (folder heads), folding, and the marks a session can carry (dash-list.js) */
+.dash .mc { cursor: pointer; user-select: none; }
+.dash .mc .fd::before { content: '▾'; display: inline-block; width: 11px; font-size: 10px; }
+.dash .mc.fold .fd::before { content: '▸'; }
+.dash .mc.grp { color: var(--border); font-weight: bold; }
+.dash .mc .gi { display: inline-block; width: 12px; height: 9px; margin-right: 5px; vertical-align: -1px;
+  background: #f5d76e; border: 1px solid #b08a1e; border-radius: 1px 3px 1px 1px; }
+.dash .card { -webkit-touch-callout: none; user-select: none; }
+.dash .card.hid { opacity: .5; }
+.dash .card .star { color: #e0a800; margin-right: 3px; }
+.dash .card .pin { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--border); border: 1px solid var(--border); }
 .dash .more { padding: 5px 10px; font-size: 11.5px; color: var(--border); cursor: pointer; border-bottom: 1px dotted var(--edge); }
 .dash .more:hover { background: var(--hover); }
 .dash .empty, .dash .pick { padding: 20px 12px; color: var(--faint); font-size: 12px; }

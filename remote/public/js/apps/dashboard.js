@@ -1,11 +1,21 @@
 // 糖糖看板 as a desktop window: every computer's sessions (newest first, the current computer on top), the chosen
 // session's conversation, its permission cards, navigation keys for the terminal's menus, and the reply box.
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
-import { $, h, esc, hhmm, ago, stateOf, prefs } from '../util.js';
+import { $, h, esc, hhmm, prefs } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
+import { createList } from './dash-list.js';
 
-const PAGE = 50;
+// the reply box's hint, by how the session can be reached
+const PLACEHOLDER = {
+  terminal: '回复（空框时按键直达终端）',
+  resume: '已关闭：发送会在后台续上',
+  busy: '后台续聊中…',
+  none: '不在终端里，只能看',
+  unknown: '还不知道在哪个终端',
+  codex: 'Codex 会话：只能看和审批',
+  off: '没开远程控制，只能看',
+};
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
 // keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts;
 // Shift+Tab cycles Claude Code's permission mode)
@@ -41,7 +51,7 @@ function mount(current) {
   const keys = h('div', { class: 'keys', hidden: true },
     ...KEYS.map(([k, l]) => h('button', { class: 'btn', type: 'button', dataset: { key: k }, text: l })),
     h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）' }));
-  const say = h('textarea', { class: 'say', rows: 1, disabled: true });
+  const say = h('textarea', { class: 'say', rows: 1, placeholder: '先选一个会话', disabled: true });
   const sendBtn = h('button', { class: 'btn go', type: 'submit', text: '发送', disabled: true });
   // the key buttons are for touch screens; with a keyboard the keys themselves are enough (⌨ shows the buttons anyway)
   const kbdBtn = h('button', { class: 'btn kbd', type: 'button', text: '⌨', title: '显示 / 隐藏按键（操作终端里的菜单）', hidden: true });
@@ -55,7 +65,7 @@ function mount(current) {
   const root = h('div', { class: 'dash' }, list, right);
 
   let sel = null;                                   // "machine|id"
-  const cards = new Map(), heads = new Map(), shown = new Map(), permCards = new Map();
+  const permCards = new Map();
   let sending = false, noteTimer = null;
 
   // what was typed but not sent stays with its conversation (kept in this browser: a reload keeps it too)
@@ -74,55 +84,9 @@ function mount(current) {
 
   const allSessions = () => net.state.sessions.flatMap((m) => m.sessions.map((s) => ({ ...s, machine: m.machine, online: m.online })));
   const find = (key) => { if (!key) return null; const [machine, id] = key.split('|'); return allSessions().find((x) => x.machine === machine && x.id === id) || null; };
-  const lastLine = (s) => { for (let i = (s.lines || []).length - 1; i >= 0; i--) if (s.lines[i].text) return s.lines[i].text; return s.state === 'history' ? '（历史会话）' : '…'; };
-
-  // ---- list (nodes are reused so a click is never lost to a rebuild) ----
-  function renderList() {
-    const machines = [...net.state.sessions].sort((a, b) => (b.machine === current) - (a.machine === current));
-    if (!machines.some((m) => m.sessions.length)) { list.replaceChildren(h('div', { class: 'empty', text: '还没有会话。开着 agent 的电脑一有 Claude 活动就会出现在这里。' })); cards.clear(); heads.clear(); return; }
-    const order = [];
-    const wanted = new Set();
-    for (const m of machines) {
-      if (!m.sessions.length) continue;
-      const limit = shown.get(m.machine) || PAGE;
-      let mc = heads.get(m.machine);
-      if (!mc) { mc = h('div'); heads.set(m.machine, mc); }
-      mc.className = 'mc' + (m.online ? ' on' : '') + (m.machine === current ? ' cur' : '');
-      const mtext = `${m.machine} · ${m.sessions.length} 个会话${m.online ? '' : '（离线）'}${m.online && !m.control ? ' · 只读' : ''}`;
-      if (mc.dataset.t !== mtext) { mc.dataset.t = mtext; mc.replaceChildren(h('span', { class: 'dot' }), mtext); }
-      order.push(mc);
-      for (const s of m.sessions.slice(0, limit)) {
-        const key = m.machine + '|' + s.id;
-        wanted.add(key);
-        let c = cards.get(key);
-        if (!c) { c = h('div', { class: 'card', dataset: { key } }, h('div', { class: 'nm' }), h('div', { class: 'sm' }), h('div', { class: 'st' })); cards.set(key, c); }
-        const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
-        c.className = 'card' + (sel === key ? ' sel' : '');
-        const nmHtml = esc(s.label) + (n ? `<span class="pb">待确认 ${n}</span>` : '');
-        if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
-        if ($('.sm', c).textContent !== lastLine(s)) $('.sm', c).textContent = lastLine(s);
-        const st = $('.st', c); st.className = 'st ' + cls; st.textContent = `${name}${s.project ? ' · ' + s.project : ''} · ${ago(s.last)}`;
-        order.push(c);
-      }
-      if (m.sessions.length > limit) {
-        const k = 'more|' + m.machine;
-        let mo = heads.get(k);
-        if (!mo) { mo = h('div', { class: 'more', dataset: { machine: m.machine } }); heads.set(k, mo); }
-        mo.textContent = `显示更多（还有 ${m.sessions.length - limit} 个）`;
-        order.push(mo);
-      }
-    }
-    for (const [k, el] of cards) if (!wanted.has(k)) { el.remove(); cards.delete(k); }
-    for (const [k, el] of heads) if (!order.includes(el)) { el.remove(); heads.delete(k); }
-    const empty = $('.empty', list); if (empty) empty.remove();
-    order.forEach((el, i) => { if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null); });
-    while (list.children.length > order.length) list.lastElementChild.remove();
-  }
-  list.addEventListener('click', (e) => {
-    const mo = e.target.closest('.more');
-    if (mo) { shown.set(mo.dataset.machine, (shown.get(mo.dataset.machine) || PAGE) + PAGE); renderList(); return; }
-    const c = e.target.closest('.card'); if (c) select(c.dataset.key);
-  });
+  // ---- list (js/apps/dash-list.js: groups, pinned / starred / hidden, right-click menus) ----
+  const sessionList = createList({ el: list, current, selected: () => sel, onSelect: select, onNote: (m, bad) => showNote(m, bad) });
+  const renderList = () => sessionList.render();
   back.addEventListener('click', () => root.classList.remove('viewing'));
 
   function select(key) {
@@ -163,8 +127,9 @@ function mount(current) {
     const s = find(sel);
     const via = s ? (s.online ? s.via || 'off' : 'off') : null;
     say.disabled = !s || sending || !['terminal', 'resume'].includes(via);
+    say.placeholder = !s ? '先选一个会话' : s.state === 'history' ? '历史会话：用上面的命令继续' : s.online ? PLACEHOLDER[via] || PLACEHOLDER.off : '机器离线';
     const asking = !!(s && s.online && (s.perms || []).length);
-    if (asking) say.disabled = true;
+    if (asking) { say.disabled = true; say.placeholder = '先处理确认卡片'; }
     // a card open: the (disabled) reply box folds to one line so the card has the room; afterwards it grows back
     if (root.classList.contains('asking') !== asking) { root.classList.toggle('asking', asking); if (!asking) fitSay(); }
     sendBtn.disabled = say.disabled || !say.value.trim();
@@ -320,8 +285,8 @@ function mount(current) {
 
   return {
     root,
-    setCurrent(c) { current = c; renderList(); list.scrollTop = 0; },
+    setCurrent(c) { sessionList.setCurrent(c); },
     select,
-    destroy() { for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); },
+    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); },
   };
 }

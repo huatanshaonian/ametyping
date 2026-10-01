@@ -1,0 +1,27 @@
+/* right-click menus (js/ctxmenu.js) and the one-line text dialog (js/dialog.js); the Windows 标准 look is at the end */
+.ctxm { position: fixed; z-index: 120; min-width: 150px; padding: 3px; background: var(--body); border: 2px solid var(--border);
+  box-shadow: 4px 4px 0 rgba(20, 10, 90, .35); user-select: none; }
+.ctxi { display: flex; align-items: center; width: 100%; padding: 4px 8px 4px 2px; border: 0; background: none; text-align: left; font-size: 12.5px; white-space: nowrap; }
+.ctxi .ck { flex: none; width: 18px; text-align: center; }
+.ctxi .lb { flex: 1; }
+.ctxi .ar { flex: none; margin-left: 14px; font-size: 10px; }
+.ctxi:hover:not(:disabled), .ctxi.open { background: var(--border); color: #fff; }
+.ctxi:disabled { opacity: .45; cursor: default; }
+.ctxsep { height: 1px; margin: 3px 4px; background: var(--edge); }
+
+.dlg { position: fixed; inset: 0; z-index: 110; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(42, 31, 94, .35); }
+.dlgbox { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: 6px 6px 0 rgba(77, 35, 207, .3); }
+.dlgt { padding: 5px 10px; font-weight: bold; color: var(--border); background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
+.dlgb { padding: 12px 14px 14px; }
+.dlgb p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.dlgb .field { width: 100%; }
+.dlga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+html[data-theme="win98"] .ctxm { background: #c0c0c0; border: 0; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .ctxi { color: #000; }
+html[data-theme="win98"] .ctxi:hover:not(:disabled), html[data-theme="win98"] .ctxi.open { background: #000080; color: #fff; }
+html[data-theme="win98"] .ctxsep { height: 0; border-top: 1px solid #808080; border-bottom: 1px solid #fff; background: none; }
+html[data-theme="win98"] .dlg { background: rgba(0, 0, 0, .25); }
+html[data-theme="win98"] .dlgbox { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .dlgt { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
+html[data-theme="win98"] .dlgb p { color: #000; }

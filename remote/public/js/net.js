@@ -35,6 +35,7 @@ export function connect() {
     else if (typeof d.t === 'string' && d.t.startsWith('fs-')) emit('fs', d);     // file explorer (fs.js)
     else if (d.t === 'todos') emit('todos');                                       // the important list changed
     else if (d.t === 'notes') emit('notes');                                       // a note was saved / deleted
+    else if (d.t === 'marks') emit('marks');                                       // 看板 marks / groups changed
   };
 }
 

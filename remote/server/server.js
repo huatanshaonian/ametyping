@@ -26,6 +26,7 @@ const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
+const { createMarks } = require('./session-marks');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createEgress } = require('./egress');
@@ -165,6 +166,8 @@ const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.
 const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'todos' }), audit: (...a) => audit(...a) });
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
+// 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
+const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes,
@@ -370,6 +373,7 @@ const server = http.createServer(async (req, res) => {
   // 日报 (summary/index.js)
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
+  if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
