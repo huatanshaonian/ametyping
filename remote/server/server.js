@@ -168,7 +168,7 @@ const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
-const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos,
+const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos, reports: () => summary && summary.reports,
   egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a) });
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
@@ -177,6 +177,7 @@ const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), c
   onNote: (n) => {
     for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, n);
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
+    if (n.week) google.onWeek(summary.reports.getWeek(n.week.start));         // and the week's, after a Sunday
   } });
 const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }

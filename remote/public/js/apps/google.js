@@ -1,5 +1,5 @@
-// Google 账户: set up once with your own OAuth client (steps below), then connect; afterwards the daily reports become
-// diary events in Google Calendar (switchable), 重要计划 are mirrored to a Google Tasks list (switchable), the calendar
+// Google 账户: set up once with your own OAuth client (steps below), then connect; afterwards the daily and weekly
+// reports become events in a calendar of their own, "Windose 日报" (switchable; past ones on request), 重要计划 are mirrored to a Google Tasks list (switchable), the calendar
 // window shows your events and tasks, notes can be copied to Drive. A sign-in from before a feature's permission was
 // added is asked to connect once more.
 // Anything that changes the account asks for the code again (js/net.js post()).
@@ -42,13 +42,21 @@ function mount() {
       const missing = s.missing || [];
       const sync = s.sync || {};
       const synced = sync.last ? new Date(sync.last) : null;
+      const FEATURES = { tasks: 'Google 任务', calendar: '单独的「Windose 日报」日历' };
+      const last = s.diaryLast, bf = s.backfill || {};
+      if (bf.running) setTimeout(() => { if (root.isConnected) render(); }, 2000);        // the backfill's progress
       parts.push(h('p', {}, '已连接：', h('b', { text: s.email || 'Google 账户' })),
-        missing.length ? h('div', { class: 'gnote' }, '新功能「Google 任务」需要多授权一项权限，请重新连接一次（不用重填客户端）：',
+        missing.length ? h('div', { class: 'gnote' }, `新功能${missing.map((f) => '「' + FEATURES[f] + '」').join('、')}需要多授权权限，请重新连接一次（不用重填客户端）：`,
           h('div', { class: 'gbtns' }, connectBtn('重新授权'))) : null,
-        toggle('diary', s.diary, '每天的日报写进 Google 日历（全天事件，标为空闲）'),
+        toggle('diary', s.diary, `日报、周报写进 Google 日历（${s.ownCalendar ? '「Windose 日报」日历' : missing.includes('calendar') ? '主日历' : '「Windose 日报」日历'}，全天事件，标为空闲）`),
+        s.diary && last ? h('p', { class: 'ghint' + (last.ok ? '' : ' bad'), text: `最近一次写入：${when(last.at)} · ${last.what} · ${last.ok ? '成功' : '失败：' + last.error}` }) : null,
+        s.diary ? h('div', { class: 'gline' }, h('button', { class: 'btn', type: 'button', text: '把过去的日报补进日历', disabled: !!bf.running, onclick: async () => {
+          const r = await net.post('/api/google/backfill', {}); if (r.ok) render(); else if (r.msg) render(r.msg);
+        } }), h('span', { class: 'ghint' + (bf.failed ? ' bad' : ''), text: bf.running ? `正在补写 ${bf.done}/${bf.total || '…'}`
+          : bf.at ? `上次补写：${bf.done - bf.failed}/${bf.total} 份${bf.failed ? `，失败 ${bf.failed} 份（${bf.error}）` : ''}` : '已经写过的会更新，不会重复' })) : null,
         missing.includes('tasks') ? null : toggle('tasks', s.tasks, `重要计划同步到 Google 任务（列表「${sync.list || 'Windose 重要计划'}」，双向）`),
         !missing.includes('tasks') && s.tasks ? h('p', { class: 'ghint' + (sync.error ? ' bad' : ''),
-          text: sync.error ? '上次同步失败：' + sync.error : synced ? `上次同步：${synced.getMonth() + 1} 月 ${synced.getDate()} 日 ${String(synced.getHours()).padStart(2, '0')}:${String(synced.getMinutes()).padStart(2, '0')}` : '还没有同步过（几秒后开始）' }) : null,
+          text: sync.error ? '上次同步失败：' + sync.error : synced ? `上次同步：${when(synced)}` : '还没有同步过（几秒后开始）' }) : null,
         h('p', { class: 'ghint', text: '日历窗口会显示 Google 日历上的日程和 Google 任务；记事本里可以「转存到 Google 云端硬盘」（只能访问本程序自己建的文件）。' }),
         h('div', { class: 'gbtns' }, h('button', { class: 'btn', type: 'button', text: '断开', onclick: async () => {
           if (!confirm('断开 Google？（授权会被撤销，之后要用需重新连接）')) return;
@@ -62,6 +70,7 @@ function mount() {
     } else parts.push(...setup(s));
     root.replaceChildren(...parts);
   }
+  const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
   function connectBtn(text) {
     return h('button', { class: 'btn go', type: 'button', text, onclick: async () => {
       const r = await net.post('/api/google/connect', {});

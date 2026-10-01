@@ -8,10 +8,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { request } = require('./http');
 
+// calendar.app.created: the "Windose 日报" calendar of our own (and nothing of the other calendars)
 const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/tasks'];
+  'https://www.googleapis.com/auth/tasks', 'https://www.googleapis.com/auth/calendar.app.created'];
 // what each feature needs; a sign-in from before a scope was added lacks it until you connect again
-const NEEDS = { tasks: 'https://www.googleapis.com/auth/tasks' };
+const NEEDS = { tasks: 'https://www.googleapis.com/auth/tasks', calendar: 'https://www.googleapis.com/auth/calendar.app.created' };
 const STATE_MS = 10 * 60e3;
 
 function createAccount({ dataDir, origin, egress, log = () => {} }) {
@@ -103,7 +104,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
     return { ok: true };
   }
 
-  // small things worth keeping next to the account (the Drive folder's id)
+  // small things worth keeping next to the account (the Drive folder's id, the reports' calendar, the last diary write)
   const get = (k) => st[k];
   const remember = (k, v) => { st[k] = v; save(); };
   return { status, has, setClient, setDiary, setTasks, authUrl, callback, api, disconnect, get, remember };
