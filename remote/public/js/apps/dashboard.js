@@ -67,6 +67,20 @@ function mount(current) {
   const cards = new Map(), heads = new Map(), shown = new Map(), permCards = new Map();
   let sending = false, noteTimer = null;
 
+  // what was typed but not sent stays with its conversation (kept in this browser: a reload keeps it too)
+  const drafts = new Map(Object.entries(prefs.get('dash.drafts', {})));
+  let draftT = null;
+  function keepDraft() {
+    if (!sel) return;
+    drafts.delete(sel);                             // (re-inserted last: the newest 30 are kept)
+    if (say.value.trim()) drafts.set(sel, say.value);
+    clearTimeout(draftT);
+    draftT = setTimeout(() => prefs.set('dash.drafts', Object.fromEntries([...drafts].slice(-30))), 400);
+  }
+  // conversations looked at lately: shown at once when you come back, then replaced by what the server sends
+  const CONV_CACHE = 12;
+  const convCache = new Map();                      // "machine|id" -> msgs, oldest first
+
   const allSessions = () => net.state.sessions.flatMap((m) => m.sessions.map((s) => ({ ...s, machine: m.machine, online: m.online })));
   const find = (key) => { if (!key) return null; const [machine, id] = key.split('|'); return allSessions().find((x) => x.machine === machine && x.id === id) || null; };
   const lastLine = (s) => { for (let i = (s.lines || []).length - 1; i >= 0; i--) if (s.lines[i].text) return s.lines[i].text; return s.state === 'history' ? '（历史会话）' : '…'; };
@@ -121,14 +135,18 @@ function mount(current) {
   back.addEventListener('click', () => root.classList.remove('viewing'));
 
   function select(key) {
+    if (key !== sel) keepDraft();                   // the one we leave keeps its unsent text
     sel = key;
     renderList();
     root.classList.add('viewing');
     const s = find(key), [machine, id] = key.split('|');
-    convEl.replaceChildren(h('div', { class: 'pick', text: '加载对话…' }));
+    const cached = convCache.get(key);
+    if (cached) renderConv(cached); else convEl.replaceChildren(h('div', { class: 'pick', text: '加载对话…' }));
     permsEl.replaceChildren(); permCards.clear(); showNote('');
     header(s);
+    say.value = drafts.get(key) || '';
     renderControls();
+    fitSay();
     net.send({ t: 'watch', machine, id });
   }
   function header(s) {
@@ -156,7 +174,10 @@ function mount(current) {
     say.disabled = !s || sending || !['terminal', 'resume'].includes(via);
     say.placeholder = !s ? '先选一个会话' : s.online ? PLACEHOLDER[via] || PLACEHOLDER.off : '这台机器离线了';
     if (s && s.state === 'history') say.placeholder = '历史会话（Claude Code 已不在运行）：用上面的命令在那台电脑上继续';
-    if (s && (s.perms || []).length) { say.disabled = true; if (via === 'terminal') say.placeholder = '它在等你确认，先处理下面的确认卡片'; }
+    const asking = !!(s && s.online && (s.perms || []).length);
+    if (asking) { say.disabled = true; if (via === 'terminal') say.placeholder = '它在等你确认，先处理下面的确认卡片'; }
+    // a card open: the (disabled) reply box folds to one line so the card has the room; afterwards it grows back
+    if (root.classList.contains('asking') !== asking) { root.classList.toggle('asking', asking); if (!asking) fitSay(); }
     sendBtn.disabled = say.disabled || !say.value.trim();
     termOk = !!(s && s.online && via === 'terminal');
     keys.hidden = !(termOk && showKeys);
@@ -181,7 +202,7 @@ function mount(current) {
   }
   modeBtn.addEventListener('click', () => pressKey('btab', modeBtn));
   const fitSay = () => { say.style.height = 'auto'; say.style.height = Math.min(140, say.scrollHeight + 2) + 'px'; };
-  say.addEventListener('input', () => { fitSay(); sendBtn.disabled = say.disabled || !say.value.trim(); });
+  say.addEventListener('input', () => { fitSay(); sendBtn.disabled = say.disabled || !say.value.trim(); keepDraft(); });
   say.addEventListener('keydown', (e) => {
     if (e.isComposing) return;
     // an empty box: the key goes to the terminal (Shift+Enter stays a newline)
@@ -204,12 +225,17 @@ function mount(current) {
   }
   compose.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const s = find(sel), text = say.value;
+    const s = find(sel), text = say.value, key = sel;
     if (!s || say.disabled || !text.trim()) return;
     sending = true; renderControls(); showNote('发送中…', false, 30000);
     const r = await net.act({ t: 'send', machine: s.machine, id: s.id, text });
     sending = false;
-    if (r.ok) { if (say.value === text) { say.value = ''; fitSay(); } showNote(r.msg || '已发送'); } else showNote(r.msg || '发送失败', true);
+    if (r.ok) {
+      // sent: out of the box and out of that conversation's draft (also when you switched away meanwhile)
+      if (sel === key && say.value === text) { say.value = ''; fitSay(); keepDraft(); }
+      else if (drafts.get(key) === text) { drafts.delete(key); prefs.set('dash.drafts', Object.fromEntries(drafts)); }
+      showNote(r.msg || '已发送');
+    } else showNote(r.msg || '发送失败', true);
     renderControls();
   });
   keys.addEventListener('click', (e) => { const b = e.target.closest('button[data-key]'); if (b) pressKey(b.dataset.key, b); });
@@ -224,12 +250,13 @@ function mount(current) {
       let i = {}; try { i = JSON.parse(p.input); } catch {}
       const choices = [['allow', '允许', 'btn go'], ['deny', '拒绝', 'btn no']];
       if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理', 'btn']);
+      // the buttons right under the title: still in view when the card area is squeezed (it scrolls from the top)
       const card = h('div', { class: 'perm', dataset: { id: p.id } },
         h('div', { class: 'pt', text: `需要你确认 · ${p.tool}${p.subagent ? ' · ' + p.subagent : ''}` }),
-        h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
-          (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }),
         h('div', { class: 'pa' }, ...choices.map(([c, l, cls]) => h('button', { class: cls, type: 'button', dataset: { choice: c }, text: l })),
-          h('span', { class: 'ps', text: '回车 = 允许 · 也可在那台机器上回答' })));
+          h('span', { class: 'ps', text: '回车 = 允许 · 也可在那台机器上回答' })),
+        h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
+          (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }));
       card.dataset.shown = Date.now();
       permCards.set(p.id, card); permsEl.append(card);
     }
@@ -289,7 +316,12 @@ function mount(current) {
   // ---- wiring ----
   const offs = [
     net.on('sessions', () => { renderList(); if (sel) header(find(sel)); renderControls(); }),
-    net.on('conv', (d) => { if (sel === d.machine + '|' + d.id) renderConv(d.msgs || []); }),
+    net.on('conv', (d) => {
+      const key = d.machine + '|' + d.id;
+      convCache.delete(key); convCache.set(key, d.msgs || []);
+      if (convCache.size > CONV_CACHE) convCache.delete(convCache.keys().next().value);
+      if (sel === key) renderConv(d.msgs || []);
+    }),
     net.on('open', () => { if (sel) { const [machine, id] = sel.split('|'); net.send({ t: 'watch', machine, id }); } }),
   ];
   const tickT = setInterval(renderList, 15000);               // "N分前" labels
