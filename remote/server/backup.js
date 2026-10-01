@@ -1,6 +1,6 @@
 // A copy of the server's data on another disk, once a day: config.json and the data folder (daily / weekly reports,
-// conversation archive, notes, 重要计划, Google sign-in, ...) as <dir>/ame-<YYYY-MM-DD>.tar.gz, the newest `keep` kept.
-// config.json "backup": { "dir": "/volume1/homes/<user>/ame-backup", "keep": 14, "at": "05:30" } -- after the morning
+// conversation archive, notes, 重要计划, Google sign-in, ...) as <dir>/ame-<YYYY-MM-DD>.tar.gz, all of them kept (or
+// the newest `keep`). config.json "backup": { "dir": "/volume1/homes/<user>/ame-backup", "at": "05:30" } -- after the morning
 // report. The folder and the files are readable by this user only (they hold the sign-ins). A day missed (the server
 // was down at that time) is made up when it comes back.
 'use strict';
@@ -14,7 +14,7 @@ const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 
 // serverDir: where config.json is; dataDir: the data folder (inside serverDir)
 // firstMs: the first look after starting (a minute; tests shorter)
-function createBackup({ serverDir, dataDir, dir, keep = 14, at = '05:30', firstMs = 60e3, log = () => {} }) {
+function createBackup({ serverDir, dataDir, dir, keep = 0, at = '05:30', firstMs = 60e3, log = () => {} }) {
   serverDir = path.resolve(serverDir); dataDir = path.resolve(dataDir); dir = path.resolve(dir);   // (tar runs in `dir`)
   const [hh, mm] = String(at).split(':').map(Number);
   let last = null, running = false;                   // last: { at, file, size } | { at, error }
@@ -44,7 +44,7 @@ function createBackup({ serverDir, dataDir, dir, keep = 14, at = '05:30', firstM
       await tar(tmp);
       fs.chmodSync(tmp, 0o600);
       fs.renameSync(tmp, out);
-      for (const f of files().slice(0, -keep)) fs.rmSync(path.join(dir, f), { force: true });
+      if (keep > 0) for (const f of files().slice(0, -keep)) fs.rmSync(path.join(dir, f), { force: true });
       last = { at: Date.now(), file: out, size: fs.statSync(out).size };
       log(`备份：${out}（${Math.round(last.size / 1024)} KB）`);
       return last;
