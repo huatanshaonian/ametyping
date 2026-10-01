@@ -69,7 +69,8 @@ function mount(current) {
   const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn);
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
     resume, notes.el, convEl, permsEl, note, keys, compose);
-  const root = h('div', { class: 'dash' }, list, right);
+  const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
+  const root = h('div', { class: 'dash' }, side, right);
 
   let sel = null;                                   // "machine|id"
   const permCards = new Map();
@@ -93,6 +94,7 @@ function mount(current) {
   const find = (key) => { if (!key) return null; const [machine, id] = key.split('|'); return allSessions().find((x) => x.machine === machine && x.id === id) || null; };
   // ---- list (js/apps/dash-list.js: groups, pinned / starred / hidden, right-click menus) ----
   const sessionList = createList({ el: list, current, selected: () => sel, onSelect: select, onNote: (m, bad) => showNote(m, bad) });
+  side.prepend(sessionList.tool);
   const renderList = () => sessionList.render();
   back.addEventListener('click', () => root.classList.remove('viewing'));
 

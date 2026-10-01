@@ -66,7 +66,9 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   async function handle(req, res, url, ip, json) {
     const p = url.pathname;
     if (req.method === 'GET' && p === '/api/search') {
-      json(res, 200, search.search(String(url.searchParams.get('q') || '').slice(0, 200)));
+      const scope = url.searchParams.get('scope') === 'sessions' ? 'sessions' : 'all';   // sessions: the dashboard list
+      json(res, 200, search.search(String(url.searchParams.get('q') || '').slice(0, 200),
+        scope === 'sessions' ? { scope, maxSessions: 200, hitsPerSession: 1 } : {}));
       return true;
     }
     if (req.method === 'GET' && p === '/api/ask') { json(res, 200, { job: qa.state() }); return true; }
