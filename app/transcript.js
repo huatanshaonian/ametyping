@@ -86,6 +86,13 @@ function recordsOf(o) {
         out.push(x ? { role: 'tool', items: [toolLine(b.name, b.input)], t, x } : { role: 'tool', items: [toolLine(b.name, b.input)], t });
       }
     }
+    // how full the context is: everything the model read for this reply plus what it wrote (the next request carries
+    // both). "used/window"; the window is not in the transcript (0: the reader decides, see remote/agent/context-window.js)
+    const u = m.usage;
+    if (u && Number.isFinite(u.input_tokens)) {
+      const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+      if (used > 0) out.push({ role: 'ctx', text: used + '/0', t });
+    }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
     const title = o.aiTitle || o.customTitle || o.title;
     if (title) out.push({ role: 'title', text: String(title), t });
@@ -104,6 +111,7 @@ function mergeRecords(out, recs) {
     const last = out[out.length - 1];
     if (r.role === 'title') out.title = r.text;
     else if (r.role === 'mode') out.mode = r.text;
+    else if (r.role === 'ctx') out.ctx = r.text;
     else if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid === r.mid) last.text += '\n\n' + r.text;
     else if (r.role === 'tool' && last && last.role === 'tool') { last.items.push(...r.items); last.t = r.t; }
     else out.push(r.role === 'tool' ? { ...r, items: [...r.items] } : { ...r });

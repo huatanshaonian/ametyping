@@ -2,7 +2,7 @@
 // (the current computer on top). Pinned sessions lead their section, starred ones carry a ★, hidden ones are left out
 // until you ask to see them. Right click (long press on a phone) a session, a group or the list for the menu.
 // Marks and groups live on the server (js/marks.js) so every device shows the same list.
-import { $, h, esc, ago, stateOf, prefs } from '../util.js';
+import { $, h, esc, ago, stateOf, prefs, ctxLeft, CTX_LOW } from '../util.js';
 import * as net from '../net.js';
 import * as marks from '../marks.js';
 import * as ctx from '../ctxmenu.js';
@@ -89,7 +89,9 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     if (!c) { c = h('div', { class: 'card', dataset: { key } }, h('div', { class: 'nm' }), h('div', { class: 'sm' }), h('div', { class: 'st' })); cards.set(key, c); }
     const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
-    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + esc(s.label) + (mk.pinned ? '<span class="pin">置顶</span>' : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
+    const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
+    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + esc(s.label) + (mk.pinned ? '<span class="pin">置顶</span>' : '') +
+      (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
     if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
     if ($('.sm', c).textContent !== lastLine(s)) $('.sm', c).textContent = lastLine(s);
     const st = $('.st', c); st.className = 'st ' + cls;

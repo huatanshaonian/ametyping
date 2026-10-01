@@ -32,7 +32,7 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
     for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
       if (!l) continue;
       let r; try { r = JSON.parse(l); } catch { continue; }
-      if (r.role === 'title' || r.role === 'mode') continue;
+      if (r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
       const parts = [r.text || '', ...(r.items || [])];
       if (r.x) parts.push(r.x.cmd || '', ...(r.x.p || []), ...((r.x.todos || []).map((t) => t[0])), r.x.plan ? r.x.plan.slice(0, 4000) : '');
       const text = parts.filter(Boolean).join(' · ');

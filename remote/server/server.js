@@ -133,12 +133,12 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '' };
+        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -213,7 +213,7 @@ function onAgentMessage(m, raw, ws) {
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
     if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
     // a session only the store knows (e.g. Codex without the pet): the list would not refresh on its own
-    // (and a new permission mode is shown in the list's session details)
+    // (and a new permission mode / context fill is shown in the list's session details)
     if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
     return;
   }

@@ -1,7 +1,7 @@
 // 糖糖看板 as a desktop window: every computer's sessions (newest first, the current computer on top), the chosen
 // session's conversation, its permission cards, navigation keys for the terminal's menus, and the reply box.
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
-import { $, h, esc, hhmm, prefs } from '../util.js';
+import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { createList } from './dash-list.js';
@@ -108,6 +108,12 @@ function mount(current) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
     hmeta.textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
+    // context left (from the last reply's token count); warned about when it runs low
+    const left = s ? ctxLeft(s) : null;
+    if (left != null) {
+      hmeta.append(' · ', h('span', { class: 'cx' + (left <= 10 ? ' bad' : left <= CTX_LOW ? ' low' : ''), text: `上下文剩 ${left}%`,
+        title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${s.id.startsWith('codex:') ? 'Codex' : '到自动压缩前'}）` }));
+    }
     resume.hidden = !(s && s.resume);
     if (s && s.resume && rcmd.textContent !== s.resume) rcmd.textContent = s.resume;
   }

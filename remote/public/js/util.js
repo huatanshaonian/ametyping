@@ -35,6 +35,16 @@ export const prefs = {
   set(k, v) { try { localStorage.setItem('ame.' + k, JSON.stringify(v)); } catch {} },
 };
 
+// how much context a session has left, in percent (null when not known yet). Claude Code compacts on its own about
+// 33k tokens before the window is full ("Context left until auto-compact"); Codex counts from a 12k baseline.
+export function ctxLeft(s) {
+  const c = s && s.ctx;
+  if (!c || !(c.win > 0)) return null;
+  const left = s.id.startsWith('codex:') ? (c.win - c.used) / (c.win - 12000) : (c.win - 33000 - c.used) / (c.win - 33000);
+  return Math.max(0, Math.min(100, Math.round(left * 100)));
+}
+export const CTX_LOW = 20;                // the dashboard warns from here down
+
 // session states as the dashboard names them
 const STATE = { message: ['working', '进行中'], thinking: ['working', '进行中'], reading: ['working', '进行中'],
   error: ['working', '出错'], working: ['working', '进行中'], waiting: ['waiting', '等你确认'], done: ['done', '完成'], idle: ['idle', '空闲'], ended: ['idle', '已关闭'],

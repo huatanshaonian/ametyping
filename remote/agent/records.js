@@ -5,6 +5,7 @@
 'use strict';
 const fs = require('fs');
 const { recordsOf } = require('../../app/transcript');
+const { claudeWindow } = require('./context-window');
 
 const MAX_READ = 4e6;          // bytes of transcript read per call
 const MAX_BATCH = 800e3;       // approx. JSON size of one message to the server
@@ -68,6 +69,7 @@ function readNext(r) {
     if (!r.cwd && o && typeof o.cwd === 'string' && o.cwd) r.cwd = o.cwd;
     if (o && o.timestamp) { const t = Date.parse(o.timestamp); if (Number.isFinite(t)) r.lastT = t; }
     const add = o ? slim(o, r.parse || recordsOf, r.lastT) : [];
+    for (const a of add) if (a.role === 'ctx' && a.text.endsWith('/0')) a.text = withWindow(r, +a.text.split('/')[0]);
     const addSize = add.length ? JSON.stringify(add).length : 0;
     if (recs.length && size + addSize > MAX_BATCH) break;             // the rest goes in the next batch
     recs.push(...add); size += addSize; pos = nl + 1;
@@ -78,6 +80,12 @@ function readNext(r) {
   }
   if (pos === 0 && !reset) return null;                               // only an unfinished line so far
   return { from, to: from + pos, reset, recs, cwd: r.cwd };
+}
+
+// a Claude Code context record's window: 1M once the session has gone past 200k, or when this machine runs a [1m] model
+function withWindow(r, used) {
+  if (used > 200e3) r.big = true;
+  return used + '/' + (r.big ? 1e6 : claudeWindow());
 }
 
 module.exports = { createReader, readNext, firstCwd };
