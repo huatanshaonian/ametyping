@@ -39,7 +39,8 @@ async function request(url, opts = {}, egress = null) {
   }
   return new Promise((resolve, reject) => {
     const body = opts.body == null ? null : Buffer.isBuffer(opts.body) ? opts.body : Buffer.from(String(opts.body));
-    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: opts.method || 'GET', createConnection,
+    // port / defaultPort: with our own connection (no agent) Node would otherwise send "Host: <host>:80", which Google answers with 404
+    const req = https.request({ hostname: u.hostname, port: 443, defaultPort: 443, path: u.pathname + u.search, method: opts.method || 'GET', createConnection,
       headers: { ...(opts.headers || {}), ...(body ? { 'Content-Length': body.length } : {}) }, timeout: TIMEOUT_MS }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
