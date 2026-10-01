@@ -67,7 +67,7 @@ Claude Code 与 Codex 的 hook 把会话事件发给糖糖，她下面的面板�
 
 ```powershell
 # Windows：糖糖 + agent + hooks + 登录自启（计划任务）
-iex (irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1).TrimStart([char]0xFEFF)
+irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1 | iex
 ```
 
 ```bash

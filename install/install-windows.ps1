@@ -1,17 +1,20 @@
-﻿# AmeTyping 一键安装（Windows）：糖糖桌宠 + 看板 agent + Claude Code hooks + 开机自启
+# AmeTyping 一键安装（Windows）：糖糖桌宠 + 看板 agent + Claude Code hooks + 开机自启
 #
 # 运行（任选其一）：
-#   iex (irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1).TrimStart([char]0xFEFF)
-#     （TrimStart 不能省：本文件带 BOM，irm 会把它当普通字符留在字符串里，iex 拿它当命令名用，报「无法将“#”项识别为 cmdlet」）
-#   powershell -ExecutionPolicy Bypass -File install\install-windows.ps1        （在已克隆的仓库里）
+#   irm https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-windows.ps1 | iex
+#   在已克隆的仓库里用下面这条（不能用 -File，原因见下面说明）：
+#   powershell -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText((Resolve-Path .\install\install-windows.ps1), (New-Object Text.UTF8Encoding $false)))"
+#     （这条下 $PSScriptRoot 为空，不会走「使用当前仓库」分支；要用当前 checkout 就先设 $env:AME_DIR=$PWD）
 #
 # 需要：Node.js 18+、git（没有会提示用 winget 安装），这台电脑已加入 Tailscale（agent 经它连群晖）。
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 无人值守：设了下面这些环境变量就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
 #   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
 #   另外 AME_DIR（装到哪）、AME_BRANCH（用哪个分支）、AME_SERVER（看板地址）可以覆盖下面三个默认值。
-# 不用 param()：本文件带 UTF-8 BOM（PS 5.1 靠它把中文提示显示对），而 irm | iex 会把 BOM 当普通字符
-# 一起送进解析器，跨行的 param 块会因此报「赋值表达式无效」；普通赋值不受影响，两条运行路径都通。
+# 不用 param()：用环境变量覆盖，跟上面 AME_* 那套约定一致（irm | iex 跑法下 param 也没法传参）。
+# 本文件是 UTF-8 无 BOM：带 BOM 的话 irm 会把它当普通字符留在字符串里，iex 拿它当命令名，报一行错。
+# 代价：PS 5.1 按 ANSI(GBK) 读无 BOM 文件，下面的中文字符串会在「解析」阶段就吃掉引号和括号，
+# 所以不能直接 -File 跑本文件；中文注释不受影响（注释吃到行尾为止，吞不过换行符）。
 $Dir    = if ($env:AME_DIR)    { $env:AME_DIR }    else { "$env:USERPROFILE\ametyping" }
 $Branch = if ($env:AME_BRANCH) { $env:AME_BRANCH } else { 'main' }
 $Server = if ($env:AME_SERVER) { $env:AME_SERVER } else { 'ws://100.65.10.90:8788/agent' }

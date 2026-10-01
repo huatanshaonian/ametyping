@@ -54,7 +54,7 @@ export function open() {
       h('p', { text: `「${r.name}」的令牌（只显示这一次${r.replaced ? '；原来同名电脑的令牌已作废' : ''}）：` }),
       copyRow('令牌', r.token),
       h('p', { text: '在新电脑上粘贴运行下面的命令即可装好（需要已加入 Tailscale）。命令里带着令牌，运行完可清掉终端历史。' }),
-      copyRow('Windows（PowerShell）', `$env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; iex (irm ${RAW}/install-windows.ps1).TrimStart([char]0xFEFF)`),
+      copyRow('Windows（PowerShell）', `$env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; irm ${RAW}/install-windows.ps1 | iex`),
       copyRow('Linux', `curl -fsSL ${RAW}/install-linux.sh | AME_NAME='${r.name}' AME_TOKEN='${r.token}' bash`));
     refresh();
   });
