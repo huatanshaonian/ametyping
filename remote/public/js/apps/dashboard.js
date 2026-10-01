@@ -6,15 +6,6 @@ import * as net from '../net.js';
 import * as wm from '../wm.js';
 
 const PAGE = 50;
-const PLACEHOLDER = {
-  terminal: '回复（Enter 发送，Shift+Enter 换行）；框为空时 方向键 / 回车 / Esc / Tab / Shift+Tab 直接发给终端',
-  resume: '会话已关闭：发送会在那台机器后台用 claude -p --resume 续上',
-  busy: '后台续聊进行中…',
-  none: '这个会话不在终端里（IDE / 桌面 App），只能看',
-  unknown: '还不知道它在哪个终端（等它下一次有动静）',
-  codex: 'Codex 会话请在 Codex 里继续；这里可以处理权限',
-  off: '这台机器没开远程控制（或糖糖没在运行），只能看',
-};
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
 // keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts;
 // Shift+Tab cycles Claude Code's permission mode)
@@ -50,7 +41,7 @@ function mount(current) {
   const keys = h('div', { class: 'keys', hidden: true },
     ...KEYS.map(([k, l]) => h('button', { class: 'btn', type: 'button', dataset: { key: k }, text: l })),
     h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）' }));
-  const say = h('textarea', { class: 'say', rows: 1, placeholder: '先选一个会话', disabled: true });
+  const say = h('textarea', { class: 'say', rows: 1, disabled: true });
   const sendBtn = h('button', { class: 'btn go', type: 'submit', text: '发送', disabled: true });
   // the key buttons are for touch screens; with a keyboard the keys themselves are enough (⌨ shows the buttons anyway)
   const kbdBtn = h('button', { class: 'btn kbd', type: 'button', text: '⌨', title: '显示 / 隐藏按键（操作终端里的菜单）', hidden: true });
@@ -172,10 +163,8 @@ function mount(current) {
     const s = find(sel);
     const via = s ? (s.online ? s.via || 'off' : 'off') : null;
     say.disabled = !s || sending || !['terminal', 'resume'].includes(via);
-    say.placeholder = !s ? '先选一个会话' : s.online ? PLACEHOLDER[via] || PLACEHOLDER.off : '这台机器离线了';
-    if (s && s.state === 'history') say.placeholder = '历史会话（Claude Code 已不在运行）：用上面的命令在那台电脑上继续';
     const asking = !!(s && s.online && (s.perms || []).length);
-    if (asking) { say.disabled = true; if (via === 'terminal') say.placeholder = '它在等你确认，先处理下面的确认卡片'; }
+    if (asking) say.disabled = true;
     // a card open: the (disabled) reply box folds to one line so the card has the room; afterwards it grows back
     if (root.classList.contains('asking') !== asking) { root.classList.toggle('asking', asking); if (!asking) fitSay(); }
     sendBtn.disabled = say.disabled || !say.value.trim();
