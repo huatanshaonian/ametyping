@@ -3,7 +3,8 @@
 // instead of doubling. One run at a time, in the background; the account window polls status().
 'use strict';
 
-function createBackfill({ calendar, reports, log = () => {} }) {
+// onWritten(kind, key): one is in the calendar now (no longer waiting for a retry)
+function createBackfill({ calendar, reports, onWritten = () => {}, log = () => {} }) {
   let st = { running: false, done: 0, total: 0, failed: 0, error: '', at: 0 };
 
   async function work(rs) {
@@ -12,11 +13,11 @@ function createBackfill({ calendar, reports, log = () => {} }) {
     st.total = days.length + weeks.length;
     await calendar.target();                          // the calendar first (made, old events moved, once)
     for (const date of days) {
-      try { await calendar.diary(rs.get(date)); } catch (e) { st.failed++; st.error = `${date}：${e.message}`; }
+      try { await calendar.diary(rs.get(date)); onWritten('day', date); } catch (e) { st.failed++; st.error = `${date}：${e.message}`; }
       st.done++;
     }
     for (const start of weeks) {
-      try { await calendar.week(rs.getWeek(start)); } catch (e) { st.failed++; st.error = `${start} 这一周：${e.message}`; }
+      try { await calendar.week(rs.getWeek(start)); onWritten('week', start); } catch (e) { st.failed++; st.error = `${start} 这一周：${e.message}`; }
       st.done++;
     }
   }

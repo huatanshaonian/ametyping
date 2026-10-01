@@ -17,6 +17,29 @@ export async function status() {
 }
 export function onStatus(fn) { listeners.add(fn); if (st) fn(st); return () => listeners.delete(fn); }
 
+// the tray: a warning while something needs you -- the sign-in ran out, reports waiting to go into the calendar, the
+// tasks sync failing (the server says when that changes: net 'google'); a click opens this window
+function problems(s) {
+  if (!s || !s.configured) return [];
+  const p = [];
+  if (s.error) p.push(s.error);
+  if (s.pending && s.pending.length) p.push(`${s.pending.length} 份日报 / 周报还没写进日历（会自动重试）`);
+  if (s.connected && s.tasks && s.sync && s.sync.error) p.push('Google 任务同步失败：' + s.sync.error);
+  return p;
+}
+let warn = null;
+onStatus((s) => {
+  const p = problems(s), tray = document.getElementById('tray');
+  if (!p.length || !tray) { if (warn) { warn.remove(); warn = null; } return; }
+  if (!warn) {
+    warn = h('button', { id: 'gwarn', type: 'button', onclick: () => open() }, h('img', { src: '/icons/msg_warning-16.png', alt: 'Google' }));
+    tray.insertBefore(warn, document.getElementById('conn'));
+  }
+  warn.title = 'Google：' + p.join('；') + '（点这里处理）';
+});
+net.on('google', () => status());
+net.on('status', (up) => { if (up) status(); });
+
 let win = null;
 export function open(message) {
   if (win) { wm.open({ id: 'google' }); win.render(message); return; }
@@ -50,6 +73,7 @@ function mount() {
           h('div', { class: 'gbtns' }, connectBtn('重新授权'))) : null,
         toggle('diary', s.diary, `日报、周报写进 Google 日历（${s.ownCalendar ? '「Windose 日报」日历' : missing.includes('calendar') ? '主日历' : '「Windose 日报」日历'}，全天事件，标为空闲）`),
         s.diary && last ? h('p', { class: 'ghint' + (last.ok ? '' : ' bad'), text: `最近一次写入：${when(last.at)} · ${last.what} · ${last.ok ? '成功' : '失败：' + last.error}` }) : null,
+        s.diary && s.pending && s.pending.length ? h('p', { class: 'ghint bad', text: `等待重试（每小时一次）：${s.pending.map((x) => x.kind === 'week' ? x.key + ' 这一周' : x.key).join('、')}；原因：${s.pending[s.pending.length - 1].error}` }) : null,
         s.diary ? h('div', { class: 'gline' }, h('button', { class: 'btn', type: 'button', text: '把过去的日报补进日历', disabled: !!bf.running, onclick: async () => {
           const r = await net.post('/api/google/backfill', {}); if (r.ok) render(); else if (r.msg) render(r.msg);
         } }), h('span', { class: 'ghint' + (bf.failed ? ' bad' : ''), text: bf.running ? `正在补写 ${bf.done}/${bf.total || '…'}`

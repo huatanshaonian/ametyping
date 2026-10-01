@@ -1,6 +1,7 @@
 // Google on the Windose page: the account window (client, connect, disconnect, diary / tasks on/off, past reports into
-// the calendar), the events the daily and weekly reports become, calendar events and tasks for the calendar window,
-// 重要计划 mirrored to Google Tasks, notes copied to Drive. Changing anything about the account needs a code entered within the hour (like remote control); the callback from Google's consent screen is
+// the calendar), the events the daily and weekly reports become (retried until they are in), calendar events and tasks
+// for the calendar window, 重要计划 mirrored to Google Tasks, notes copied to Drive, today's agenda for 糖糖's morning
+// bubble; onChange() when something the tray shows changed. Changing anything about the account needs a code entered within the hour (like remote control); the callback from Google's consent screen is
 // public (the login cookie is SameSite=Strict, so Google's redirect arrives without it) and checked by its one-time state.
 'use strict';
 const { createAccount } = require('./account');
@@ -9,31 +10,62 @@ const { createDrive } = require('./drive');
 const { createTasks } = require('./tasks');
 const { createTasksSync } = require('./tasks-sync');
 const { createBackfill } = require('./backfill');
+const { createRetry } = require('./retry');
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // reports(): the daily reports' store (summary/reports.js), or null -- for writing past ones into the calendar
-function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => null, log = console.log, audit = () => {} }) {
+function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => null, onChange = () => {}, log = console.log, audit = () => {} }) {
   const account = createAccount({ dataDir, origin, egress, log });
   const calendar = createCalendar({ account, origin, log });
   const drive = createDrive({ account, log });
   const tasks = createTasks({ account });
   const sync = todos ? createTasksSync({ dataDir, account, tasks, todos, log }) : null;
-  const backfill = createBackfill({ calendar, reports, log });
   const connected = () => account.status().connected;
-  const status = () => ({ ...account.status(), ...(sync ? { sync: sync.status() } : {}),
-    diaryLast: account.get('diaryLast') || null, ownCalendar: !!account.get('diaryCalendar'), backfill: backfill.status() });
-
-  // a finished daily / weekly report becomes its event (when connected and wanted); the outcome is shown in the
-  // account window (calendar.js keeps it)
   const wanted = () => connected() && account.status().diary;
+  const retry = createRetry({ account, calendar, reports, wanted, log });
+  const backfill = createBackfill({ calendar, reports, log, onWritten: (kind, key) => retry.done(kind, key) });
+  const status = () => ({ ...account.status(), ...(sync ? { sync: sync.status() } : {}),
+    diaryLast: account.get('diaryLast') || null, ownCalendar: !!account.get('diaryCalendar'), backfill: backfill.status(),
+    pending: wanted() || account.status().error ? retry.list().map((p) => ({ kind: p.kind, key: p.key, error: p.error })) : [] });
+
+  // what the tray shows (an expired sign-in, reports waiting, a failing sync): open pages are told when it changes
+  const sign = () => { const s = status(); return JSON.stringify([s.connected, s.error, s.pending.length, s.sync && s.sync.error]); };
+  let lastSign = sign();
+  const watch = setInterval(() => { const x = sign(); if (x !== lastSign) { lastSign = x; onChange(); } }, 30e3); watch.unref();
+
+  // a finished daily / weekly report becomes its event (when connected and wanted); a failure waits for a retry
+  // (retry.js), the outcome is shown in the account window
+  // (signed out -- the sign-in ran out: waits for connecting again)
+  const signedOut = (kind, key) => { const s = account.status(); if (s.configured && s.diary && !s.connected) retry.add(kind, key, 'Google 授权失效，重新连接后补写'); };
   function onReport(r) {
-    if (!r || r.draft || !wanted()) return;
-    calendar.diary(r).catch((e) => log('Google 日历写入失败：' + e.message));
+    if (!r || r.draft) return;
+    if (!wanted()) return signedOut('day', r.date);
+    calendar.diary(r).then(() => retry.done('day', r.date), (e) => { log('Google 日历写入失败（稍后重试）：' + e.message); retry.add('day', r.date, e); });
   }
   function onWeek(w) {
-    if (!w || !wanted()) return;
-    calendar.week(w).catch((e) => log('Google 日历写入周报失败：' + e.message));
+    if (!w) return;
+    if (!wanted()) return signedOut('week', w.start);
+    calendar.week(w).then(() => retry.done('week', w.start), (e) => { log('Google 日历写入周报失败（稍后重试）：' + e.message); retry.add('week', w.start, e); });
+  }
+
+  // 糖糖's morning bubble: what today holds -- Google Calendar events, tasks due in your other lists, 重要计划 due.
+  // { date, google, events: [{ time, title }], tasks: [title], todos: [text] }; what cannot be read is left out
+  const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const hm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  async function agenda() {
+    const d = ymd(Date.now()), next = ymd(Date.now() + 86400e3);
+    const out = { date: d, google: connected(), events: [], tasks: [],
+      todos: todos ? todos.open().filter((t) => t.due === d).map((t) => t.text).slice(0, 5) : [] };
+    if (!connected()) return out;
+    await Promise.all([
+      calendar.events(d, next).then((xs) => {
+        out.events = xs.filter((e) => !e.diary && (!e.allDay || e.start === d)).sort((a, b) => (a.allDay ? 0 : 1) - (b.allDay ? 0 : 1) || a.start.localeCompare(b.start))
+          .slice(0, 6).map((e) => ({ time: e.allDay ? '' : (e.start < d ? '' : hm(e.start)), title: e.title }));
+      }, () => {}),
+      account.has('tasks') ? tasks.due(d, next, sync && sync.listId()).then((xs) => { out.tasks = xs.filter((t) => !t.done).map((t) => t.title).slice(0, 5); }, () => {}) : null,
+    ]);
+    return out;
   }
   // the calendar window's month: events, and tasks due (not those of the 重要计划 list: they are the items themselves);
   // force: ask Google again (opening the window, 刷新), which also picks up 重要计划 changed in Google
@@ -73,8 +105,10 @@ function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => n
     catch (e) { r = { ok: false, msg: e.message }; }
     if (url.searchParams.get('error')) r = { ok: false, msg: '在 Google 页面上取消了' };
     audit('google-callback', '-', r.ok ? 'ok' : 'failed');
-    // signed in with the calendar of our own allowed: make it (and move the old events there) right away
+    // signed in with the calendar of our own allowed: make it (and move the old events there) right away; what was
+    // waiting is tried again
     if (r.ok && account.has('calendar') && account.status().diary) calendar.target().catch((e) => log('Google 日历：建日历失败：' + e.message));
+    if (r.ok) { setTimeout(() => retry.run(), 3000); lastSign = ''; }
     const to = r.ok ? '/#google=ok' : '/#google=fail';
     send(res, 200, `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="${r.ok ? 0 : 4};url=${to}">` +
       `<title>Google</title><p style="font:14px sans-serif;padding:20px">${r.ok ? '已连接 Google，正在返回 Windose…' : '没能连接 Google：' + esc(r.msg) + '<br>几秒后返回 Windose。'}</p>`, 'text/html; charset=utf-8');
@@ -107,7 +141,8 @@ function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => n
     return true;
   }
 
-  return { handle, handleCallback, onReport, onWeek, onTodos, forReport, events, connected, status };
+  return { handle, handleCallback, onReport, onWeek, onTodos, forReport, events, agenda, connected, status,
+    stop() { clearInterval(watch); retry.stop(); if (sync) sync.stop(); } };
 }
 
 module.exports = { createGoogle };
