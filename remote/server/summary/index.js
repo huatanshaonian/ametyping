@@ -67,7 +67,9 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   async function handle(req, res, url, ip, json) {
     const p = url.pathname;
     if (req.method === 'GET' && p === '/api/search') {
-      json(res, 200, search.search(String(url.searchParams.get('q') || '').slice(0, 200)));
+      const scope = url.searchParams.get('scope') === 'sessions' ? 'sessions' : 'all';   // sessions: the dashboard list
+      json(res, 200, search.search(String(url.searchParams.get('q') || '').slice(0, 200),
+        scope === 'sessions' ? { scope, maxSessions: 200, hitsPerSession: 1 } : {}));
       return true;
     }
     if (req.method === 'GET' && p === '/api/ask') { json(res, 200, { job: qa.state() }); return true; }
@@ -86,6 +88,11 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
     if (req.method === 'GET' && p === '/api/report') {
       const r = reports.get(url.searchParams.get('date'));
       json(res, r ? 200 : 404, r || { error: 'not found' });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/report/session') {        // one conversation's daily notes
+      const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');
+      json(res, 200, { items: machine && id ? reports.sessionNotes(machine, id) : [] });
       return true;
     }
     if (req.method === 'GET' && p === '/api/report/backfill') {       // what a backfill would do (asked before starting it)

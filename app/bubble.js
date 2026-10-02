@@ -277,7 +277,7 @@ function msgEl(m) {
   const d = document.createElement('div');
   d.className = 'm ' + m.role;
   const tm = `<span class="tm">${hhmm(m.t)}</span>`;
-  if (m.role === 'assistant') d.innerHTML = md(m.text);
+  if (m.role === 'assistant' || m.role === 'btw') d.innerHTML = (m.role === 'btw' ? '<b class="btwh">顺带一问的回答</b>' : '') + md(m.text);
   else if (m.role === 'tool') {
     const shown = m.items.slice(-4).map(esc).join(' · ');
     d.innerHTML = `<b>⚙</b> ${m.items.length > 4 ? `…等 ${m.items.length} 步 · ` : ''}${shown}${tm}`;

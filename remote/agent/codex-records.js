@@ -66,6 +66,10 @@ function recordsOf(o) {
     out.push({ role: 'sys', text: '（上下文已压缩）', t });
   } else if (o.type === 'event_msg' && p.type === 'turn_aborted') {
     out.push({ role: 'sys', text: '已中断', t });
+  } else if (o.type === 'event_msg' && p.type === 'token_count' && p.info && p.info.last_token_usage) {
+    // how full the context is ("used/window"), as Codex reports it after each request
+    const used = +p.info.last_token_usage.total_tokens || 0, win = +p.info.model_context_window || 0;
+    if (used > 0) out.push({ role: 'ctx', text: used + '/' + win, t });
   }
   return out;
 }

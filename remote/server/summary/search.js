@@ -32,7 +32,7 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
     for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
       if (!l) continue;
       let r; try { r = JSON.parse(l); } catch { continue; }
-      if (r.role === 'title' || r.role === 'mode') continue;
+      if (r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
       const parts = [r.text || '', ...(r.items || [])];
       if (r.x) parts.push(r.x.cmd || '', ...(r.x.p || []), ...((r.x.todos || []).map((t) => t[0])), r.x.plan ? r.x.plan.slice(0, 4000) : '');
       const text = parts.filter(Boolean).join(' · ');
@@ -49,10 +49,16 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
   }
 
   // q -> { reports: [{ date, headline, snippet }], artifacts: [index entries + snippet], sessions: [{ machine, id, title, hits: [{ t, role, snippet }] }] }
-  function search(q, { maxSessions = 30, hitsPerSession = 3 } = {}) {
+  // scope 'sessions': conversations only (the dashboard list's search)
+  function search(q, { maxSessions = 30, hitsPerSession = 3, scope = 'all' } = {}) {
     const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
     const out = { reports: [], artifacts: [], sessions: [], notes: [] };
     if (!terms.length) return out;
+    if (scope !== 'sessions') everythingElse(terms, out);
+    sessionsMatching(terms, out, maxSessions, hitsPerSession);
+    return out;
+  }
+  function everythingElse(terms, out) {
     for (const it of reports.list()) {
       const r = reports.get(it.date); if (!r) continue;
       const text = reportText(r);
@@ -67,6 +73,8 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
       if (matches(text.toLowerCase(), terms)) out.artifacts.push({ ...a, snippet: snippet(text, terms) });
     }
     out.artifacts.sort((a, b) => String(b.last || '').localeCompare(String(a.last || '')));
+  }
+  function sessionsMatching(terms, out, maxSessions, hitsPerSession) {
     // conversations: newest day first; a session found on several days is one result
     // stored file names are the session ids made safe (store.js): map them back to the sessions
     const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || '_';
@@ -96,7 +104,6 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
       }
     }
     out.sessions = [...bySession.values()].sort((a, b) => b.last - a.last);
-    return out;
   }
   return { search };
 }

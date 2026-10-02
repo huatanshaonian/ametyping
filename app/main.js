@@ -8,6 +8,7 @@ const bridge = require('./bridge');
 const { createRemoteControl } = require('./remote-control');
 const { createMorning } = require('./morning');
 const { createMailNotice } = require('./mail-notice');
+const { adoptRunning } = require('./session-adopt');
 const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -151,6 +152,9 @@ app.whenReady().then(() => {
   }
 
   if (process.env.AME_DEMO) return runDemo(process.env.AME_DEMO);
+  // Claude Code sessions already open (the pet was restarted, the computer woke up): on the list at once
+  setTimeout(() => adoptRunning({ sessions, bridge, home: app.getPath('home'), isClaude: (n) => CLAUDE_EXE.test(n), isTerminal: (n) => TERM_HOSTS.test(n),
+    onChange: () => pushBubble(null) }).catch((e) => console.error('adopt:', e.message)), 1500);
   uIOhook.on('keydown', (e) => { if (win) win.webContents.send('key', { code: e.keycode, down: true }); morning.onKey(); mailNotice.onKey(); });
   uIOhook.on('keyup', (e) => win && win.webContents.send('key', { code: e.keycode, down: false }));
   // any mouse release ends a drag / resize, even if the page never saw the pointerup

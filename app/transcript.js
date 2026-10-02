@@ -65,9 +65,36 @@ function userText(s) {
 // The records one transcript line contributes, unmerged: what the conversation says without the tool output
 // (user / assistant text in full, each tool call as one line). The dashboard agent stores these on the server;
 // the panel merges them (parseLine).
-function recordsOf(o) {
+// /btw (a side question): Claude Code forks a background agent and shows its answer in an overlay; the transcript only
+// has the command's output "⑂ forked <name> (<suffix>)" and, later, a task notification for task "a<name>-…<suffix>"
+// with the answer in <result>. st (any object kept per transcript) pairs the two: the question becomes a user record,
+// the answer a "btw" record. Without st the answers are left out.
+function btwRecords(o, st, t) {
+  if (o.type === 'system' && o.subtype === 'local_command' && o.commandRun && o.commandRun.command === 'btw') {
+    const f = /⑂ forked (\S+) \(([0-9a-f]+)\)/.exec(String(o.content || ''));
+    if (!f) return [];                                             // (no question: just the usage line)
+    if (st) (st.btw = st.btw || new Map()).set(f[1] + '|' + f[2], 1);
+    return [{ role: 'user', text: ('/btw ' + String(o.commandRun.args || '')).trim(), t }];
+  }
+  if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && st.btw && /^<task-notification>/.test(String(o.content || ''))) {
+    const c = String(o.content), id = (/<task-id>([^<]+)<\/task-id>/.exec(c) || [])[1] || '';
+    const res = /<result>([\s\S]*)<\/result>/.exec(c);
+    if (!res || !/<status>completed<\/status>/.test(c)) return [];
+    const fork = [...st.btw.keys()].find((k) => { const [name, suf] = k.split('|'); return id.startsWith('a' + name + '-') && id.endsWith(suf); });
+    if (!fork) return [];
+    // (a resumed fork notifies again: a new answer is a new record, the same one again is not)
+    const seen = (st.btwSeen = st.btwSeen || new Set()), sig = id + '|' + res[1].length + '|' + res[1].slice(0, 80);
+    if (seen.has(sig)) return [];
+    seen.add(sig);
+    return [{ role: 'btw', text: res[1].trim(), t }];
+  }
+  return [];
+}
+
+function recordsOf(o, st) {
   const out = [];
   if (!o || o.isSidechain || o.isMeta) return out;
+  if (o.type === 'system' || o.type === 'queue-operation') return btwRecords(o, st, o.timestamp ? Date.parse(o.timestamp) : Date.now());
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
   if (o.type === 'user' && m) {
@@ -85,6 +112,13 @@ function recordsOf(o) {
         const x = toolExtra(b.name, b.input);
         out.push(x ? { role: 'tool', items: [toolLine(b.name, b.input)], t, x } : { role: 'tool', items: [toolLine(b.name, b.input)], t });
       }
+    }
+    // how full the context is: everything the model read for this reply plus what it wrote (the next request carries
+    // both). "used/window"; the window is not in the transcript (0: the reader decides, see remote/agent/context-window.js)
+    const u = m.usage;
+    if (u && Number.isFinite(u.input_tokens)) {
+      const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+      if (used > 0) out.push({ role: 'ctx', text: used + '/0', t });
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
     const title = o.aiTitle || o.customTitle || o.title;
@@ -104,13 +138,14 @@ function mergeRecords(out, recs) {
     const last = out[out.length - 1];
     if (r.role === 'title') out.title = r.text;
     else if (r.role === 'mode') out.mode = r.text;
+    else if (r.role === 'ctx') out.ctx = r.text;
     else if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid === r.mid) last.text += '\n\n' + r.text;
     else if (r.role === 'tool' && last && last.role === 'tool') { last.items.push(...r.items); last.t = r.t; }
     else out.push(r.role === 'tool' ? { ...r, items: [...r.items] } : { ...r });
   }
 }
 
-function parseLine(o, out) { mergeRecords(out, recordsOf(o)); }
+function parseLine(o, out) { mergeRecords(out, recordsOf(o, out)); }        // (the message list carries the /btw pairing)
 
 // cache: { file, offset, msgs, title } -- returns true when something new was read
 function poll(cache) {

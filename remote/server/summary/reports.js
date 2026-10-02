@@ -43,6 +43,27 @@ function createReports(dir) {
     for (const it of list()) { const r = get(it.date); if (r && !r.brief) return r; }
     return null;
   }
+  // one conversation's notes, day by day (newest first): from every daily report it appears in, and the latest
+  // 「总结到现在」 when that covers time after them. Reports are read once and kept until their file changes.
+  const parsed = new Map();                          // name -> { mtime, sessions }
+  function sessionsOf(name) {
+    let st; try { st = fs.statSync(file(name)); } catch { parsed.delete(name); return []; }
+    const c = parsed.get(name);
+    if (c && c.mtime === st.mtimeMs) return c.sessions;
+    const r = readJson(file(name), {});
+    const v = { mtime: st.mtimeMs, sessions: (r.sessions || []).map((s) => ({ ...s, date: r.date, draft: !!r.draft, brief: !!r.brief, to: r.to })) };
+    parsed.set(name, v);
+    return v.sessions;
+  }
+  function sessionNotes(machine, id) {
+    const out = [];
+    let names = []; try { names = fs.readdirSync(dir); } catch {}
+    const days = names.filter((n) => DAY.test(n.slice(0, -5)) && n.endsWith('.json')).map((n) => n.slice(0, -5)).sort().reverse();
+    for (const date of days) for (const s of sessionsOf(date)) if (s.machine === machine && s.id === id) out.push(s);
+    const d = sessionsOf('draft').find((s) => s.machine === machine && s.id === id);
+    if (d && (!out.length || d.to > out[0].to)) out.unshift(d);
+    return out.map((s) => ({ date: s.date, draft: s.draft, brief: s.brief, minutes: s.minutes, title: s.title, project: s.project, note: s.note || null }));
+  }
   const has = (date) => DAY.test(String(date)) && fs.existsSync(file(date));
 
   const state = () => readJson(path.join(dir, 'state.json'), {});
@@ -52,7 +73,7 @@ function createReports(dir) {
   const cacheGet = (key) => readJson(cacheFile(key), null);
   const cachePut = (key, v) => writeJson(cacheFile(key), v);
 
-  return { get, save, list, latest, has, getWeek, hasWeek, saveWeek, listWeeks, state, setState, cacheGet, cachePut };
+  return { get, save, list, latest, has, sessionNotes, getWeek, hasWeek, saveWeek, listWeeks, state, setState, cacheGet, cachePut };
 }
 
 module.exports = { createReports };

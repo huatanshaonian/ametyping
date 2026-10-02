@@ -21,7 +21,7 @@ const dayOf = (t) => { const d = new Date(Number.isFinite(t) ? t : Date.now()); 
 // tool calls one group; title records are metadata
 function merge(out, recs) {
   for (const r of recs) {
-    if (r.role === 'title' || r.role === 'mode') continue;
+    if (r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
     const last = out[out.length - 1];
     if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid && last.mid === r.mid) last.text += '\n\n' + r.text;
     else if (r.role === 'tool' && last && last.role === 'tool') { last.items = last.items.concat(r.items || []); last.t = r.t; }
@@ -29,7 +29,7 @@ function merge(out, recs) {
   }
   if (out.length > TAIL) out.splice(0, out.length - TAIL);
 }
-const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title', 'mode']);
+const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title', 'mode', 'ctx', 'btw']);
 function clean(r) {
   if (!r || !ROLES.has(r.role)) return null;
   const o = { u: typeof r.u === 'string' ? r.u.slice(0, 64) : null, i: +r.i || 0, role: r.role, t: +r.t || Date.now() };
@@ -74,6 +74,17 @@ function createStore(dir) {
     const recs = (Array.isArray(d.recs) ? d.recs : []).map(clean).filter(Boolean);
     let modeChanged = false;
     for (const r of recs) {
+      // how full the context is ("used/window", app/transcript.js): only the latest is kept, in the state, not the log;
+      // a change of a whole percent is worth showing
+      if (r.role === 'ctx') {
+        const [used, win] = String(r.text || '').split('/').map(Number);
+        if (!(used > 0) || !(win > 0)) continue;
+        const pct = (c) => (c ? Math.floor((c.used / c.win) * 100) : -1);
+        const next = { used: Math.round(used), win: Math.round(win), t: r.t };
+        if (pct(next) !== pct(e.ctx)) modeChanged = true;
+        e.ctx = next;
+        continue;
+      }
       // Claude Code writes the same title line again and again; only a change is worth keeping
       if (r.role === 'title' && (!r.text || r.text.slice(0, 80) === e.title)) continue;
       // the permission mode is written around every message: keep only changes
@@ -160,7 +171,7 @@ function createStore(dir) {
     const out = {};
     for (const [m, ids] of Object.entries(state)) {
       out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
-        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '' }));
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null }));
     }
     return out;
   }

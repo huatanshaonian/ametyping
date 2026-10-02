@@ -15,6 +15,9 @@ const DAY_SCHEMA = obj({
   plans: { type: 'array', items: obj({ title: str, project: str, session: str }) },
   keywords: strs,
   artifacts: { type: 'array', items: obj({ ref: str, note: str }) },
+  // one short note per conversation (the dashboard's 对话摘要): what it did that day, what was planned but not done,
+  // where it stands, key points / ideas
+  notes: { type: 'array', items: obj({ session: str, did: str, open: strs, status: { type: 'string', enum: ['done', 'ongoing', 'paused'] }, ideas: strs }) },
 });
 const SESSION_SCHEMA = obj({ summary: str, category: cat, done: strs, decisions: strs, unfinished: strs });
 
@@ -54,6 +57,7 @@ function dayPrompt({ from, to, sessions, todos = [], artifacts = [], events = []
     '- plans：只列摘录里明确出现「写了计划」的计划（标题、项目、会话编号），没有就返回空数组，不要把未完成事项当成计划。',
     '- 会话编号（sessions、plans 的 session）只填 S1 这样的编号本身。',
     '- artifacts：给「产出物」里的每个文件写一句用途说明（note，不超过 30 字，例如「画 RCS 对比图的脚本」），ref 填编号如 A1；看不出用途就写空字符串。没有产出物就返回空数组。',
+    '- notes：每个会话一条，给以后单独回顾这个会话用，要短：session 填编号；did 一两句说这个会话这段时间做了什么、结果如何；open 列出在这个会话里计划了或提到了但还没做的事（没有就空）；status：done=这个会话要做的事已经完全做完，ongoing=还在进行、之后要继续，paused=中断或搁置了；ideas 列出关键结论、重要发现或产生的新点子（没有就空，不要凑）。杂活会话只写 did 一句，open、ideas 留空。' + (brief ? '（补录：did 一句话，open、ideas 各最多 2 条。）' : ''),
     '- headline：一句话概括这段时间做了什么（不超过 40 字）。keywords：10～20 个方便以后搜索的关键词（项目名、文件名、技术名词，中英文都可以）。',
     ...(events.length ? ['- 「日程」来自用户的 Google 日历，只作背景：和某个项目相关的（会议、汇报、截止等）可以在那个项目的 summary 里顺带提到；没有会话记录对应的日程不要编造工作内容，也不要为日程单独列项目。'] : []),
     '- 用简体中文，简洁，不要客套；不要编造摘录里没有的内容。',

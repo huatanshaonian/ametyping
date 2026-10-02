@@ -55,7 +55,10 @@ export function render(r) {
   const byKey = new Map((r.sessions || []).map((s) => [s.key, s]));
   const sessLink = (key) => {
     const s = byKey.get(key); if (!s) return null;
-    return h('button', { class: 'rp-sess', type: 'button', title: `${s.machine} · ${s.cwd || ''}\n${s.resume || ''}`, text: `${s.title || s.id.slice(0, 8)} · ${s.machine}`,
+    // hover: where it ran, how to resume it, and its own note of the day (对话摘要)
+    const n = s.note, st = n && { done: '已完成', ongoing: '进行中', paused: '搁置' }[n.status];
+    const note = n && n.did ? `\n\n${st ? '【' + st + '】' : ''}${n.did}${n.open.length ? '\n没做：' + n.open.join('；') : ''}${n.ideas.length ? '\n要点：' + n.ideas.join('；') : ''}` : '';
+    return h('button', { class: 'rp-sess', type: 'button', title: `${s.machine} · ${s.cwd || ''}\n${s.resume || ''}${note}`, text: `${s.title || s.id.slice(0, 8)} · ${s.machine}`,
       onclick: () => dashboard.openSession(s.machine, s.id) });
   };
   const project = (p) => h('div', { class: 'rp-proj' },

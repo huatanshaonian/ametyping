@@ -26,6 +26,8 @@ const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
+const { createMarks } = require('./session-marks');
+const { createExport } = require('./session-export');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
@@ -134,12 +136,12 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '' };
+        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -168,6 +170,9 @@ const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.
 const todos = createTodos({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => { broadcast({ t: 'todos' }); google.onTodos(); }, audit: (...a) => audit(...a) });
 // 记事本 (open notepads refresh their list on a change)
 const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'notes' }), audit: (...a) => audit(...a) });
+// 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
+const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
+const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos, reports: () => summary && summary.reports,
@@ -233,11 +238,17 @@ function onAgentMessage(m, raw, ws) {
     if (r.resync != null) { try { ws.send(JSON.stringify({ t: 'sync', offsets: { [d.id]: r.resync } })); } catch {} return; }
     if (r.changed) for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
     // a session only the store knows (e.g. Codex without the pet): the list would not refresh on its own
-    // (and a new permission mode is shown in the list's session details)
+    // (and a new permission mode / context fill is shown in the list's session details)
     if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
+  if (d.t === 'cmds' && Array.isArray(d.list)) {
+    m.cmds = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
+      .map((c) => ({ name: String(c.name), desc: str(c.desc, 120), src: str(c.src, 10) }));
+    return;
+  }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode);
@@ -393,6 +404,18 @@ const server = http.createServer(async (req, res) => {
   // 日报 (summary/index.js)
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
+  if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
+  if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
+    const m = machines.get(String(url.searchParams.get('machine') || ''));
+    return json(res, 200, { list: (m && m.cmds) || [] });
+  }
+  if (req.method === 'GET' && p === '/api/session/export') {
+    const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');
+    const x = machine && id ? exporter.build(machine, id, url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md') : null;
+    if (!x) return send(res, 404, 'not found');
+    audit('session-export', ip, `${machine}|${id}`.slice(0, 160));
+    return send(res, 200, x.body, x.type, { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(x.name)}`, 'Cache-Control': 'no-store' });
+  }
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
