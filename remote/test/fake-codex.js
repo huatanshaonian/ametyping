@@ -10,7 +10,12 @@ process.stdin.on('end', () => {
   if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ args, prompt, proxy: process.env.HTTPS_PROXY || '' }) + '\n');
   if (process.env.FAKE_CODEX_FAIL) { process.stderr.write('ERROR: stream disconnected\n'); process.exit(1); }
   let answer;
-  if (schema.properties.items && /新邮件/.test(prompt)) {
+  if (schema.properties.subject && schema.properties.text && !schema.properties.headline) {
+    // 「让 GPT 起草」: a reply keeps the original subject; the points go into the text
+    const orig = (/^主题：(.*)$/m.exec(prompt) || [])[1] || '';
+    const points = (/^- 他想说的要点：(.*)$/m.exec(prompt) || [])[1] || '';
+    answer = { subject: orig ? 'Re: ' + orig : '关于论文的事', text: `老师您好：\n\n${points}\n\n此致\n敬礼` };
+  } else if (schema.properties.items && /新邮件/.test(prompt)) {
     // the mail triage: by the subject -- 报销 / 提交 / 报名: something to do (the date in the text is the deadline);
     // 院刊 / ResearchGate: papers (the numbered lines with a link); anything else: nothing
     const parts = prompt.split(/^### /m).slice(1);

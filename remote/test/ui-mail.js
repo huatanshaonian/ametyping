@@ -17,11 +17,14 @@ cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...
 const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT; cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')] }; fs.writeFileSync(CFG, JSON.stringify(cfg));
 // two mailboxes in mail.json already: one fine, one whose password is refused
 fs.mkdirSync(path.join(T, 'srv', 'data'), { recursive: true });
-const srvAcc = (id, address, pass, name) => ({ id, address, name, imap: { host: '127.0.0.1', port: IMAP }, smtp: { host: 'mail.cstnet.cn', port: 465 }, pass, added: Date.now() });
+const SMTP = 18842;
+const srvAcc = (id, address, pass, name) => ({ id, address, name, imap: { host: '127.0.0.1', port: IMAP }, smtp: { host: '127.0.0.1', port: SMTP }, pass, signature: `张三\n力学研究所`, added: Date.now() });
 fs.writeFileSync(path.join(T, 'srv', 'data', 'mail.json'), JSON.stringify({ accounts: [srvAcc('a1', 'zhangsan@test.ac.cn', 'right', '所里'), srvAcc('a2', 'zhangsan@ucas.ac.cn', 'old', '国科大')], state: {} }));
 
 cp.execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(T, 'k.pem'), '-out', path.join(T, 'c.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
 const imap = createFakeImap({ key: fs.readFileSync(path.join(T, 'k.pem')), cert: fs.readFileSync(path.join(T, 'c.pem')), users: { 'zhangsan@test.ac.cn': 'right' } });
+const { createFakeSmtp } = require('./fake-smtp');
+const smtp = createFakeSmtp({ key: fs.readFileSync(path.join(T, 'k.pem')), cert: fs.readFileSync(path.join(T, 'c.pem')), users: { 'zhangsan@test.ac.cn': 'right' } });
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 // to: "to|cc"
 const mail = (from, to, subject, text, ago, extra = '') => imap.add(`From: ${from}\r\nTo: ${to.split('|')[0]}\r\n${to.includes('|') ? 'Cc: ' + to.split('|')[1] + '\r\n' : ''}Subject: =?UTF-8?B?${b64(subject)}?=\r\nDate: ${new Date(Date.now() - ago).toUTCString()}\r\n` +
@@ -69,7 +72,7 @@ function login() {
 }
 
 (async () => {
-  await imap.listen(IMAP);
+  await imap.listen(IMAP); await smtp.listen(SMTP);
   const errors = [], res = [];
   const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: 'ignore' });
@@ -139,6 +142,46 @@ function login() {
     chk('the tray opens 邮箱设置: both mailboxes, the refused one says so, the form, the help', /所里/.test(setTxt) && /登录被拒/.test(setTxt) && /添加邮箱/.test(setTxt) && /客户端专用密码/.test(setTxt), setTxt.slice(0, 300));
     await shot('71-mail-settings.png');
     await evalJs("[...document.querySelectorAll('.win')].forEach(w => { const t = w.querySelector('.title'); if (t && t.textContent === '邮箱设置') w.querySelector('.tbtn.close').click(); })"); await sleep(300);
+    // 回复: the compose window filled in; 让 GPT 起草; 发送 (confirmed) -> out by SMTP
+    await evalJs("window.confirm = () => true; window.alert = (m) => { window.__alerted = m; };");
+    await evalJs("[...document.querySelectorAll('.ml-i')].find(i => i.textContent.includes('组会改到')).click()"); await sleep(800);
+    await evalJs("[...document.querySelectorAll('.ml-acts .btn')].find(b => b.textContent === '回复').click()"); await sleep(1500);
+    const comp = await evalJs("(() => { const c = document.querySelector('.mcomp'); if (!c) return null; const f = [...c.querySelectorAll('.mc-row .field')].map(x => x.value); return { fields: f, quote: (c.querySelector('.mc-quote pre') || {}).textContent || '', sig: c.querySelector('.mc-sig').textContent }; })()");
+    chk('回复: a compose window -- from the mailbox, to the sender, Re:, the original to quote, the signature', comp && comp.fields.includes('a1') && comp.fields.includes('"李老师" <li@test.ac.cn>'.replace(/"/g, '')) &&
+      comp.fields.includes('Re: 组会改到周四下午三点') && /写道：/.test(comp.quote) && /张三/.test(comp.sig), comp);
+    await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '让 GPT 起草').click()"); await sleep(300);
+    await evalJs("(() => { const t = document.querySelector('.mc-points'); t.value = '收到，会准时参加'; })()");
+    await evalJs("document.querySelector('.mc-ai .btn.go').click()");
+    for (let i = 0; i < 30 && !(await evalJs("document.querySelector('.mc-text').value.includes('会准时参加')")); i++) await sleep(500);
+    chk('让 GPT 起草: the text written into the editor (nothing sent)', (await evalJs("document.querySelector('.mc-text').value")).includes('收到，会准时参加') && smtp.got.length === 0, await evalJs("document.querySelector('.mc-text').value"));
+    await sleep(1500);
+    await shot('78-mail-compose.png');
+    await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '发送').click()");
+    for (let i = 0; i < 30 && !smtp.got.length; i++) await sleep(500);
+    chk('发送: out by SMTP to the sender, the window closed, told it went', smtp.got.length === 1 && JSON.stringify(smtp.got[0].rcpt) === '["li@test.ac.cn"]' &&
+      await evalJs("!document.querySelector('.mcomp') && /已发出/.test(window.__alerted || '')"), [smtp.got.map((g) => g.rcpt), await evalJs("window.__alerted || ''")]);
+    // Markdown with LaTeX formulas (the viewer's renderer): drawn by KaTeX, prices and code left alone
+    const MD = String.raw`## 散射
+RCS 定义为 $\sigma = \lim_{R\to\infty} 4\pi R^2 \frac{|E_s|^2}{|E_i|^2}$。
+
+$$
+\nabla \times \mathbf{E} = -j\omega\mu\mathbf{H}
+$$
+
+价格 $5 和 $10 不是公式，代码 ` + '`$x$`' + ' 也不是。';
+    const mathOk = await evalJs(`(async () => {
+      const { renderMd } = await import('/js/apps/md.js');
+      const w = document.createElement('div'); w.className = 'md'; w.id = 'mdtest';
+      Object.assign(w.style, { position: 'fixed', left: '20px', top: '20px', width: '640px', background: '#fff', padding: '12px', zIndex: 9999, border: '1px solid #888' });
+      document.body.append(w);
+      await renderMd(w, ${JSON.stringify(MD)}, { machine: 'm', path: '/x/a.md', urls: [], openPath: () => {} });
+      await new Promise((r) => setTimeout(r, 800));
+      return { katex: w.querySelectorAll('.katex').length, display: w.querySelectorAll('.katex-display').length, code: (w.querySelector('code') || {}).textContent, text: w.textContent };
+    })()`);
+    chk('LaTeX in Markdown: an inline and a display formula drawn by KaTeX; prices and code untouched', mathOk && mathOk.katex === 2 && mathOk.display === 1 &&
+      mathOk.text.includes('价格 $5 和 $10') && mathOk.code === '$x$', mathOk);
+    await shot('77-md-math.png');
+    await evalJs("document.getElementById('mdtest').remove()");
     // phone
     await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 780, deviceScaleFactor: 2, mobile: true });
     await sleep(1200);
@@ -150,7 +193,7 @@ function login() {
     await shot('73-mail-phone-read.png');
     ws.close();
   } catch (e) { errors.push('test: ' + e.stack); }
-  finally { try { chrome && chrome.kill(); } catch {} srv.kill(); await imap.close(); }
+  finally { try { chrome && chrome.kill(); } catch {} srv.kill(); await imap.close(); await smtp.close(); }
   for (const r of res) console.log(r);
   console.log(errors.length ? 'page errors:\n' + errors.join('\n') : 'no page errors');
   await sleep(800);

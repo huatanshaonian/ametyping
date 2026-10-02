@@ -12,7 +12,7 @@ const idate = (t) => { const d = new Date(t); const p = (n) => String(n).padStar
 
 // structure: answer BODYSTRUCTURE (false: a server that gives none -- attachments are then taken out of the whole message)
 function createFakeImap({ key, cert, users, uidValidity = 777, structure = true }) {
-  const box = { msgs: [], nextUid: 1, uidValidity };
+  const box = { msgs: [], nextUid: 1, uidValidity, sent: [], nextSent: 1, sentFolder: 'Sent' };     // sent: what APPEND put in the sent folder
   const commands = [];
   const clients = new Set();
   let logins = 0, refused = 0;
@@ -33,8 +33,23 @@ function createFakeImap({ key, cert, users, uidValidity = 777, structure = true 
     let buf = '';
     sock.on('data', (d) => {
       buf += d.toString('latin1');
-      let i;
-      while ((i = buf.indexOf('\r\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 2); handle(c, line); }
+      for (;;) {
+        if (c.lit) {                                         // APPEND's message: so many bytes, then the line's end
+          if (buf.length < c.lit.need + 2) return;
+          const raw = Buffer.from(buf.slice(0, c.lit.need), 'latin1'); buf = buf.slice(c.lit.need).replace(/^\r\n/, '');
+          const { tag, box: name, flags } = c.lit; c.lit = null;
+          const m = { uid: box.nextSent++, raw, flags, box: name };
+          box.sent.push(m);
+          c.write(`${tag} OK [APPENDUID ${box.uidValidity} ${m.uid}] APPEND completed\r\n`);
+          continue;
+        }
+        const i = buf.indexOf('\r\n');
+        if (i < 0) return;
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ap = /^(\S+) APPEND ("(?:[^"\\]|\\.)*"|\S+)\s+(?:\(([^)]*)\)\s+)?(?:"[^"]*"\s+)?\{(\d+)\}$/i.exec(line);
+        if (ap && c.user) { commands.push(line); c.lit = { tag: ap[1], box: ap[2].replace(/^"|"$/g, ''), flags: (ap[3] || '').split(/\s+/).filter(Boolean), need: +ap[4] }; c.write('+ Ready for literal data\r\n'); continue; }
+        handle(c, line);
+      }
     });
   });
 
@@ -93,7 +108,8 @@ function createFakeImap({ key, cert, users, uidValidity = 777, structure = true 
     }
     if (cmd === 'LIST' || cmd === 'LSUB') {                       // (imapflow asks for the delimiter, then INBOX)
       if (/""\s*$/.test(args)) c.write(`* ${cmd} (\\Noselect) "/" ""\r\n`);
-      else if (/INBOX|\*|%/i.test(args)) c.write(`* ${cmd} (\\HasNoChildren) "/" INBOX\r\n`);
+      else if (/[*%]/.test(args)) c.write(`* ${cmd} (\\HasNoChildren) "/" INBOX\r\n` + (box.sentFolder ? `* ${cmd} (\\HasNoChildren \\Sent) "/" "${box.sentFolder}"\r\n` : ''));
+      else if (/INBOX/i.test(args)) c.write(`* ${cmd} (\\HasNoChildren) "/" INBOX\r\n`);
       return ok(`${cmd} completed`);
     }
     if (cmd === 'SEARCH' && uidPrefix) {
@@ -135,7 +151,13 @@ function createFakeImap({ key, cert, users, uidValidity = 777, structure = true 
       const sm = /^([\d:*,]+)\s+([+-])FLAGS(?:\.SILENT)?\s+\(([^)]*)\)/i.exec(args);
       if (!sm) return c.write(`${tag} BAD bad STORE\r\n`);
       if (c.readOnly) return c.write(`${tag} NO mailbox is read-only\r\n`);
-      for (const uid of uidSet(sm[1])) setFlag(uid, sm[2] === '+', c);
+      for (const f of sm[3].split(/\s+/).filter(Boolean)) {
+        for (const uid of uidSet(sm[1])) {
+          if (f.toLowerCase() === SEEN.toLowerCase()) { setFlag(uid, sm[2] === '+', c); continue; }
+          const m = box.msgs.find((x) => x.uid === uid);           // (other flags: \Answered, \Flagged, ...)
+          if (m) m.flags = sm[2] === '+' ? [...new Set([...m.flags, f])] : m.flags.filter((x) => x !== f);
+        }
+      }
       return ok('STORE completed');
     }
     c.write(`${tag} BAD unknown command ${cmd}\r\n`);
