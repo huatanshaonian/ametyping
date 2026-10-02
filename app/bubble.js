@@ -130,9 +130,11 @@ function renderPermissions() {
       JSON.stringify(i, null, 2)].filter(Boolean).join('\n');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
     const choices = [['allow', '允许'], ['deny', '拒绝']];
+    if (p.always) choices.splice(1, 0, ['always', '总是允许']);       // Claude Code's "don't ask again" (what it adds: the tooltip)
     if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理']);
     for (const [choice, label] of choices) {
       const b = document.createElement('button'); b.type = 'button'; b.dataset.choice = choice; b.textContent = label;
+      if (choice === 'always') b.title = '允许，并且以后不再问：' + p.always;
       actions.appendChild(b);
     }
     const status = document.createElement('span'); status.className = 'permission-status';

@@ -1,5 +1,6 @@
 'use strict';
 const { randomUUID } = require('crypto');
+const { alwaysLabel } = require('./permission-rules');
 
 // A pending response is the authority: once it is gone, no UI action can decide it again.
 // How long a card waits: Claude Code shows its own terminal prompt at the same time, so its hook can wait
@@ -32,6 +33,8 @@ function createPermissions(onChange, timeout = WAIT) {
       const id = randomUUID();
       const p = { id, session: d.session, provider: d.provider || 'claude', tool: d.tool, input: d.input || {},
         cwd: d.cwd || '', agentId: d.agentId || '', subagent: d.subagent || '',
+        // what 总是允许 would add (Claude Code's own "don't ask again" suggestions), as one line; '' = no such option
+        always: d.provider === 'codex' ? '' : alwaysLabel(d.suggestions),
         started: Date.now(), res };
       p.close = () => finish(id, undefined, 'closed');
       p.timer = setTimeout(() => finish(id, undefined, 'timeout'), waitFor(p.provider));
@@ -42,11 +45,12 @@ function createPermissions(onChange, timeout = WAIT) {
     },
     list(session) {
       return [...pending.values()].filter((p) => p.session === session)
-        .map(({ id, provider, tool, input, cwd, subagent }) => ({ id, provider, tool, input, cwd, subagent }));
+        .map(({ id, provider, tool, input, cwd, subagent, always }) => ({ id, provider, tool, input, cwd, subagent, always }));
     },
     decide(id, choice) {
       if (choice === 'defer' && pending.get(id)?.provider === 'codex') return finish(id, undefined, 'defer');
-      return ['allow', 'deny'].includes(choice) && finish(id, choice, 'decided');
+      if (choice === 'always' && !pending.get(id)?.always) return false;              // (nothing it could add)
+      return ['allow', 'always', 'deny'].includes(choice) && finish(id, choice, 'decided');
     },
     advance(d) {
       if (!['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'Interrupt'].includes(d.hookEvent)) return;

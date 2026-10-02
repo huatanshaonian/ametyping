@@ -103,7 +103,7 @@ function controlState() {
   return sessions.list().map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s),
     t0: s.t0, last: s.last, lines: s.lines.slice(-8),
-    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent,
+    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
 }

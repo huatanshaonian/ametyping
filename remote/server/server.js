@@ -283,7 +283,7 @@ function onAgentMessage(m, raw, ws) {
       cur.via = VIA.includes(s.via) ? s.via : 'off';
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
-        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), input: str(p.input, 8000) })) : [];
+        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000) })) : [];
     }
     for (const id of [...m.sessions.keys()]) if (!keep.has(id)) m.sessions.delete(id);
     broadcast({ t: 'sessions', data: snapshot() });
@@ -344,7 +344,7 @@ function onBrowserAction(c, d) {
     out = { t: 'key', id: s.id, key: d.key };
     audit('control-key', c.ip, m.name, s.id, d.key);
   } else {
-    if (typeof d.perm !== 'string' || !['allow', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
+    if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
     if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
     out = { t: 'decide', id: s.id, perm: d.perm, choice: d.choice };
     audit('control-decide', c.ip, m.name, s.id, d.choice);

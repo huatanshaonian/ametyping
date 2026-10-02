@@ -227,12 +227,15 @@ function mount(current) {
       if (permCards.has(p.id)) continue;
       let i = {}; try { i = JSON.parse(p.input); } catch {}
       const choices = [['allow', '允许', 'btn go'], ['deny', '拒绝', 'btn no']];
+      if (p.always) choices.splice(1, 0, ['always', '总是允许', 'btn']);   // Claude Code's "Yes, and don't ask again for ..."
       if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理', 'btn']);
       // the buttons right under the title: still in view when the card area is squeezed (it scrolls from the top)
       const card = h('div', { class: 'perm', dataset: { id: p.id } },
         h('div', { class: 'pt', text: `需要你确认 · ${p.tool}${p.subagent ? ' · ' + p.subagent : ''}` }),
         h('div', { class: 'pa' }, ...choices.map(([c, l, cls]) => h('button', { class: cls, type: 'button', dataset: { choice: c }, text: l })),
           h('span', { class: 'ps', text: '回车 = 允许 · 也可在那台机器上回答' })),
+        // what 总是允许 adds, and where (this session / the project's settings)
+        p.always ? h('div', { class: 'pal', text: '总是允许 = 允许，并且以后不再问：' + p.always }) : null,
         h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
           (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }));
       card.dataset.shown = Date.now();
