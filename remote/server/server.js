@@ -28,6 +28,7 @@ const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
 const { createMarks } = require('./session-marks');
 const { createExport } = require('./session-export');
+const searchIdx = require('./search-index');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
@@ -181,8 +182,11 @@ const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.da
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 // with today's agenda (Google events and tasks, 重要计划 due) for the morning bubble; without it if that fails
 const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today }), () => n);
+// the conversations' full-text index (SQLite, data/search.db): follows what the store writes; built in the background
+const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
+if (searchIndex) { store.onAppend((f) => searchIndex.touched(f)); searchIndex.sweep(); }
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
+  resumeCmd, artifacts, todos, notes, searchIndex, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar

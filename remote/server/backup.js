@@ -24,7 +24,7 @@ function createBackup({ serverDir, dataDir, dir, keep = 0, at = '05:30', firstMs
   // (run in the backup folder with a bare file name: GNU tar reads "C:\..." as host:path)
   function tar(out) {
     return new Promise((resolve, reject) => {
-      const p = spawn('tar', ['-czf', path.basename(out), '-C', serverDir, 'config.json', path.relative(serverDir, dataDir).replace(/\\/g, '/')],
+      const p = spawn('tar', ['-czf', path.basename(out), '--exclude=search.db*', '-C', serverDir, 'config.json', path.relative(serverDir, dataDir).replace(/\\/g, '/')],
         { cwd: path.dirname(out), stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
       let err = '';
       p.stderr.on('data', (d) => { err += d; });

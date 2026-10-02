@@ -110,11 +110,15 @@ function createStore(dir) {
     return { ok: true, changed: recs.length > 0, modeChanged };
   }
 
+  // told of every file appended to (the search index reads on from where it stood: server/search-index.js)
+  const appendHooks = [];
+  const onAppend = (fn) => appendHooks.push(fn);
   function flush() {
     for (const [f, lines] of pending) {
       try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); fs.appendFileSync(f, lines.join('\n') + '\n', { mode: 0o600 }); }
       catch (e) { console.error(`写入 ${f} 失败：${e.message}`); return; }  // keep pending; state stays behind the files
       pending.delete(f);
+      for (const fn of appendHooks) { try { fn(f); } catch {} }
     }
     if (!dirty) return;
     try {
@@ -199,7 +203,7 @@ function createStore(dir) {
 
   const offsets = (m) => Object.fromEntries(Object.entries(state[m] || {}).map(([id, e]) => [id, e.off]));
   const has = (m, id) => !!(state[m] && state[m][id]);
-  return { accept, meta, flush, tail, offsets, has, sessions, records, lastActivity };
+  return { accept, meta, flush, tail, offsets, has, sessions, records, lastActivity, onAppend };
 }
 
 module.exports = { createStore };
