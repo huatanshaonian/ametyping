@@ -6,6 +6,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { createDocSearch } = require('./search-docs');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SNIP = 60;
@@ -21,7 +22,9 @@ const matches = (low, terms) => terms.every((t) => low.includes(t));
 // deps: storeDir (data/), reports (reports.js), artifacts (server/artifacts.js or null), sessions() -> store.sessions()
 // notes (server/notes.js, optional): the notepad's notes are searched too
 // index (server/search-index.js, optional): conversations are looked up there once it is ready; scanned until then
-function createSearch({ storeDir, reports, artifacts, notes = null, sessions, index = null }) {
+// mail() -> the mail store (server/mail/store.js) or null: its messages are searched too
+function createSearch({ storeDir, reports, artifacts, notes = null, sessions, index = null, mail = () => null }) {
+  const docs = createDocSearch({ storeDir, reports, notes, artifacts, mail, index, snippet, matches });
   const cache = new Map();                            // file -> { key, lines: [{ t, role, text, low }] }
 
   // a stored conversation file as searchable lines (what was said, tool lines, full commands and paths)
@@ -44,37 +47,16 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions, in
     return lines;
   }
 
-  function reportText(r) {
-    const p = (r.projects || []).map((x) => [x.name, x.summary, ...(x.done || []), ...(x.decisions || []), ...(x.unfinished || [])].join(' '));
-    return [r.headline, ...(r.keywords || []), ...p, ...(r.open || []).map((o) => o.text), ...(r.plans || []).map((x) => x.title),
-      ...(r.artifacts || []).map((a) => `${a.path} ${a.note || ''}`)].filter(Boolean).join(' · ');
-  }
-
-  // q -> { reports: [{ date, headline, snippet }], artifacts: [index entries + snippet], sessions: [{ machine, id, title, hits: [{ t, role, snippet }] }] }
+  // q -> { reports: [{ date, headline, snippet }], artifacts: [index entries + snippet], notes: [{ id, title, updated, snippet }],
+  //        mail: [{ key, acc, subject, from, date, snippet }], sessions: [{ machine, id, title, hits: [{ t, role, snippet }] }] }
   // scope 'sessions': conversations only (the dashboard list's search)
   function search(q, { maxSessions = 30, hitsPerSession = 3, scope = 'all' } = {}) {
     const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-    const out = { reports: [], artifacts: [], sessions: [], notes: [] };
+    const out = { reports: [], artifacts: [], sessions: [], notes: [], mail: [] };
     if (!terms.length) return out;
-    if (scope !== 'sessions') everythingElse(terms, out);
+    if (scope !== 'sessions') docs.search(terms, out);
     sessionsMatching(terms, out, maxSessions, hitsPerSession);
     return out;
-  }
-  function everythingElse(terms, out) {
-    for (const it of reports.list()) {
-      const r = reports.get(it.date); if (!r) continue;
-      const text = reportText(r);
-      if (matches(text.toLowerCase(), terms)) out.reports.push({ date: it.date, headline: r.headline || '', brief: !!r.brief, snippet: snippet(text, terms) });
-    }
-    for (const e of notes ? notes.list() : []) {
-      const n = notes.get(e.id); if (!n) continue;
-      if (matches(n.text.toLowerCase(), terms)) out.notes.push({ id: e.id, title: e.title, updated: e.updated, snippet: snippet(n.text, terms) });
-    }
-    for (const a of artifacts ? artifacts.list() : []) {
-      const text = `${a.path} ${a.note || ''} ${a.machine}`;
-      if (matches(text.toLowerCase(), terms)) out.artifacts.push({ ...a, snippet: snippet(text, terms) });
-    }
-    out.artifacts.sort((a, b) => String(b.last || '').localeCompare(String(a.last || '')));
   }
   function sessionsMatching(terms, out, maxSessions, hitsPerSession) {
     // conversations: newest day first; a session found on several days is one result
@@ -125,7 +107,7 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions, in
       .map(({ seen, full, first, ...s }) => ({ ...s, hits: (full.length ? full : first).sort(newest).slice(0, hitsPerSession)
         .map((l) => ({ t: l.t, role: l.role, snippet: snippet(l.text, terms) })) }));
   }
-  return { search };
+  return { search, syncDocs: docs.syncNow };
 }
 
 module.exports = { createSearch };

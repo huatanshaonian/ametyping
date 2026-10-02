@@ -187,9 +187,9 @@ const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note
 const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...today, mail: mail.morning() } }), () => n);
 // the conversations' full-text index (SQLite, data/search.db): follows what the store writes; built in the background
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
-if (searchIndex) { store.onAppend((f) => searchIndex.touched(f)); searchIndex.sweep(); }
+if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, searchIndex, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
+  resumeCmd, artifacts, todos, notes, searchIndex, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
@@ -201,6 +201,14 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
   audit: (...a) => audit(...a), ask: summary ? (p, sch) => summary.ask(p, sch) : null, reports: () => summary && summary.reports, todos,
   onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
+// the search index built in the background: the conversations, then the documents (reports, notes, artifacts, mail);
+// new mail is indexed a few seconds after it arrives, so a search finds little left to do
+if (searchIndex && summary) {
+  const syncDocs = () => { try { summary.syncSearchDocs(); } catch (e) { console.log('搜索索引：文档同步失败 ' + e.message); } };
+  searchIndex.sweep(() => setImmediate(syncDocs));
+  let docsT = null;
+  mail.onNew(() => { clearTimeout(docsT); docsT = setTimeout(syncDocs, 3000); });
+} else if (searchIndex) searchIndex.sweep();
 // a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
 function mailAlert(alert) {
   broadcast({ t: 'mail-alert', alert });
