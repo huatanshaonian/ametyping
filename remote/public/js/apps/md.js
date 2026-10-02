@@ -1,12 +1,14 @@
 // Markdown in a viewer window: rendered with marked, cleaned with DOMPurify (no scripts, forms, frames, inline
 // styles), then the pictures it references by relative path are fetched from the same remote folder -- the part a
 // plain file manager cannot do. Pictures on the internet are not loaded (the page never talks to other sites).
-import { marked } from '/vendor/marked.esm.js';
+// LaTeX formulas ($$…$$, $…$, \[…\], \(…\)) are drawn by KaTeX (md-math.js).
+import { Marked } from '/vendor/marked.esm.js';
 import DOMPurify from '/vendor/purify.es.js';
 import { h } from '../util.js';
 import * as fsc from '../fs.js';
 import * as rpath from '../rpath.js';
 import { mimeOf } from '../filetypes.js';
+import { createMath, drawMath } from './md-math.js';
 
 const EXTERNAL = /^([a-z][a-z0-9+.-]*:|\/\/)/i;
 
@@ -16,8 +18,10 @@ async function pool(items, n, fn) {
 }
 
 export async function renderMd(el, text, { machine, path, urls, openPath }) {
-  const html = marked.parse(text, { gfm: true });
+  const math = createMath();
+  const html = new Marked({ gfm: true }, { extensions: math.extensions }).parse(text);       // (an instance per page: its own formulas)
   el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'] });
+  await drawMath(el, math.found);
   const dir = rpath.dirname(path);
   const local = (ref) => {
     const r = decodeURI(ref.split(/[?#]/)[0]);

@@ -1,0 +1,1 @@
+katex 0.19.0 (MIT): dist/katex.mjs, dist/katex.min.css, dist/fonts/*.woff2 — copied as is (the browser takes the woff2; the woff / ttf the CSS also names are not needed).
