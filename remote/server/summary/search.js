@@ -1,7 +1,8 @@
 // Search over what the NAS keeps: daily reports, the artifact index, and every stored conversation (data/<day>/
-// <machine>/<session>.jsonl). Plain substring matching -- every word of the query must occur (case-insensitive),
-// which suits Chinese without a tokenizer; newest first. A few MB of text a month: files are read when they change
-// and kept in memory as lines of searchable text.
+// <machine>/<session>.jsonl). Every word of the query must occur (case-insensitive) -- in a report, or somewhere in
+// a conversation (a record holding them all ranks that conversation first; then newest first). Conversations are
+// looked up in the SQLite index (server/search-index.js) once it is built; until then, or if it fails, the files are
+// scanned (read when they change, kept in memory as lines of searchable text).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +20,8 @@ const matches = (low, terms) => terms.every((t) => low.includes(t));
 
 // deps: storeDir (data/), reports (reports.js), artifacts (server/artifacts.js or null), sessions() -> store.sessions()
 // notes (server/notes.js, optional): the notepad's notes are searched too
-function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) {
+// index (server/search-index.js, optional): conversations are looked up there once it is ready; scanned until then
+function createSearch({ storeDir, reports, artifacts, notes = null, sessions, index = null }) {
   const cache = new Map();                            // file -> { key, lines: [{ t, role, text, low }] }
 
   // a stored conversation file as searchable lines (what was said, tool lines, full commands and paths)
@@ -80,6 +82,18 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
     const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || '_';
     const titles = new Map();
     for (const [m, list] of Object.entries(sessions())) for (const s of list) titles.set(safe(m) + '|' + safe(s.id), { ...s, machine: m });
+    if (index && index.ready()) {
+      let found = null;
+      try { found = index.find(terms, { maxSessions, hitsPerSession }); } catch { found = null; }   // (a broken index: scan)
+      if (found) {
+        out.sessions = found.map((f) => {
+          const meta = titles.get(f.machine + '|' + f.session) || {};
+          return { machine: meta.machine || f.machine, id: meta.id || f.session, title: meta.title || meta.project || f.session.slice(0, 8), project: meta.project || '', last: f.last,
+            hits: f.hits.map((h) => ({ t: h.t, role: h.role, snippet: snippet(h.text, terms) })) };
+        });
+        return;
+      }
+    }
     const bySession = new Map();
     let days = []; try { days = fs.readdirSync(storeDir).filter((d) => DAY.test(d)).sort().reverse(); } catch {}
     for (const day of days) {
@@ -89,21 +103,27 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions }) 
         for (const f of files) {
           const id = f.slice(0, -6), key = m + '|' + id;
           for (const l of linesOf(path.join(storeDir, day, m, f))) {
-            if (!matches(l.low, terms)) continue;
+            const has = terms.filter((t) => l.low.includes(t));
+            if (!has.length) continue;
             let s = bySession.get(key);
             if (!s) {
-              if (bySession.size >= maxSessions) continue;
               const meta = titles.get(key) || {};
-              s = { machine: meta.machine || m, id: meta.id || id, title: meta.title || meta.project || id.slice(0, 8), project: meta.project || '', last: 0, hits: [] };
+              s = { machine: meta.machine || m, id: meta.id || id, title: meta.title || meta.project || id.slice(0, 8), project: meta.project || '', last: 0, seen: new Set(), full: [], first: [] };
               bySession.set(key, s);
             }
+            for (const t of has) s.seen.add(t);
             s.last = Math.max(s.last, l.t || 0);
-            if (s.hits.length < hitsPerSession) s.hits.push({ t: l.t, role: l.role, snippet: snippet(l.text, terms) });
+            if (has.length === terms.length) s.full.push(l); else if (has.includes(terms[0])) s.first.push(l);
           }
         }
       }
     }
-    out.sessions = [...bySession.values()].sort((a, b) => b.last - a.last);
+    // every term somewhere in the session (as the index does: search-index.js); a record holding them all ranks first
+    const newest = (a, b) => (b.t || 0) - (a.t || 0);
+    out.sessions = [...bySession.values()].filter((s) => s.seen.size === terms.length)
+      .sort((a, b) => (!!b.full.length - !!a.full.length) || (b.last - a.last)).slice(0, maxSessions)
+      .map(({ seen, full, first, ...s }) => ({ ...s, hits: (full.length ? full : first).sort(newest).slice(0, hitsPerSession)
+        .map((l) => ({ t: l.t, role: l.role, snippet: snippet(l.text, terms) })) }));
   }
   return { search };
 }
