@@ -48,7 +48,7 @@ function createExport({ store, resumeCmd }) {
       if (ymd(m.t) !== day) { day = ymd(m.t); lines.push(md ? `## ${dayTitle(m.t)}` : `==== ${dayTitle(m.t)} ====`, ''); }
       if (m.role === 'tool') { lines.push(md ? `> 工具（${hm(m.t)}）：${m.items.join(' · ')}` : `  · 工具（${hm(m.t)}）：${m.items.join(' · ')}`, ''); continue; }
       if (m.role === 'sys') { lines.push(md ? `*（${m.text}）*` : `（${m.text}）`, ''); continue; }
-      const who = m.role === 'user' ? '我' : bot;
+      const who = m.role === 'user' ? '我' : m.role === 'btw' ? bot + '（顺带一问的回答）' : bot;
       lines.push(md ? `### ${who} · ${hm(m.t)}` : `[${hm(m.t)}] ${who}：`, '', m.text, '');
     }
     if (!msgs.length) lines.push('（这个会话还没有存下内容）');

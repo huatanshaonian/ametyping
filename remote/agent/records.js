@@ -30,8 +30,8 @@ function createReader(file, offset, parse = recordsOf) {
 
 // t0: for a line without its own timestamp (title, permission mode), the time of the line before it in the file --
 // not "now", which would make an old session look active when its history is streamed later
-function slim(o, parse, t0) {
-  return parse(o).map((r, i) => {
+function slim(o, parse, t0, st) {
+  return parse(o, st).map((r, i) => {
     const rec = { u: o.uuid || (o.payload && (o.payload.id || o.payload.call_id)) || null, i, role: r.role, t: o.timestamp || !t0 ? r.t : t0 };
     if (r.text != null) rec.text = r.text.length > MAX_TEXT ? r.text.slice(0, MAX_TEXT) + '\n…（过长，已截断）' : r.text;
     if (r.items) rec.items = r.items;
@@ -68,7 +68,7 @@ function readNext(r) {
     // the directory the session was started in (later lines follow any cd): `claude --resume` looks it up from there
     if (!r.cwd && o && typeof o.cwd === 'string' && o.cwd) r.cwd = o.cwd;
     if (o && o.timestamp) { const t = Date.parse(o.timestamp); if (Number.isFinite(t)) r.lastT = t; }
-    const add = o ? slim(o, r.parse || recordsOf, r.lastT) : [];
+    const add = o ? slim(o, r.parse || recordsOf, r.lastT, r) : [];   // (the reader keeps the /btw pairing)
     for (const a of add) if (a.role === 'ctx' && a.text.endsWith('/0')) a.text = withWindow(r, +a.text.split('/')[0]);
     const addSize = add.length ? JSON.stringify(add).length : 0;
     if (recs.length && size + addSize > MAX_BATCH) break;             // the rest goes in the next batch

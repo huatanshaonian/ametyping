@@ -22,6 +22,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
 const records = require('./records');
+const commands = require('./commands');
 const codex = require('./codex-records');
 const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
@@ -221,6 +222,7 @@ function connect() {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled }));
+    sendCommands(true);
     lastConv.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     tick(true);
@@ -295,6 +297,18 @@ function pushRecords() {
   }
 }
 function sendConv(id) { sendJSON({ t: 'conv', id, msgs: convOf(id) }); }
+
+// this machine's own slash commands, skills and plugin commands (commands.js) for the dashboard's suggestions:
+// on connecting, then whenever a look every 10 minutes finds them changed
+let cmdsSig = '';
+function sendCommands(force) {
+  let list = []; try { list = commands.scan(os.homedir()); } catch {}
+  const sig = JSON.stringify(list);
+  if (!force && sig === cmdsSig) return;
+  cmdsSig = sig;
+  sendJSON({ t: 'cmds', list });
+}
+setInterval(() => sendCommands(false), 10 * 60e3).unref();
 
 // push the session list on a change, and each conversation whose content moved
 const lastConv = new Map();

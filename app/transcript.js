@@ -65,9 +65,36 @@ function userText(s) {
 // The records one transcript line contributes, unmerged: what the conversation says without the tool output
 // (user / assistant text in full, each tool call as one line). The dashboard agent stores these on the server;
 // the panel merges them (parseLine).
-function recordsOf(o) {
+// /btw (a side question): Claude Code forks a background agent and shows its answer in an overlay; the transcript only
+// has the command's output "⑂ forked <name> (<suffix>)" and, later, a task notification for task "a<name>-…<suffix>"
+// with the answer in <result>. st (any object kept per transcript) pairs the two: the question becomes a user record,
+// the answer a "btw" record. Without st the answers are left out.
+function btwRecords(o, st, t) {
+  if (o.type === 'system' && o.subtype === 'local_command' && o.commandRun && o.commandRun.command === 'btw') {
+    const f = /⑂ forked (\S+) \(([0-9a-f]+)\)/.exec(String(o.content || ''));
+    if (!f) return [];                                             // (no question: just the usage line)
+    if (st) (st.btw = st.btw || new Map()).set(f[1] + '|' + f[2], 1);
+    return [{ role: 'user', text: ('/btw ' + String(o.commandRun.args || '')).trim(), t }];
+  }
+  if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && st.btw && /^<task-notification>/.test(String(o.content || ''))) {
+    const c = String(o.content), id = (/<task-id>([^<]+)<\/task-id>/.exec(c) || [])[1] || '';
+    const res = /<result>([\s\S]*)<\/result>/.exec(c);
+    if (!res || !/<status>completed<\/status>/.test(c)) return [];
+    const fork = [...st.btw.keys()].find((k) => { const [name, suf] = k.split('|'); return id.startsWith('a' + name + '-') && id.endsWith(suf); });
+    if (!fork) return [];
+    // (a resumed fork notifies again: a new answer is a new record, the same one again is not)
+    const seen = (st.btwSeen = st.btwSeen || new Set()), sig = id + '|' + res[1].length + '|' + res[1].slice(0, 80);
+    if (seen.has(sig)) return [];
+    seen.add(sig);
+    return [{ role: 'btw', text: res[1].trim(), t }];
+  }
+  return [];
+}
+
+function recordsOf(o, st) {
   const out = [];
   if (!o || o.isSidechain || o.isMeta) return out;
+  if (o.type === 'system' || o.type === 'queue-operation') return btwRecords(o, st, o.timestamp ? Date.parse(o.timestamp) : Date.now());
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
   if (o.type === 'user' && m) {
@@ -118,7 +145,7 @@ function mergeRecords(out, recs) {
   }
 }
 
-function parseLine(o, out) { mergeRecords(out, recordsOf(o)); }
+function parseLine(o, out) { mergeRecords(out, recordsOf(o, out)); }        // (the message list carries the /btw pairing)
 
 // cache: { file, offset, msgs, title } -- returns true when something new was read
 function poll(cache) {

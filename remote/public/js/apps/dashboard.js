@@ -6,6 +6,8 @@ import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { createList } from './dash-list.js';
 import { createNotes } from './dash-notes.js';
+import { createBtw } from './dash-btw.js';
+import { createSlash } from './dash-slash.js';
 
 // the reply box's hint, by how the session can be reached
 const PLACEHOLDER = {
@@ -66,9 +68,15 @@ function mount(current) {
   kbdBtn.addEventListener('click', () => { showKeys = !showKeys; prefs.set('dash.keys', showKeys); renderControls(); });
   // the session's permission mode; a click cycles it like Shift+Tab in the terminal
   const modeBtn = h('button', { class: 'btn mode', type: 'button', hidden: true, text: '模式？' });
-  const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn);
+  // "/" in the reply box: suggestions of the session's machine's commands (dash-slash.js)
+  const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), onFill: () => say.dispatchEvent(new Event('input')) });
+  const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn, slash.el);
+  // /btw answers pop up over the conversation (dash-btw.js); a click on one in the conversation opens it again
+  const btw = createBtw({ md: (t) => md(t) });
+  const btwText = new WeakMap();                     // answer element -> its text
+  convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); if (b) btw.show(b.dataset.q || '', btwText.get(b)); });
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
-    resume, notes.el, convEl, permsEl, note, keys, compose);
+    resume, notes.el, convEl, btw.el, permsEl, note, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
   const root = h('div', { class: 'dash' }, side, right);
 
@@ -270,6 +278,7 @@ function mount(current) {
     const d = h('div', { class: 'm ' + m.role });
     const tm = `<span class="tm">${m.t ? hhmm(m.t) : ''}</span>`;
     if (m.role === 'assistant') d.innerHTML = md(m.text || '');
+    else if (m.role === 'btw') { d.innerHTML = '<div class="btwh">顺带一问的回答 · 点开单独看</div>' + md(m.text || ''); d.title = '点开单独看'; }
     else if (m.role === 'tool') d.innerHTML = `<b>⚙</b> ${(m.items || []).slice(-5).map(esc).join(' · ')}${tm}`;
     else if (m.role === 'user') { d.textContent = m.text || ''; d.insertAdjacentHTML('beforeend', tm); }
     else d.textContent = m.text || '';
@@ -279,6 +288,9 @@ function mount(current) {
     const atBottom = convEl.scrollHeight - convEl.scrollTop - convEl.clientHeight < 60;
     if (!msgs.length) { convEl.replaceChildren(h('div', { class: 'pick', text: '这个会话还没有内容。' })); return; }
     convEl.replaceChildren(...msgs.map(msgEl));
+    // a /btw answer remembers its question (shown with it when clicked)
+    let q = '';
+    msgs.forEach((m, i) => { if (m.role === 'user' && /^\/btw(\s|$)/.test(m.text || '')) q = m.text; if (m.role === 'btw') { convEl.children[i].dataset.q = q; btwText.set(convEl.children[i], m.text); } });
     if (atBottom || convEl.dataset.for !== sel) convEl.scrollTop = convEl.scrollHeight;
     convEl.dataset.for = sel;
   }
@@ -290,7 +302,7 @@ function mount(current) {
       const key = d.machine + '|' + d.id;
       convCache.delete(key); convCache.set(key, d.msgs || []);
       if (convCache.size > CONV_CACHE) convCache.delete(convCache.keys().next().value);
-      if (sel === key) renderConv(d.msgs || []);
+      if (sel === key) { renderConv(d.msgs || []); btw.update(key, d.msgs || []); }
     }),
     net.on('open', () => { if (sel) { const [machine, id] = sel.split('|'); net.send({ t: 'watch', machine, id }); } }),
   ];
