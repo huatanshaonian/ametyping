@@ -8,6 +8,7 @@ export const EVENTS = [
   ['shutdown', '注销', 'shutdown'],
   ['perm', '出现新的待确认', 'notify'],
   ['done', '会话完成', 'chimes'],
+  ['mail', '邮件提醒（要办的通知、推荐文献）', 'notify'],
   ['error', '操作失败', 'chord'],
   ['recycle', '删除壁纸', 'recycle'],
 ];

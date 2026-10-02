@@ -46,3 +46,26 @@
 .ml-i .tag.n { color: var(--muted); border-style: dotted; }
 .ml-acts { margin-top: 6px; } .ml-acts .btn { padding: 1px 10px; }
 .ml-text a { color: var(--border); text-decoration: underline; word-break: break-all; }
+/* what the model made of a mail (the list's line, the message's box) and 邮件提醒 (.mal) */
+.ml-t em { font-style: normal; color: var(--bad); }
+.tag.k-action { color: #fff !important; background: var(--bad); border-color: var(--bad); }
+.tag.k-notice { color: var(--warn) !important; }
+.tag.k-reading { color: var(--ok-text) !important; }
+.tag.fun { color: var(--accent-muted); }
+.ml-i .tag.k-action, .ml-i .tag.k-notice, .ml-i .tag.k-reading { margin-right: 3px; }
+.ml-judge { margin: 8px 12px 0; padding: 6px 10px; border: 1px dashed var(--edge); background: var(--tint); font-size: 12.5px; line-height: 1.7; }
+.ml-judge .tag, .mal-i .tag { font-style: normal; font-size: 11px; padding: 0 4px; border: 1px solid; }
+.ml-judge q, .mal-due q { display: block; color: var(--muted); font-size: 12px; } .ml-judge q::before, .mal-due q::before { content: '原文：'; }
+.mal-picks { margin: 4px 0; padding-left: 18px; } .mal-picks a { color: var(--border); } .mal-picks small { color: var(--muted); }
+.mal { padding: 8px 12px; font-size: 13px; line-height: 1.6; overflow-y: auto; position: absolute; inset: 0; }
+.mal-i { padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--edge); border-left: 4px solid var(--edge); background: var(--body); }
+.mal-i.k-action { border-left-color: var(--bad); } .mal-i.k-notice { border-left-color: var(--warn); } .mal-i.k-reading { border-left-color: var(--ok-text); }
+.mal-h b { margin-left: 4px; color: var(--ink); }
+.mal-s { font-size: 12px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mal-todo span, .mal-due span { color: var(--muted); }
+.mal-due.late { color: var(--bad); }
+.mal-i .gbtns { margin: 6px 0 0; flex-wrap: wrap; }
+.mal-done summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 6px 0; }
+.mla-int { resize: vertical; font: inherit; }
+#mbell { border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 1px; cursor: pointer; color: var(--bad); font-size: 11px; }
+#mbell img { width: 16px; height: 16px; }

@@ -43,16 +43,18 @@ function createMailStore({ dataDir }) {
   }
 
   const has = (key) => index.has(key);
-  // r: parse.js's record + { key, acc, uid }; false when it is already there
+  // r: parse.js's record + { key, acc, uid } -> the message as kept (no text; with its dup fingerprint), or null when it
+  // is already there
   function add(r) {
-    if (index.has(r.key) || (r.mid && byMid.has(r.acc + '|' + r.mid))) return false;
+    if (index.has(r.key) || (r.mid && byMid.has(r.acc + '|' + r.mid))) return null;
     const dir = path.join(root, r.acc);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const rec = { ...r, dup: dupOf(r) };
     fs.appendFileSync(path.join(dir, monthOf(r.date) + '.jsonl'), JSON.stringify(rec) + '\n', { mode: 0o600 });
-    index.set(r.key, head(rec));
+    const h = head(rec);
+    index.set(r.key, h);
     if (r.mid) byMid.set(r.acc + '|' + r.mid, r.key);
-    return true;
+    return h;
   }
   // the whole message (with its text; read / unread as now)
   function get(key) {

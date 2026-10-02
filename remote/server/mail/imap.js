@@ -20,7 +20,8 @@ const CUT = 3 * 1024 * 1024;
 const BATCH = 20;
 
 // account: accounts.get(id) (with the password); st / setState: its { uv, lastUid, lastSync };
-// onNew(heads): messages just stored; onSeen(keys): read / unread changed; onStatus(): status changed.
+// onNew(heads, { initial }): messages just stored (initial: the first sync's, from before); onSeen(keys): read /
+// unread changed; onStatus(): status changed.
 // client(options): ImapFlow (tests: a stand-in)
 function createSyncer({ account, state, setState, store, onNew = () => {}, onSeen = () => {}, onStatus = () => {}, log = () => {}, client: makeClient = (o) => new ImapFlow(o) }) {
   let st = { state: 'connecting', error: '', auth: false, lastSync: state().lastSync || 0 };
@@ -114,6 +115,7 @@ function createSyncer({ account, state, setState, store, onNew = () => {}, onSee
     const uv = String(cl.mailbox.uidValidity);
     let s = state();
     if (s.uv !== uv) { s = { uv, lastUid: 0 }; setState(account.id, s); }
+    const initial = !s.lastUid;
     let uids;
     if (!s.lastUid) uids = (await cl.search({ since: new Date(Date.now() - FIRST_DAYS * 86400e3) }, { uid: true })) || [];
     else uids = ((await cl.search({ uid: `${s.lastUid + 1}:*` }, { uid: true })) || []).filter((u) => u > s.lastUid);
@@ -129,7 +131,8 @@ function createSyncer({ account, state, setState, store, onNew = () => {}, onSee
         try {
           const r = await parse({ ...m, cut: (m.size || 0) > CUT }, account.address);
           const rec = { key, acc: account.id, uid: Number(m.uid), ...r };
-          if (store.add(rec)) { const { text, ...h } = rec; got.push(h); }
+          const h = store.add(rec);                     // (as kept: with the fingerprint the triage goes by)
+          if (h) got.push(h);
         } catch (e) { log(`邮件 ${account.address}：第 ${m.uid} 封解析失败 ${e.message}`); }
       }
       const top = Math.max(s.lastUid || 0, ...part);
@@ -137,7 +140,7 @@ function createSyncer({ account, state, setState, store, onNew = () => {}, onSee
     }
     set({ lastSync: Date.now(), error: '' });
     setState(account.id, { lastSync: Date.now() });
-    if (got.length) { log(`邮件 ${account.address}：收到 ${got.length} 封`); onNew(got); }
+    if (got.length) { log(`邮件 ${account.address}：收到 ${got.length} 封`); onNew(got, { initial }); }
   }
 
   function start() {

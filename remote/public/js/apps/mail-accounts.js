@@ -20,7 +20,21 @@ const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d
 function mount() {
   const msg = h('p', { class: 'gnote' });
   const rows = h('div', { class: 'mla-rows' }), formBox = h('div');
-  const root = h('div', { class: 'mla' }, msg, rows, formBox,
+  // the research interests recommended papers are judged by: inferred from the daily reports, plus your own words
+  const guess = h('div', { class: 'ghint' });
+  const extra = h('textarea', { class: 'field mla-int', rows: 3, placeholder: '研究方向补充（可不填），例如：电磁散射、RCS、超表面、FDTD；也想看看机器学习在电磁里的应用' });
+  const intMsg = h('span', { class: 'ghint' });
+  const interests = h('div', { class: 'mla-form' }, h('b', { text: '推荐文献按什么判断' }), guess, extra,
+    h('div', { class: 'gbtns' }, h('button', { class: 'btn', type: 'button', text: '保存', onclick: async () => {
+      const r = await net.post('/api/mail/interests', { text: extra.value });
+      intMsg.textContent = r.ok ? '已保存' : r.msg || '没能保存';
+    } }), intMsg));
+  (async () => {
+    let r = {}; try { r = await (await fetch('/api/mail/interests')).json(); } catch { return; }
+    guess.textContent = '从工作日报推断：' + ([...(r.projects || []), ...(r.keywords || []).slice(0, 12)].join('、') || '（日报还不多，暂时推断不出来）');
+    extra.value = r.extra || '';
+  })();
+  const root = h('div', { class: 'mla' }, msg, rows, formBox, interests,
     h('div', { class: 'ghint mla-help' },
       h('p', { text: '密码要用「客户端专用密码」（邮箱绑定了手机后，第三方程序不能用登录密码）：网页邮箱 → 设置 → 邮箱密码 → 点「+」→ 短信验证 → 起个名字（例如 Windose），把生成的密码填在这里。两个邮箱各生成一个。' }),
       h('p', { text: '邮件只读不改：不会标成已读，也不会移动或删除邮箱里的信。密码只保存在群晖上。' })));

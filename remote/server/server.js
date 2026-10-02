@@ -186,8 +186,10 @@ const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), c
   } });
 const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
 // 邮件: the mailboxes kept in step on the NAS (mail/index.js); open pages are told about new mail / account changes
+// new mail is read by the model (the daily report's, mail/triage.js); an alert goes to open pages (sound, the phone buzzes)
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
-  audit: (...a) => audit(...a) });
+  audit: (...a) => audit(...a), ask: summary ? (p, sch) => summary.ask(p, sch) : null, reports: () => summary && summary.reports, todos,
+  onAlert: (alert) => broadcast({ t: 'mail-alert', alert }), triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup, log: console.log });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }

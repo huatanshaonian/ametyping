@@ -1,13 +1,15 @@
 // 邮件: the mailboxes kept on the NAS (remote/server/mail). The list on the left (newest first, unread in bold; 直 sent
 // to you, 抄 a copy, 群 a list or bulk mail, 附 attachments; the same mail in both mailboxes once, ×2), the message on
 // the right with its links clickable and 标为已读 / 未读 (in the mailboxes themselves, every copy); a narrow window
-// shows one side at a time.
+// shows one side at a time. What the model made of a mail (mail/triage.js) is shown with it: 要办 / 通知 / 推荐, one
+// line saying what it is, the deadline; the message adds what to do and the papers it picked.
 // The mailboxes are set up in 设置 (mail-accounts.js). New mail and account changes arrive by the server's 'mail'
 // event. open(key) shows one message.
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
 import * as settings from './mail-accounts.js';
+import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (also puts the bell in the tray)
 
 let app = null;
 const pad = (n) => String(n).padStart(2, '0');
@@ -63,9 +65,10 @@ function mount(first) {
   const syncBtn = h('button', { class: 'btn', type: 'button', text: '收信', title: '现在就看看有没有新邮件' });
   const setBtn = h('button', { class: 'btn', type: 'button', text: '设置', title: '添加 / 修改邮箱' });
   const allBtn = h('button', { class: 'btn', type: 'button', text: '全部标为已读', title: '列表里未读的都标为已读（邮箱里也是）' });
+  const alertBtn = h('button', { class: 'btn', type: 'button', text: '提醒', title: 'GPT 读过新邮件后觉得要告诉你的', onclick: () => showAlerts() });
   const listEl = h('div', { class: 'ml-list' });
   const view = h('div', { class: 'ml-view' });
-  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, allBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
+  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, allBtn, alertBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
   let accounts = [], items = [], cur = null, more = false;
 
   const accOf = (id) => accounts.find((a) => a.id === id);
@@ -104,7 +107,7 @@ function mount(first) {
         m.bulk ? h('i', { class: 'tag b', text: '群', title: '邮件列表 / 群发' }) : null,
         m.att && m.att.length ? h('i', { class: 'tag a', text: '附', title: m.att.map((a) => a.name).join('、') }) : null,
         h('span', { text: m.subject || '（无主题）' })),
-      h('div', { class: 'ml-l3', text: m.snippet || '' })));
+      ...triaged(m)));
     if (more) rows.push(h('button', { class: 'btn ml-more', type: 'button', text: '更早的邮件', onclick: () => loadList(true) }));
     listEl.replaceChildren(...(rows.length ? rows : [h('p', { class: 'ml-empty', text: accounts.length ? '这里还没有邮件。第一次会收最近 30 天的。' : '先点「设置」添加邮箱。' })]));
   }
@@ -116,6 +119,14 @@ function mount(first) {
     if (!r.ok) { status.textContent = r.msg || '没能改'; status.classList.add('bad'); return; }
     await loadList(); showStatus();
     if (cur) show(cur, true);
+  }
+  // the model's view in the list: its label (要办 / 通知 / 推荐; nothing for the rest), the deadline, its one line
+  function triaged(m) {
+    const t = m.t;
+    if (!t) return [h('div', { class: 'ml-l3', text: m.snippet || '' })];
+    const k = kindOf(t.important || t.kind === 'reading' ? t.kind : '');
+    return [h('div', { class: 'ml-l3 ml-t' }, k ? h('i', { class: 'tag ' + k[1], text: k[0] }) : null,
+      t.deadline ? h('em', { text: '截止 ' + t.deadline.slice(5).replace('-', '/') + ' ' }) : null, h('span', { text: t.summary || m.snippet || '' }))];
   }
   async function show(key, quiet) {
     let m = null; try { const r = await fetch('/api/mail/msg?key=' + encodeURIComponent(key)); if (r.ok) m = await r.json(); } catch {}
@@ -140,11 +151,23 @@ function mount(first) {
       m.att && m.att.length ? line('附件', m.att.map((x) => `${x.name}（${kb(x.size)}）`).join('，')) : null,
       h('div', { class: 'ml-acts' }, h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
         onclick: () => mark(copies.map((c) => c.key), unread) }))),
+    m.t ? judged(m.t) : null,
     h('pre', { class: 'ml-text' }, ...(m.text ? linked(m.text) : [document.createTextNode('（没有正文）')])));
     if (!quiet) view.scrollTop = 0;
     root.classList.add('reading');
   }
 
+  // what the model made of it, above the text
+  function judged(t) {
+    const k = kindOf(t.important || t.kind === 'reading' ? t.kind : '');
+    return h('div', { class: 'ml-judge' },
+      h('div', {}, h('b', { text: 'GPT：' }), k ? h('i', { class: 'tag ' + k[1], text: k[0] }) : h('i', { class: 'tag', text: t.kind === 'notice' ? '通知（与你关系不大）' : '不用管' }), ' ' + (t.summary || '')),
+      t.todo ? h('div', {}, h('b', { text: '要做：' }), t.todo) : null,
+      t.deadline ? h('div', {}, h('b', { text: '截止：' }), due(t.deadline), t.deadlineText ? h('q', { text: t.deadlineText }) : null) : null,
+      t.picks && t.picks.length ? h('ul', { class: 'mal-picks' }, ...t.picks.map((p) => h('li', {},
+        p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('span', { text: p.title }),
+        p.fun ? h('i', { class: 'tag fun', text: '有趣' }) : null, h('small', { text: ' ' + p.why })))) : null);
+  }
   listEl.addEventListener('click', (e) => { const it = e.target.closest('.ml-i'); if (it) show(it.dataset.key); });
   accSel.addEventListener('change', () => { cur = null; view.replaceChildren(); showStatus(); loadList(); });
   syncBtn.addEventListener('click', async () => {
@@ -160,7 +183,7 @@ function mount(first) {
     if (confirm(`把列表里 ${items.filter((m) => !m.seen).length} 封未读的都标为已读？（邮箱里也会变成已读）`)) mark(keys, true);
   });
 
-  const off = net.on('mail', (d) => { if (d && (d.what === 'new' || d.what === 'seen')) loadList(); else loadAccounts(); });
+  const off = net.on('mail', (d) => { if (d && (d.what === 'new' || d.what === 'seen' || d.what === 'alerts')) loadList(); else loadAccounts(); });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 620));
   ro.observe(root);
   view.replaceChildren(h('p', { class: 'ml-empty', text: '点左边的一封邮件看全文。' }));
