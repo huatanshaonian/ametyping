@@ -11,6 +11,7 @@ import * as net from '../net.js';
 import * as settings from './mail-accounts.js';
 import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (also puts the bell in the tray)
 import { openUrl } from './viewer.js';
+import { compose, openDraft } from './mail-compose.js';
 import { kindOf as fileKind } from '../filetypes.js';
 
 let app = null;
@@ -53,6 +54,19 @@ async function checkTray() {
 net.on('mail', (d) => { if (!d || d.what !== 'new') checkTray(); });
 net.on('status', (up) => { if (up) checkTray(); });
 
+// 草稿: the mail not sent yet, newest first; a click carries on with it
+let draftsWin = null;
+async function showDrafts() {
+  let items = []; try { items = (await (await fetch('/api/mail/drafts')).json()).items || []; } catch {}
+  const MODE = { new: '新邮件', reply: '回复', all: '回复全部', forward: '转发' };
+  const list = h('div', { class: 'mal' }, ...(items.length ? items.map((x) => h('div', { class: 'mal-i', style: 'cursor:pointer', onclick: () => { openDraft(x.id); } },
+    h('div', { class: 'mal-h' }, h('i', { class: 'tag', text: MODE[x.mode] || '新邮件' }), h('b', { text: x.subject || '（无主题）' })),
+    h('div', { class: 'mal-s', text: `给 ${x.to || '（还没填）'} · ${new Date(x.updated).toLocaleString()}` }))) : [h('p', { class: 'ml-empty', text: '没有草稿。' })]));
+  if (draftsWin && wm.has('mail-drafts')) { draftsWin.replaceChildren(list); wm.open({ id: 'mail-drafts' }); return; }
+  draftsWin = h('div', {}, list);
+  wm.open({ id: 'mail-drafts', title: '草稿', icon: '/icons/outlook_express-16.png', content: draftsWin, width: 460, height: 420, onClose: () => { draftsWin = null; } });
+}
+
 export function open(key) {
   if (app) { wm.open({ id: 'mail' }); if (typeof key === 'string') app.show(key); return; }
   app = mount(typeof key === 'string' ? key : null);
@@ -70,7 +84,9 @@ function mount(first) {
   const alertBtn = h('button', { class: 'btn', type: 'button', text: '提醒', title: 'GPT 读过新邮件后觉得要告诉你的', onclick: () => showAlerts() });
   const listEl = h('div', { class: 'ml-list' });
   const view = h('div', { class: 'ml-view' });
-  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, allBtn, alertBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
+  const newBtn = h('button', { class: 'btn', type: 'button', text: '写信', onclick: () => compose({ mode: 'new', acc: accSel.value }) });
+  const draftBtn = h('button', { class: 'btn', type: 'button', text: '草稿', title: '没写完的信（存在群晖上）', onclick: () => showDrafts() });
+  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, newBtn, draftBtn, allBtn, alertBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
   let accounts = [], items = [], cur = null, more = false;
 
   const accOf = (id) => accounts.find((a) => a.id === id);
@@ -151,8 +167,12 @@ function mount(first) {
         return (names.length > 1 ? `${names.join('、')} 各收到一封` : `${names[0]} 收到 ${copies.length} 封`) + '（内容相同，只显示一封）';
       })()) : null,
       m.att && m.att.length ? h('div', { class: 'ml-hl' }, h('b', { text: '附件' }), h('span', { class: 'ml-atts' }, ...m.att.map((x, i) => attLink(m, x, i)))) : null,
-      h('div', { class: 'ml-acts' }, h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
-        onclick: () => mark(copies.map((c) => c.key), unread) }))),
+      h('div', { class: 'ml-acts' },
+        h('button', { class: 'btn', type: 'button', text: '回复', onclick: () => compose({ mode: 'reply', key: m.key }) }),
+        h('button', { class: 'btn', type: 'button', text: '回复全部', onclick: () => compose({ mode: 'all', key: m.key }) }),
+        h('button', { class: 'btn', type: 'button', text: '转发', onclick: () => compose({ mode: 'forward', key: m.key }) }),
+        h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
+          onclick: () => mark(copies.map((c) => c.key), unread) }))),
     m.t ? judged(m.t) : null,
     h('pre', { class: 'ml-text' }, ...(m.text ? linked(m.text) : [document.createTextNode('（没有正文）')])));
     if (!quiet) view.scrollTop = 0;

@@ -1,5 +1,5 @@
 // 邮箱账号 (中国科技网 / any IMAP + SMTP mailbox): <dataDir>/mail.json, mode 600 --
-//   { accounts: [{ id, address, name, imap: { host, port }, smtp: { host, port }, pass, added }],
+//   { accounts: [{ id, address, name, imap: { host, port }, smtp: { host, port }, pass, signature, added }],
 //     state: { <id>: { uv, lastUid, lastSync } } }
 // pass is the mailbox's 客户端专用密码 (a password for mail clients only, made in the webmail's settings); it never
 // leaves this file (the web API gets the accounts without it).
@@ -19,7 +19,7 @@ function createAccounts({ dataDir }) {
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
   const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
 
-  const pub = (a) => ({ id: a.id, address: a.address, name: a.name, imap: a.imap, smtp: a.smtp, added: a.added });
+  const pub = (a) => ({ id: a.id, address: a.address, name: a.name, imap: a.imap, smtp: a.smtp, signature: a.signature || '', added: a.added });
   const list = () => st.accounts.map(pub);
   const get = (id) => st.accounts.find((a) => a.id === id) || null;      // (with the password: for the mail modules only)
   const all = () => st.accounts.slice();
@@ -38,7 +38,9 @@ function createAccounts({ dataDir }) {
     const pass = d.pass != null && String(d.pass) !== '' ? String(d.pass) : old ? old.pass : '';
     if (!pass || pass.length > 200) return { msg: '请填客户端专用密码' };
     const name = String(d.name != null ? d.name : old ? old.name : '').trim().slice(0, 40) || address.split('@')[0];
-    return { address, name, imap, smtp, pass };
+    // the signature put under a new mail / a reply (kept as written)
+    const signature = String(d.signature != null ? d.signature : old ? old.signature || '' : '').replace(/\r\n/g, '\n').slice(0, 1000);
+    return { address, name, imap, smtp, pass, signature };
   }
 
   function add(d) {

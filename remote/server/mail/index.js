@@ -21,16 +21,18 @@ const { createMailStore } = require('./store');
 const { createSyncer } = require('./imap');
 const { createTriage } = require('./triage');
 const { fetchAttachment } = require('./attach');
+const { createCompose } = require('./compose');
 
 // an attachment shown in the page only when it cannot run anything there; anything else is a download
 const INLINE = /^(application\/pdf|image\/(png|jpeg|gif|webp|bmp)|text\/plain)$/i;
 const ATT_MAX = 100 * 1024 * 1024;
 
-function createMail({ dataDir, onChange = () => {}, log = console.log, audit = () => {}, client, ask = null, reports = () => null, todos = null, onAlert = () => {}, triageWaitMs }) {
+function createMail({ dataDir, onChange = () => {}, log = console.log, audit = () => {}, client, transport, ask = null, reports = () => null, todos = null, onAlert = () => {}, triageWaitMs }) {
   const accounts = createAccounts({ dataDir });
   const store = createMailStore({ dataDir });
   const triage = createTriage({ dataDir, store, accounts, ask, reports, log, waitMs: triageWaitMs, onChange: () => onChange('alerts'),
     onAlert: (a) => { try { onAlert(a); } catch (e) { log('邮件提醒：' + e.message); } } });
+  const compose = createCompose({ dataDir, accounts, store, ask, log, audit, client, transport });
   const syncers = new Map();                          // account id -> syncer
   const listeners = new Set();                        // (heads) => {}: other modules told about new mail
 
@@ -64,6 +66,8 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;
+    // writing and sending (compose.js; before anything reads the body: an upload is the file itself)
+    if (await compose.handle(req, res, url, ip, json, readBody, fresh)) return true;
     if (req.method === 'GET' && p === '/api/mail') { json(res, 200, { accounts: status() }); return true; }
     if (req.method === 'GET' && p === '/api/mail/list') {
       const before = +url.searchParams.get('before') || Infinity, n = Math.min(+url.searchParams.get('n') || 50, 200);

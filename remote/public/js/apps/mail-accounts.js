@@ -46,6 +46,8 @@ function mount() {
     const f = (ph, v, type = 'text') => h('input', { class: 'field', placeholder: ph, value: v || '', type, autocomplete: 'off' });
     const address = f('邮箱地址，例如 zhangsan@xxx.ac.cn', a && a.address);
     const name = f('显示名（可不填，例如「所里」）', a && a.name);
+    const sig = h('textarea', { class: 'field mla-int', rows: 3, placeholder: '签名（可不填），写信时自动加在正文后面，例如：张三 / 中国科学院力学研究所（可以写多行）' });
+    sig.value = (a && a.signature) || '';
     const pass = f(a ? '客户端专用密码（不改就留空）' : '客户端专用密码', '', 'password');
     const imapHost = f('收件服务器', a ? a.imap.host : 'mail.cstnet.cn'), imapPort = f('端口', a ? a.imap.port : 993);
     const smtpHost = f('发件服务器', a ? a.smtp.host : 'mail.cstnet.cn'), smtpPort = f('端口', a ? a.smtp.port : 465);
@@ -53,12 +55,12 @@ function mount() {
       h('div', { class: 'mla-srv' }, h('span', { text: '收件 IMAP（SSL）' }), imapHost, imapPort),
       h('div', { class: 'mla-srv' }, h('span', { text: '发件 SMTP（SSL）' }), smtpHost, smtpPort));
     const save = h('button', { class: 'btn go', type: 'button', text: a ? '保存' : '添加', onclick: async () => {
-      const body = { id: a && a.id, address: address.value, name: name.value, pass: pass.value,
+      const body = { id: a && a.id, address: address.value, name: name.value, pass: pass.value, signature: sig.value,
         imapHost: imapHost.value, imapPort: imapPort.value, smtpHost: smtpHost.value, smtpPort: smtpPort.value };
       const r = await net.post('/api/mail/accounts/' + (a ? 'update' : 'add'), body);
       if (r.ok) { await load(a ? '已保存，正在重新连接' : '已添加，正在连接并收取最近 30 天的邮件'); showForm(null); } else msg.textContent = r.msg || '没能保存';
     } });
-    return h('div', { class: 'mla-form' }, h('b', { text: a ? `修改 ${a.address}` : '添加邮箱' }), address, name, pass, adv,
+    return h('div', { class: 'mla-form' }, h('b', { text: a ? `修改 ${a.address}` : '添加邮箱' }), address, name, pass, sig, adv,
       h('div', { class: 'gbtns' }, save, a ? h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => showForm(null) }) : null));
   }
 
