@@ -69,3 +69,4 @@
 .mla-int { resize: vertical; font: inherit; }
 #mbell { border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 1px; cursor: pointer; color: var(--bad); font-size: 11px; }
 #mbell img { width: 16px; height: 16px; }
+.ml-atts { display: flex; flex-wrap: wrap; gap: 4px 10px; } .ml-att { color: var(--border); text-decoration: underline; cursor: pointer; word-break: break-all; }

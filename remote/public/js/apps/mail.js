@@ -10,6 +10,8 @@ import * as wm from '../wm.js';
 import * as net from '../net.js';
 import * as settings from './mail-accounts.js';
 import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (also puts the bell in the tray)
+import { openUrl } from './viewer.js';
+import { kindOf as fileKind } from '../filetypes.js';
 
 let app = null;
 const pad = (n) => String(n).padStart(2, '0');
@@ -148,7 +150,7 @@ function mount(first) {
         const names = [...new Set(copies.map((c) => (accOf(c.acc) || {}).name || c.acc))];
         return (names.length > 1 ? `${names.join('、')} 各收到一封` : `${names[0]} 收到 ${copies.length} 封`) + '（内容相同，只显示一封）';
       })()) : null,
-      m.att && m.att.length ? line('附件', m.att.map((x) => `${x.name}（${kb(x.size)}）`).join('，')) : null,
+      m.att && m.att.length ? h('div', { class: 'ml-hl' }, h('b', { text: '附件' }), h('span', { class: 'ml-atts' }, ...m.att.map((x, i) => attLink(m, x, i)))) : null,
       h('div', { class: 'ml-acts' }, h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
         onclick: () => mark(copies.map((c) => c.key), unread) }))),
     m.t ? judged(m.t) : null,
@@ -157,6 +159,15 @@ function mount(first) {
     root.classList.add('reading');
   }
 
+  // an attachment: fetched from the mailbox when clicked -- PDF, pictures, text in a Windose window, the rest downloaded
+  function attLink(m, x, i) {
+    const url = `/api/mail/att?key=${encodeURIComponent(m.key)}&i=${i}`, label = `${x.name}（${kb(x.size)}）`;
+    if (fileKind(x.name) === 'other') return h('a', { class: 'ml-att', href: url + '&dl=1', download: x.name, text: label, title: '下载' });
+    return h('a', { class: 'ml-att', href: '#', text: label, title: '在 Windose 里打开', onclick: (e) => {
+      e.preventDefault();
+      openUrl({ id: 'mail-att:' + m.key + ':' + i, title: x.name, name: x.name, where: `${m.subject || '（无主题）'} 的附件`, url, download: url + '&dl=1' });
+    } });
+  }
   // what the model made of it, above the text
   function judged(t) {
     const k = kindOf(t.important || t.kind === 'reading' ? t.kind : '');

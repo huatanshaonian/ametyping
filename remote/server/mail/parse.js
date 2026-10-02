@@ -21,11 +21,12 @@ function htmlText(html) {
     .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-// attachments from the BODYSTRUCTURE (imapflow's tree): parts with a file name, or marked as attachments
+// attachments from the BODYSTRUCTURE (imapflow's tree): parts with a file name, or marked as attachments (part: where it
+// is in the message, for fetching it)
 function fromStructure(node, out = []) {
   if (!node) return out;
   const name = (node.dispositionParameters && node.dispositionParameters.filename) || (node.parameters && node.parameters.name) || '';
-  if (!node.childNodes && (node.disposition === 'attachment' || name)) out.push({ name: String(name || '未命名').slice(0, 200), size: node.size || 0, type: node.type || '' });
+  if (!node.childNodes && (node.disposition === 'attachment' || name)) out.push({ name: String(name || '未命名').slice(0, 200), size: node.size || 0, type: node.type || '', part: node.part || '' });
   for (const c of node.childNodes || []) fromStructure(c, out);
   return out;
 }

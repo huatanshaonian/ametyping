@@ -32,6 +32,7 @@ const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
 const { createMail } = require('./mail');
+const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
@@ -376,6 +377,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, 'index.html');
   if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
+  if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);

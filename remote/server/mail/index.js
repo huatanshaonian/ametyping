@@ -9,6 +9,8 @@
 //   GET  /api/mail/alerts                  what the model found worth telling (triage.js); POST .../alerts/done
 //                                          { id } (知道了), .../alerts/todo { id } (加入重要计划: with its deadline)
 //   GET / POST /api/mail/interests         the research interests recommended papers are judged by (+ own words)
+//   GET  /api/mail/att?key=&i=[&dl=1]      an attachment, fetched from the mailbox now (PDF / pictures / plain text
+//                                          shown, anything else downloaded)
 // onChange(what): 'accounts' (an account or its status changed), 'new' (mail arrived), 'seen' (read / unread
 // changed) or 'alerts' -- the server tells open pages. ask: the model (summary's), null = no triage; onAlert(alert):
 // a new alert, for the other ways of telling (Google Calendar, 糖糖).
@@ -18,6 +20,11 @@ const { createAccounts } = require('./accounts');
 const { createMailStore } = require('./store');
 const { createSyncer } = require('./imap');
 const { createTriage } = require('./triage');
+const { fetchAttachment } = require('./attach');
+
+// an attachment shown in the page only when it cannot run anything there; anything else is a download
+const INLINE = /^(application\/pdf|image\/(png|jpeg|gif|webp|bmp)|text\/plain)$/i;
+const ATT_MAX = 100 * 1024 * 1024;
 
 function createMail({ dataDir, onChange = () => {}, log = console.log, audit = () => {}, client, ask = null, reports = () => null, todos = null, onAlert = () => {}, triageWaitMs }) {
   const accounts = createAccounts({ dataDir });
@@ -74,6 +81,7 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
       return true;
     }
     if (req.method === 'GET' && p === '/api/mail/interests') { json(res, 200, triage.interests()); return true; }
+    if (req.method === 'GET' && p === '/api/mail/att') { await attachment(res, url, ip, json); return true; }
     if (req.method !== 'POST' || !p.startsWith('/api/mail/')) return false;
     let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
     const what = p.slice('/api/mail/'.length);
@@ -131,6 +139,32 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
     const todo = open.filter((a) => a.kind !== 'reading'), reading = open.filter((a) => a.kind === 'reading');
     const dues = todo.map((a) => a.deadline).filter(Boolean).sort();
     return { todo: todo.length, reading: reading.length, top: [...todo, ...reading].slice(0, 3).map((a) => String(a.summary || a.subject).slice(0, 40)), due: dues[0] || '' };
+  }
+
+  // the attachment's bytes straight from the mailbox to the browser
+  async function attachment(res, url, ip, json) {
+    const key = String(url.searchParams.get('key') || ''), i = Math.max(0, +url.searchParams.get('i') || 0);
+    const m = store.get(key), a = m && accounts.get(m.acc);
+    const att = m && (m.att || [])[i];
+    if (!m || !a || !att) return json(res, 404, { error: '找不到这个附件' });
+    const s = accounts.state(a.id);
+    if (!key.startsWith(`${a.id}:${s.uv}:`)) return json(res, 409, { error: '邮箱有变动，请先收一次信' });
+    let got;
+    try { got = await fetchAttachment({ account: a, uid: m.uid, i, name: att.name, client }); }
+    catch (e) { return json(res, 502, { error: '没能从邮箱取到附件：' + (e.responseText || e.message) }); }
+    const mime = String(got.type).split(';')[0].trim().toLowerCase(), charset = /charset="?([\w-]+)/i.exec(String(got.type));
+    const inline = !url.searchParams.get('dl') && INLINE.test(mime);
+    res.writeHead(200, {
+      // (the type and charset only: other parameters may carry a non-ASCII file name, not allowed in a header)
+      'Content-Type': inline ? mime + (charset ? '; charset=' + charset[1] : '') : 'application/octet-stream',
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(got.name || att.name)}`,
+      'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Cache-Control': 'private, no-store' });
+    audit('mail-att', ip, att.name.slice(0, 60));
+    let n = 0;
+    got.stream.on('data', (c) => { n += c.length; if (n > ATT_MAX) got.stream.destroy(); });
+    got.stream.on('error', () => res.destroy());
+    got.stream.on('close', () => got.close());
+    got.stream.pipe(res);
   }
 
   return { handle, status, store, accounts, morning, onNew: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
