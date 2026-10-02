@@ -73,14 +73,15 @@ function open({ dataDir, log = () => {} }) {
     dropFile: db.prepare('DELETE FROM lines WHERE file = ?'),
     dropChunks: db.prepare('DELETE FROM chunks WHERE file = ?'),
     addChunk: db.prepare('INSERT INTO chunks (lo, hi, machine, session, tmax, file) VALUES (?, ?, ?, ?, ?, ?)'),
-    maxRow: db.prepare('SELECT max(rowid) AS r FROM lines'),
+    maxRow: db.prepare('SELECT rowid AS r FROM lines ORDER BY rowid DESC LIMIT 1'),   // (max(rowid) would read every row)
+    growChunk: db.prepare('UPDATE chunks SET hi = ?, tmax = max(tmax, ?) WHERE lo = ?'),
   };
   const rel = (f) => path.relative(dataDir, f).replace(/\\/g, '/');
 
   // which session a row belongs to without reading the row: every catch-up of a file inserts one run of row numbers
   // (a chunk), kept in memory sorted by its first row; a lookup is a binary search
   let chunks = [], chunkGen = 0;                                  // (chunkGen: bumped on every change, for byLo's map)
-  const loadChunks = () => { chunkGen++; chunks = db.prepare('SELECT lo, hi, machine, session, tmax FROM chunks ORDER BY lo').all().map((c) => ({ ...c, key: c.machine + '|' + c.session })); };
+  const loadChunks = () => { chunkGen++; chunks = db.prepare('SELECT lo, hi, machine, session, tmax, file FROM chunks ORDER BY lo').all().map((c) => ({ ...c, key: c.machine + '|' + c.session })); };
   loadChunks();
   const byLo = () => { if (byLo.gen !== chunkGen) { byLo.map = new Map(chunks.map((c) => [c.lo, c])); byLo.gen = chunkGen; } return byLo.map; };
   // the chunks holding rows that match an FTS query (SQLite does the row -> chunk step: fast for common words too)
@@ -93,14 +94,14 @@ function open({ dataDir, log = () => {} }) {
     const key = rel(f), row = q.off.get(key);
     let off = row ? row.off : 0;
     if (st.size === off) return;
-    const [day, machine, name] = key.split('/');
+    const [, machine, name] = key.split('/');
     db.exec('BEGIN');
     try {
       if (st.size < off) { q.dropFile.run(key); q.dropChunks.run(key); off = 0; }   // rewritten: index it again
       const n = st.size - off, buf = Buffer.alloc(n);
       const fd = fs.openSync(f, 'r'); try { fs.readSync(fd, buf, 0, n, off); } finally { fs.closeSync(fd); }
       const end = buf.lastIndexOf(10) + 1;                           // up to the last complete line
-      const sess = name.replace(/\.jsonl$/, ''), first = (q.maxRow.get().r || 0) + 1;
+      const sess = name.replace(/\.jsonl$/, ''), first = ((q.maxRow.get() || {}).r || 0) + 1;
       let tmax = 0, added = 0;
       for (const l of buf.toString('utf8', 0, end).split('\n')) {
         if (!l) continue;
@@ -110,15 +111,18 @@ function open({ dataDir, log = () => {} }) {
         q.add.run(seg(text), text, machine, sess, +r.t || 0, String(r.role || ''), key);
         added++; tmax = Math.max(tmax, +r.t || 0);
       }
-      const last = (q.maxRow.get().r || 0);
+      const last = ((q.maxRow.get() || {}).r || 0);
       if (added && last - first + 1 !== added) throw new Error('row numbers not consecutive');
-      if (added) q.addChunk.run(first, last, machine, sess, tmax, key);
+      const prev = chunks[chunks.length - 1];
+      const grow = added && prev && prev.hi === first - 1 && prev.file === key && st.size >= (row ? row.off : 0);
+      if (grow) q.growChunk.run(last, tmax, prev.lo);
+      else if (added) q.addChunk.run(first, last, machine, sess, tmax, key);
       q.setOff.run(key, off + end);
       db.exec('COMMIT');
       if (st.size < (row ? row.off : 0)) loadChunks();
-      else if (added) { chunks.push({ lo: first, hi: last, machine, session: sess, tmax, key: machine + '|' + sess }); chunkGen++; }
+      else if (grow) { prev.hi = last; prev.tmax = Math.max(prev.tmax, tmax); chunkGen++; }
+      else if (added) { chunks.push({ lo: first, hi: last, machine, session: sess, tmax, file: key, key: machine + '|' + sess }); chunkGen++; }
     } catch (e) { db.exec('ROLLBACK'); loadChunks(); log(`搜索索引：${key} 没索引上（${e.message}）`); }
-    void day;
   }
 
   // what the store wrote since the last search: indexed before the next one
@@ -211,6 +215,24 @@ function open({ dataDir, log = () => {} }) {
       }
       return got.sort((x, y) => y.t - x.t);
     };
+    // a LIKE term (a lone CJK character) cannot use row ranges: one pass over the matching rows, newest first, for all
+    // the shown sessions at once
+    const likeHits = (cs, want) => {
+      const got = new Map(); let full = 0;
+      if (!want.size) return got;
+      for (const r of db.prepare(`SELECT machine, session, t, role, text FROM lines WHERE ${cs.map((c) => c.sql).join(' AND ')} ORDER BY rowid DESC`).iterate(...cs.map((c) => c.arg))) {
+        const k = r.machine + '|' + r.session, l = got.get(k) || [];
+        if (!want.has(k) || l.length >= hitsPerSession) continue;
+        l.push({ t: r.t, role: r.role, text: r.text }); got.set(k, l);
+        if (l.length === hitsPerSession && ++full === want.size) break;
+      }
+      return got;
+    };
+    if (!allMatch) {
+      const full = likeHits(both, new Set(out.filter((x) => x.all).map((x) => x.k)));
+      const part = likeHits([all[0]], new Set(out.filter((x) => !x.all).map((x) => x.k)));
+      return out.map((x) => { const [machine, session] = x.k.split('|'); return { machine, session, last: x.last, all: x.all, hits: ((x.all ? full : part).get(x.k) || []).sort((a, b) => b.t - a.t) }; });
+    }
     return out.map((x) => { const [machine, session] = x.k.split('|'); return { machine, session, last: x.last, all: x.all, hits: hitsIn(x.k, x.all ? both : [all[0]]) }; });
   }
 
