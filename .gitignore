@@ -7,3 +7,4 @@ remote/agent/agent.json
 windows98-icons/
 remote/test/out/
 remote/server/data/
+remote/deploy/deploy.local.json
