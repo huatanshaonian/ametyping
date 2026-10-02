@@ -255,6 +255,8 @@ function connect() {
     else if (typeof d.t === 'string' && d.t.startsWith('fs')) fsServe.handle(d);
     // a new daily report: its note goes to the local pet for the morning bubble (information, not remote control)
     else if (d.t === 'report-note' && typeof d.date === 'string') petCall('POST', '/control/report', d);
+    // a new mail the NAS found something in: the pet's bubble (information too)
+    else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));

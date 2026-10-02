@@ -124,7 +124,16 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
     return true;
   }
 
-  return { handle, status, store, accounts, onNew: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+  // 糖糖's morning bubble: what the open mail alerts come to -- { todo: things to do / notices, reading: papers,
+  // top: [up to 3 lines, things to do first], due: the nearest deadline }
+  function morning() {
+    const open = triage.alerts().filter((a) => !a.done);
+    const todo = open.filter((a) => a.kind !== 'reading'), reading = open.filter((a) => a.kind === 'reading');
+    const dues = todo.map((a) => a.deadline).filter(Boolean).sort();
+    return { todo: todo.length, reading: reading.length, top: [...todo, ...reading].slice(0, 3).map((a) => String(a.summary || a.subject).slice(0, 40)), due: dues[0] || '' };
+  }
+
+  return { handle, status, store, accounts, morning, onNew: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     triage, async stop() { clearTimeout(backT); triage.stop(); for (const s of syncers.values()) await s.stop(); } };
 }
 

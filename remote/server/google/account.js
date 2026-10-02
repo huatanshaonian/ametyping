@@ -24,7 +24,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
 
   const has = (feature) => !!(st.token && st.token.refresh && String(st.token.scope || '').split(/\s+/).includes(NEEDS[feature]));
   const status = () => ({ configured: !!(st.clientId && st.clientSecret), connected: !!(st.token && st.token.refresh), email: st.email || '',
-    diary: st.diary !== false, tasks: st.tasks !== false, missing: st.token && st.token.refresh ? Object.keys(NEEDS).filter((f) => !has(f)) : [],
+    diary: st.diary !== false, tasks: st.tasks !== false, remind: st.remind !== false, missing: st.token && st.token.refresh ? Object.keys(NEEDS).filter((f) => !has(f)) : [],
     redirect: redirect(), clientId: st.clientId || '', error: st.error || '' });
 
   function setClient(clientId, clientSecret) {
@@ -37,6 +37,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
   }
   function setDiary(on) { st.diary = !!on; save(); return { ok: true }; }
   function setTasks(on) { st.tasks = !!on; save(); return { ok: true }; }
+  function setRemind(on) { st.remind = !!on; save(); return { ok: true }; }
 
   // the consent-screen address for the browser to go to
   function authUrl(sid) {
@@ -107,7 +108,7 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
   // small things worth keeping next to the account (the Drive folder's id, the reports' calendar, the last diary write)
   const get = (k) => st[k];
   const remember = (k, v) => { st[k] = v; save(); };
-  return { status, has, setClient, setDiary, setTasks, authUrl, callback, api, disconnect, get, remember };
+  return { status, has, setClient, setDiary, setTasks, setRemind, authUrl, callback, api, disconnect, get, remember };
 }
 
 module.exports = { createAccount, SCOPES };

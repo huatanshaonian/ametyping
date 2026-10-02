@@ -176,7 +176,8 @@ const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.da
 // a new daily / weekly report: its short note goes to every connected machine (the pet shows it next morning)
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 // with today's agenda (Google events and tasks, 重要计划 due) for the morning bubble; without it if that fails
-const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today }), () => n);
+// (and the mail alerts still open: mail.morning())
+const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...today, mail: mail.morning() } }), () => n);
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
   resumeCmd, artifacts, todos, notes, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
@@ -189,7 +190,15 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 // new mail is read by the model (the daily report's, mail/triage.js); an alert goes to open pages (sound, the phone buzzes)
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
   audit: (...a) => audit(...a), ask: summary ? (p, sch) => summary.ask(p, sch) : null, reports: () => summary && summary.reports, todos,
-  onAlert: (alert) => broadcast({ t: 'mail-alert', alert }), triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
+  onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
+// a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
+function mailAlert(alert) {
+  broadcast({ t: 'mail-alert', alert });
+  google.mailAlert(alert);
+  const a = { id: alert.id, key: alert.key, kind: alert.kind, summary: alert.summary, subject: alert.subject, todo: alert.todo, deadline: alert.deadline,
+    picks: (alert.picks || []).map((p) => ({ title: p.title })) };
+  for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) { try { sock.send(JSON.stringify({ t: 'mail-alert', alert: a })); } catch {} }
+}
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup, log: console.log });
 function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }

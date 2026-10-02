@@ -90,6 +90,9 @@ openDashboard();
 {
   const m = /^#report=(draft|week-\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2})$/.exec(location.hash);
   if (m) { reports.open(m[1]); history.replaceState(null, '', location.pathname); }
+  // #mail=<key>: from a mail alert (Google Calendar, 糖糖's bubble) -- that message
+  const ml = /^#mail=([\w%:.-]+)$/.exec(location.hash);
+  if (ml) { mail.open(decodeURIComponent(ml[1])); history.replaceState(null, '', location.pathname); }
   // back from Google's consent screen (google/index.js handleCallback)
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }

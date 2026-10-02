@@ -21,6 +21,10 @@ window.morning.onNote((n) => {
     : t.google ? '今天没有日程' : '');
   const due = t ? [...t.todos, ...t.tasks] : [];
   line($('due'), due.length ? '今天到期：' + due.join('、') : '');
+  // the mail alerts still open (邮件提醒)
+  const m = t && t.mail;
+  line($('mail'), m && (m.todo || m.reading) ? '邮件：' + [m.todo ? `${m.todo} 件要办${m.due ? `（${md(m.due)}截止）` : ''}` : '', m.reading ? `${m.reading} 篇推荐` : ''].filter(Boolean).join('、') : '');
+  $('mail').title = m && m.top.length ? m.top.join('；') : '';
 });
 $('close').addEventListener('click', (e) => { e.stopPropagation(); window.morning.close(); });
 $('box').addEventListener('click', () => window.morning.open());

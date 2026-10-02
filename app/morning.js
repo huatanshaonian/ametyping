@@ -26,10 +26,16 @@ function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, d
   function agendaOf(t) {
     if (!t || !/^\d{4}-\d{2}-\d{2}$/.test(t.date)) return undefined;
     return { date: t.date, google: !!t.google, tasks: strs(t.tasks, 5, 40), todos: strs(t.todos, 5, 60),
-      events: (Array.isArray(t.events) ? t.events : []).slice(0, 6).map((e) => ({ time: /^\d{2}:\d{2}$/.test(e && e.time) ? e.time : '', title: str(e && e.title, 40) })).filter((e) => e.title) };
+      events: (Array.isArray(t.events) ? t.events : []).slice(0, 6).map((e) => ({ time: /^\d{2}:\d{2}$/.test(e && e.time) ? e.time : '', title: str(e && e.title, 40) })).filter((e) => e.title),
+      // the mail alerts still open: { todo, reading, top: [line], due }
+      mail: t.mail ? { todo: +t.mail.todo || 0, reading: +t.mail.reading || 0, top: strs(t.mail.top, 3, 40), due: /^\d{4}-\d{2}-\d{2}$/.test(t.mail.due) ? t.mail.due : '' } : undefined };
   }
   // the agenda's lines in the bubble (none when it is not today's)
-  const agendaLines = (n) => { const t = n && n.today; if (!t || t.date !== today()) return 0; return (t.events.length || t.google ? 1 : 0) + (t.tasks.length || t.todos.length ? 1 : 0); };
+  const agendaLines = (n) => {
+    const t = n && n.today;
+    if (!t || t.date !== today()) return 0;
+    return (t.events.length || t.google ? 1 : 0) + (t.tasks.length || t.todos.length ? 1 : 0) + (t.mail && (t.mail.todo || t.mail.reading) ? 1 : 0);
+  };
   // a note from the agent: { date, headline, projects: [name], open: n, chores: n, week?: { start, end, headline }, today?: agenda }
   function setNote(d) {
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return false;

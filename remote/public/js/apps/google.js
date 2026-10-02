@@ -78,6 +78,7 @@ function mount() {
           const r = await net.post('/api/google/backfill', {}); if (r.ok) render(); else if (r.msg) render(r.msg);
         } }), h('span', { class: 'ghint' + (bf.failed ? ' bad' : ''), text: bf.running ? `正在补写 ${bf.done}/${bf.total || '…'}`
           : bf.at ? `上次补写：${bf.done - bf.failed}/${bf.total} 份${bf.failed ? `，失败 ${bf.failed} 份（${bf.error}）` : ''}` : '已经写过的会更新，不会重复' })) : null,
+        missing.includes('calendar') ? null : toggle('remind', s.remind, '重要邮件提醒到手机（「Windose 提醒」日历：马上提醒一次，截止日前一天 9 点再提醒）'),
         missing.includes('tasks') ? null : toggle('tasks', s.tasks, `重要计划同步到 Google 任务（列表「${sync.list || 'Windose 重要计划'}」，双向）`),
         !missing.includes('tasks') && s.tasks ? h('p', { class: 'ghint' + (sync.error ? ' bad' : ''),
           text: sync.error ? '上次同步失败：' + sync.error : synced ? `上次同步：${when(synced)}` : '还没有同步过（几秒后开始）' }) : null,

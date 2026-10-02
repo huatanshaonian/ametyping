@@ -11,6 +11,7 @@ const { createTasks } = require('./tasks');
 const { createTasksSync } = require('./tasks-sync');
 const { createBackfill } = require('./backfill');
 const { createRetry } = require('./retry');
+const { createRemind } = require('./remind');
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -24,6 +25,13 @@ function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => n
   const connected = () => account.status().connected;
   const wanted = () => connected() && account.status().diary;
   const retry = createRetry({ account, calendar, reports, wanted, log });
+  const remind = createRemind({ account, origin, log });
+  // a mail alert (mail/triage.js) to the phone through the 「Windose 提醒」 calendar (when wanted and allowed)
+  function mailAlert(alert) {
+    const s = account.status();
+    if (!s.connected || !s.remind || !account.has('calendar')) return;
+    remind.mail(alert).catch((e) => log('Google 日历：邮件提醒没写进去：' + e.message));
+  }
   const backfill = createBackfill({ calendar, reports, log, onWritten: (kind, key) => retry.done(kind, key) });
   const status = () => ({ ...account.status(), ...(sync ? { sync: sync.status() } : {}),
     diaryLast: account.get('diaryLast') || null, ownCalendar: !!account.get('diaryCalendar'), backfill: backfill.status(),
@@ -120,12 +128,13 @@ function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => n
     if (req.method !== 'POST' || !p.startsWith('/api/google/')) return false;
     let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
     const what = p.slice('/api/google/'.length);
-    if (['client', 'connect', 'disconnect', 'diary', 'tasks', 'backfill'].includes(what) && !fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
+    if (['client', 'connect', 'disconnect', 'diary', 'tasks', 'remind', 'backfill'].includes(what) && !fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
     let r;
     try {
       if (what === 'client') r = account.setClient(d.clientId, d.clientSecret);
       else if (what === 'diary') r = account.setDiary(d.on);
       else if (what === 'tasks') { r = account.setTasks(d.on); if (d.on && sync) sync.kick(0); }
+      else if (what === 'remind') r = account.setRemind(d.on);
       else if (what === 'backfill') r = connected() ? backfill.start() : { ok: false, msg: '还没有连接 Google' };
       else if (what === 'connect') { const u = account.authUrl(); r = u ? { ok: true, url: u } : { ok: false, msg: '先填好客户端 ID 和密钥' }; }
       else if (what === 'disconnect') r = await account.disconnect();
@@ -141,7 +150,7 @@ function createGoogle({ dataDir, origin, egress, notes, todos, reports = () => n
     return true;
   }
 
-  return { handle, handleCallback, onReport, onWeek, onTodos, forReport, events, agenda, connected, status,
+  return { handle, handleCallback, onReport, onWeek, onTodos, forReport, events, agenda, mailAlert, connected, status,
     stop() { clearInterval(watch); retry.stop(); if (sync) sync.stop(); } };
 }
 
