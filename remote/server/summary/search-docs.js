@@ -99,7 +99,9 @@ function createDocSearch({ storeDir, reports, notes = null, artifacts = null, ma
     }
     viaScan(terms, out);
   }
-  return { search, reportText };
+  // the index brought up to date now (in the background: after the start, after new mail) so a search finds little to do
+  function syncNow() { if (index) sync(index.docs); }
+  return { search, syncNow, reportText };
 }
 
 module.exports = { createDocSearch, reportText, DAY };

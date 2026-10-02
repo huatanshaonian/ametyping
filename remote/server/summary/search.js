@@ -107,7 +107,7 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions, in
       .map(({ seen, full, first, ...s }) => ({ ...s, hits: (full.length ? full : first).sort(newest).slice(0, hitsPerSession)
         .map((l) => ({ t: l.t, role: l.role, snippet: snippet(l.text, terms) })) }));
   }
-  return { search };
+  return { search, syncDocs: docs.syncNow };
 }
 
 module.exports = { createSearch };

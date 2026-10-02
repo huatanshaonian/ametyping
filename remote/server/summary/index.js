@@ -115,7 +115,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   }
 
   // ask(prompt, schema): one question to the model through the same proxies (the mail's triage uses it too)
-  return { handle, scheduler, reports, generate: gen.generate, latestNote, ask: gen.ask };
+  return { handle, scheduler, reports, generate: gen.generate, latestNote, ask: gen.ask, syncSearchDocs: () => search.syncDocs() };
 }
 
 module.exports = { createSummary };
