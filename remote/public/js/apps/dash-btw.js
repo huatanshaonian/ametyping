@@ -1,5 +1,5 @@
 // /btw (a side question) in 糖糖看板: Claude Code shows its answer in an overlay of its own; here the answer arrives as
-// a "btw" message (app/transcript.js pairs it with the question) and pops up over the conversation the same way --
+// a "btw" message (app/transcript.js pairs it with the question) and pops up under the conversation (which makes room) --
 // when it is new while you watch that conversation (or came in during the last two minutes). It stays in the
 // conversation as a marked reply too.
 import { h } from '../util.js';
@@ -22,7 +22,7 @@ export function createBtw({ md }) {
     el.hidden = false;
     body.scrollTop = 0;
   }
-  // a conversation's messages came in (key: the one on screen)
+  // a conversation's messages came in (key: the one on screen); true when an answer popped up
   function update(key, msgs) {
     let i = msgs.length - 1;
     while (i >= 0 && msgs[i].role !== 'btw') i--;
@@ -30,11 +30,12 @@ export function createBtw({ md }) {
     const sig = last ? `${last.t}|${(last.text || '').length}` : '';
     const prev = known.get(key);
     known.set(key, sig);
-    if (!last || sig === prev) return;
-    if (prev === undefined && Date.now() - (last.t || 0) > FRESH) return;     // an old answer, first time this is opened
+    if (!last || sig === prev) return false;
+    if (prev === undefined && Date.now() - (last.t || 0) > FRESH) return false;   // an old answer, first time this is opened
     let j = i - 1;
     while (j >= 0 && !(msgs[j].role === 'user' && /^\/btw\b/.test(msgs[j].text || ''))) j--;
     show(j >= 0 ? msgs[j].text : '', last.text);
+    return true;
   }
   return { el, update, show, close, open: () => !el.hidden };
 }

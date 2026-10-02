@@ -3,7 +3,7 @@
 // until you ask to see them. Right click (long press on a phone) a session, a group or the list for the menu.
 // Marks and groups live on the server (js/marks.js) so every device shows the same list. Above it: 活动 / 全部 and
 // the search box (dash-filter.js); the list element itself is `el`, the bar is returned as `tool`.
-import { $, h, esc, ago, stateOf, prefs, ctxLeft, CTX_LOW } from '../util.js';
+import { $, h, esc, ago, stateOf, prefs, ctxLeft, CTX_LOW, plain } from '../util.js';
 import * as net from '../net.js';
 import * as marks from '../marks.js';
 import * as ctx from '../ctxmenu.js';
@@ -17,7 +17,7 @@ export function createList({ el, current, selected, onSelect, onNote }) {
   const collapsed = new Set(prefs.get('dash.collapsed', []));
   let showHidden = false, onlyStarred = prefs.get('dash.onlyStarred', false);
 
-  const lastLine = (s) => { for (let i = (s.lines || []).length - 1; i >= 0; i--) if (s.lines[i].text) return s.lines[i].text; return s.state === 'history' ? '（历史会话）' : '…'; };
+  const lastLine = (s) => { for (let i = (s.lines || []).length - 1; i >= 0; i--) if (s.lines[i].text) return plain(s.lines[i].text); return s.state === 'history' ? '（历史会话）' : '…'; };
   const head = (k) => { let x = heads.get(k); if (!x) { x = h('div'); heads.set(k, x); } return x; };
   const filter = createFilter({ onChange: () => { render(); el.scrollTop = 0; } });
 

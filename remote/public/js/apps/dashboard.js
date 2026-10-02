@@ -302,7 +302,8 @@ function mount(current) {
       const key = d.machine + '|' + d.id;
       convCache.delete(key); convCache.set(key, d.msgs || []);
       if (convCache.size > CONV_CACHE) convCache.delete(convCache.keys().next().value);
-      if (sel === key) { renderConv(d.msgs || []); btw.update(key, d.msgs || []); }
+      // (a /btw answer popping up takes room under the conversation: keep its end in view)
+      if (sel === key) { renderConv(d.msgs || []); if (btw.update(key, d.msgs || [])) convEl.scrollTop = convEl.scrollHeight; }
     }),
     net.on('open', () => { if (sel) { const [machine, id] = sel.split('|'); net.send({ t: 'watch', machine, id }); } }),
   ];

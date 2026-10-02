@@ -20,6 +20,7 @@ function open(items, x, y, level, fromRight) {
     if (it === '-') { el.append(h('div', { class: 'ctxsep' })); continue; }
     const b = h('button', { class: 'ctxi' + (it.sub ? ' has-sub' : ''), type: 'button', role: 'menuitem', disabled: !!it.disabled },
       h('span', { class: 'ck', text: it.check ? '✓' : '' }), h('span', { class: 'lb', text: it.label }), it.sub ? h('span', { class: 'ar', text: '▸' }) : null);
+    b.addEventListener('mouseenter', () => b.focus({ preventScroll: true }));   // (the mouse and the keys mark the same item)
     if (it.sub) {
       const openSub = () => {
         if (b.classList.contains('open')) return;
@@ -73,6 +74,29 @@ export function attach(el, itemsFor) {
 
 // a click / tap anywhere else, Escape, or the window changing closes it
 addEventListener('pointerdown', (e) => { if (menus.length && !menus.some((m) => m.contains(e.target))) close(); }, true);
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && menus.length) close(); });
+// the keyboard, while a menu is open: ↑ ↓ choose, → or Enter opens a submenu, ← goes back, Enter / Space runs, Esc closes
+addEventListener('keydown', (e) => {
+  if (!menus.length) return;
+  const menu = menus[menus.length - 1];
+  const items = [...menu.querySelectorAll('.ctxi:not(:disabled)')];
+  const at = items.indexOf(document.activeElement);
+  const done = () => { e.preventDefault(); e.stopPropagation(); };
+  if (e.key === 'Escape') { close(); done(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const n = items.length; if (!n) return done();
+    items[at < 0 ? (e.key === 'ArrowDown' ? 0 : n - 1) : (at + (e.key === 'ArrowDown' ? 1 : n - 1)) % n].focus();
+    done();
+  } else if ((e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') && at >= 0 && items[at].classList.contains('has-sub')) {
+    items[at].click();                                   // opens it
+    const sub = menus[menus.length - 1];
+    if (sub !== menu) { const first = sub.querySelector('.ctxi:not(:disabled)'); if (first) first.focus(); }
+    done();
+  } else if (e.key === 'ArrowLeft' && menus.length > 1) {
+    menus.pop().remove();
+    const parent = menus[menus.length - 1], open = parent.querySelector('.ctxi.open');
+    if (open) { open.classList.remove('open'); open.focus(); }
+    done();
+  } else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); done(); }
+}, true);
 addEventListener('resize', close);
 addEventListener('blur', close);

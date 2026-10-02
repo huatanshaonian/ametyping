@@ -5,7 +5,7 @@
 .ctxi .ck { flex: none; width: 18px; text-align: center; }
 .ctxi .lb { flex: 1; }
 .ctxi .ar { flex: none; margin-left: 14px; font-size: 10px; }
-.ctxi:hover:not(:disabled), .ctxi.open { background: var(--border); color: #fff; }
+.ctxi:hover:not(:disabled), .ctxi.open, .ctxi:focus { background: var(--border); color: #fff; outline: none; }
 .ctxi:disabled { opacity: .45; cursor: default; }
 .ctxsep { height: 1px; margin: 3px 4px; background: var(--edge); }
 
@@ -19,7 +19,7 @@
 
 html[data-theme="win98"] .ctxm { background: #c0c0c0; border: 0; box-shadow: var(--raised-outer); }
 html[data-theme="win98"] .ctxi { color: #000; }
-html[data-theme="win98"] .ctxi:hover:not(:disabled), html[data-theme="win98"] .ctxi.open { background: #000080; color: #fff; }
+html[data-theme="win98"] .ctxi:hover:not(:disabled), html[data-theme="win98"] .ctxi.open, html[data-theme="win98"] .ctxi:focus { background: #000080; color: #fff; }
 html[data-theme="win98"] .ctxsep { height: 0; border-top: 1px solid #808080; border-bottom: 1px solid #fff; background: none; }
 html[data-theme="win98"] .dlg { background: rgba(0, 0, 0, .25); }
 html[data-theme="win98"] .dlgbox { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }

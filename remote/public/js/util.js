@@ -18,6 +18,10 @@ export function h(tag, props = {}, ...kids) {
   return el;
 }
 
+// one line of Markdown as plain text (a card's last line): no **, `, #, >, list marks, link targets
+export const plain = (s) => String(s || '')
+  .replace(/`{3}[^\n]*\n?/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`|~~)/g, '')
+  .replace(/^\s*(#{1,6}\s+|>\s?|[-+*]\s+|\d+\.\s+)/gm, '').replace(/\s+/g, ' ').trim();
 export const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 export const ago = (t) => {
