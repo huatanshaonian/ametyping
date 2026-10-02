@@ -41,3 +41,8 @@
 .mla-srv .field:nth-of-type(2) { width: 70px; flex: none; }
 .mla-help p { margin: 6px 0; }
 #mwarn { border: 0; background: none; padding: 0; display: flex; cursor: pointer; } #mwarn img { width: 16px; height: 16px; filter: drop-shadow(0 0 2px var(--bad)); }   /* the tray: a mailbox password refused */
+.ml-i.unread .ml-l1 b, .ml-i.unread .ml-l2 span { font-weight: bold; }
+.ml-i.unread { box-shadow: inset 3px 0 0 var(--border); }
+.ml-i .tag.n { color: var(--muted); border-style: dotted; }
+.ml-acts { margin-top: 6px; } .ml-acts .btn { padding: 1px 10px; }
+.ml-text a { color: var(--border); text-decoration: underline; word-break: break-all; }

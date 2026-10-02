@@ -11,9 +11,12 @@ const TEXT_MAX = 100000;                             // characters of text kept 
 const addr = (a) => ({ name: String(a.name || '').slice(0, 80), address: String(a.address || '').toLowerCase().slice(0, 200) });
 const addrs = (v) => (v ? (Array.isArray(v) ? v : [v]).flatMap((x) => x.value || []).filter((a) => a.address).map(addr).slice(0, 50) : []);
 
-// a rough HTML -> text, for messages without a plain-text part (mailparser's own conversion is the first choice)
+// a rough HTML -> text, for messages without a plain-text part (mailparser's own conversion is the first choice);
+// a link keeps its address: 「text (https://…)」
 function htmlText(html) {
-  return String(html || '').replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
+  return String(html || '').replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<a\b[^>]*?href\s*=\s*["']?(https?:[^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, (m, href, t) => { const x = t.replace(/<[^>]+>/g, '').trim(); return x && x !== href ? `${x} (${href})` : href; })
+    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
     .replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
     .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }

@@ -5,7 +5,9 @@
 //   GET  /api/mail/msg?key=                one message with its text
 //   POST /api/mail/accounts/add | update | remove     (a code entered within the hour, like remote control)
 //   POST /api/mail/sync { acc }            look for new mail now
-// onChange(what): 'accounts' (an account or its status changed) or 'new' (mail arrived) -- the server tells open pages.
+//   POST /api/mail/seen { keys, seen }     mark read / unread in the mailboxes themselves (no code asked: harmless)
+// onChange(what): 'accounts' (an account or its status changed), 'new' (mail arrived) or 'seen' (read / unread
+// changed) -- the server tells open pages.
 'use strict';
 const { createAccounts } = require('./accounts');
 const { createMailStore } = require('./store');
@@ -19,6 +21,7 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
 
   function startOne(a) {
     const s = createSyncer({ account: a, state: () => accounts.state(a.id), setState: accounts.setState, store, log, client,
+      onSeen: () => onChange('seen'),
       onNew: (heads) => { onChange('new'); for (const fn of listeners) try { fn(heads, a); } catch (e) { log('邮件：' + e.message); } },
       onStatus: () => onChange('accounts') });
     syncers.set(a.id, s);
@@ -63,6 +66,21 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
         if (r.ok) { const s = syncers.get(id); syncers.delete(id); if (s) await s.stop(); if (d.purge) store.removeAccount(id); }
       } else { json(res, 404, { ok: false }); return true; }
       if (r.ok) { audit('mail-' + op, ip, r.account ? r.account.address : ''); onChange('accounts'); }
+    } else if (what === 'seen') {
+      // the keys may be copies in different mailboxes: each mailbox is asked for its own
+      const byAcc = new Map();
+      for (const k of (Array.isArray(d.keys) ? d.keys : []).slice(0, 500).map(String)) {
+        const acc = k.split(':')[0];
+        if (!byAcc.has(acc)) byAcc.set(acc, []);
+        byAcc.get(acc).push(k);
+      }
+      const errs = [];
+      for (const [acc, keys] of byAcc) {
+        const s = syncers.get(acc);
+        const x = s ? await s.setSeen(keys, !!d.seen) : { ok: false, msg: '找不到这个邮箱' };
+        if (!x.ok) errs.push(((accounts.get(acc) || {}).name || acc) + '：' + x.msg);
+      }
+      r = errs.length ? { ok: false, msg: errs.join('；') } : { ok: byAcc.size > 0, msg: byAcc.size ? '' : '没有选中邮件' };
     } else if (what === 'sync') {
       const s = syncers.get(String(d.acc || ''));
       if (s) { s.now(); r = { ok: true }; } else r = { ok: false, msg: '找不到这个邮箱' };

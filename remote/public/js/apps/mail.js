@@ -1,5 +1,7 @@
-// 邮件: the mailboxes kept on the NAS (remote/server/mail). The list on the left (newest first; 直 sent to you, 抄 a
-// copy, 群 a list or bulk mail, 附 attachments), the message on the right; a narrow window shows one side at a time.
+// 邮件: the mailboxes kept on the NAS (remote/server/mail). The list on the left (newest first, unread in bold; 直 sent
+// to you, 抄 a copy, 群 a list or bulk mail, 附 attachments; the same mail in both mailboxes once, ×2), the message on
+// the right with its links clickable and 标为已读 / 未读 (in the mailboxes themselves, every copy); a narrow window
+// shows one side at a time.
 // The mailboxes are set up in 设置 (mail-accounts.js). New mail and account changes arrive by the server's 'mail'
 // event. open(key) shows one message.
 import { h } from '../util.js';
@@ -17,6 +19,19 @@ const when = (t) => {
 const full = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const who = (a) => (a ? (a.name ? `${a.name} <${a.address}>` : a.address) : '');
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+// the text with its web / mail links clickable (opened in a new tab; nothing else is turned into a link)
+const LINK = /(https?:\/\/[^\s<>"'（）()【】「」，。；]+[^\s<>"'（）()【】「」，。；.,;:!?]|mailto:[^\s<>"']+)/g;
+function linked(text) {
+  const out = [];
+  let at = 0;
+  for (const m of String(text).matchAll(LINK)) {
+    if (m.index > at) out.push(document.createTextNode(text.slice(at, m.index)));
+    out.push(h('a', { href: m[0], target: '_blank', rel: 'noopener noreferrer', text: m[0] }));
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(document.createTextNode(text.slice(at)));
+  return out;
+}
 
 // the tray: a warning while a mailbox's password is refused (the 客户端专用密码 was removed or replaced in the webmail);
 // a click opens 邮箱设置 to enter the new one. Passing network trouble is not shown there (it mends itself).
@@ -47,9 +62,10 @@ function mount(first) {
   const back = h('button', { class: 'btn ml-back', type: 'button', text: '‹ 列表', onclick: () => root.classList.remove('reading') });
   const syncBtn = h('button', { class: 'btn', type: 'button', text: '收信', title: '现在就看看有没有新邮件' });
   const setBtn = h('button', { class: 'btn', type: 'button', text: '设置', title: '添加 / 修改邮箱' });
+  const allBtn = h('button', { class: 'btn', type: 'button', text: '全部标为已读', title: '列表里未读的都标为已读（邮箱里也是）' });
   const listEl = h('div', { class: 'ml-list' });
   const view = h('div', { class: 'ml-view' });
-  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
+  const root = h('div', { class: 'mail' }, h('div', { class: 'ml-bar' }, back, accSel, syncBtn, allBtn, setBtn, status), h('div', { class: 'ml-main' }, listEl, view));
   let accounts = [], items = [], cur = null, more = false;
 
   const accOf = (id) => accounts.find((a) => a.id === id);
@@ -79,8 +95,10 @@ function mount(first) {
     render();
   }
   function render() {
-    const rows = items.map((m) => h('div', { class: 'ml-i' + (cur === m.key ? ' sel' : '') + (m.bulk ? ' bulk' : ''), dataset: { key: m.key } },
-      h('div', { class: 'ml-l1' }, h('b', { text: (m.from && (m.from.name || m.from.address)) || '（无发件人）' }), h('small', { text: when(m.date) })),
+    const rows = items.map((m) => h('div', { class: 'ml-i' + (cur === m.key ? ' sel' : '') + (m.bulk ? ' bulk' : '') + (m.seen ? '' : ' unread'), dataset: { key: m.key } },
+      h('div', { class: 'ml-l1' }, h('b', { text: (m.from && (m.from.name || m.from.address)) || '（无发件人）' }),
+        m.copies && m.copies.length > 1 ? h('i', { class: 'tag n', text: '×' + m.copies.length, title: '同一封发到了 ' + m.copies.map((c) => (accOf(c.acc) || {}).name || c.acc).join('、') }) : null,
+        h('small', { text: when(m.date) })),
       h('div', { class: 'ml-l2' },
         m.direct ? h('i', { class: 'tag d', text: '直', title: '直接发给你的' }) : m.copy ? h('i', { class: 'tag c', text: '抄', title: '抄送给你的' }) : null,
         m.bulk ? h('i', { class: 'tag b', text: '群', title: '邮件列表 / 群发' }) : null,
@@ -90,10 +108,22 @@ function mount(first) {
     if (more) rows.push(h('button', { class: 'btn ml-more', type: 'button', text: '更早的邮件', onclick: () => loadList(true) }));
     listEl.replaceChildren(...(rows.length ? rows : [h('p', { class: 'ml-empty', text: accounts.length ? '这里还没有邮件。第一次会收最近 30 天的。' : '先点「设置」添加邮箱。' })]));
   }
-  async function show(key) {
+  // read / unread, in the mailboxes (every copy of the mail)
+  async function mark(keys, seen) {
+    if (!keys.length) return;
+    status.textContent = seen ? '标为已读…' : '标为未读…';
+    const r = await net.post('/api/mail/seen', { keys, seen });
+    if (!r.ok) { status.textContent = r.msg || '没能改'; status.classList.add('bad'); return; }
+    await loadList(); showStatus();
+    if (cur) show(cur, true);
+  }
+  async function show(key, quiet) {
     let m = null; try { const r = await fetch('/api/mail/msg?key=' + encodeURIComponent(key)); if (r.ok) m = await r.json(); } catch {}
     if (!m) return;
     cur = key;
+    const it = items.find((x) => x.key === key || (x.copies || []).some((c) => c.key === key));
+    const copies = it && it.copies ? it.copies : [{ key, acc: m.acc, seen: m.seen }];
+    const unread = copies.some((c) => !c.seen);
     for (const el of listEl.querySelectorAll('.ml-i')) el.classList.toggle('sel', el.dataset.key === key);
     const a = accOf(m.acc);
     const line = (k, v) => (v ? h('div', { class: 'ml-hl' }, h('b', { text: k }), h('span', { text: v })) : null);
@@ -103,9 +133,15 @@ function mount(first) {
       line('收件人', (m.to || []).map(who).join('，')),
       line('抄送', (m.cc || []).map(who).join('，')),
       line('时间', full(m.date) + (a && accounts.length > 1 ? ` · ${a.name} 收到` : '')),
-      m.att && m.att.length ? line('附件', m.att.map((x) => `${x.name}（${kb(x.size)}）`).join('，')) : null),
-    h('pre', { class: 'ml-text', text: m.text || '（没有正文）' }));
-    view.scrollTop = 0;
+      copies.length > 1 ? line('重复', (() => {
+        const names = [...new Set(copies.map((c) => (accOf(c.acc) || {}).name || c.acc))];
+        return (names.length > 1 ? `${names.join('、')} 各收到一封` : `${names[0]} 收到 ${copies.length} 封`) + '（内容相同，只显示一封）';
+      })()) : null,
+      m.att && m.att.length ? line('附件', m.att.map((x) => `${x.name}（${kb(x.size)}）`).join('，')) : null,
+      h('div', { class: 'ml-acts' }, h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
+        onclick: () => mark(copies.map((c) => c.key), unread) }))),
+    h('pre', { class: 'ml-text' }, ...(m.text ? linked(m.text) : [document.createTextNode('（没有正文）')])));
+    if (!quiet) view.scrollTop = 0;
     root.classList.add('reading');
   }
 
@@ -118,8 +154,13 @@ function mount(first) {
     setTimeout(() => { loadAccounts(); loadList(); }, 1500);
   });
   setBtn.addEventListener('click', () => settings.open());
+  allBtn.addEventListener('click', () => {
+    const keys = items.filter((m) => !m.seen).flatMap((m) => m.copies.filter((c) => !c.seen).map((c) => c.key));
+    if (!keys.length) { status.textContent = '列表里没有未读的'; return; }
+    if (confirm(`把列表里 ${items.filter((m) => !m.seen).length} 封未读的都标为已读？（邮箱里也会变成已读）`)) mark(keys, true);
+  });
 
-  const off = net.on('mail', (d) => { if (d && d.what === 'new') loadList(); else loadAccounts(); });
+  const off = net.on('mail', (d) => { if (d && (d.what === 'new' || d.what === 'seen')) loadList(); else loadAccounts(); });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 620));
   ro.observe(root);
   view.replaceChildren(h('p', { class: 'ml-empty', text: '点左边的一封邮件看全文。' }));
