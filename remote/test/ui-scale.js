@@ -1,0 +1,128 @@
+// UI check (界面大小): throwaway server + agent with fake sessions, headless Chrome over CDP (login cookie injected),
+// screenshots at desktop and phone size, page errors collected.
+const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
+const R = require('path').resolve(__dirname, '..');
+const WebSocket = require(R + '/node_modules/ws');
+const auth = require(R + '/server/auth');
+const SP = __dirname, OUT = path.join(SP, 'out', 'shots'); fs.mkdirSync(OUT, { recursive: true });
+const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-ui-'));
+const HOME = path.join(T, 'home'), PROJ = path.join(HOME, '.claude', 'projects', '-proj-demo');
+fs.mkdirSync(PROJ, { recursive: true });
+const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
+const PORT = 18801, CDP = 9336;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const env = { ...process.env, AME_REMOTE_CONFIG: CFG };
+const node = (args, extra = {}) => cp.execFileSync(process.execPath, args, { env: { ...env, ...extra } }).toString();
+let n = 0;
+const L = (o, t) => JSON.stringify({ uuid: 'u' + (++n), cwd: '/home/dell/demo', timestamp: new Date(t).toISOString(), ...o }) + '\n';
+const now = Date.now();
+node([R + '/server/setup.js', 'init'], { AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' });
+const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT; fs.writeFileSync(CFG, JSON.stringify(cfg));
+const tok = node([R + '/server/setup.js', 'add-agent', 'dell97']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
+const ACFG = path.join(T, 'agent.json');
+fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500 }));
+fs.writeFileSync(path.join(PROJ, 'aaaaaaaa-1111-2222-3333-444444444444.jsonl'),
+  L({ type: 'ai-title', aiTitle: 'FDTD 网格加密' }, now - 900e3) +
+  L({ type: 'user', message: { role: 'user', content: '帮我把 FDTD 的网格在界面附近加密' } }, now - 800e3) +
+  L({ type: 'assistant', message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: '好的，先看一下现在的网格生成：\n\n```python\ndx = 1e-3\n```\n我会在 **界面两侧** 各加密 5 层。' }] } }, now - 790e3) +
+  L({ type: 'assistant', message: { id: 'a2', role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/home/dell/demo/mesh.py' } }, { type: 'tool_use', name: 'Edit', input: { file_path: '/home/dell/demo/mesh.py' } }] } }, now - 780e3) +
+  L({ type: 'assistant', message: { id: 'a3', role: 'assistant', content: [{ type: 'text', text: '改好了，网格数从 400 增加到 460。' }] } }, now - 60e3));
+fs.writeFileSync(path.join(PROJ, 'bbbbbbbb-1111-2222-3333-444444444444.jsonl'),
+  L({ type: 'user', message: { role: 'user', content: '跑一下测试' } }, now - 5e3));
+
+const kids = [];
+const spawn = (args, e) => { const p = cp.spawn(process.execPath, args, { env: { ...env, ...e }, stdio: 'ignore' }); kids.push(p); return p; };
+function login() {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
+    const req = http.request({ host: '127.0.0.1', port: PORT, path: '/api/login', method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${PORT}`, 'Content-Length': Buffer.byteLength(body) } },
+    (res) => { res.resume(); resolve(String(res.headers['set-cookie'] || '').split(';')[0].split('=')); });
+    req.end(body);
+  });
+}
+const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { const r = http.request(url, { method }, (res) => { let b = ''; res.on('data', (c) => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } }); }); r.on('error', reject); r.end(); });
+
+(async () => {
+  const errors = [];
+  let chrome;
+  try {
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(800);
+    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
+    const [cname, cval] = await login();
+    chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
+      `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
+    await sleep(2000);
+    const tab = await getJSON(`http://127.0.0.1:${CDP}/json/new?about:blank`, 'PUT');
+    const ws = new WebSocket(tab.webSocketDebuggerUrl);
+    await new Promise((r) => ws.on('open', r));
+    let id = 0; const pending = new Map();
+    ws.on('message', (m) => {
+      const o = JSON.parse(m);
+      if (o.id && pending.has(o.id)) { pending.get(o.id)(o); pending.delete(o.id); }
+      if (o.method === 'Runtime.exceptionThrown') errors.push('exception: ' + JSON.stringify(o.params.exceptionDetails.exception && o.params.exceptionDetails.exception.description || o.params.exceptionDetails.text).slice(0, 300));
+      if (o.method === 'Runtime.consoleAPICalled' && o.params.type === 'error') errors.push('console: ' + o.params.args.map((a) => a.value || a.description).join(' ').slice(0, 300));
+      if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') errors.push('log: ' + o.params.entry.text.slice(0, 300) + ' ' + (o.params.entry.url || ''));
+    });
+    const call = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+    const evalJs = async (expr) => (await call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.result.value;
+    const shot = async (name) => { const r = await call('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(OUT, name), Buffer.from(r.result.data, 'base64')); };
+    await call('Runtime.enable'); await call('Log.enable'); await call('Page.enable');
+    await call('Network.enable');
+    await call('Network.setCookie', { name: cname, value: cval, url: `http://127.0.0.1:${PORT}/` });
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
+    await sleep(3500);
+
+    const res = []; const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
+    const drag = async (x1, y1, x2, y2) => {
+      await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x1, y: y1 });
+      await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: x1, y: y1, button: 'left', clickCount: 1 });
+      for (let i = 1; i <= 6; i++) { await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x1 + (x2 - x1) * i / 6, y: y1 + (y2 - y1) * i / 6, button: 'left', buttons: 1 }); await sleep(20); }
+      await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x2, y: y2, button: 'left', clickCount: 1 });
+      await sleep(200);
+    };
+    const rect = (sel) => evalJs(`(() => { const r = document.querySelector('${sel}').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
+    chk('default size on a desktop browser is 中 (1.15)', await evalJs("document.documentElement.style.zoom === '1.15'"), await evalJs("document.documentElement.style.zoom"));
+    await evalJs("(async () => { const m = await import('/js/wallpaper.js'); m.openSettings(); })()"); await sleep(800);
+    await evalJs("(() => { const s = document.querySelector('select[title^=\"界面大小\"]'); s.value = 'xl'; s.dispatchEvent(new Event('change')); })()"); await sleep(500);
+    chk('特大 zooms the page to 1.5', await evalJs("document.documentElement.style.zoom === '1.5' && JSON.parse(localStorage.getItem('ame.scale')) === 'xl'"), 0);
+    await shot('40-scale-xl.png');
+    // a window follows the pointer 1:1 on screen at 1.5x
+    const t0 = await rect('.win:not(.inactive) .titlebar');
+    await drag(t0.x + 60, t0.y + t0.h / 2 + 6, t0.x + 60 + 150, t0.y + t0.h / 2 + 6 + 90);
+    const t1 = await rect('.win:not(.inactive) .titlebar');
+    chk('drag at 1.5x: window moves with the pointer', Math.abs(t1.x - (t0.x + 150)) <= 3 && Math.abs(t1.y - (t0.y + 90)) <= 3, { t0, t1 });
+    await drag(t1.x + 60, t1.y + t1.h / 2 + 6, t1.x + 60 - 150, t1.y + t1.h / 2 + 6 - 90);   // back, so the grip is on screen
+    // resize from the bottom-right grip keeps up with the pointer too
+    const w0 = await rect('.win:not(.inactive)');
+    const g = await rect('.win:not(.inactive) .resize');
+    await drag(g.x + g.w / 2, g.y + g.h / 2, g.x + g.w / 2 - 120, g.y + g.h / 2 - 60);
+    const w1 = await rect('.win:not(.inactive)');
+    chk('resize at 1.5x follows the pointer', Math.abs(w1.w - (w0.w - 120)) <= 4 && Math.abs(w1.h - (w0.h - 60)) <= 4, { w0, w1 });
+    // volume: clicking the top of the track is loudest, the bottom is silent
+    await evalJs("document.getElementById('soundbtn').click()"); await sleep(300);
+    const v = await rect('#volpop .vtrack');
+    const click = async (x, y) => { await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }); await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }); await sleep(150); };
+    await click(v.x + v.w / 2, v.y + 6 * 1.5);
+    const top = await evalJs("(async () => (await import('/js/sound.js')).volume())()");
+    await click(v.x + v.w / 2, v.y + (6 + 96) * 1.5);
+    const bottom = await evalJs("(async () => (await import('/js/sound.js')).volume())()");
+    chk('volume slider maps the pointer at 1.5x', top > 0.95 && bottom < 0.05, { top, bottom });
+    await evalJs("(() => { const s = document.querySelector('select[title^=\"界面大小\"]'); s.value = 's'; s.dispatchEvent(new Event('change')); })()"); await sleep(300);
+    chk('小 is the original size (no zoom)', await evalJs("document.documentElement.style.zoom === ''"), await evalJs("document.documentElement.style.zoom"));
+    await call('Page.reload'); await sleep(2500);
+    chk('kept after reload', await evalJs("document.documentElement.style.zoom === '' && JSON.parse(localStorage.getItem('ame.scale')) === 's'"), 0);
+    console.log(res.join(String.fromCharCode(10)));
+    ws.close();
+  } catch (e) { errors.push('script: ' + e.stack); }
+  finally {
+    try { chrome && chrome.kill(); } catch {}
+    for (const k of kids) try { k.kill(); } catch {}
+    await sleep(800);
+    try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
+    console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no page errors');
+    console.log('shots in', OUT);
+    process.exit(0);
+  }
+})();

@@ -99,7 +99,7 @@ cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node --test codex-hook.test.js app/permissions.test.js   # 单元测试
 ```
 
-国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试脚本不入库（`remote/test/`）。
+国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。
 
 技术栈：Electron 33、Canvas 2D 分层绑定、`uiohook-napi`；看板为 Node（`ws`）+ 原生 ES modules，Markdown 渲染用本地的 marked 与 DOMPurify。
 

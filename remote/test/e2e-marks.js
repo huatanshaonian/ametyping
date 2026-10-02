@@ -1,0 +1,25 @@
+// session-marks.js: flags, groups, validation, persistence, deleting a group
+const fs = require('fs'), path = require('path'), os = require('os');
+const { createMarks } = require('../server/session-marks');
+const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-marks-'));
+const res = []; const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
+let changes = 0;
+const m = createMarks({ dataDir: T, onChange: () => changes++ });
+chk('bad key refused', !m.set({ key: 'nobar', pinned: true }).ok, 0);
+chk('key with control chars refused', !m.set({ key: 'a|b\n', pinned: true }).ok, 0);
+chk('pin', m.set({ key: 'pc|s1', pinned: true }).ok && m.get().sessions['pc|s1'].pinned === true, m.get());
+chk('unknown group refused', !m.set({ key: 'pc|s1', group: 'nope' }).ok, 0);
+chk('empty group name refused', !m.group({ op: 'add', name: '   ' }).ok, 0);
+const g = m.group({ op: 'add', name: '  科研   项目 ' }).group;
+chk('group name trimmed', g.name === '科研 项目', g);
+chk('into the group', m.set({ key: 'nas|s2', group: g.id }).ok && m.set({ key: 'pc|s1', group: g.id }).ok, m.get());
+chk('rename', m.group({ op: 'rename', id: g.id, name: '新名字' }).ok && m.get().groups[0].name === '新名字', m.get());
+chk('unpin keeps the group', m.set({ key: 'pc|s1', pinned: false }).ok && m.get().sessions['pc|s1'].group === g.id && !('pinned' in m.get().sessions['pc|s1']), m.get());
+const again = createMarks({ dataDir: T });
+chk('persisted', again.get().groups.length === 1 && again.get().sessions['nas|s2'].group === g.id, again.get());
+m.set({ key: 'nas|s2', starred: true });
+chk('delete group: members drop out, other marks stay, empty entries go', m.group({ op: 'delete', id: g.id }).ok && !m.get().groups.length && m.get().sessions['nas|s2'].starred && !m.get().sessions['nas|s2'].group && !m.get().sessions['pc|s1'], m.get());
+chk('onChange fired', changes > 5, changes);
+chk('__proto__ cannot be reached', !m.set({ key: '__proto__', pinned: true }).ok, 0);
+fs.rmSync(T, { recursive: true, force: true });
+console.log(res.join('\n'));
