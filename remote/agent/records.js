@@ -4,7 +4,7 @@
 // (restart, reconnect) loses or duplicates anything. Only complete lines are sent.
 'use strict';
 const fs = require('fs');
-const { recordsOf } = require('../../app/transcript');
+const { recordsOf, forkLookup } = require('../../app/transcript');
 const { claudeWindow } = require('./context-window');
 
 const MAX_READ = 4e6;          // bytes of transcript read per call
@@ -25,7 +25,8 @@ function firstCwd(file) {
 
 // parse: one parsed line -> records (Claude Code's recordsOf by default; codex-records.js for Codex sessions)
 function createReader(file, offset, parse = recordsOf) {
-  return { file, offset, skipping: false, parse, cwd: parse === recordsOf ? firstCwd(file) : null };
+  // (forkLookup: a /btw answer whose question was before the offset this reader started at -- see app/transcript.js)
+  return { file, offset, skipping: false, parse, cwd: parse === recordsOf ? firstCwd(file) : null, forkLookup: parse === recordsOf ? forkLookup(file) : null };
 }
 
 // t0: for a line without its own timestamp (title, permission mode), the time of the line before it in the file --

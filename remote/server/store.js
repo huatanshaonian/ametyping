@@ -87,6 +87,14 @@ function createStore(dir) {
       }
       // Claude Code writes the same title line again and again; only a change is worth keeping
       if (r.role === 'title' && (!r.text || r.text.slice(0, 80) === e.title)) continue;
+      // the same /btw answer again (Claude Code writes the notification more than once; an agent restarted in between
+      // no longer knows it sent it): kept once per conversation
+      if (r.role === 'btw') {
+        const sig = (r.text || '').length + ':' + (r.text || '').slice(0, 120);
+        e.btw = e.btw || [];
+        if (e.btw.includes(sig)) continue;
+        e.btw.push(sig); if (e.btw.length > 30) e.btw.shift();
+      }
       // the permission mode is written around every message: keep only changes
       if (r.role === 'mode') { if (!r.text || r.text === e.mode) continue; e.mode = r.text.slice(0, 24); modeChanged = true; }
       const day = dayOf(r.t);
