@@ -43,6 +43,8 @@ function createMailStore({ dataDir }) {
   }
 
   const has = (key) => index.has(key);
+  // a message as kept in memory (no text): for search results
+  const brief = (key) => index.get(key) || null;
   // r: parse.js's record + { key, acc, uid } -> the message as kept (no text; with its dup fingerprint), or null when it
   // is already there
   function add(r) {
@@ -118,7 +120,7 @@ function createMailStore({ dataDir }) {
     try { fs.rmSync(path.join(root, acc), { recursive: true, force: true }); } catch {}
   }
 
-  return { has, add, get, list, copiesOf, between, count, unread, setSeen, uidsOf, removeAccount };
+  return { has, brief, add, get, list, copiesOf, between, count, unread, setSeen, uidsOf, removeAccount };
 }
 
 module.exports = { createMailStore, dupOf };

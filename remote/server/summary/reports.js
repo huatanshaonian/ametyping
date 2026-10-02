@@ -64,6 +64,11 @@ function createReports(dir) {
     if (d && (!out.length || d.to > out[0].to)) out.unshift(d);
     return out.map((s) => ({ date: s.date, draft: s.draft, brief: s.brief, minutes: s.minutes, title: s.title, project: s.project, note: s.note || null }));
   }
+  // every daily report's date and file time (what the search index checks; no report is read)
+  function versions() {
+    let names = []; try { names = fs.readdirSync(dir); } catch {}
+    return names.filter((n) => DAY.test(n.slice(0, -5)) && n.endsWith('.json')).map((n) => { let m = 0; try { m = fs.statSync(path.join(dir, n)).mtimeMs; } catch {} return { date: n.slice(0, -5), mtime: m }; });
+  }
   const has = (date) => DAY.test(String(date)) && fs.existsSync(file(date));
 
   const state = () => readJson(path.join(dir, 'state.json'), {});
@@ -73,7 +78,7 @@ function createReports(dir) {
   const cacheGet = (key) => readJson(cacheFile(key), null);
   const cachePut = (key, v) => writeJson(cacheFile(key), v);
 
-  return { get, save, list, latest, has, sessionNotes, getWeek, hasWeek, saveWeek, listWeeks, state, setState, cacheGet, cachePut };
+  return { get, save, list, latest, has, sessionNotes, versions, getWeek, hasWeek, saveWeek, listWeeks, state, setState, cacheGet, cachePut };
 }
 
 module.exports = { createReports };
