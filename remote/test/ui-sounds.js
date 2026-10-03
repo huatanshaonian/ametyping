@@ -90,7 +90,8 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("document.getElementById('soundbtn').click()"); await evalJs("document.querySelector('#volpop .vmute input').click()");
     chk('tray click mutes (icon)', (await evalJs("document.querySelector('#soundbtn img').src")).includes('loudspeaker_muted'), await evalJs("document.querySelector('#soundbtn img').src"));
     await evalJs("document.getElementById('startbtn').click()"); await sleep(200);
-    await evalJs("[...document.querySelectorAll('.smi')].find(b=>b.textContent.includes('声音')).click()"); await sleep(600);
+    await evalJs("[...document.querySelectorAll('.smi')].find(b=>b.textContent.includes('控制面板')).click()"); await sleep(400);
+    await evalJs("document.querySelector('.cp-item[data-id=sounds]').click()"); await sleep(600);
     await shot('10-sounds.png');
     await evalJs("[...document.querySelectorAll('.sounds label')].find(l=>l.textContent.includes('操作失败')).querySelector('button').click()"); await sleep(300);
     chk('try-out plays even when muted', (await played()).includes('chord.wav'), await played());

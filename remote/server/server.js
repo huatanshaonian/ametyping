@@ -199,7 +199,7 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 // 邮件: the mailboxes kept in step on the NAS (mail/index.js); open pages are told about new mail / account changes
 // new mail is read by the model (the daily report's, mail/triage.js); an alert goes to open pages (sound, the phone buzzes)
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
-  audit: (...a) => audit(...a), ask: summary ? (p, sch) => summary.ask(p, sch) : null, reports: () => summary && summary.reports, todos,
+  audit: (...a) => audit(...a), ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, reports: () => summary && summary.reports, todos,
   onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
 // the search index built in the background: the conversations, then the documents (reports, notes, artifacts, mail);
 // new mail is indexed a few seconds after it arrives, so a search finds little left to do
@@ -434,6 +434,8 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
+  // AI 模型: each job's model / effort, Codex's version and updates (server/ai)
+  if (summary && /^\/api\/ai(\/|$)/.test(p) && await summary.ai.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));

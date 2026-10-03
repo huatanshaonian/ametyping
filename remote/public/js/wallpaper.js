@@ -1,7 +1,6 @@
 // Wallpaper: a few built-in pictures, one image of your own (kept in this browser's IndexedDB, never uploaded),
 // and pictures the server downloaded from a URL (shared by every device). The choice is per browser.
 import { $, h, prefs } from './util.js';
-import * as wm from './wm.js';
 import * as sound from './sound.js';
 import * as theme from './theme.js';
 
@@ -82,7 +81,11 @@ export async function init() {
 }
 
 // ---- 显示属性 window ----
-export function openSettings() {
+// 显示属性 lives in 控制面板 (apps/control.js): this opens it there
+export function openSettings() { import('./apps/control.js').then((c) => c.open('display')); }
+
+// the 显示属性 page itself, for 控制面板: { root }
+export function settingsPanel() {
   const grid = h('div', { class: 'walls' });
   const msg = h('div', { class: 'wallmsg' });
   const say = (t, bad) => { msg.textContent = t || ''; msg.classList.toggle('bad', !!bad); };
@@ -135,5 +138,5 @@ export function openSettings() {
     grid,
     h('div', { class: 'wallbar' }, url, fetchBtn, h('button', { class: 'btn', type: 'button', text: '本地图片…', onclick: () => file.click() }), file),
     msg);
-  wm.open({ id: 'display', title: '显示属性', icon: '/icons/display_properties-16.png', content, width: 560, height: 420 });
+  return { root: content };
 }

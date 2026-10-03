@@ -87,7 +87,7 @@ function createCompose({ dataDir, accounts, store, ask = null, log = () => {}, a
     const prompt = draftPrompt({ mode: x.mode, points: String(d.points || '').slice(0, 2000), tone: d.tone, subject: x.subject, text: x.text, to: x.to,
       orig: m ? { from: who(m.from), date: when(m.date), subject: m.subject, text: m.text } : null, me: { name: a ? a.name : '', address: a ? a.address : '' } });
     try {
-      const r = await ask(prompt, DRAFT_SCHEMA);
+      const r = await ask(prompt, DRAFT_SCHEMA, 'mailDraft');
       return { ok: true, subject: String(r.subject || x.subject || '').slice(0, 500), text: String(r.text || '').slice(0, 50000) };
     } catch (e) { return { ok: false, msg: '模型没能起草：' + e.message }; }
   }

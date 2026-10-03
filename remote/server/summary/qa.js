@@ -56,7 +56,7 @@ function createQA({ search, reports, notes = null, mail = () => null, ask, log =
       '用户想从自己过去和 AI 编程助手的对话、工作日报、笔记、产出的文件、邮件里找东西。把下面的问题变成 3～8 个搜索词：',
       '关键名词、文件名、技术名词，中文和英文写法都给（如「画图」和 plot、matplotlib），每个词尽量短（2～6 个字或一个英文单词），不要整句。',
       '', '问题：' + j.q,
-    ].join('\n'), TERMS_SCHEMA);
+    ].join('\n'), TERMS_SCHEMA, 'ask');
     j.terms = [...new Set((t.terms || []).map((x) => String(x).trim()).filter(Boolean))].slice(0, 10);
     const found = gather(j.terms);
     j.found = { reports: found.reports.length, sessions: found.sessions.length, artifacts: found.artifacts.length, notes: found.notes.length, mail: found.mail.length };
@@ -68,7 +68,7 @@ function createQA({ search, reports, notes = null, mail = () => null, ask, log =
       '根据下面找到的资料回答用户的问题。只用资料里的信息；资料里没有的就说没找到，不要编造。',
       '回答用简体中文，直接给结论（例如文件在哪、哪天做的、怎么做的），提到的内容在句末标出处编号，如 [C2]、[F1]、[R3]、[N1]、[M1]。',
       'sources 列出用到的编号（如 C2）。', '', '问题：' + j.q, '', '资料：', context(found),
-    ].join('\n'), ANSWER_SCHEMA);
+    ].join('\n'), ANSWER_SCHEMA, 'ask');
     const pick = (ref) => {
       const m = /^([RCFNM])(\d+)$/.exec(String(ref).replace(/[[\]\s]/g, '')); if (!m) return null;
       const i = +m[2] - 1;
