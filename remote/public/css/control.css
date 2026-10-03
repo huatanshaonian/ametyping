@@ -1,0 +1,38 @@
+/* 控制面板 (apps/control.js): the items on the left with their icons, the chosen one on the right; a narrow window
+   shows the icons first and the item after (with a way back). AI 模型 (.aim, apps/ai-models.js). */
+.cp { position: absolute; inset: 0; display: flex; }
+.cp-nav { width: 196px; flex: none; overflow-y: auto; border-right: 1px solid var(--edge); background: var(--body); padding: 4px 0; }
+.cp-item { display: grid; grid-template-columns: 32px 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center; width: 100%;
+  padding: 6px 10px; border: 0; background: none; text-align: left; cursor: pointer; color: var(--ink); font: inherit; }
+.cp-item img { grid-row: 1 / 3; width: 32px; height: 32px; image-rendering: pixelated; }
+.cp-item .cp-l { font-size: 13px; color: var(--border); }
+.cp-item small { font-size: 11px; color: var(--muted); line-height: 1.3; }
+.cp-item:hover { background: var(--hover); }
+.cp-item.sel { background: var(--border); } .cp-item.sel .cp-l, .cp-item.sel small { color: #fff; }
+.cp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cp-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
+.cp-title { color: var(--border); }
+.cp-back { display: none; padding: 1px 10px; }
+.cp-pane { flex: 1; min-height: 0; overflow: auto; position: relative; }
+/* (each page was a window of its own: the ones filling it absolutely keep doing so inside the pane) */
+.cp-pane > .walls, .cp-pane > div > .walls { max-height: none; }
+.cp.narrow .cp-nav { width: 100%; border-right: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-content: start; }
+.cp.narrow .cp-main { display: none; }
+.cp.narrow.picked .cp-nav { display: none; }
+.cp.narrow.picked .cp-main { display: flex; }
+.cp.narrow .cp-back { display: inline-block; }
+
+.aim { padding: 10px 14px; font-size: 13px; line-height: 1.6; }
+.aim-table { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 12px; }
+.aim-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(120px, 1fr) minmax(100px, .8fr); gap: 4px 8px; align-items: center; padding: 5px 0;
+  border-bottom: 1px dotted var(--edge); }
+.aim-row > div b { display: block; color: var(--border); font-weight: normal; } .aim-row > div small { font-size: 11px; color: var(--muted); }
+.aim-row .field { width: 100%; min-width: 0; }
+.aim-uses { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted); }
+.aim-def { background: var(--tint); padding: 6px 6px; border-bottom: 1px solid var(--edge); }
+.aim-h { margin: 8px 0 4px; color: var(--border); font-size: 14px; }
+.aim-kv { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; } .aim-kv b { width: 64px; flex: none; color: var(--muted); font-weight: normal; }
+.aim-kv small { color: var(--muted); font-size: 11.5px; }
+.aim-new { color: var(--warn); font-weight: bold; } .aim-bad { color: var(--bad); }
+.aim-out { max-height: 140px; overflow: auto; background: var(--tint); padding: 6px 8px; font-size: 11.5px; white-space: pre-wrap; }
+.cp.narrow .aim-row { grid-template-columns: 1fr 1fr; } .cp.narrow .aim-row > div:first-child { grid-column: 1 / 3; } .cp.narrow .aim-uses { grid-column: 1 / 3; }

@@ -9,7 +9,6 @@ import * as netpanel from './netpanel.js';
 import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
-import * as sounds from './apps/sounds.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
@@ -17,6 +16,7 @@ import * as notepad from './apps/notepad.js';
 import * as calendar from './apps/calendar.js';
 import * as google from './apps/google.js';
 import * as mail from './apps/mail.js';
+import * as control from './apps/control.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -40,16 +40,13 @@ const APPS = [
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
   { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
   { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
-  { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
+  { id: 'control', label: '控制面板', icon: icon('directory_control_panel'), open: () => control.open(), hint: '显示、声音、电脑、Google、邮箱、AI 模型等所有设置' },
 ];
 desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
   { icon: icon('sched_task'), label: '重要计划', action: todo.open },
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
-  { icon: icon('computer_2'), label: '添加电脑', action: computers.open },
-  { icon: icon('key_win'), label: 'Google 账户', action: () => google.open() },
-  { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
   'sep',
   { icon: icon('key_win'), label: '注销', action: logout },
 ]);

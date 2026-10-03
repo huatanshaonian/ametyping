@@ -2,6 +2,18 @@
 // shaped by the schema it was given (a day report or a session summary), or fails (FAKE_CODEX_FAIL).
 const fs = require('fs');
 const args = process.argv.slice(2);
+// the maintenance commands (控制面板 → AI 模型): the version lives in FAKE_CODEX_VERSION (a file; 0.158.0 when none),
+// `update` moves it on to FAKE_CODEX_NEXT, `login status` says logged in unless FAKE_CODEX_LOGGED_OUT
+if (args[0] === '--version' || args[0] === 'update' || args[0] === 'login') {
+  const vf = process.env.FAKE_CODEX_VERSION;
+  const cur = () => { try { return fs.readFileSync(vf, 'utf8').trim(); } catch { return '0.158.0'; } };
+  if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ args, proxy: process.env.HTTPS_PROXY || '' }) + '\n');
+  if (args[0] === '--version') console.log('codex-cli ' + cur());
+  else if (args[0] === 'update') { if (vf && process.env.FAKE_CODEX_NEXT) fs.writeFileSync(vf, process.env.FAKE_CODEX_NEXT); console.log('Updated Codex to ' + cur()); }
+  else if (process.env.FAKE_CODEX_LOGGED_OUT) { console.log('Not logged in'); process.exit(1); }
+  else console.log('Logged in using ChatGPT');
+  process.exit(0);
+}
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
 const out = args[args.indexOf('-o') + 1];
 let prompt = '';

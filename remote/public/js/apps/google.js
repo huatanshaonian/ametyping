@@ -4,7 +4,6 @@
 // added is asked to connect once more.
 // Anything that changes the account asks for the code again (js/net.js post()).
 import { h } from '../util.js';
-import * as wm from '../wm.js';
 import * as net from '../net.js';
 
 let st = null;
@@ -40,12 +39,13 @@ onStatus((s) => {
 net.on('google', () => status());
 net.on('status', (up) => { if (up) status(); });
 
-let win = null;
-export function open(message) {
-  if (win) { wm.open({ id: 'google' }); win.render(message); return; }
-  win = mount();
-  wm.open({ id: 'google', title: 'Google 账户', icon: '/icons/key_win-16.png', content: win.root, width: 520, height: 470, onClose: () => { win = null; } });
-  win.render(message);
+// Google 账户 lives in 控制面板 (control.js): this opens it there; message (after signing in) is shown on top
+export function open(message) { import('./control.js').then((c) => c.open('google', message)); }
+// the page itself, for 控制面板: { root, show(message) }
+export function panel(message) {
+  const p = mount();
+  p.render(message);
+  return { root: p.root, show: (m) => p.render(m) };
 }
 
 function mount() {

@@ -58,7 +58,7 @@ function createWeekly({ reports, ask, todos = null, log = () => {} }) {
     for (const r of dailies) for (const p of r.projects || []) { if (CATS.includes(p.category)) byCat[p.category] += p.minutes || 0; if (p.category === 'chore') chores++; }
     const artifacts = dailies.flatMap((r) => (r.artifacts || []).map((a) => ({ date: r.date, machine: a.machine, path: a.path, note: a.note, sha: a.backed ? a.sha : '' })));
     const last = [...dailies].reverse().find((r) => !r.brief) || dailies[dailies.length - 1];
-    const ans = await ask(weekPrompt(start, dailies), WEEK_SCHEMA);
+    const ans = await ask(weekPrompt(start, dailies), WEEK_SCHEMA, 'weekly');
     const w = {
       start, end: dates[6], generatedAt: Date.now(), headline: ans.headline || '',
       projects: (ans.projects || []).filter((p) => p.category !== 'chore'), highlights: ans.highlights || [],
