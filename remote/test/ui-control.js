@@ -72,10 +72,10 @@ function login() {
       !/添加电脑|Google 账户|声音/.test(menu) && /重要计划/.test(menu) && /网上邻居/.test(menu), [desk, menu]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the six items with their icons; the first one open beside them', items === '显示属性|声音|电脑|Google 账户|邮箱|AI 模型' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 6 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the seven items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 7 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
-    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['AI 模型', '.aim', '默认']]) {
+    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);

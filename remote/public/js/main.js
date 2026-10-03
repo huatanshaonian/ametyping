@@ -18,6 +18,7 @@ import * as google from './apps/google.js';
 import * as mail from './apps/mail.js';
 import * as control from './apps/control.js';
 import * as sound from './sound.js';
+import * as push from './push.js';
 import './alerts.js';
 import './volume.js';
 
@@ -94,5 +95,8 @@ openDashboard();
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }
 }
+// the installable app and phone notifications (js/push.js); a notification's link opens that session / message
+push.start();
+push.route({ s: (machine, id) => dashboard.openSession(machine, id), mail: (key) => mail.open(key) });
 // just logged in (the login page leaves a mark): the start-up sound, once
 try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

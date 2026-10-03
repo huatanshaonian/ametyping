@@ -1,4 +1,4 @@
-// 控制面板: every setting in one window, each item with the icon it always had -- 显示属性, 声音, 电脑, Google 账户,
+// 控制面板: every setting in one window, each item with the icon it always had -- 显示属性, 声音, 通知, 电脑, Google 账户,
 // 邮箱, AI 模型. The list on the left, the chosen item on the right (a narrow window: the icons first, then the item
 // with a way back). The items' old open() functions land here, so links elsewhere (the calendar's 「连接 Google」, the
 // tray's warnings, 邮件's 设置) open the right page.
@@ -11,10 +11,12 @@ import { panel as computersPanel } from './computers.js';
 import { panel as googlePanel } from './google.js';
 import { panel as mailPanel } from './mail-accounts.js';
 import { panel as aiPanel } from './ai-models.js';
+import { panel as notifyPanel } from './notify.js';
 
 const ITEMS = [
   { id: 'display', label: '显示属性', icon: 'display_properties', note: '壁纸、配色、界面大小', panel: displayPanel },
   { id: 'sounds', label: '声音', icon: 'mixer_sound', note: '系统音效、静音、手机振动', panel: soundsPanel },
+  { id: 'notify', label: '通知', icon: 'msg_information', note: '手机通知、安装为应用', panel: notifyPanel },
   { id: 'computers', label: '电脑', icon: 'network_normal_two_pcs', note: '添加 / 移除连到这里的电脑', panel: computersPanel },
   { id: 'google', label: 'Google 账户', icon: 'key_win', note: '日历、任务、云端硬盘、提醒到手机', panel: googlePanel },
   { id: 'mail', label: '邮箱', icon: 'outlook_express', note: '收信的邮箱、签名、推荐文献按什么判断', panel: mailPanel },
