@@ -113,6 +113,16 @@ function recordsOf(o, st) {
   const out = [];
   if (!o || o.isSidechain || o.isMeta) return out;
   if (o.type === 'system' || o.type === 'queue-operation') return btwRecords(o, st, o.timestamp ? Date.parse(o.timestamp) : Date.now());
+  // a message you sent while Claude was busy: it waits in a queue and is handed to Claude mid-turn -- written then as an
+  // attachment, not as a user message (background tasks' notifications come the same way: not yours, left out)
+  if (o.type === 'attachment' && o.attachment && o.attachment.type === 'queued_command') {
+    const a = o.attachment;
+    if (a.commandMode !== 'prompt' || a.humanTurn === false) return out;
+    const raw = typeof a.prompt === 'string' ? a.prompt : Array.isArray(a.prompt) ? a.prompt.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n') : '';
+    const u = userText(raw);
+    if (u && typeof u === 'string') out.push({ role: 'user', text: u, t: o.timestamp ? Date.parse(o.timestamp) : Date.now() });
+    return out;
+  }
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
   if (o.type === 'user' && m) {
