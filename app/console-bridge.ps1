@@ -3,6 +3,9 @@
 #   alive <pid>           -> "ok 1" | "ok 0"
 #   send <pid> <base64>   -> "ok" | "err <reason>"   types UTF-8 text, then Enter, into the console <pid> is attached to
 #   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab btab (Shift+Tab)
+#                                                   clear (Claude Code's input box emptied: Ctrl+E Ctrl+U, then
+#                                                   Backspace Ctrl+U for the lines above; Ctrl+Y there brings it back)
+#   type <pid> <b64>      -> as send, without the Enter (tests)
 #   screen <pid>          -> "ok <base64>" | "err <reason>"   the visible text of that console window (UTF-8)
 #   launch <base64 json>  -> "ok <pid>" | "err <reason>"   {exe, args, cwd}: start a program in a new console window
 # Input goes through WriteConsoleInput, i.e. the terminal's own input buffer: Claude Code reads it exactly like
@@ -129,6 +132,7 @@ public static class AmeCon {
   // btab = Shift+Tab (Claude Code: cycle the permission mode)
   public static string KeyPress(uint pid, string name) {
     ushort vk, scan, ch = 0; uint ctrl = 0;
+    if (name == "clear") return ClearInput(pid);
     switch (name) {
       case "btab": vk = 0x09; scan = 0x0F; ch = 9; ctrl = 0x0010; break;   // SHIFT_PRESSED
       case "up": vk = 0x26; scan = 0x48; break;
@@ -141,6 +145,15 @@ public static class AmeCon {
       default: return "!unknown key";
     }
     return WithConsole(pid, "CONIN$", h => { var l = new List<INPUT_RECORD>(); Key(l, ch, vk, scan, ctrl); return Write(h, l); });
+  }
+  // empty Claude Code's input box (what was typed there must not be sent along with a reply from the dashboard)
+  public static string ClearInput(uint pid) {
+    return WithConsole(pid, "CONIN$", h => {
+      var l = new List<INPUT_RECORD>();
+      Key(l, 5, 0x45, 0x12, 0x0008); Key(l, 21, 0x55, 0x16, 0x0008);           // Ctrl+E, Ctrl+U
+      for (int i = 0; i < 20; i++) { Key(l, 8, 0x08, 0x0E); Key(l, 21, 0x55, 0x16, 0x0008); }   // Backspace, Ctrl+U
+      return Write(h, l);
+    });
   }
 }
 '@
@@ -163,6 +176,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       }
       'key'    { $r = & $res ([AmeCon]::KeyPress([uint32]$p[1], [string]$p[2])) }
       'send'   { $r = & $res ([AmeCon]::Send([uint32]$p[1], [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[2])), $true)) }
+      'type'   { $r = & $res ([AmeCon]::Send([uint32]$p[1], [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[2])), $false)) }
       default  { $r = 'err unknown' }
     }
   } catch { $r = 'err ' + ($_.Exception.Message -replace '\s+', ' ') }
