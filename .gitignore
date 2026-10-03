@@ -7,3 +7,5 @@ remote/agent/agent.json
 windows98-icons/
 remote/test/out/
 remote/server/data/
+remote/deploy/nas/zotero/.env
+remote/deploy/nas/zotero/config/

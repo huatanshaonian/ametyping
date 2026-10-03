@@ -1,0 +1,38 @@
+# Zotero desktop on the NAS, used through a browser (linuxserver's Selkies web desktop), for the literature module.
+# Log in to zotero.org and set up WebDAV file sync once in the web desktop; after that ame-remote drives it through
+# Zotero's local API (http://127.0.0.1:23119/api/, writes need Zotero 10+ and a key from /api/local/authorize).
+#
+# network_mode: host -- Zotero only listens on 127.0.0.1 inside wherever it runs, so the container shares the NAS's
+# network to let ame-remote (on the NAS itself) reach port 23119. The web desktop then listens on the NAS directly:
+#   https://<nas>:3921/  (3920 is plain HTTP and only meant for a reverse proxy)
+# Reach it over the LAN / Tailscale only; never forward these ports to the internet.
+#
+# Put this file in /volume2/docker/zotero/ with a .env next to it (see .env.example; not in git), then create a
+# project from that folder in Container Manager, or: sudo /usr/local/bin/docker-compose up -d
+# (sudo's PATH has no /usr/local/bin on DSM).
+#
+# The desktop starts Zotero once (config/.config/labwc/autostart, created on first start) and closing its window
+# would take the local API down with it: the last line `zotero` there is replaced by
+#   while true; do zotero; sleep 3; done
+# so it comes back by itself.
+services:
+  zotero:
+    image: lscr.io/linuxserver/zotero:latest
+    container_name: zotero
+    network_mode: host
+    shm_size: "1gb"
+    env_file: .env                  # CUSTOM_USER / PASSWORD: HTTP basic auth of the web desktop
+    environment:
+      - PUID=1026                   # huatanshaonian:users -- owns ./config
+      - PGID=100
+      - TZ=Asia/Shanghai
+      - LC_ALL=zh_CN.UTF-8
+      - TITLE=Zotero
+      - CUSTOM_PORT=3920            # the image's defaults (3000/3001/8082) moved out of the way on the host network
+      - CUSTOM_HTTPS_PORT=3921
+      - CUSTOM_WS_PORT=3922
+      - DISABLE_SUDO=true
+      - DISABLE_TERMINALS=true
+    volumes:
+      - ./config:/config            # Zotero's profile and data directory (the local copy of the library)
+    restart: unless-stopped
