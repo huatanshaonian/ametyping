@@ -35,7 +35,11 @@
 .dash .mc.grp { color: var(--border); font-weight: bold; }
 .dash .mc .gi { display: inline-block; width: 12px; height: 9px; margin-right: 5px; vertical-align: -1px;
   background: #f5d76e; border: 1px solid #b08a1e; border-radius: 1px 3px 1px 1px; }
-.dash .card { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }   /* (a long press opens the menu, not iOS's text selection) */
+.dash .card { position: relative; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* ⋯ on each card where there is no right click (touch screens): the same menu */
+.dash .card .cm { display: none; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; padding: 0;
+  border: 0; background: none; color: var(--faint); font-size: 18px; line-height: 30px; }
+@media (pointer: coarse) { .dash .card .cm { display: block; } .dash .card { padding-right: 36px; } }   /* (a long press opens the menu, not iOS's text selection) */
 .dash .card.hid { opacity: .5; }
 .dash .card .star { color: #e0a800; margin-right: 3px; }
 .dash .head .meta .cx.low { color: var(--warn); font-weight: bold; }
@@ -108,6 +112,11 @@
 .dash.narrow.viewing .side { display: none; }
 .dash.narrow:not(.viewing) .right { display: none; }
 .dash.narrow .back { display: inline-block; }
+/* a narrow window (a phone): the title on a line of its own, the machine / project / context left / 摘要 under it */
+.dash.narrow .head { flex-wrap: wrap; row-gap: 3px; }
+.dash.narrow .head > span:first-child { flex: 1 0 100%; }
+.dash.narrow .head .hr { flex: 1 1 100%; justify-content: space-between; }
+.dash.narrow .head .meta { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 0 1 auto; }
 .dash .compose .kbd { padding: 3px 8px; font-size: 13px; }
 /* the permission mode button next to the reply box (click = Shift+Tab) */
 .dash .compose .mode { padding: 3px 8px; font-size: 12px; white-space: nowrap; min-width: 58px; }
