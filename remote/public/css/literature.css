@@ -1,0 +1,106 @@
+/* 文献 window (apps/literature.js and its tabs) and the 深读 window (apps/lit-reader.js). */
+.lit { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.lit-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
+.lit-tab { font: inherit; font-size: 12.5px; padding: 2px 12px; cursor: pointer; border: 1px solid var(--edge); background: var(--body); color: var(--border); }
+.lit-tab.on { background: var(--border); color: #fff; border-color: var(--border); }
+.lit-sp { flex: 1; }
+.lit-st { font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lit-st.bad, .lit-empty.bad, .lb-job.bad { color: var(--bad); }
+.lit-body { flex: 1; min-height: 0; position: relative; }
+.lit-pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.lit-sub { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--edge); background: var(--body); }
+.lit-sub .btn { padding: 2px 10px; }
+.lit-empty { padding: 10px 12px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.lit .tag, .lr .tag { flex: none; font-style: normal; font-size: 10.5px; line-height: 15px; padding: 0 4px; border: 1px solid var(--edge); color: var(--muted); }
+
+/* 今日 */
+.lf-list { flex: 1; overflow-y: auto; padding: 8px 12px; background: var(--body); font-size: 13px; }
+.lf-sec h3 { margin: 6px 0; font-size: 13.5px; color: var(--border); }
+.lf-i { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--edge); border-left: 4px solid var(--border); background: #fff; line-height: 1.55; }
+.lf-i.k-rv, .lf-i.k-cu { border-left-color: var(--ok-text); } .lf-i.k-old { border-left-color: var(--warn); } .lf-i.k-fun { border-left-color: var(--pink); }
+.lf-i.past { opacity: .7; }
+.lf-h { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+.lf-t { font-weight: bold; color: var(--ink); text-decoration: none; } a.lf-t:hover { text-decoration: underline; }
+.tag.new { color: var(--border) !important; } .tag.rv, .tag.cu { color: var(--ok-text) !important; } .tag.old { color: var(--warn) !important; } .tag.fun { color: var(--pink-d) !important; }
+.tag.q { color: #fff !important; background: var(--border); border-color: var(--border) !important; } .tag.c { color: var(--ok-text) !important; }
+.lf-score { font-size: 11px; color: var(--muted); }
+.lf-m { font-size: 12px; color: var(--muted); }
+.lf-why { margin: 4px 0; padding: 4px 8px; background: var(--tint); } .lf-why b { display: block; font-size: 12px; color: var(--border); font-weight: normal; }
+.lf-abs summary { cursor: pointer; font-size: 12px; color: var(--muted); } .lf-abs p { margin: 4px 0; font-size: 12.5px; color: var(--ink); }
+.lf-note { font-size: 12.5px; } .lf-note b { color: var(--border); }
+.lf-tip { margin: 4px 0; font-size: 12px; color: var(--muted); }
+.lf-q { margin: 4px 0 6px; } .lf-q b { display: block; font-weight: normal; } .lf-ans { width: 100%; resize: vertical; font: inherit; }
+.lf-more { margin: 10px 0; } .lf-more summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom: 6px; }
+.lit .gbtns { margin: 6px 0 0; flex-wrap: wrap; gap: 6px; } .lit .gbtns .btn, .lr .gbtns .btn { padding: 2px 10px; }
+
+/* 文献库 / 知识库: list on the left, the paper / proposal / topic on the right */
+.lb-main { flex: 1; min-height: 0; display: flex; }
+.lb-list, .lk-left { width: 330px; flex: none; overflow-y: auto; border-right: 1px solid var(--edge); background: var(--body); }
+.lk-left { padding: 0 0 10px; } .lk-left h4 { margin: 8px 10px 4px; font-size: 12.5px; color: var(--border); } .lk-left > .field { margin: 0 10px; width: calc(100% - 20px); }
+.lk-new { display: flex; gap: 4px; margin: 6px 10px; } .lk-new .field { flex: 1; }
+.lb-i { padding: 5px 10px; border-bottom: 1px dotted var(--edge); cursor: pointer; font-size: 12.5px; }
+.lb-i:hover { background: var(--hover); } .lb-i.sel { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--border); }
+.lb-t { display: flex; gap: 4px; align-items: baseline; color: var(--ink); } .lb-t span { min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lb-t .star { font-style: normal; color: var(--warn); }
+.lb-m { display: flex; gap: 4px; align-items: center; font-size: 11.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lb-m span { overflow: hidden; text-overflow: ellipsis; }
+.lb-view, .lk-view { flex: 1; min-width: 0; overflow-y: auto; background: #fff; }
+.lb-head { padding: 8px 14px; border-bottom: 1px solid var(--edge); background: var(--body); }
+.lb-head h3 { margin: 2px 0 4px; font-size: 15px; color: var(--border); }
+.lb-head code { font: 11.5px Consolas, monospace; background: var(--tint); padding: 0 3px; }
+.lb-head a { color: var(--border); }
+.lb-job { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.lb-tip { margin: 8px 14px; padding: 5px 10px; font-size: 12.5px; border: 1px dashed var(--warn); color: var(--warn); }
+.lb-sec { margin: 8px 14px; font-size: 13px; } .lb-sec h4 { margin: 4px 0; color: var(--border); font-size: 13px; } .lb-sec summary { cursor: pointer; color: var(--border); }
+.lb-sec li { margin: 2px 0; } .lb-sec li small { color: var(--muted); }
+.lb-act { display: flex; align-items: center; gap: 8px; margin: 3px 0; } .lb-act span { flex: 1; } .lb-act.done span { color: var(--faint); text-decoration: line-through; } .lb-act .btn { padding: 0 8px; font-size: 12px; }
+.lb-card { padding-top: 6px; }
+.lb-edit { display: block; width: calc(100% - 20px); margin: 10px; min-height: 420px; font: 12.5px/1.55 Consolas, "Microsoft YaHei UI", monospace; resize: vertical; }
+.lb-back { display: none; }
+.lit.narrow .lb-list, .lit.narrow .lk-left { width: 100%; border-right: 0; }
+.lit.narrow .lb.viewing .lb-list, .lit.narrow .lb.viewing .lk-left, .lit.narrow .lb:not(.viewing) .lb-view, .lit.narrow .lb:not(.viewing) .lk-view { display: none; }
+.lit.narrow .lb.viewing .lb-back { display: inline-block; }
+.md .wlink { text-decoration: none; border-bottom: 1px dashed var(--border); } .md .plink { font-size: .85em; text-decoration: none; color: var(--accent-muted); }
+.lk-diff { margin: 0; padding: 8px 12px; font: 12.5px/1.5 Consolas, "Microsoft YaHei UI", monospace; white-space: pre-wrap; word-break: break-word; }
+.lk-diff .d.add { background: rgba(60, 170, 120, .14); } .lk-diff .d.del { background: rgba(180, 50, 110, .12); text-decoration: line-through; color: var(--muted); }
+.lk-diff .d.gap { color: var(--faint); text-align: center; }
+.lk-rel { margin: 0 4px; }
+
+/* 画像 / 产出 */
+.lp { flex: 1; overflow-y: auto; padding: 8px 14px 20px; background: var(--body); font-size: 13px; }
+.lp-row { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 8px 0; align-items: start; }
+.lp-row > label { padding-top: 4px; color: var(--border); }
+.lp-row > small, .lp-row small { grid-column: 2; color: var(--muted); font-size: 11.5px; }
+.lp-row textarea { width: 100%; resize: vertical; font: inherit; }
+.lp-q { display: grid; grid-template-columns: 26px 1fr auto auto; gap: 4px 6px; align-items: center; margin: 4px 0; }
+.lp-q b { color: var(--border); } .lp-q small { grid-column: 2 / 5; } .lp-q.done input { text-decoration: line-through; color: var(--faint); }
+.lp-q .btn { padding: 1px 8px; }
+.ls-v { margin: 6px 0 10px; padding: 8px 12px; border-left: 4px solid var(--border); background: var(--tint); font-size: 14px; }
+.ls-r { display: flex; align-items: baseline; gap: 8px; margin: 3px 0; } .ls-r b { width: 36px; text-align: right; font-size: 16px; color: var(--border); } .ls-r small { color: var(--muted); }
+.lp h4 { margin: 12px 0 4px; color: var(--border); }
+
+/* 深读 */
+.lr { position: absolute; inset: 0; display: flex; }
+.lr-pdf { flex: 1; min-width: 0; position: relative; border-right: 1px solid var(--edge); background: #8a8a9a; }
+.lr-pdf .notice { background: var(--body); height: 100%; overflow-y: auto; } .lr-abs { font-size: 13px; color: var(--ink); }
+.lr-side { width: 440px; flex: none; display: flex; flex-direction: column; background: var(--body); min-width: 0; }
+.lr-swap { display: none; margin-left: auto; }
+.lr-pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 6px 10px; font-size: 13px; }
+.lr-sec { display: flex; flex-direction: column; gap: 6px; }
+.lr-tip { margin: 2px 0; font-size: 12px; color: var(--muted); }
+.lr-in { width: 100%; resize: vertical; font: 13px/1.55 "Microsoft YaHei UI", system-ui, sans-serif; }
+.lr-fb { margin-top: 8px; padding: 6px 10px; border: 1px dashed var(--border); background: #fff; } .lr-fb h4 { margin: 2px 0; color: var(--border); }
+.lr-md { padding: 0; max-width: none; font-size: 13px; }
+.lr-chat { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; }
+.lr-me { align-self: flex-end; max-width: 88%; padding: 5px 9px; background: var(--border); color: #fff; white-space: pre-wrap; }
+.lr-me blockquote { margin: 0 0 4px; padding-left: 6px; border-left: 2px solid rgba(255, 255, 255, .6); font-size: 12px; opacity: .85; }
+.lr-ai { align-self: stretch; padding: 5px 9px; background: #fff; border: 1px solid var(--edge); }
+.lr-ask { padding: 4px 9px; border-left: 3px solid var(--pink); background: var(--quote-bg); font-size: 12.5px; } .lr-ask .md { font-size: 12.5px; }
+.lr-box { flex: none; border-top: 1px solid var(--edge); padding-top: 6px; }
+.lr-sel { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lr.narrow .lr-side { width: 100%; } .lr.narrow .lr-pdf { display: none; } .lr.narrow.side .lr-pdf { display: block; } .lr.narrow.side .lr-side { display: none; }
+.lr.narrow .lr-swap { display: inline-block; }
+.lr.narrow.side .lr-pdf::after { content: none; }
+html[data-theme="win98"] .lit-tab { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); }
+html[data-theme="win98"] .lit-tab.on { box-shadow: var(--pressed); background: #dcdcdc; }
+html[data-theme="win98"] .lr-me { background: #000080; }

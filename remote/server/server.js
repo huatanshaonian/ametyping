@@ -35,6 +35,7 @@ const { createBackup } = require('./backup');
 const { createMail } = require('./mail');
 const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
+const { createLiterature } = require('./literature');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -184,7 +185,7 @@ const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.da
 const sendNote = (sock, n) => { try { sock.send(JSON.stringify({ t: 'report-note', ...n })); } catch {} };
 // with today's agenda (Google events and tasks, 重要计划 due) for the morning bubble; without it if that fails
 // (and the mail alerts still open: mail.morning())
-const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...today, mail: mail.morning() } }), () => n);
+const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...today, mail: mail.morning(), papers: lit ? lit.morning() : undefined } }), () => n);
 // the conversations' full-text index (SQLite, data/search.db): follows what the store writes; built in the background
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
 if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
@@ -209,6 +210,11 @@ if (searchIndex && summary) {
   let docsT = null;
   mail.onNew(() => { clearTimeout(docsT); docsT = setTimeout(syncDocs, 3000); });
 } else if (searchIndex) searchIndex.sweep();
+// 文献 (literature/index.js): the daily papers, cards, deep reading and the knowledge base, on the NAS's Zotero
+// (config "literature"; the model is the daily report's); open pages are told what changed
+const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
+  ask: summary ? (p, sch) => summary.ask(p, sch) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
+  audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
 // a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
 function mailAlert(alert) {
   broadcast({ t: 'mail-alert', alert });
@@ -434,6 +440,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
+  if (lit && /^\/api\/lit(\/|$)/.test(p) && await lit.handle(req, res, url, ip, json, readBody)) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));

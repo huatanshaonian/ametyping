@@ -17,6 +17,7 @@ import * as notepad from './apps/notepad.js';
 import * as calendar from './apps/calendar.js';
 import * as google from './apps/google.js';
 import * as mail from './apps/mail.js';
+import * as literature from './apps/literature.js';
 import * as sound from './sound.js';
 import './alerts.js';
 import './volume.js';
@@ -40,6 +41,7 @@ const APPS = [
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
   { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
   { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
+  { id: 'literature', label: '文献', icon: icon('help_book_big'), open: () => literature.open(), hint: '每日文献推送、卡片、深读和知识库（连着群晖上的 Zotero）' },
   { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
 ];
 desktop.setIcons(APPS);
@@ -93,6 +95,8 @@ openDashboard();
   // #mail=<key>: from a mail alert (Google Calendar, 糖糖's bubble) -- that message
   const ml = /^#mail=([\w%:.-]+)$/.exec(location.hash);
   if (ml) { mail.open(decodeURIComponent(ml[1])); history.replaceState(null, '', location.pathname); }
+  // #lit: the day's papers (糖糖's morning bubble)
+  if (location.hash === '#lit') { literature.open('feed'); history.replaceState(null, '', location.pathname); }
   // back from Google's consent screen (google/index.js handleCallback)
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }
