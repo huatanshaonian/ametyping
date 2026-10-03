@@ -71,6 +71,8 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await call('Network.enable');
     await call('Network.setCookie', { name: cname, value: cval, url: `http://127.0.0.1:${PORT}/` });
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    // the sizes here are for 界面大小「小」(no zoom); the default 「中」 zooms the page by 1.15
+    await call('Page.addScriptToEvaluateOnNewDocument', { source: "localStorage.setItem('ame.scale', '\"s\"')" });
     await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
     await sleep(3500);
 
