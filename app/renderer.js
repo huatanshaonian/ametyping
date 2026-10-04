@@ -739,10 +739,16 @@ function gazeOffset(gx, gy) {
 function stepEye(gx, gy, dt) {                          // eyes are quicker than the head: they get there first
   if (!smoothGaze()) return;
   const o = gazeOffset(gx, gy);
-  eye.x = ease(eye.x, o.x, 16, dt); eye.y = ease(eye.y, o.y, 16, dt); eye.amt = ease(eye.amt, o.amt, 16, dt);
+  const k = GS.speed || 16;
+  eye.x = ease(eye.x, o.x, k, dt); eye.y = ease(eye.y, o.y, k, dt); eye.amt = ease(eye.amt, o.amt, k, dt);
 }
 function drawSmoothGaze() {
   if (!eye.cv) { eye.cv = document.createElement('canvas'); eye.cv.width = GS.w * EYE_RES; eye.cv.height = GS.h * EYE_RES; }
+  const key = eye.x.toFixed(2) + ',' + eye.y.toFixed(2) + ',' + eye.amt.toFixed(3);
+  if (key !== eye.key) { eye.key = key; composeEye(); }   // the cursor is still most of the time: reuse the composed eye
+  ctx.drawImage(eye.cv, OX + GS.x * CS, OY + GS.y * CS, GS.w * CS, GS.h * CS);
+}
+function composeEye() {
   const g = eye.cv.getContext('2d');
   g.setTransform(EYE_RES, 0, 0, EYE_RES, 0, 0);
   g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, GS.w, GS.h);
@@ -766,7 +772,6 @@ function drawSmoothGaze() {
   }
   g.globalCompositeOperation = 'source-over';
   g.drawImage(img.gaze_lid, 0, 0, GS.w, GS.h);
-  ctx.drawImage(eye.cv, OX + GS.x * CS, OY + GS.y * CS, GS.w * CS, GS.h * CS);
 }
 function drawGaze() {
   if (!RIG.gaze || mood.face !== 'neutral') return;
