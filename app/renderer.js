@@ -749,9 +749,21 @@ function drawSmoothGaze() {
   g.imageSmoothingQuality = 'high';
   g.drawImage(img.gaze_white, 0, 0, GS.w, GS.h);
   g.globalCompositeOperation = 'source-atop';           // the iris only shows inside the eye opening
-  const s = 1 + 0.04 * (1 - eye.amt);                   // the painted neutral iris is a touch bigger than the turned ones
-  const cx = GS.irisX + GS.irisW / 2 + eye.x, cy = GS.irisY + GS.irisH / 2 + eye.y;
-  g.drawImage(img.gaze_iris, cx - GS.irisW * s / 2, cy - GS.irisH * s / 2, GS.irisW * s, GS.irisH * s);
+  // Foreshortening, as painted: the side of the iris she looks toward is squeezed (the rim comes in to ~2/3 of its
+  // distance from the pupil at a full sideways turn), the far side stays (grows a little). An affine map cannot be
+  // lopsided, so the disc is drawn as two halves split at the pupil, each scaled along the gaze axis by its own
+  // factor; points on the split line do not move under either, so the halves meet without a seam.
+  const d = Math.hypot(eye.x, eye.y), turn = Math.min(1, d / GS.turn), phi = d > 1e-3 ? Math.atan2(eye.y, eye.x) : 0;
+  const u = 1 + GS.restGrow * (1 - eye.amt);            // the painted neutral iris is a touch bigger than the turned ones
+  const px = GS.pupil[0] + eye.x, py = GS.pupil[1] + eye.y;
+  for (const [s, x0] of [[1 - GS.squeeze * turn, -0.5], [1 + GS.stretch * turn, -200]]) {   // near half, far half
+    g.save();
+    g.translate(px, py); g.rotate(phi);
+    g.beginPath(); g.rect(x0, -200, 200.5, 400); g.clip();
+    g.scale(u * s, u); g.rotate(-phi); g.translate(-GS.pupil[0], -GS.pupil[1]);
+    g.drawImage(img.gaze_iris, GS.irisX, GS.irisY, GS.irisW, GS.irisH);
+    g.restore();
+  }
   g.globalCompositeOperation = 'source-over';
   g.drawImage(img.gaze_lid, 0, 0, GS.w, GS.h);
   ctx.drawImage(eye.cv, OX + GS.x * CS, OY + GS.y * CS, GS.w * CS, GS.h * CS);

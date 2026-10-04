@@ -155,7 +155,9 @@ lidcol = np.median(stack, axis=0)
 Image.fromarray(np.clip(np.dstack([lidcol, lid * opening]), 0, 255).astype(np.uint8), 'RGBA').save(os.path.join(OUT, 'gaze_lid.png'))
 
 data = {'x': X, 'y': Y, 'w': W, 'h': H, 'irisX': int(iris_x), 'irisY': int(iris_y), 'irisW': int(bx1 - bx0), 'irisH': int(by1 - by0),
+        'pupil': [TX0 + TW // 2, TY0 + TH // 2],
         'offset': {d: [int(off[d][0]), int(off[d][1])] for d in DIRS}}
+# (turn / squeeze / stretch / restGrow in gaze_smooth.js are hand-set from measuring the painted patches, not printed here)
 print('window.GAZE_SMOOTH =', json.dumps(data))
 if not CHECK: sys.exit(0)
 os.makedirs(CHECK, exist_ok=True)
