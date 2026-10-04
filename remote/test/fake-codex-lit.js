@@ -11,7 +11,20 @@ process.stdin.on('end', () => {
   if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ kind: Object.keys(schema.properties || {}).join(','), prompt }) + '\n');
   const P = schema.properties || {};
   let a;
-  if (P.seeds) {
+  if (P.queries) {
+    // 梳理, step 1: a first line from the account, what to search, the words for the library
+    const story = (/## 研究自述\n([\s\S]*?)\n\n## /.exec(prompt) || [])[1] || '';
+    a = { line: '初稿：' + story.slice(0, 20), queries: ['plasma sheath electron density', 'reentry communication blackout'], libWords: ['plasma', '鞘套', 'radar cross section'] };
+  } else if (P.unclear) {
+    // 梳理, step 2: the line again and the questions in dimensions, grounded in the library (L) and new papers (N)
+    const story = (/## 研究自述\n([\s\S]*?)\n\n## /.exec(prompt) || [])[1] || '';
+    a = { line: '总目标：' + story.slice(0, 20) + '\n1. 等离子体鞘套电磁散射\n2. RCS 高频方法与验证',
+      questions: [
+        { dim: '贴合工作', text: '鞘套电子密度剖面在 RCS 计算里怎么取', why: '自述里说卡在剖面', state: '[N1] 测了黑障时的剖面，[L1] 用流场算过后向散射', refs: ['L1', 'N1'] },
+        { dim: '方法与验证', text: 'RCS 计算结果拿什么验证', why: '自述里提到没有实测数据', state: '公开的飞行试验数据很少', refs: ['N2', 'X9'] },
+        { dim: '领域前沿', text: '近几年的鞘套剖面测量能否给出可用的输入', why: '新文献', state: '见 [N2]', refs: ['N2'] }],
+      unclear: ['气动隐身协同优化是你自己做，还是合作方做？'] };
+  } else if (P.seeds) {
     // 按主线补全: the branches (one the library covers, one it hardly does), a suggestion, what to follow
     const key = (/^- \[([A-Z0-9]{8})\]/m.exec(prompt) || [])[1] || '';
     a = { branches: [{ name: '等离子体鞘套电磁散射', desc: `库里有代表作 [${key}]，讲到了后向散射`, coverage: '充足', keywords: ['plasma sheath', 'reentry', 'electron density'], papers: key ? [key, 'NOTAKEY1'] : [] },

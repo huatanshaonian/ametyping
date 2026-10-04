@@ -48,6 +48,13 @@ function createOpenAlex({ http, base = 'https://api.openalex.org', key = '', mai
           authorIds: (w.authorships || []).map((a) => ({ name: (a.author && a.author.display_name) || '', id: String((a.author && a.author.id) || '').split('/').pop(), inst: ((a.institutions || [])[0] || {}).display_name || '' })) }; }
       catch (e) { if (e.status === 404) return null; throw e; }
     },
+    // the literature on a subject since a year, most relevant first (for working out the questions: what others are on)
+    async explore(words, fromYear, n = 8) {
+      const s = new URLSearchParams({ search: words, filter: `from_publication_date:${fromYear}-01-01`, sort: 'relevance_score:desc', per_page: String(n),
+        ...(key ? { api_key: key } : {}), ...(mailto ? { mailto } : {}) });
+      const j = await http.json(`${base}/works?${s}`);
+      return (j.results || []).map((w) => ({ ...fromWork(w), cited: w.cited_by_count || 0 }));
+    },
     // a journal by name -> { name, issns } (the best match with ISSNs), for a journal the library lacks
     async source(name) {
       const s = new URLSearchParams({ search: name, per_page: '5', ...(key ? { api_key: key } : {}), ...(mailto ? { mailto } : {}) });

@@ -1,18 +1,20 @@
-// 画像: what the push and every card are aimed at. The user writes the research's main line (主线) and the questions
-// being worked on (most important first); the model then reads the whole Zotero library with that line as the frame
+// 画像: what the push and every card are aimed at. The user writes an account of the work (研究自述: what it is, where
+// it is stuck, as unsystematic as it comes); the model sorts it into the research's main line (主线) and the questions
+// in dimensions -- after looking up the library and the last years' literature (organize); the user corrects those;
+// the model then reads the whole Zotero library with that line as the frame
 // (prompts/profile.js) and fills in the rest in detail -- the line's branches (what each covers, how well the library
 // covers it, its representative papers, its search phrases), questions the user may have missed (suggestions, nothing
 // more), and what to follow so every branch is watched, the thin ones above all. The user edits and confirms.
 // The follow lists are made concrete here: journals -> ISSNs (from the library; a journal the library lacks: from
 // OpenAlex), AIAA journals -> their RSS codes, authors -> OpenAlex ids (through a paper of theirs in the library),
 // key papers -> OpenAlex ids (for "who cites them").
-//   <dataDir>/literature/profile.json  { line, questions, suggestions, topics: [{ name, desc, coverage, keywords, papers }],
+//   <dataDir>/literature/profile.json  { story, line, questions, unclear, suggestions, topics: [{ name, desc, coverage, keywords, papers }],
 //                                         follow: { venues, authors, keywords, arxiv, ntrs, seeds }, confirmed, filledAt }
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { FILL_SCHEMA, fillPrompt } = require('./prompts/profile');
+const { FILL_SCHEMA, fillPrompt, PLAN_SCHEMA, planPrompt, QUESTIONS_SCHEMA, questionsPrompt, DIMS } = require('./prompts/profile');
 
 // AIAA ARC's table-of-contents feeds, by journal name (lower case)
 const AIAA = { 'aiaa journal': 'aiaaj', 'journal of spacecraft and rockets': 'jsr', 'journal of aircraft': 'ja', 'journal of thermophysics and heat transfer': 'jtht',
@@ -25,7 +27,7 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 function createProfile({ dir, mirror, ask, openalex = null, reports = () => null, log = () => {} }) {
   const file = path.join(dir, 'profile.json');
   let p = null; try { p = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-  const blank = () => ({ line: '', questions: [], suggestions: [], topics: [], follow: { venues: [], authors: [], keywords: [], arxiv: [], ntrs: [], seeds: [] } });
+  const blank = () => ({ story: '', line: '', questions: [], unclear: [], suggestions: [], topics: [], follow: { venues: [], authors: [], keywords: [], arxiv: [], ntrs: [], seeds: [] } });
   const save = () => { p.updated = Date.now(); fs.writeFileSync(file + '.tmp', JSON.stringify(p, null, 1)); fs.renameSync(file + '.tmp', file); };
   let job = null;
 
@@ -109,12 +111,69 @@ function createProfile({ dir, mirror, ask, openalex = null, reports = () => null
     for (const s of q.follow.seeds) if (!s.openalex && s.doi) { try { const w = await openalex.byDoi(s.doi); if (w) s.openalex = w.openalex; } catch {} }
   }
 
+  // the library's papers about these words (title, abstract, tags, collection names; annotated ones count double)
+  function libraryAbout(words, n = 45) {
+    const ws = uniq(words.map((w) => w.toLowerCase())).filter((w) => w.length > 1);
+    const cname = new Map(mirror.collections().map((c) => [c.key, c.name]));
+    return mirror.items().map((it) => {
+      const t = [it.title, it.abstract, it.tags.join(' '), it.collections.map((c) => cname.get(c)).join(' ')].join(' ').toLowerCase();
+      const hits = ws.reduce((s, w) => s + (t.includes(w) ? 1 : 0), 0);
+      const notes = mirror.annotationCount(it.key) + mirror.childrenOf(it.key).notes.length;
+      return { it, notes, s: hits * (notes ? 2 : 1) };
+    }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s || b.it.added - a.it.added).slice(0, n);
+  }
+  // the last years' literature for the searches (OpenAlex, most relevant first), the library's own papers left out
+  async function frontier(queries, years = 4, per = 7, max = 50) {
+    if (!openalex || !openalex.explore) return [];
+    const from = new Date().getFullYear() - years, seen = new Set(), out = [];
+    for (const q of queries.slice(0, 10)) {
+      let r = []; try { r = await openalex.explore(unquote(q), from, per); } catch (e) { log('文献：梳理时检索失败：' + e.message); }
+      for (const w of r) {
+        const k = w.doi || w.title.toLowerCase();
+        if (seen.has(k) || (w.doi && mirror.findDoi(w.doi)) || mirror.findTitle(w.title)) continue;
+        seen.add(k); out.push(w);
+      }
+    }
+    return out.slice(0, max);
+  }
+  // 梳理 -- research, not a summary of the account: (1) the account -> a first line and what to look up; (2) the
+  // library's papers that matter + the last years' literature (OpenAlex); (3) the line again and the questions in
+  // dimensions, each with what others asked and answered and the papers it rests on. Replaces the line and questions
+  // there (the window asks first when they were edited).
+  function organize() {
+    if (job && job.running) return { ok: false, msg: '正在处理上一步' };
+    if (!p || String(p.story || '').trim().length < 20) return { ok: false, msg: '先写下研究自述并保存（多写一点）' };
+    job = { running: true, what: 'organize', step: '读自述', started: Date.now() };
+    (async () => {
+      const work = recentWork();
+      const plan = await ask(planPrompt(p.story, work, library().collections), PLAN_SCHEMA);
+      job.step = '翻文献库、检索近几年的文献';
+      const lib = libraryAbout([...(plan.libWords || []), ...(plan.queries || []).flatMap((q) => unquote(q).split(' '))]).map((x, i) => ({ ref: 'L' + (i + 1), key: x.it.key, title: x.it.title, venue: x.it.venue, year: x.it.year, abstract: x.it.abstract, notes: x.notes }));
+      const fresh = (await frontier(plan.queries || [])).map((w, i) => ({ ref: 'N' + (i + 1), ...w }));
+      job.step = '归纳问题';
+      const d = await ask(questionsPrompt(p.story, plan.line || '', lib, fresh, work), QUESTIONS_SCHEMA);
+      const byRef = new Map([...lib.map((x) => [x.ref, { key: x.key, title: x.title, year: x.year }]), ...fresh.map((x) => [x.ref, { title: x.title, year: x.year, venue: x.venue, url: x.url, doi: x.doi }])]);
+      // (a paper the model named by its list number in a sentence: its short title instead)
+      const named = (t) => readable(t).replace(/\[?\b([LN]\d{1,3})\b\]?/g, (m, r) => { const x = byRef.get(r); return x ? `《${x.title.length > 36 ? x.title.slice(0, 34) + '…' : x.title}》` : m; });
+      p.line = named(String(d.line || plan.line || '').trim()).slice(0, 6000);
+      p.questions = (d.questions || []).slice(0, 16).map((q) => ({ id: id(), dim: DIMS.includes(q.dim) ? q.dim : '贴合工作', text: named(String(q.text || '').trim()).slice(0, 300),
+        why: named(String(q.why || '').trim()).slice(0, 300), state: named(String(q.state || '').trim()).slice(0, 600),
+        refs: uniq((q.refs || []).map((r) => String(r).replace(/[^LN\d]/gi, '').toUpperCase())).map((r) => byRef.get(r)).filter(Boolean).slice(0, 5), status: 'open' }))
+        .filter((q) => q.text).sort((a, b) => DIMS.indexOf(a.dim) - DIMS.indexOf(b.dim));
+      p.unclear = (d.unclear || []).map((x) => String(x).trim().slice(0, 300)).filter(Boolean).slice(0, 6);
+      p.organized = { at: Date.now(), library: lib.length, fresh: fresh.length };
+      p.organizedAt = Date.now(); p.confirmed = false;
+      save();
+      log(`文献：研究自述已梳理（库内 ${lib.length} 篇、近几年 ${fresh.length} 篇文献为据；${p.questions.length} 个问题，待修改）`);
+    })().catch((e) => { job.error = e.message; log('文献：梳理研究自述失败：' + e.message); }).finally(() => { job.running = false; });
+    return { ok: true };
+  }
   // 按主线调研补全: the model fills everything below the line (what the user changed there before is replaced)
   function fill() {
     if (job && job.running) return { ok: false, msg: '正在按主线补全' };
-    if (!p || !String(p.line || '').trim()) return { ok: false, msg: '先写下研究主线并保存' };
+    if (!p || !String(p.line || '').trim()) return { ok: false, msg: '先梳理出研究主线（或自己写）并保存' };
     if (!mirror.items().length) return { ok: false, msg: '还没有读到 Zotero 文献库' };
-    job = { running: true, started: Date.now() };
+    job = { running: true, what: 'fill', started: Date.now() };
     (async () => {
       const qs = (p.questions || []).filter((q) => q.status !== 'done').map((q) => q.text);
       const d = await ask(fillPrompt(p.line, qs, library(), recentWork()), FILL_SCHEMA);
@@ -130,9 +189,13 @@ function createProfile({ dir, mirror, ask, openalex = null, reports = () => null
   // the user's edits: any of line, questions (in order of importance), suggestions, topics, follow; confirm marks it confirmed
   async function update(d) {
     if (!p) p = blank();
+    if (typeof d.story === 'string') p.story = d.story.slice(0, 30000);
     if (typeof d.line === 'string') p.line = d.line.slice(0, 6000);
-    if (Array.isArray(d.questions)) p.questions = d.questions.slice(0, 15).map((q) => ({ id: q.id || id(), text: String(q.text || '').trim().slice(0, 300), why: String(q.why || '').slice(0, 300),
-      status: q.status === 'done' ? 'done' : 'open' })).filter((q) => q.text);
+    if (Array.isArray(d.unclear)) p.unclear = d.unclear.map((x) => String(x).slice(0, 300)).filter(Boolean).slice(0, 6);
+    if (Array.isArray(d.questions)) p.questions = d.questions.slice(0, 20).map((q) => ({ id: q.id || id(), dim: DIMS.includes(q.dim) ? q.dim : '', text: String(q.text || '').trim().slice(0, 300),
+      why: String(q.why || '').slice(0, 300), state: String(q.state || '').slice(0, 600), status: q.status === 'done' ? 'done' : 'open',
+      refs: (Array.isArray(q.refs) ? q.refs : []).slice(0, 6).map((r) => ({ key: /^[A-Z0-9]{8}$/.test(r.key || '') ? r.key : undefined, title: String(r.title || '').slice(0, 300), year: +r.year || undefined,
+        venue: r.venue ? String(r.venue).slice(0, 120) : undefined, url: /^https?:\/\//.test(r.url || '') ? String(r.url).slice(0, 500) : undefined, doi: r.doi ? String(r.doi).slice(0, 200) : undefined })).filter((r) => r.title) })).filter((q) => q.text);
     if (Array.isArray(d.suggestions)) p.suggestions = d.suggestions.slice(0, 8).map((q) => ({ id: q.id || id(), text: String(q.text || '').slice(0, 300), why: String(q.why || '').slice(0, 300) })).filter((q) => q.text);
     if (Array.isArray(d.topics)) p.topics = d.topics.slice(0, 15).map((t) => ({ name: String(t.name || '').trim().slice(0, 60), desc: String(t.desc || '').slice(0, 800),
       coverage: COVERAGE.includes(t.coverage) ? t.coverage : '', keywords: uniq((t.keywords || []).map(unquote)).slice(0, 12),
@@ -158,11 +221,11 @@ function createProfile({ dir, mirror, ask, openalex = null, reports = () => null
     return { ok: true, profile: p };
   }
   const get = () => p;
-  const state = () => ({ running: !!(job && job.running), error: job && !job.running ? job.error || '' : '' });
+  const state = () => ({ running: !!(job && job.running), what: (job && job.what) || '', step: job && job.running ? job.step || '' : '', error: job && !job.running ? job.error || '' : '' });
   // the words that say what the user cares about (for picking pages, review, prefiltering)
   const words = () => p ? uniq([...(p.topics || []).flatMap((t) => t.keywords || []), ...((p.follow || {}).keywords || [])]) : [];
   const openQuestions = () => (p && p.questions || []).filter((q) => q.status !== 'done');
-  return { get, fill, update, state, words, openQuestions, library };
+  return { get, organize, fill, update, state, words, openQuestions, library };
 }
 
 module.exports = { createProfile, AIAA };

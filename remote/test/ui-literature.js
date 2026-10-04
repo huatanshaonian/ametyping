@@ -60,7 +60,9 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     const [cname, cval] = cookie.split('=');
     // the state the window shows: library mirrored, profile confirmed, write access, the day's push, one paper kept
     await until(async () => ((await api('GET', '/api/lit')).j || { zotero: {} }).zotero.items === 2);
-    await api('POST', '/api/lit/profile/save', { line: '再入飞行器气动隐身：等离子体鞘套的电磁散射、RCS 高频方法与验证、气动隐身协同优化。', questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取' }, { text: 'RCS 计算结果拿什么验证' }] });
+    await api('POST', '/api/lit/profile/save', { story: '再入飞行器气动隐身：我在算等离子体鞘套对 RCS 的影响，卡在电子密度剖面怎么取，也缺验证数据。' });
+    await api('POST', '/api/lit/profile/organize');
+    await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.organizedAt && !r.state.running; }, 30000);
     await api('POST', '/api/lit/profile/fill');
     const prof = await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.filledAt && !r.state.running && r.profile; }, 30000);
     await api('POST', '/api/lit/profile/save', { questions: prof.questions, confirm: true });
@@ -147,11 +149,15 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     // 画像 and 产出
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '画像').click()");
     chk('画像: the main line, the branches with coverage and their papers by title, a suggestion to take or drop', await waitFor("!!document.querySelector('.lp-t')") &&
-      /再入飞行器气动隐身/.test(await evalJs("document.querySelector('.lp textarea').value")) && await evalJs("[...document.querySelectorAll('.lp-papers a')].some(a => a.textContent.startsWith('Backward scattering'))") &&
+      /再入飞行器气动隐身/.test(await evalJs("document.querySelector('.lp textarea').value")) && /总目标/.test(await evalJs("document.querySelectorAll('.lp textarea')[1].value")) && await evalJs("!!document.querySelector('.lp-unclear li')") && await evalJs("[...document.querySelectorAll('.lp-papers a')].some(a => a.textContent.startsWith('Backward scattering'))") &&
       await evalJs("!!document.querySelector('.tag.cov.thin')") && await evalJs("document.querySelectorAll('.lp-sug').length === 1") && !(await evalJs("/[A-Z0-9]{8}/.test(document.querySelector('.lp-ts').textContent)")),
       await evalJs("(document.querySelector('.lp')||{}).textContent"));
+    chk('画像: each question with its dimension, where the field stands, and its papers (the library\x27s open in 文献库, new ones by link)',
+      await evalJs("[...document.querySelectorAll('.lp-dim')].map(x => x.value).join() === '贴合工作,领域前沿,方法与验证'") && /领域现状/.test(await evalJs("document.querySelector('.lp-qd').textContent")) &&
+      await evalJs("!!document.querySelector('.lp-qd a[href^=\"http\"]') && [...document.querySelectorAll('.lp-qd a')].some(a => a.textContent.startsWith('Backward scattering'))"),
+      await evalJs("(document.querySelector('.lp-qs')||{}).textContent"));
     chk('no stray "null" text on the profile page', !(await evalJs("/null/.test(document.querySelector('.lp').textContent)")), 0);
-    chk('画像: the questions editable, the follow lists', await waitFor("document.querySelectorAll('.lp-q').length === 2") && /0018-926X/.test(await evalJs("[...document.querySelectorAll('.lp textarea')].map(t => t.value).join(' ')")), await evalJs("document.querySelector('.lp').textContent"));
+    chk('画像: the questions editable, the follow lists', await waitFor("document.querySelectorAll('.lp-q').length === 3") && /0018-926X/.test(await evalJs("[...document.querySelectorAll('.lp textarea')].map(t => t.value).join(' ')")), await evalJs("document.querySelector('.lp').textContent"));
     await shot('86-lit-profile.png');
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '产出').click()");
     chk('产出: the verdict and the counts', await waitFor("!!document.querySelector('.ls-v')") && /写下自己的理解/.test(await evalJs("document.querySelectorAll('.lp')[1].textContent")), await evalJs("document.body.textContent.slice(-400)"));

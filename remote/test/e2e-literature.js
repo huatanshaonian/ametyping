@@ -89,9 +89,25 @@ const src = createFakeSources();
 
     // ---- the profile ----
     ok('the push refuses without a profile', (await P('/api/lit/feed/run')).ok && (await until(async () => { const f = await G('/api/lit/feed'); const r = (f.status.runs || []).slice(-1)[0]; return r && r.error; })), '');
-    ok('filling refused before the main line is written', !(await P('/api/lit/profile/fill')).ok);
+    ok('filling refused before there is a main line', !(await P('/api/lit/profile/fill')).ok);
+    ok('organizing refused without an account of the work', !(await P('/api/lit/profile/organize')).ok);
+    const STORY = '我在做再入飞行器的气动隐身，主要算等离子体鞘套对 RCS 的影响，现在卡在电子密度剖面怎么取，也没有实测数据来验证。';
+    ok('the user writes the account of the work, as it comes', (await P('/api/lit/profile/save', { story: STORY })).ok);
+    ok('organizing started', (await P('/api/lit/profile/organize')).ok);
+    let org = await until(async () => { const r = await G('/api/lit/profile'); return r.profile && r.profile.organizedAt && !r.state.running && r.profile; }, 30000);
+    ok('organized: a main line, the questions in dimensions, each with why, where the field stands and its papers; what was unclear', org && org.line.startsWith('总目标：我在做再入飞行器') &&
+      org.questions.map((q) => q.dim).join() === '贴合工作,领域前沿,方法与验证' && org.questions[0].why && org.unclear.length === 1 && org.story === STORY, org);
+    const q1 = org.questions[0], qv = org.questions.find((q) => q.dim === '方法与验证');
+    ok('a question\'s papers: the library\'s (with its key, to open) and the new ones (with a link); an unknown number dropped', q1.refs.length === 2 && q1.refs[0].key === 'AAAAAAA1' &&
+      /blackout measurements/.test(q1.refs[1].title) && /^https?:/.test(q1.refs[1].url) && qv.refs.length === 1, org.questions);
+    ok('the papers\' list numbers in the text become their titles', !/\b[LN]\d\b/.test(q1.state) && /《Plasma sheath communication/.test(q1.state) && /《Backward scattering/.test(q1.state), q1.state);
+    const orgLog = fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const plan = orgLog.find((x) => /queries/.test(x.kind)), qp = orgLog.find((x) => /line,questions,unclear/.test(x.kind));
+    ok('organizing read the account, then the library\'s papers on it and the last years\' literature (the library\'s own left out of the new)', plan && /## 研究自述\n我在做再入飞行器/.test(plan.prompt) &&
+      qp && /\[L1\]\* Backward scattering/.test(qp.prompt) && /\[N1\] Plasma sheath communication blackout/.test(qp.prompt) && !/\[N\d\] Plasma sheath blackout mitigation/.test(qp.prompt) &&
+      src.hits.some((h) => /sort=relevance_score/.test(h) && /search=plasma\+sheath\+electron\+density/.test(h)), qp && qp.prompt.slice(-1500));
     const LINE = '博士课题：再入飞行器气动隐身。三条线：等离子体鞘套的电磁散射；RCS 高频方法与验证；气动外形与隐身的协同优化。';
-    ok('the user writes the main line and the questions, most important first', (await P('/api/lit/profile/save', { line: LINE, questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取' }, { text: 'RCS 计算结果拿什么验证' }] })).ok);
+    ok('the user corrects the main line and the questions', (await P('/api/lit/profile/save', { line: LINE, questions: org.questions })).ok);
     ok('filling started', (await P('/api/lit/profile/fill')).ok);
     let prof = await until(async () => { const r = await G('/api/lit/profile'); return r.profile && r.profile.filledAt && !r.state.running && r.profile; }, 30000);
     const venue = prof && prof.follow.venues.find((v) => /Antennas/.test(v.name)), aiaaJ = prof && prof.follow.venues.find((v) => v.name === 'AIAA Journal'), extra = prof && prof.follow.venues.find((v) => v.extra);
@@ -102,15 +118,16 @@ const src = createFakeSources();
     ok('the branches: what each covers, how well the library covers it, its papers shown by title', br && br.coverage === '充足' && br.paperList[0].title.startsWith('Backward scattering') &&
       thin && thin.coverage === '较少' && !thin.papers.length, prof.topics);
     ok('no item key left in the prose: the paper\'s title instead', !/[A-Z0-9]{8}/.test(br.desc) && /《Backward scattering/.test(br.desc), br.desc);
-    ok('the line and the user\'s questions untouched; the model\'s questions are suggestions only', prof.line === LINE && prof.questions.map((q) => q.text).join('|') === '鞘套电子密度剖面在 RCS 计算里怎么取|RCS 计算结果拿什么验证' &&
+    ok('the line and the user\'s questions untouched (the account too); the model\'s questions are suggestions only', prof.line === LINE && prof.story === STORY && prof.questions.map((q) => q.text).join('|') === org.questions.map((q) => q.text).join('|') && prof.questions[0].refs.length === 2 &&
       prof.suggestions.length === 1 && /试验/.test(prof.suggestions[0].text), [prof.questions, prof.suggestions]);
     const log1 = fs.readFileSync(path.join(T, 'codex.log'), 'utf8');
     ok('the filling was made from the line, the questions in order, and the whole library', log1.includes('再入飞行器气动隐身') && /Q1\. 鞘套电子密度剖面/.test(log1) &&
       /\[AAAAAAA1\]\*/.test(log1) && /\[AAAAAAA2\]/.test(log1) && /\[AAAAAAA4\]/.test(log1) && /IEEE Transactions on Antennas and Propagation（1）/.test(log1));
     const sv = await P('/api/lit/profile/save', { questions: [...prof.questions, { text: prof.suggestions[0].text, status: 'open' }], suggestions: [], confirm: true });
-    ok('a suggestion taken in, confirmed', sv.ok && sv.profile.confirmed && sv.profile.questions.length === 3 && !sv.profile.suggestions.length, sv);
+    ok('a suggestion taken in, confirmed', sv.ok && sv.profile.confirmed && sv.profile.questions.length === 4 && !sv.profile.suggestions.length && sv.profile.questions[0].dim === '贴合工作' && sv.profile.questions[0].refs.length === 2, sv);
 
     // ---- the daily push ----
+    const hits0 = src.hits.length;
     await P('/api/lit/feed/run');
     const feed = await until(async () => { const f = await G('/api/lit/feed'); return !f.status.running && (f.status.runs || []).filter((r) => !r.error).length && f; }, 30000);
     const open = feed.items.filter((e) => e.status === 'new');
@@ -120,7 +137,7 @@ const src = createFakeSources();
     const ramc = fresh.find((e) => /RAM C-II/.test(e.paper.title)), closed = fresh.find((e) => /blackout/.test(e.paper.title));
     ok('the same paper from OpenAlex and AIAA is one, with the open PDF link; the why and the question number', ramc.paper.sources.sort().join() === 'aiaa,openalex' && /\/pdf\/new1\.pdf$/.test(ramc.paper.pdf) && ramc.question === 1 && /剖面/.test(ramc.why), ramc);
     ok('the review: recall questions, from the annotated paper', rev[0].key === 'AAAAAAA1' && rev[0].mode === 'recall' && rev[0].recall.length === 2, rev[0]);
-    const searches = src.hits.filter((h) => h.startsWith('/oa/works?') && /[?&]search=/.test(h));
+    const searches = src.hits.slice(hits0).filter((h) => h.startsWith('/oa/works?') && /[?&]search=/.test(h));
     ok('search phrases: 4 of the 5 today, without their quotes', searches.length === 4 && !searches.some((h) => /%22|"/.test(h)), searches);
     const ax = src.hits.find((h) => h.startsWith('/arxiv/api/query')) || '';
     ok('arXiv: the categories AND one of the profile\'s phrases', /cat%3Aphysics\.plasm-ph/.test(ax) && /abs%3A%22plasma\+sheath%22/.test(ax), ax);

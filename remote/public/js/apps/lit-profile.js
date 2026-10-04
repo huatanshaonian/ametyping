@@ -1,9 +1,11 @@
-// 文献 › 画像: what the push and the cards are aimed at (server/literature/profile.js), in three steps:
-//   1. the user writes the research's main line (主线) and the questions being worked on (most important first)
-//   2. 按主线调研补全: the model reads the whole Zotero library with the line as the frame and fills in the rest -- the
+// 文献 › 画像: what the push and the cards are aimed at (server/literature/profile.js), in four steps:
+//   1. 研究自述: the user writes what the work is and where it is stuck, as it comes
+//   2. 让 AI 梳理: the model sorts it into a main line (主线) and the questions (most important first), and says what it
+//      found unclear; the user corrects them
+//   3. 按主线调研补全: the model reads the whole Zotero library with the line as the frame and fills in the rest -- the
 //      line's branches (what each covers, how well the library covers it, its representative papers, search phrases),
 //      questions the user may have missed (only suggestions: 采纳 / 不要), what to follow
-//   3. the user corrects any of it and confirms (保存并确认)
+//   4. the user corrects any of it and confirms (保存并确认)
 // Papers are shown by their titles; the follow lists are one item per line.
 // 文献 › 产出 (mountStats): what reading turned into over the last week / month.
 import { h } from '../util.js';
@@ -11,21 +13,26 @@ import { get, post } from './lit-api.js';
 
 const lines = (ta) => ta.value.split('\n').map((s) => s.trim()).filter(Boolean);
 const COVER = { 充足: 'ok', 一般: '', 较少: 'thin' };
+// the dimensions the questions are laid out in (server/literature/prompts/profile.js)
+const DIMS = ['贴合工作', '领域前沿', '文献空白', '方法与验证'];
 
 export function mount(el, ctx) {
   const st = h('span', { class: 'lit-st' });
   const saveBtn = h('button', { class: 'btn go', type: 'button', text: '保存并确认' });
   const body = h('div', { class: 'lp' });
   el.append(h('div', { class: 'lit-sub' }, saveBtn, st), body);
-  let p = null, qs = [], sugs = [], topics = [], running = false, F = {};
+  let p = null, qs = [], sugs = [], topics = [], running = false, what = '', F = {};
 
   async function refresh() {
     const r = await get('/api/lit/profile');
     p = r && r.profile; const s = (r && r.state) || {};
     running = !!s.running;
     st.classList.toggle('bad', !!s.error);
-    st.textContent = running ? '正在按主线调研你的文献库、补全下面的内容…（几分钟）' : s.error ? '补全失败：' + s.error
-      : !p || !p.line ? '先写研究主线' : p.confirmed ? '已确认（改了记得保存）' : p.filledAt ? 'AI 已按主线补全：看一遍、改一改，再点「保存并确认」' : '主线写好后，点「按主线调研补全」';
+    st.textContent = running ? (s.what === 'organize' ? `正在梳理：${s.step || '读自述'}…（几分钟）` : '正在按主线调研你的文献库、补全下面的内容…（几分钟）')
+      : s.error ? (s.what === 'organize' ? '梳理失败：' : '补全失败：') + s.error
+        : !p || (!p.story && !p.line) ? '先写研究自述' : !p.line ? '写好自述后，点「让 AI 梳理成主线和问题」' : p.confirmed ? '已确认（改了记得保存）'
+          : p.filledAt ? 'AI 已按主线补全：看一遍、改一改，再点「保存并确认」' : '改好主线和问题后，点「按主线调研补全」';
+    what = s.what || '';
     render();
     if (running) poll();
   }
@@ -37,7 +44,8 @@ export function mount(el, ctx) {
     sugs = ((p && p.suggestions) || []).map((q) => ({ ...q }));
     topics = ((p && p.topics) || []).map((t) => ({ ...t, keywords: [...(t.keywords || [])], papers: [...(t.papers || [])], paperList: [...(t.paperList || [])] }));
     F = {
-      line: area(p && p.line, 9, '用自己的话写博士课题的整体：总目标是什么、分成哪几条线（比如：气动外形与隐身的协同设计、等离子体鞘套的电磁散射、RCS 的高效计算与验证……）、它们之间怎么衔接、最后要做出什么。\n写得粗一点没关系，AI 会照着它去你的文献库里调研，把下面的分支、检索词、期刊、作者补全。'),
+      story: area(p && p.story, 12, '想到哪写到哪：你的课题在做什么、为什么做；现在手上在算/在写什么；用了哪些方法和软件；卡在哪里、对什么没把握；导师或组里对你有什么期待；最后想做出什么……\n不用系统，可以很长，也可以随时回来补充。AI 会把它梳理成下面的研究主线和问题。'),
+      line: area(p && p.line, 9, '研究主线：AI 梳理出来后在这里改；也可以自己写。'),
       venues: area((f.venues || []).map((v) => `${v.name}${v.extra ? '（库外）' : ''}${(v.issns || []).length ? ' | ' + v.issns.join(' ') : ''}${v.aiaa ? ' | aiaa:' + v.aiaa : ''}`).join('\n'), 5, '期刊名 | ISSN ISSN | aiaa:代码（ISSN 可空：会从库里或 OpenAlex 查）'),
       authors: area((f.authors || []).map((a) => `${a.name}${a.openalex ? ` | ${a.openalex} | ${a.inst || ''}${a.guess ? '（按姓名猜的，请核对）' : ''}` : ' | （没找到）'}`).join('\n'), 4, '作者名 | OpenAlex 编号（可空：从你库里这位作者带 DOI 的论文去查）'),
       keywords: area((f.keywords || []).join('\n'), 5, '英文检索式，一行一个（每天轮流用几条）'),
@@ -49,14 +57,22 @@ export function mount(el, ctx) {
 
     // questions, most important first
     const qBox = h('div', { class: 'lp-qs' });
+    // a question: its dimension, the text, why it matters, where the field stands (who asked / answered what) and the
+    // papers it rests on (the library's open in 文献库, the others at their link)
+    const dimSel = (q) => { const s = h('select', { class: 'field lp-dim', title: '问题的维度' }, ...['', ...DIMS].map((d) => h('option', { value: d, text: d || '（维度）' }))); s.value = q.dim || ''; s.addEventListener('change', () => { q.dim = s.value; }); return s; };
+    const refLink = (r) => h('li', {}, r.key ? h('a', { href: '#', text: r.title, title: '在文献库里打开', onclick: (e) => { e.preventDefault(); ctx.openItem(r.key); } })
+      : r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer', text: r.title }) : h('span', { text: r.title }),
+      h('small', { text: ` ${[r.venue, r.year].filter(Boolean).join(' ')}${r.key ? ' · 库里' : ' · 新文献'}` }));
     const drawQs = () => qBox.replaceChildren(...qs.map((q, i) => h('div', { class: 'lp-q' + (q.status === 'done' ? ' done' : '') },
       h('b', { text: 'Q' + (i + 1) }),
-      (() => { const t = h('input', { class: 'field', value: q.text, placeholder: '一个你现在要解决的具体问题' }); t.addEventListener('input', () => { q.text = t.value; }); return t; })(),
+      h('span', { class: 'lp-qt' }, dimSel(q), (() => { const t = h('input', { class: 'field', value: q.text, placeholder: '一个你现在要解决的具体问题' }); t.addEventListener('input', () => { q.text = t.value; }); return t; })()),
       h('span', { class: 'lp-qb' },
         h('button', { class: 'btn', type: 'button', text: '↑', title: '更重要', disabled: i === 0, onclick: () => { [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]]; drawQs(); } }),
         h('button', { class: 'btn', type: 'button', text: q.status === 'done' ? '重新打开' : '解决了', title: '解决了的问题不再用来挑文献', onclick: () => { q.status = q.status === 'done' ? 'open' : 'done'; drawQs(); } }),
         h('button', { class: 'btn no', type: 'button', text: '删', onclick: () => { qs.splice(i, 1); drawQs(); } })),
-      q.why ? h('small', { text: q.why }) : null)),
+      q.why || q.state || (q.refs || []).length ? h('div', { class: 'lp-qd' }, q.why ? h('div', {}, h('b', { text: '为什么：' }), q.why) : null,
+        q.state ? h('div', {}, h('b', { text: '领域现状：' }), q.state) : null,
+        (q.refs || []).length ? h('ul', { class: 'lp-papers' }, ...q.refs.map(refLink)) : null) : null)),
     h('button', { class: 'btn', type: 'button', text: '＋ 加一个问题', onclick: () => { qs.push({ text: '', status: 'open' }); drawQs(); setTimeout(() => { const ins = qBox.querySelectorAll('input'); if (ins.length) ins[ins.length - 1].focus(); }, 0); } }));
     drawQs();
     // the model's suggested questions: taken in (to the end of the list) or dropped
@@ -68,7 +84,10 @@ export function mount(el, ctx) {
           h('button', { class: 'btn no', type: 'button', text: '不要', onclick: () => { sugs.splice(i, 1); drawSugs(); } }))))] : []));
     drawSugs();
 
-    const fillBtn = h('button', { class: 'btn go', type: 'button', text: running ? '正在调研…' : p && p.filledAt ? '按主线重新调研补全' : '按主线调研补全', disabled: running,
+    const orgBtn = h('button', { class: 'btn go', type: 'button', text: running && what === 'organize' ? '正在梳理…' : p && p.line ? '重新梳理' : '让 AI 梳理成主线和问题', disabled: running,
+      title: '保存自述，让 AI 读自述、翻你的文献库、检索近几年的文献，梳理出研究主线和分维度的问题（几分钟）', onclick: organize });
+    const unclear = (p && p.unclear) || [];
+    const fillBtn = h('button', { class: 'btn go', type: 'button', text: running && what === 'fill' ? '正在调研…' : p && p.filledAt ? '按主线重新调研补全' : '按主线调研补全', disabled: running || !(p && p.line),
       title: '保存主线和问题，然后让 AI 以主线为准读一遍整个文献库，补全下面的分支、期刊、作者、检索式（几分钟）', onclick: fill });
 
     // the branches (topics): name, how well the library covers it, what it is, search words, its papers in the library
@@ -88,12 +107,16 @@ export function mount(el, ctx) {
 
     const row = (label, el2, tip) => h('div', { class: 'lp-row' }, h('label', { text: label }), el2, tip ? h('small', { text: tip }) : null);
     body.replaceChildren(...[
-      h('h3', { class: 'lp-step', text: '① 你来写：研究主线和问题' }),
-      row('研究主线', F.line, '画像以它为准。AI 不会改写它，只会照着它去补全下面的内容。'),
-      h('div', { class: 'lp-row' }, h('label', { text: '当前问题' }), h('div', {}, h('small', { text: '越靠前越重要（↑ 调整）。每篇推送和每张卡片都会挂到其中一个问题上。' }), qBox, sBox)),
-      h('h3', { class: 'lp-step' }, '② AI 按主线调研你的文献库，补全下面的内容 ', fillBtn),
-      p && p.filledAt ? null : h('p', { class: 'lit-empty', text: '写好主线后点上面的按钮。AI 会把主线拆成若干分支，标出你的文献库对每个分支的覆盖程度，挑出代表文献，再定下要跟的期刊、作者和检索式——文献少的分支，正是以后推送要补的。' }),
-      h('h3', { class: 'lp-step', text: '③ 你来改：分支和要跟的东西（改完点上面的「保存并确认」）' }),
+      h('h3', { class: 'lp-step', text: '① 你来写：研究自述' }),
+      row('研究自述', F.story, '随时可以回来补充；补充后点「重新梳理」。'),
+      h('h3', { class: 'lp-step' }, '② AI 调研梳理（读自述、翻你的文献库、检索近几年的文献），你来改：研究主线和问题 ', orgBtn),
+      unclear.length ? h('div', { class: 'lp-unclear' }, h('b', { text: 'AI 觉得自述里需要你说清楚的地方：' }), h('ul', {}, ...unclear.map((x) => h('li', { text: x }))),
+        h('small', { text: '可以补充进自述再「重新梳理」，也可以直接在下面改主线和问题。' })) : null,
+      row('研究主线', F.line, '画像以它为准：推送和卡片都按它来。'),
+      h('div', { class: 'lp-row' }, h('label', { text: '当前问题' }), h('div', {}, h('small', { text: '越靠前越重要（↑ 调整）。维度：贴合工作 / 领域前沿 / 文献空白 / 方法与验证。每篇推送和每张卡片都会挂到其中一个问题上。' }), qBox, sBox)),
+      h('h3', { class: 'lp-step' }, '③ AI 按主线调研你的文献库，补全下面的内容 ', fillBtn),
+      p && p.filledAt ? null : h('p', { class: 'lit-empty', text: '主线和问题改好后点上面的按钮。AI 会把主线拆成若干分支，标出你的文献库对每个分支的覆盖程度，挑出代表文献，再定下要跟的期刊、作者和检索式——文献少的分支，正是以后推送要补的。' }),
+      h('h3', { class: 'lp-step', text: '④ 你来改：分支和要跟的东西（改完点最上面的「保存并确认」）' }),
       row('研究分支', tBox),
       row('跟踪的期刊', F.venues, '「库外」= 你库里还没有、AI 为覆盖少的分支建议的期刊；AIAA 期刊另外读它的目录 RSS'),
       row('跟踪的作者', F.authors),
@@ -107,7 +130,7 @@ export function mount(el, ctx) {
     const venue = (l) => { const [n, issns = '', aiaa = ''] = l.split('|').map((s) => s.trim()); const name = n.replace(/（库外）$/, ''); return { name, issns: issns.split(/\s+/).filter(Boolean), aiaa: aiaa.replace(/^aiaa:/, ''), extra: /（库外）$/.test(n) }; };
     const old = (p && p.follow) || {};
     return {
-      line: F.line.value, questions: qs.filter((q) => String(q.text || '').trim()), suggestions: sugs,
+      story: F.story.value, line: F.line.value, questions: qs.filter((q) => String(q.text || '').trim()), suggestions: sugs,
       topics: topics.map((t) => ({ name: t.name, desc: t.desc, coverage: t.coverage, keywords: t.keywords, papers: t.papers })),
       follow: { venues: lines(F.venues).map(venue),
         authors: lines(F.authors).map((l) => { const [name, aid = ''] = l.split('|').map((s) => s.trim()); const o = (old.authors || []).find((a) => a.name === name && a.openalex === aid) || {}; return { ...o, name, openalex: /^A\d+$/.test(aid) ? aid : '' }; }),
@@ -122,16 +145,23 @@ export function mount(el, ctx) {
     if (!r.ok) { st.textContent = r.msg || '没保存上'; return false; }
     return true;
   }
+  async function organize() {
+    if (F.story.value.trim().length < 20) { st.textContent = '先在研究自述里多写一点'; F.story.focus(); return; }
+    if (p && p.line && !confirm('重新梳理会按现在的自述重写研究主线和问题（你在上面改过的会被替换）。继续？')) return;
+    if (!(await save(false))) return;
+    const r = await post('/api/lit/profile/organize', {});
+    if (r.ok) { running = true; what = 'organize'; st.textContent = '正在梳理你的研究自述…（一两分钟）'; poll(); render(); } else st.textContent = r.msg || '没开始';
+  }
   async function fill() {
-    if (!F.line.value.trim()) { st.textContent = '先写研究主线'; F.line.focus(); return; }
+    if (!F.line.value.trim()) { st.textContent = '先梳理出研究主线（或自己写）'; F.line.focus(); return; }
     if (p && p.filledAt && !confirm('重新调研会按现在的主线和问题，重写下面的分支、期刊、作者、检索式（你在下面改过的会被替换；主线和问题不动）。继续？')) return;
     if (!(await save(false))) return;
     const r = await post('/api/lit/profile/fill', {});
-    if (r.ok) { running = true; st.textContent = '正在按主线调研你的文献库、补全下面的内容…（几分钟）'; poll(); render(); } else st.textContent = r.msg || '没开始';
+    if (r.ok) { running = true; what = 'fill'; st.textContent = '正在按主线调研你的文献库、补全下面的内容…（几分钟）'; poll(); render(); } else st.textContent = r.msg || '没开始';
   }
   saveBtn.addEventListener('click', async () => { if (await save(true)) { st.textContent = '已保存并确认'; refresh(); } });
   let pt = null;
-  function poll() { clearTimeout(pt); pt = setTimeout(async () => { const r = await get('/api/lit/profile'); if (r && r.state && r.state.running) return poll(); refresh(); }, 4000); }
+  function poll() { clearTimeout(pt); pt = setTimeout(async () => { const r = await get('/api/lit/profile'); if (r && r.state && r.state.running) { if (r.state.what === 'organize') st.textContent = `正在梳理：${r.state.step || '读自述'}…（几分钟）`; return poll(); } refresh(); }, 4000); }
   return { refresh, destroy() { clearTimeout(pt); } };
 }
 

@@ -119,3 +119,7 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lp-th { display: flex; align-items: center; gap: 6px; } .lp-tn { flex: 1; font-weight: bold; } .lp-th .btn { padding: 1px 8px; }
 .tag.cov { font-style: normal; font-size: 11px; padding: 0 5px; border: 1px solid var(--edge); color: var(--muted); } .tag.cov.ok { color: var(--ok-text); border-color: var(--ok-text); } .tag.cov.thin { color: var(--warn); border-color: var(--warn); }
 .lp-papers { margin: 0; padding-left: 18px; font-size: 12px; } .lp-papers a { color: var(--border); } .lp-papers small { color: var(--muted); }
+.lp-unclear { margin: 6px 0 6px 100px; padding: 6px 10px; border: 1px dashed var(--warn); background: var(--quote-bg); font-size: 12.5px; }
+.lp-unclear b { color: var(--warn); font-weight: normal; } .lp-unclear ul { margin: 4px 0; padding-left: 18px; } .lp-unclear small { color: var(--muted); }
+.lp-q { align-items: start; } .lp-qt { display: flex; gap: 4px; min-width: 0; } .lp-qt .field:last-child { flex: 1; min-width: 0; } .lp-dim { width: 96px; flex: none; }
+.lp-qd { grid-column: 2 / 4; font-size: 12px; color: var(--muted); line-height: 1.55; padding: 2px 0 4px; } .lp-qd b { color: var(--accent-muted); font-weight: normal; }

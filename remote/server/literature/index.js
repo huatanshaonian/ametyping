@@ -141,6 +141,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       api.authorize().then((x) => { authError = x.ok ? '' : x.msg; changed('zotero'); if (x.ok) audit('lit-authorize', ip); });
       r = { ok: true, msg: '请到 Zotero 的网页桌面里点「始终允许」' };
     } else if (what === 'zotero/refresh') { r = await mirror.refresh(true).then(() => ({ ok: true }), (e) => ({ ok: false, msg: e.message })); }
+    else if (what === 'profile/organize') r = profile.organize();
     else if (what === 'profile/fill' || what === 'profile/draft') r = profile.fill();
     else if (what === 'profile/save') r = await profile.update(d);
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }

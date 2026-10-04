@@ -35,6 +35,8 @@ function createFakeSources() {
       const f = u.searchParams.get('filter') || '';
       if (f.includes('primary_location.source.issn')) return json({ results: [w.open, w.dup, w.other] });
       if (f.includes('cites:')) return json({ results: [w.closed] });
+      // (梳理: the last years' literature, most relevant first; the paper already in the library is in it too)
+      if (u.searchParams.get('sort') === 'relevance_score:desc') return json({ results: [w.closed, w.dup, w.open] });
       return json({ results: [] });
     }
     if (p.startsWith('/oa/works/doi:')) {
