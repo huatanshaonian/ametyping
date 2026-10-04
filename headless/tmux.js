@@ -1,5 +1,7 @@
-// Types a reply into a Claude Code session running in a tmux pane: the text goes in as one bracketed paste
-// (so newlines stay part of the message instead of submitting it early), then Enter submits it.
+// Types a reply into a Claude Code session running in a tmux pane: the input box emptied first (what was typed there by
+// hand would otherwise be sent along -- Ctrl+E Ctrl+U, then Backspace Ctrl+U for the lines above; Ctrl+Y there brings
+// it back), the text as one bracketed paste (so newlines stay part of the message instead of submitting it early),
+// then Enter submits it.
 'use strict';
 const { execFile } = require('child_process');
 const crypto = require('crypto');
@@ -13,9 +15,13 @@ function tmux(socket, args, input) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const CLEAR = ['C-e', 'C-u', ...Array.from({ length: 20 }, () => ['BSpace', 'C-u']).flat()];
 async function send(target, text) {
+  let r = await tmux(target.socket, ['send-keys', '-t', target.pane, ...CLEAR]);
+  if (!r.ok) return r;
+  await sleep(100);
   const buf = 'ame-' + crypto.randomBytes(6).toString('hex');
-  let r = await tmux(target.socket, ['load-buffer', '-b', buf, '-'], text);
+  r = await tmux(target.socket, ['load-buffer', '-b', buf, '-'], text);
   if (!r.ok) return r;
   r = await tmux(target.socket, ['paste-buffer', '-p', '-d', '-b', buf, '-t', target.pane]);
   if (!r.ok) { await tmux(target.socket, ['delete-buffer', '-b', buf]); return r; }

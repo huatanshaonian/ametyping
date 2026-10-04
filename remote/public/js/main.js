@@ -9,7 +9,6 @@ import * as netpanel from './netpanel.js';
 import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
-import * as sounds from './apps/sounds.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
@@ -18,7 +17,9 @@ import * as calendar from './apps/calendar.js';
 import * as google from './apps/google.js';
 import * as mail from './apps/mail.js';
 import * as literature from './apps/literature.js';
+import * as control from './apps/control.js';
 import * as sound from './sound.js';
+import * as push from './push.js';
 import './alerts.js';
 import './volume.js';
 
@@ -42,16 +43,13 @@ const APPS = [
   { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
   { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
   { id: 'literature', label: '文献', icon: icon('help_book_big'), open: () => literature.open(), hint: '每日文献推送、卡片、深读和知识库（连着群晖上的 Zotero）' },
-  { id: 'display', label: '显示属性', icon: icon('display_properties'), open: wallpaper.openSettings },
+  { id: 'control', label: '控制面板', icon: icon('directory_control_panel'), open: () => control.open(), hint: '显示、声音、电脑、Google、邮箱、AI 模型等所有设置' },
 ];
 desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
   { icon: icon('sched_task'), label: '重要计划', action: todo.open },
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
-  { icon: icon('computer_2'), label: '添加电脑', action: computers.open },
-  { icon: icon('key_win'), label: 'Google 账户', action: () => google.open() },
-  { icon: icon('mixer_sound'), label: '声音', action: sounds.open },
   'sep',
   { icon: icon('key_win'), label: '注销', action: logout },
 ]);
@@ -68,6 +66,8 @@ function selectMachine(name) {
   dashboard.setCurrent(name);
 }
 netpanel.init(selectMachine);
+// 我的电脑's computer list: as picking it here, then its 我的电脑
+explorer.setSwitch((name) => { selectMachine(name); openMyComputer(); });
 document.getElementById('addpc').addEventListener('click', (e) => { e.stopPropagation(); computers.open(); });
 
 function render() {
@@ -101,5 +101,8 @@ openDashboard();
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }
 }
+// the installable app and phone notifications (js/push.js); a notification's link opens that session / message
+push.start();
+push.route({ s: (machine, id) => dashboard.openSession(machine, id), mail: (key) => mail.open(key) });
 // just logged in (the login page leaves a mark): the start-up sound, once
 try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

@@ -569,7 +569,7 @@ function sessionLabel(s) {
 // A card answered (here, on the dashboard or in the terminal) puts the session back to work. Left "waiting" with
 // 需要确认 as its last line, the panel would take the vanished card for a timed-out one ("请到终端里回答") and the
 // reply box would stay blocked until the next hook event. Only a real timeout keeps that hint: the terminal still asks.
-const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : '已拒绝'), closed: () => '已在终端处理', advanced: () => '已在终端处理' };
+const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : e.choice === 'always' ? '已总是允许' : '已拒绝'), closed: () => '已在终端处理', advanced: () => '已在终端处理' };
 const permissions = createPermissions((sid, end) => {
   const s = sessions.get(sid), say = end && PERM_END[end.why];
   if (say && s && s.state === 'waiting' && !permissions.list(sid).length) onClaudeEvent('thinking', { session: sid, text: `${say(end)}：${end.tool}` });
@@ -721,7 +721,7 @@ function controlState() {
   return [...sessions.values()].sort((x, y) => x.born - y.born).map((s) => ({
     id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s),
     t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8),
-    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent,
+    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
 }

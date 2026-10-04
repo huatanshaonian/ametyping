@@ -18,6 +18,7 @@ const { createEgress } = require('../egress');
 const { createSearch } = require('./search');
 const { createQA } = require('./qa');
 const { createWeekly, mondayOf } = require('./weekly');
+const { createAi } = require('../ai');
 
 function readBody(req, cap = 4096) {
   return new Promise((resolve, reject) => {
@@ -42,7 +43,9 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
     timeoutMs: (+cfg.timeoutMin || 20) * 60e3,
   };
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
-  const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log,
+  // which model / effort each job uses, and Codex kept up to date (控制面板 → AI 模型); cfg.codexHome: tests
+  const ai = createAi({ dataDir: path.dirname(dir), codex, egress, fallbackModel: codex.model, codexHome: cfg.codexHome, log, audit });
+  const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log, pick: ai.pick,
     artifacts, todos, calendar, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
   const weekly = createWeekly({ reports, ask: gen.ask, todos, log });
   // the short note for the pet: the latest daily report that is not a backfill, and its week when that is written
@@ -115,7 +118,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   }
 
   // ask(prompt, schema): one question to the model through the same proxies (the mail's triage uses it too)
-  return { handle, scheduler, reports, generate: gen.generate, latestNote, ask: gen.ask, syncSearchDocs: () => search.syncDocs() };
+  return { handle, scheduler, reports, generate: gen.generate, latestNote, ask: gen.ask, ai, syncSearchDocs: () => search.syncDocs() };
 }
 
 module.exports = { createSummary };

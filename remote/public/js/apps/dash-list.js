@@ -100,7 +100,11 @@ export function createList({ el, current, selected, onSelect, onNote }) {
   }
   function card({ s, m, key, mk }, showMachine) {
     let c = cards.get(key);
-    if (!c) { c = h('div', { class: 'card', dataset: { key } }, h('div', { class: 'nm' }), h('div', { class: 'sm' }), h('div', { class: 'st' })); cards.set(key, c); }
+    if (!c) {
+      c = h('div', { class: 'card', dataset: { key } }, h('div', { class: 'nm' }), h('div', { class: 'sm' }), h('div', { class: 'st' }),
+        h('button', { class: 'cm', type: 'button', title: '更多操作', 'aria-label': '更多操作', text: '⋯' }));   // (shown on touch screens)
+      cards.set(key, c);
+    }
     const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
@@ -118,6 +122,12 @@ export function createList({ el, current, selected, onSelect, onNote }) {
 
   // ---- clicks: a session, "more", a section head (fold), the hidden ones ----
   el.addEventListener('click', (e) => {
+    const cm = e.target.closest('.cm');
+    if (cm) {                                                         // ⋯: the session's menu, under the button
+      const r = cm.getBoundingClientRect();
+      ctx.show(r.right, r.bottom, sessionMenu(cm.closest('.card').dataset.key), { touch: true });
+      return;
+    }
     const t = e.target.closest('.more, .mc, .card');
     if (!t) return;
     if (t.classList.contains('hid') && t.classList.contains('more')) { showHidden = !showHidden; render(); return; }

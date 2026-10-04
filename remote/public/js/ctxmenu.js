@@ -4,12 +4,19 @@
 import { h, zoom } from './util.js';
 
 let menus = [];                                            // the open menu and its submenu
+// a menu opened by a long press appears under the finger: some phones send a click when it lifts, which would pick the
+// item there at once -- for a moment after such an opening, items do not react
+let armedAt = 0;
+const ARM_MS = 450;
+const armed = () => Date.now() - armedAt >= ARM_MS;
 const LONG_MS = 520;
 
 export function close() { for (const m of menus) m.remove(); menus = []; }
 
-export function show(cx, cy, items) {
+// touch: opened by a finger (a long press, the ⋯ button): see armedAt
+export function show(cx, cy, items, { touch = false } = {}) {
   close();
+  armedAt = touch ? Date.now() : 0;
   const z = zoom();                                        // pointer px -> page px (the size setting zooms the page)
   open(items, cx / z, cy / z, 0);
 }
@@ -23,7 +30,7 @@ function open(items, x, y, level, fromRight) {
     b.addEventListener('mouseenter', () => b.focus({ preventScroll: true }));   // (the mouse and the keys mark the same item)
     if (it.sub) {
       const openSub = () => {
-        if (b.classList.contains('open')) return;
+        if (b.classList.contains('open') || !armed()) return;
         for (const s of el.querySelectorAll('.ctxi.open')) s.classList.remove('open');
         menus.slice(level + 1).forEach((m) => m.remove()); menus = menus.slice(0, level + 1);
         b.classList.add('open');
@@ -37,7 +44,7 @@ function open(items, x, y, level, fromRight) {
         for (const s of el.querySelectorAll('.ctxi.open')) s.classList.remove('open');
         menus.slice(level + 1).forEach((m) => m.remove()); menus = menus.slice(0, level + 1);
       });
-      b.addEventListener('click', () => { close(); if (it.onClick) it.onClick(); });
+      b.addEventListener('click', () => { if (!armed()) return; close(); if (it.onClick) it.onClick(); });
     }
     el.append(b);
   }
@@ -54,20 +61,23 @@ function open(items, x, y, level, fromRight) {
 
 // right click, or a long press without moving on a touch screen; the click after a long press is swallowed
 export function attach(el, itemsFor) {
-  let timer = null, sx = 0, sy = 0, longAt = 0;
-  const fire = (e, x, y) => { const items = itemsFor(e); if (items && items.length) { show(x, y, items); return true; } return false; };
+  let timer = null, sx = 0, sy = 0, longAt = 0, touchAt = 0;
+  const fire = (e, x, y, touch) => { const items = itemsFor(e); if (items && items.length) { show(x, y, items, { touch }); return true; } return false; };
   el.addEventListener('contextmenu', (e) => {
     if (Date.now() - longAt < 800) { e.preventDefault(); return; }
-    if (fire(e, e.clientX, e.clientY)) e.preventDefault();
+    // (a phone's own long-press menu event: it comes while the finger is down)
+    const touch = Date.now() - touchAt < 1500;
+    if (fire(e, e.clientX, e.clientY, touch)) { e.preventDefault(); if (touch) { longAt = Date.now(); clearTimeout(timer); timer = null; } }
   });
   el.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
-    const t = e.touches[0]; sx = t.clientX; sy = t.clientY;
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY; touchAt = Date.now();
     const target = e.target;
     clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; if (fire({ target }, sx, sy)) longAt = Date.now(); }, LONG_MS);
+    timer = setTimeout(() => { timer = null; if (fire({ target }, sx, sy, true)) longAt = Date.now(); }, LONG_MS);
   }, { passive: true });
-  el.addEventListener('touchmove', (e) => { const t = e.touches[0]; if (timer && Math.hypot(t.clientX - sx, t.clientY - sy) > 10) { clearTimeout(timer); timer = null; } }, { passive: true });
+  el.addEventListener('touchmove', (e) => { const t = e.touches[0]; if (timer && Math.hypot(t.clientX - sx, t.clientY - sy) > 14) { clearTimeout(timer); timer = null; } }, { passive: true });
+  el.addEventListener('touchcancel', () => { clearTimeout(timer); timer = null; }, { passive: true });
   el.addEventListener('touchend', (e) => { clearTimeout(timer); timer = null; if (Date.now() - longAt < 800) e.preventDefault(); });
   el.addEventListener('click', (e) => { if (Date.now() - longAt < 800) { e.stopPropagation(); e.preventDefault(); } }, true);
 }

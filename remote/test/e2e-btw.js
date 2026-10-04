@@ -25,6 +25,18 @@ const st = createStore(path.join(T, 'data'));
 st.accept('pc', { id: 'S', from: 0, to: b1.to, recs: b1.recs }); st.accept('pc', { id: 'S', from: b1.to, to: b2.to, recs: b2.recs });
 const kept = st.records('pc', 'S', 0, Date.parse('2027-01-01'));
 chk('store keeps the answers', kept.filter((r) => r.role === 'btw').length === 2, kept.map((r) => r.role));
+// a reader that starts after the question (the agent restarted in between): the answer is still known by its fork line
+const f2 = path.join(T, 's2.jsonl');
+fs.writeFileSync(f2, J({ type: 'user', uuid: 'u1', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: '主任务' } }) + J(fork('side', 'c0de', '重启前问的？', '2026-10-02T10:00:05Z')));
+const startAt = fs.statSync(f2).size;
+fs.appendFileSync(f2, J(note('ahelper-00000000000000aa', '别的后台代理的结果', '2026-10-02T10:00:20Z')) + J(note('aside-0123456789abc0de', '重启后才到的回答。', '2026-10-02T10:00:30Z')));
+const rd2 = records.createReader(f2, startAt);
+const b3 = records.readNext(rd2);
+chk('restarted reader: the answer found through its fork line; another named agent\'s result is not an answer', JSON.stringify(b3.recs.filter((r) => r.role === 'btw').map((r) => r.text)) === JSON.stringify(['重启后才到的回答。']) && !b3.recs.some((r) => r.text === '别的后台代理的结果'), b3.recs);
+// the same answer sent twice (re-read after a restart, or written twice): stored once
+st.accept('pc', { id: 'S', from: b2.to, to: b2.to + 10, recs: [{ role: 'btw', text: '五层。', t: Date.parse('2026-10-01T10:02:00Z'), i: 0 }] });
+st.flush && st.flush();
+chk('store: the same answer again is not stored twice', st.records('pc', 'S', 0, Date.parse('2027-01-01')).filter((r) => r.role === 'btw').length === 2, st.records('pc', 'S', 0, Date.parse('2027-01-01')).map((r) => r.text));
 // the command scan
 const H = path.join(T, 'home'), C = path.join(H, '.claude');
 fs.mkdirSync(path.join(C, 'commands', 'tools'), { recursive: true });

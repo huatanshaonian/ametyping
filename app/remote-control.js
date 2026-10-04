@@ -61,6 +61,10 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     if (t.msg) return { ok: false, msg: t.msg };
     if (t.pid) {
       if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（面板卡片或终端里）' };
+      // whatever was typed in the terminal's own input box first: out of the way (Ctrl+Y there brings it back), so the
+      // reply goes as it is and not glued to half a sentence
+      await bridge.key(t.pid, 'clear');
+      await new Promise((res) => setTimeout(res, 150));
       const r = await bridge.send(t.pid, text);
       return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
     }

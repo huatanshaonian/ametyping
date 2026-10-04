@@ -1,6 +1,8 @@
 // 我的电脑 / 资源管理器 for one remote computer: its roots (drives or allowed folders), then folder listings.
 // Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code can be
 // started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows).
+// Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
+// 网上邻居 does: main.js's setSwitch).
 import { h, icon, $ as $q } from '../util.js';
 import * as wm from '../wm.js';
 import * as fsc from '../fs.js';
@@ -11,6 +13,8 @@ import { openFile } from './viewer.js';
 
 const touch = matchMedia('(pointer: coarse)').matches;
 const views = new Map();                  // machine -> view
+let switchTo = (m) => open(m);            // main.js: pick that computer (网上邻居, the desktop) and open its 我的电脑
+export function setSwitch(fn) { switchTo = fn; }
 
 const when = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 
@@ -29,6 +33,17 @@ export function openPath(machine, path) {
 
 function create(machine, startPath) {
   const id = 'explorer:' + machine;
+  // the computers (网上邻居's): this one shown; another one picked opens its own 我的电脑
+  const pcs = h('select', { class: 'field xpc', title: '切换到网上邻居里的另一台电脑' });
+  function renderPcs() {
+    const ms = net.state.sessions.length ? net.state.sessions : [{ machine, online: true, files: true }];
+    const list = ms.some((m) => m.machine === machine) ? ms : [{ machine, online: false }, ...ms];
+    pcs.replaceChildren(...list.map((m) => h('option', { value: m.machine, text: m.machine + (!m.online ? '（离线）' : !m.files ? '（未开放文件）' : '') })));
+    pcs.value = machine;
+  }
+  pcs.addEventListener('change', () => { const to = pcs.value; pcs.value = machine; if (to !== machine) switchTo(to); });
+  const offPcs = net.on('sessions', renderPcs);
+  renderPcs();
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
@@ -40,7 +55,7 @@ function create(machine, startPath) {
     h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
-  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, up, refresh, addr, launchBtn), launchBar, body, status);
+  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, launchBtn), launchBar, body, status);
   let cur = null, parent = null, seq = 0;
 
   function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; }
@@ -102,7 +117,7 @@ function create(machine, startPath) {
   body.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && cur != null) { e.preventDefault(); load(parent); } });
 
   const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), content: root, width: 720, height: 460,
-    onClose: () => views.delete(machine) });
+    onClose: () => { views.delete(machine); offPcs(); } });
   load(startPath);
   return { id, load };
 }

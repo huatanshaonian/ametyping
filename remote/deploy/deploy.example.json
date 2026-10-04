@@ -1,0 +1,12 @@
+{
+  "nas": {
+    "ssh": "nas",
+    "dir": "/volume2/docker/ame-remote",
+    "node": "/var/packages/Node.js_v22/target/usr/local/bin/node",
+    "npm": "/var/packages/Node.js_v22/target/usr/local/lib/node_modules/npm/bin/npm-cli.js"
+  },
+  "agents": [
+    { "name": "linux-box", "ssh": "linux-box", "dir": "~/ametyping" },
+    { "name": "这台电脑", "local": true, "task": "AmeTyping Agent" }
+  ]
+}

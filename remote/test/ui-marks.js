@@ -293,13 +293,34 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('long press: the menu is open', (await evalJs("document.querySelectorAll('.ctxm').length")) === 1, 0);
     chk('long press: the session was not opened', !(await evalJs("document.querySelector('.dash').classList.contains('viewing')")), 0);
     await shot('94-marks-phone.png');
+    // a phone sending a click where the finger lifts (right on the first item): it must not pick it
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: pp.x, y: pp.y, button: 'left', clickCount: 1 });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pp.x, y: pp.y, button: 'left', clickCount: 1 });
+    await sleep(200);
+    chk('long press: the click as the finger lifts picks nothing', (await evalJs("document.querySelectorAll('.ctxm').length")) === 1 && !(await evalJs("document.querySelector('.dash').classList.contains('viewing')")), 0);
+    await sleep(400);
     await item('星标');
     chk('the phone menu works', !(await cardsOrder()).find((x) => x.includes('demo 会话')).startsWith('★'), await cardsOrder());
+    // ⋯ on each card (touch screens): a tap opens the same menu, the session stays closed
+    chk('⋯ shown on a phone', await evalJs("getComputedStyle(document.querySelector('.dash .card .cm')).display !== 'none'"), 0);
+    const dots = await evalJs("(() => { const c = [...document.querySelectorAll('.dash .card')].find(x => x.textContent.includes('demo 会话')).querySelector('.cm').getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; })()");
+    await call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: dots.x, y: dots.y }] });
+    await call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(500);
+    const dm = await evalJs("[...document.querySelectorAll('.ctxm .ctxi')].map(e => e.textContent)");
+    chk('⋯: the session\'s menu, the session not opened', dm.some((x) => x.includes('移到群组')) && !(await evalJs("document.querySelector('.dash').classList.contains('viewing')")), dm);
+    await shot('94b-marks-phone-dots.png');
+    await key('Escape', 27); await sleep(200);
     const pq = await rect('.dash .card', '第二个会话');
     await call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pq.x, y: pq.y }] });
     await call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await sleep(600);
     chk('a short tap still opens the session', await evalJs("document.querySelector('.dash').classList.contains('viewing')"), 0);
+    // the header on a phone: the title on its own line (the whole width), machine / project / 摘要 under it
+    await sleep(500);
+    const hd = await evalJs("(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(); const t = r('.dash .head b'), m = r('.dash .head .hr'), h = r('.dash .head'); return { tTop: t.top, tBottom: t.bottom, mTop: m.top, tWidth: t.width, hWidth: h.width, text: document.querySelector('.dash .head b').textContent }; })()");
+    chk('phone header: the title on a line of its own, the details under it', hd.mTop >= hd.tBottom - 1, hd);
+    await shot('95b-phone-header.png');
     const unauth = await new Promise((r) => http.get(`http://127.0.0.1:${PORT}/api/session/export?machine=box&id=${SID}`, (res) => { res.resume(); r(res.statusCode); }));
     chk('export: not logged in refused', unauth === 401, unauth);
   } catch (e) { errors.push('script: ' + e.stack); }

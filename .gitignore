@@ -9,3 +9,4 @@ remote/test/out/
 remote/server/data/
 remote/deploy/nas/zotero/.env
 remote/deploy/nas/zotero/config/
+remote/deploy/deploy.local.json

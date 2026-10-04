@@ -1,17 +1,16 @@
-// 邮箱设置: the mailboxes the NAS keeps in step (remote/server/mail/accounts.js) -- each with its state, how much mail
+// 邮箱 (in 控制面板; was 邮箱设置): the mailboxes the NAS keeps in step (remote/server/mail/accounts.js) -- each with its state, how much mail
 // is kept, when it last looked; add / change / remove (a code within the hour). The password is the mailbox's
 // 客户端专用密码; it stays on the NAS (an empty field when changing keeps the old one). Servers default to 中国科技网
 // (mail.cstnet.cn, IMAP 993 / SMTP 465), changeable under 服务器设置.
 import { h } from '../util.js';
-import * as wm from '../wm.js';
 import * as net from '../net.js';
 
-let win = null;
-export function open() {
-  if (win) { wm.open({ id: 'mail-accounts' }); win.load(); return; }
-  win = mount();
-  wm.open({ id: 'mail-accounts', title: '邮箱设置', icon: '/icons/outlook_express-16.png', content: win.root, width: 520, height: 540,
-    onClose: () => { win.destroy(); win = null; } });
+// 邮箱 lives in 控制面板 (control.js): this opens it there
+export function open() { import('./control.js').then((c) => c.open('mail')); }
+// the page itself, for 控制面板: { root, destroy, show }
+export function panel() {
+  const p = mount();
+  return { root: p.root, destroy: p.destroy, show: () => p.load() };
 }
 
 const pad = (n) => String(n).padStart(2, '0');

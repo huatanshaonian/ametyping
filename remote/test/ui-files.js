@@ -25,6 +25,12 @@ fs.copyFileSync(R + '/public/wall/illust_bike_inaba.webp', path.join(SHARE, 'doc
 fs.writeFileSync(path.join(SHARE, 'docs', 'notes.txt'), ['中文笔记', 'line 2', ''].join(String.fromCharCode(10)));
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
+// a second computer with files of its own (我的电脑's computer switch)
+const tok2 = node([R + '/server/setup.js', 'add-agent', 'box2']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
+const SHARE2 = path.join(T, 'share2'); fs.mkdirSync(SHARE2); fs.writeFileSync(path.join(SHARE2, 'on-box2.txt'), 'box2\n');
+const HOME2 = path.join(T, 'home2'); fs.mkdirSync(path.join(HOME2, '.claude', 'projects'), { recursive: true });
+const ACFG2 = path.join(T, 'agent2.json');
+fs.writeFileSync(ACFG2, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok2, name: 'box2', control: false, scanMs: 500, files: { roots: [SHARE2] } }));
 fs.writeFileSync(path.join(PROJ, 'aaaaaaaa-1111-2222-3333-444444444444.jsonl'),
   L({ type: 'ai-title', aiTitle: 'FDTD 网格加密' }, now - 900e3) +
   L({ type: 'user', message: { role: 'user', content: '帮我把 FDTD 的网格在界面附近加密' } }, now - 800e3) +
@@ -53,6 +59,7 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
   try {
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(800);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
+    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME2, HOME: HOME2, AME_AGENT_CONFIG: ACFG2 }); await sleep(1500);
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
       `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
@@ -79,6 +86,8 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await sleep(3500);
 
     const dbl = (sel) => evalJs(`(() => { const el = [...document.querySelectorAll('${sel.q}')].find(x => x.textContent.includes('${sel.t}')); if (!el) return false; el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()`);
+    // (two computers now: dell97 picked in 网上邻居 first)
+    await evalJs("[...document.querySelectorAll('.mach')].find(b => b.textContent.includes('dell97')).click()"); await sleep(500);
     console.log('open 我的电脑', await dbl({ q: '.dicon', t: '我的电脑' })); await sleep(1500);
     console.log('open root', await dbl({ q: '.xroot', t: 'share' })); await sleep(1200);
     console.log('open docs', await dbl({ q: '.xlist tr', t: 'docs' })); await sleep(1200);
@@ -91,6 +100,19 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("document.querySelector('.md a').click()"); await sleep(1500);
     console.log('linked text file:', await evalJs("(document.querySelector('.vtext')||{}).textContent"));
     await shot('9-text.png');
+    // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
+    const res = [];
+    const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
+    const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
+    let w = await wins();
+    chk('我的电脑: a computer list with both, this one shown', w.length === 1 && w[0].pc === 'dell97' && w[0].opts.join() === 'box2,dell97', w);
+    await evalJs("(() => { const s = document.querySelector('.explorer .xpc'); s.value = 'box2'; s.dispatchEvent(new Event('change')); })()"); await sleep(1800);
+    w = await wins();
+    chk('switching to box2: its own 我的电脑 opens (the dell97 one stays as it was)', w.length === 2 && w.some((x) => x.pc === 'box2') && w.some((x) => x.pc === 'dell97'), w);
+    chk('box2\'s files shown', await evalJs("[...document.querySelectorAll('.explorer')].some(e => e.querySelector('.xpc').value === 'box2' && e.textContent.includes('share2'))"), 0);
+    chk('the desktop follows (as picking box2 in 网上邻居)', (await evalJs('localStorage.getItem("ame.machine")')) === '"box2"', await evalJs('localStorage.getItem("ame.machine")'));
+    await shot('9b-explorer-switch.png');
+    console.log(res.join('\n'));
     ws.close();
   } catch (e) { errors.push('script: ' + e.stack); }
   finally {

@@ -45,7 +45,8 @@ function noteHtml(md) {
   return `<div data-schema-version="9">${out.join('')}</div>`;
 }
 
-function createCards({ kb, mirror, fulltext, profile, ask, api, writeNotes = true, log = () => {}, onChange = () => {} }) {
+// ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读)
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, writeNotes = true, log = () => {}, onChange = () => {} }) {
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
 
@@ -136,7 +137,7 @@ function createCards({ kb, mirror, fulltext, profile, ask, api, writeNotes = tru
     if (ft.scanned) log(`文献：${key} 像是扫描件，正文很少，深读卡可能不准`);
     const cur = find(key);
     const mine = cur ? ((cur.sections.find((s) => s.title === '我的理解') || {}).text || '') : '';
-    const a = await ask(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000), annotationLines(mirror, key), mine, others(key)), DEEP_SCHEMA);
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000), annotationLines(mirror, key), mine, others(key)), DEEP_SCHEMA);
     const r = store(item, 'deep', a, { pdf: true });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: true };

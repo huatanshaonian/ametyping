@@ -3,6 +3,9 @@
 .xbar, .vbar { flex: none; display: flex; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--edge); background: var(--gamepink); }
 .xbar .btn { padding: 2px 9px; }
 .xbar .addr { flex: 1; font-size: 12px; }
+/* the computer switch (apps/explorer.js) */
+.xbar .xpc { flex: 0 1 auto; max-width: 160px; font-size: 12px; padding: 2px 4px; }
+.xbar .xpci { width: 16px; height: 16px; flex: none; }
 .xbody { flex: 1; overflow: auto; outline: none; }
 .xlaunch { flex: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); }
 .xlaunch .xlh { font-size: 12px; color: var(--border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

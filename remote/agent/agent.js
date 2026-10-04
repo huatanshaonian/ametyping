@@ -171,7 +171,7 @@ async function control(d) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
     r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
-  } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'deny', 'defer'].includes(d.choice)) {
+  } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice });
   } else return { ok: false, msg: '无效请求' };
   if (!r) return { ok: false, msg: '本机糖糖没在运行，没法操作' };

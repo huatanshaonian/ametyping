@@ -20,7 +20,17 @@ async function pool(items, n, fn) {
 export async function renderMd(el, text, { machine, path, urls, openPath }) {
   const math = createMath();
   const html = new Marked({ gfm: true }, { extensions: math.extensions }).parse(text);       // (an instance per page: its own formulas)
-  el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'] });
+  const frag = DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'], RETURN_DOM_FRAGMENT: true });
+  // the pictures' addresses come off while the HTML is still inert: in the page the browser would at once ask this
+  // server for "img/mesh.png" (a 404) before the picture is fetched from the remote folder below
+  const pics = [];
+  for (const img of frag.querySelectorAll('img')) {
+    const src = img.getAttribute('src') || '';
+    if (/^data:image\//i.test(src)) continue;
+    img.removeAttribute('src');
+    pics.push({ img, src });
+  }
+  el.replaceChildren(frag);
   await drawMath(el, math.found);
   const dir = rpath.dirname(path);
   const local = (ref) => {
@@ -39,10 +49,7 @@ export async function renderMd(el, text, { machine, path, urls, openPath }) {
 
   // pictures: relative ones from the remote folder, internet ones named but not loaded
   const imgs = [];
-  for (const img of el.querySelectorAll('img')) {
-    const src = img.getAttribute('src') || '';
-    if (/^data:image\//i.test(src)) continue;
-    img.removeAttribute('src');
+  for (const { img, src } of pics) {
     if (EXTERNAL.test(src)) { img.replaceWith(h('span', { class: 'mdimg-note', text: `［外链图片未加载：${img.alt || src}］`, title: src })); continue; }
     img.classList.add('loading'); img.alt = img.alt || src;
     imgs.push({ img, target: local(src), src });

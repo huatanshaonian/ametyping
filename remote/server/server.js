@@ -36,6 +36,9 @@ const { createMail } = require('./mail');
 const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
 const { createLiterature } = require('./literature');
+const { createPush } = require('./push');
+const { createPushEvents } = require('./push/events');
+const googleHttp = require('./google/http');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
 let cfg;
@@ -70,7 +73,7 @@ if (cfg.secureCookies) SEC_HEADERS['Strict-Transport-Security'] = 'max-age=31536
 // with https the cookie gets the __Host- prefix: the browser then only accepts it Secure, Path=/, no Domain
 const SID = cfg.secureCookies ? '__Host-sid' : 'sid';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.wav': 'audio/wav' };
+  '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.wav': 'audio/wav' };
 // the desktop's own files (after login): one level under these folders, plain names only
 const STATIC = /^\/(css|js|js\/apps|icons|img|wall|vendor|sounds)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg|wav)$/;
 
@@ -178,6 +181,11 @@ const exporter = createExport({ store, resumeCmd });     // 导出: one conversa
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
+// phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
+const pushEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
+const push = createPush({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), subject: /^https:\/\//.test(cfg.origin || '') ? cfg.origin : 'mailto:windose@localhost',
+  request: (url, opts) => googleHttp.request(url, opts, pushEgress), log: console.log, audit: (...a) => audit(...a) });
+const pushEvents = createPushEvents({ push });
 const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos, reports: () => summary && summary.reports,
   egress: gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null, audit: (...a) => audit(...a),
   onChange: () => broadcast({ t: 'google' }) });                              // (the tray's Google warning)
@@ -200,7 +208,7 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 // 邮件: the mailboxes kept in step on the NAS (mail/index.js); open pages are told about new mail / account changes
 // new mail is read by the model (the daily report's, mail/triage.js); an alert goes to open pages (sound, the phone buzzes)
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
-  audit: (...a) => audit(...a), ask: summary ? (p, sch) => summary.ask(p, sch) : null, reports: () => summary && summary.reports, todos,
+  audit: (...a) => audit(...a), ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, reports: () => summary && summary.reports, todos,
   onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
 // the search index built in the background: the conversations, then the documents (reports, notes, artifacts, mail);
 // new mail is indexed a few seconds after it arrives, so a search finds little left to do
@@ -213,11 +221,12 @@ if (searchIndex && summary) {
 // 文献 (literature/index.js): the daily papers, cards, deep reading and the knowledge base, on the NAS's Zotero
 // (config "literature"; the model is the daily report's); open pages are told what changed
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
-  ask: summary ? (p, sch) => summary.ask(p, sch) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
+  ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
   audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
 // a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
 function mailAlert(alert) {
   broadcast({ t: 'mail-alert', alert });
+  pushEvents.mail(alert);
   google.mailAlert(alert);
   const a = { id: alert.id, key: alert.key, kind: alert.kind, summary: alert.summary, subject: alert.subject, todo: alert.todo, deadline: alert.deadline,
     picks: (alert.picks || []).map((p) => ({ title: p.title })) };
@@ -249,6 +258,7 @@ function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
     m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() });
+    pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
   }
@@ -259,6 +269,7 @@ function onAgentMessage(m, raw, ws) {
     // a session only the store knows (e.g. Codex without the pet): the list would not refresh on its own
     // (and a new permission mode / context fill is shown in the list's session details)
     if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
+    if (r.modeChanged) { const i = store.info(m.name, d.id); if (i) pushEvents.ctx(m.name, d.id, i.ctx, (m.sessions.get(d.id) || {}).label || i.title); }
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
@@ -289,10 +300,11 @@ function onAgentMessage(m, raw, ws) {
       cur.via = VIA.includes(s.via) ? s.via : 'off';
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
-        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), input: str(p.input, 8000) })) : [];
+        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000) })) : [];
     }
     for (const id of [...m.sessions.keys()]) if (!keep.has(id)) m.sessions.delete(id);
     broadcast({ t: 'sessions', data: snapshot() });
+    pushEvents.sessions(m.name, [...m.sessions.values()], CONTROL && !!m.control);   // approvals waiting, long tasks finished
   } else if (d.t === 'conv' && typeof d.id === 'string' && Array.isArray(d.msgs)) {
     const s = m.sessions.get(d.id);
     if (!s) return;
@@ -350,7 +362,7 @@ function onBrowserAction(c, d) {
     out = { t: 'key', id: s.id, key: d.key };
     audit('control-key', c.ip, m.name, s.id, d.key);
   } else {
-    if (typeof d.perm !== 'string' || !['allow', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
+    if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
     if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
     out = { t: 'decide', id: s.id, perm: d.perm, choice: d.choice };
     audit('control-decide', c.ip, m.name, s.id, d.choice);
@@ -372,6 +384,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (p === '/login' || p === '/login.html')) return serveFile(res, 'login.html');
   if (req.method === 'GET' && p === '/login.js') return serveFile(res, 'login.js');
   if (req.method === 'GET' && p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
+  // the installable web app and its notifications: the service worker (at the root: its scope is the whole site) and
+  // the app icons -- fetched by the browser without the login cookie, and nothing in them says what this is (the
+  // manifest, which does, is fetched with the cookie: below)
+  if (req.method === 'GET' && p === '/sw.js') return serveFile(res, 'sw.js', 'no-cache');
+  if (req.method === 'GET' && /^\/app\/[a-z0-9-]+\.png$/.test(p)) return serveFile(res, p.slice(1), 'max-age=86400');
   // Google's consent screen sends the browser back here without the (SameSite=Strict) login cookie: the one-time
   // state it carries is the check (google/account.js)
   if (req.method === 'GET' && p === '/api/google/callback') return google.handleCallback(req, res, url, send);
@@ -394,6 +411,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, 'index.html');
+  if (req.method === 'GET' && p === '/manifest.webmanifest') return serveFile(res, 'manifest.webmanifest', 'no-cache');
   if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
@@ -425,6 +443,7 @@ const server = http.createServer(async (req, res) => {
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
+  if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
     return json(res, 200, { list: (m && m.cmds) || [] });
@@ -441,6 +460,8 @@ const server = http.createServer(async (req, res) => {
   if (await calendarView.handle(req, res, url, json)) return;
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (lit && /^\/api\/lit(\/|$)/.test(p) && await lit.handle(req, res, url, ip, json, readBody)) return;
+  // AI 模型: each job's model / effort, Codex's version and updates (server/ai)
+  if (summary && /^\/api\/ai(\/|$)/.test(p) && await summary.ai.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded
   if (req.method === 'GET' && p === '/api/artifact') {
     const f = artifacts.fileOf(String(url.searchParams.get('sha') || ''));
@@ -568,6 +589,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
     } else if (d.t === 'unwatch') c.sub = null;
+    // this page on screen or not (its own push subscription): a device showing Windose gets no notifications meanwhile
+    else if (d.t === 'push-here' && typeof d.endpoint === 'string' && d.endpoint.length < 1000) push.here(d.endpoint, d.on === true);
     else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
       fsRelay.fromBrowser(c, d);                                       // read-only file explorer

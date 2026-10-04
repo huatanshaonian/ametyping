@@ -17,7 +17,8 @@ const MAX_ARTIFACTS = 80;
 
 // calendar(from, to): the Google Calendar events in the window (google/index.js forReport; it also syncs 重要计划 ticked
 // off in Google Tasks first), background for the report; none when Google is not connected
-function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, backupBytes = 5e6 }) {
+// pick(task) -> { model, effort }: what each AI job runs with (ai/settings.js); none: config.json's model for everything
+function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, pick = null, backupBytes = 5e6 }) {
   // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
   // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
   // offline: its files are listed unchecked.
@@ -52,7 +53,8 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     return out.slice(0, MAX_ARTIFACTS).map((a, i) => ({ ref: 'A' + (i + 1), ...a }));
   }
   // one question to the model, through whichever proxy gets through (none configured: direct)
-  async function ask(prompt, schema) {
+  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft) -- its model and effort
+  async function ask(prompt, schema, task = 'daily') {
     let env = { ...process.env };
     if (egress) {
       const proxy = await egress.pick('chatgpt.com');
@@ -60,7 +62,8 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
       env = egress.env(proxy);
     }
     if (codex.pathPrefix) env.PATH = codex.pathPrefix + path.delimiter + (env.PATH || '');
-    try { return await runCodex({ bin: codex.bin, model: codex.model, prompt, schema, env, timeoutMs: codex.timeoutMs }); }
+    const use = pick ? pick(task) : { model: codex.model, effort: '' };
+    try { return await runCodex({ bin: codex.bin, model: use.model, effort: use.effort, prompt, schema, env, timeoutMs: codex.timeoutMs }); }
     catch (e) { if (egress) egress.forget(); throw e; }
   }
 
@@ -90,7 +93,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     if (d.text.length > SESSION_MAX) d = digest(it.s, it.recs, { userMax: 600, replyMax: 150 });
     if (d.text.length > SESSION_MAX) d = { ...d, text: d.text.slice(0, SESSION_MAX * 0.25) + '\n……（中间省略）……\n' + d.text.slice(-SESSION_MAX * 0.75) };
     log(`日报：先总结长会话 ${it.key}（${it.s.title || it.s.id}，${d.text.length} 字）`);
-    it.summary = await ask(sessionPrompt(d, it.hint), SESSION_SCHEMA);
+    it.summary = await ask(sessionPrompt(d, it.hint), SESSION_SCHEMA, 'session');
     reports.cachePut(key, it.summary);
   }
 
@@ -112,7 +115,7 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     }
     const arts = items.length ? await findArtifacts(items) : [];
     const ans = items.length
-      ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, events, brief: !!job.brief }), DAY_SCHEMA)
+      ? await ask(dayPrompt({ from, to, sessions: items, todos: important, artifacts: arts, events, brief: !!job.brief }), DAY_SCHEMA, 'daily')
       : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [], notes: [] };
     const report = assemble(job, items, ans, arts, important);
     if (events.length) report.events = events;

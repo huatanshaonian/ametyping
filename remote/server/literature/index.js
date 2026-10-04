@@ -39,6 +39,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const px = Array.isArray(cfg.proxies) ? cfg.proxies : proxies;
   const http = createHttp({ egress: px.length ? createEgress({ proxies: px, log }) : null, viaProxy: cfg.viaProxy || ['ntrs.nasa.gov'] });
   const changed = (what) => { try { onChange(what); } catch {} };
+  // two jobs in 控制面板 › AI 模型, each with its own model / effort: the many small calls of the push, and the reading
+  const askFeed = (p, s) => ask(p, s, 'litFeed'), askRead = (p, s) => ask(p, s, 'litRead');
 
   const api = createLocalApi({ base: cfg.zotero || 'http://127.0.0.1:23119', http, dir, log });
   const kb = createKb({ dir: path.resolve(cfg.kbDir || path.join(dir, 'kb')), log, onChange: () => changed('kb') });
@@ -53,11 +55,11 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   };
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
   const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto: cfg.mailto || '' });
-  const profile = createProfile({ dir, mirror, ask, openalex: sources.openalex, reports, log });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask, api, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
-  const feed = createFeed({ dir, cfg, mirror, profile, sources, ask, cards, mail, log, onChange: () => changed('feed') });
+  const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, reports, log });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  const feed = createFeed({ dir, cfg, mirror, profile, sources, ask: askFeed, cards, mail, log, onChange: () => changed('feed') });
   intake = createIntake({ cfg, api, mirror, fulltext, cards, feed, http, unpaywall, log, onChange: () => changed('feed') });
-  const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask, log, onChange: (k) => changed('read:' + k) });
+  const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, log, onChange: (k) => changed('read:' + k) });
   const stats = createStats({ kb, feed, todos });
 
   mirror.start();

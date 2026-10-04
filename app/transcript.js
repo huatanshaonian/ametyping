@@ -68,19 +68,37 @@ function userText(s) {
 // /btw (a side question): Claude Code forks a background agent and shows its answer in an overlay; the transcript only
 // has the command's output "⑂ forked <name> (<suffix>)" and, later, a task notification for task "a<name>-…<suffix>"
 // with the answer in <result>. st (any object kept per transcript) pairs the two: the question becomes a user record,
-// the answer a "btw" record. Without st the answers are left out.
+// the answer a "btw" record. Without st the answers are left out. A reader that starts after the question (a restart)
+// finds it through st.forkLookup (forkLookup(file): the transcript searched for that fork line).
+const FORK = /⑂ forked (\S+) \(([0-9a-f]+)\)/;
+const isFork = (key, id) => { const [name, suf] = key.split('|'); return id.startsWith('a' + name + '-') && id.endsWith(suf); };
+function forkLookup(file) {
+  const found = new Set();
+  let scanned = 0;
+  return (id) => {
+    // read on from where the last look stopped (a little overlap: a fork line cut by the previous end)
+    let size = 0; try { size = fs.statSync(file).size; } catch { return false; }
+    if (size > scanned) {
+      const from = Math.max(0, scanned - 400), n = size - from, buf = Buffer.alloc(n);
+      try { const fd = fs.openSync(file, 'r'); try { fs.readSync(fd, buf, 0, n, from); } finally { fs.closeSync(fd); } } catch { return false; }
+      for (const m of buf.toString('utf8').matchAll(new RegExp(FORK.source, 'g'))) found.add(m[1] + '|' + m[2]);
+      scanned = size;
+    }
+    return [...found].some((k) => isFork(k, id));
+  };
+}
 function btwRecords(o, st, t) {
   if (o.type === 'system' && o.subtype === 'local_command' && o.commandRun && o.commandRun.command === 'btw') {
-    const f = /⑂ forked (\S+) \(([0-9a-f]+)\)/.exec(String(o.content || ''));
+    const f = FORK.exec(String(o.content || ''));
     if (!f) return [];                                             // (no question: just the usage line)
     if (st) (st.btw = st.btw || new Map()).set(f[1] + '|' + f[2], 1);
     return [{ role: 'user', text: ('/btw ' + String(o.commandRun.args || '')).trim(), t }];
   }
-  if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && st.btw && /^<task-notification>/.test(String(o.content || ''))) {
+  if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && (st.btw || st.forkLookup) && /^<task-notification>/.test(String(o.content || ''))) {
     const c = String(o.content), id = (/<task-id>([^<]+)<\/task-id>/.exec(c) || [])[1] || '';
     const res = /<result>([\s\S]*)<\/result>/.exec(c);
     if (!res || !/<status>completed<\/status>/.test(c)) return [];
-    const fork = [...st.btw.keys()].find((k) => { const [name, suf] = k.split('|'); return id.startsWith('a' + name + '-') && id.endsWith(suf); });
+    const fork = [...(st.btw || new Map()).keys()].some((k) => isFork(k, id)) || (/^a\S+-[0-9a-f]+$/.test(id) && !!st.forkLookup && st.forkLookup(id));
     if (!fork) return [];
     // (a resumed fork notifies again: a new answer is a new record, the same one again is not)
     const seen = (st.btwSeen = st.btwSeen || new Set()), sig = id + '|' + res[1].length + '|' + res[1].slice(0, 80);
@@ -95,6 +113,16 @@ function recordsOf(o, st) {
   const out = [];
   if (!o || o.isSidechain || o.isMeta) return out;
   if (o.type === 'system' || o.type === 'queue-operation') return btwRecords(o, st, o.timestamp ? Date.parse(o.timestamp) : Date.now());
+  // a message you sent while Claude was busy: it waits in a queue and is handed to Claude mid-turn -- written then as an
+  // attachment, not as a user message (background tasks' notifications come the same way: not yours, left out)
+  if (o.type === 'attachment' && o.attachment && o.attachment.type === 'queued_command') {
+    const a = o.attachment;
+    if (a.commandMode !== 'prompt' || a.humanTurn === false) return out;
+    const raw = typeof a.prompt === 'string' ? a.prompt : Array.isArray(a.prompt) ? a.prompt.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n') : '';
+    const u = userText(raw);
+    if (u && typeof u === 'string') out.push({ role: 'user', text: u, t: o.timestamp ? Date.parse(o.timestamp) : Date.now() });
+    return out;
+  }
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
   if (o.type === 'user' && m) {
@@ -154,6 +182,7 @@ function poll(cache) {
   if (cache.offset != null && st.size === cache.offset) return false;
   if (cache.offset == null || st.size < cache.offset) {          // first read (or the file was rewritten)
     cache.msgs = []; cache.offset = Math.max(0, st.size - FIRST_READ); cache.partial = '';
+    cache.msgs.forkLookup = forkLookup(cache.file);              // (a /btw asked before the part read now)
     cache.skipFirst = cache.offset > 0;
   }
   const n = st.size - cache.offset;
@@ -174,4 +203,4 @@ function poll(cache) {
   return true;
 }
 
-module.exports = { poll, recordsOf, mergeRecords };
+module.exports = { poll, recordsOf, mergeRecords, forkLookup };

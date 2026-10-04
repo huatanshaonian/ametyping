@@ -1,14 +1,18 @@
-// 添加电脑: the machines allowed to connect. Adding one gives its token once, together with ready-to-paste install
-// commands for Windows and Linux (install/ scripts) -- so a new device needs nothing done on the server.
+// 电脑 (in 控制面板; was 添加电脑): the machines allowed to connect. Adding one gives its token once, together with
+// ready-to-paste install commands for Windows and Linux (install/ scripts) -- so a new device needs nothing done on the
+// server.
 // Removing one revokes its token and disconnects it (its stored conversations stay).
 import { h, icon } from '../util.js';
-import * as wm from '../wm.js';
 import * as net from '../net.js';
 
 const RAW = 'https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install';
 const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
-export function open() {
+// 电脑 lives in 控制面板 (control.js): this opens it there
+export function open() { import('./control.js').then((c) => c.open('computers')); }
+
+// the page itself, for 控制面板: { root }
+export function panel() {
   const listBox = h('div', { class: 'cmplist' });
   const name = h('input', { class: 'field', type: 'text', placeholder: '新电脑的名字（字母、数字、点、横线）', maxlength: 40, spellcheck: 'false' });
   const addBtn = h('button', { class: 'btn go', type: 'submit', text: '添加' });
@@ -63,5 +67,5 @@ export function open() {
   const content = h('div', { class: 'computers' },
     h('div', { class: 'cmphead', text: '已登记的电脑' }), listBox,
     h('div', { class: 'cmphead', text: '添加一台电脑' }), form, result, msg);
-  wm.open({ id: 'computers', title: '添加电脑', icon: icon('network_normal_two_pcs', true), content, width: 640, height: 480 });
+  return { root: content };
 }

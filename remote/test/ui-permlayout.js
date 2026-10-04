@@ -136,6 +136,20 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await pick('第二个会话'); await sleep(1200);
     const instant = await evalJs("(() => { const c = [...document.querySelectorAll('.dash .card')].find(x => x.textContent.includes('demo 会话')); c.click(); return document.querySelector('.dash .conv').textContent; })()");
     chk('a conversation looked at lately shows at once', !instant.includes('加载对话') && instant.includes('先想想怎么改'), instant.slice(0, 120));
+    // 总是允许: shown with what it adds when Claude Code offers it; the choice goes back to the pet as 'always'
+    perms = [{ id: 'p9', provider: 'claude', tool: 'Bash', cwd: '/demo', always: 'Bash(npm test:*) · 本会话', input: JSON.stringify({ command: 'npm test' }) }];
+    for (let i = 0; i < 40; i++) { await sleep(100); if (await evalJs("!!document.querySelector('.dash .perm')")) break; }
+    const card9 = await evalJs("(() => { const c = document.querySelector('.dash .perm'); return { btns: [...c.querySelectorAll('.pa button')].map(b => b.textContent), text: c.textContent }; })()");
+    chk('总是允许: the button and what it adds', JSON.stringify(card9.btns) === JSON.stringify(['允许', '总是允许', '拒绝']) && card9.text.includes('以后不再问：Bash(npm test:*) · 本会话'), card9);
+    await shot('81-perm-always.png');
+    await evalJs("[...document.querySelectorAll('.dash .perm .pa button')].find(b => b.textContent === '总是允许').click()");
+    for (let i = 0; i < 40 && !decisions.some((d) => d.id === 'p9'); i++) await sleep(150);
+    const d9 = decisions.find((d) => d.id === 'p9');
+    chk('总是允许: reaches the pet as choice always', d9 && d9.choice === 'always', decisions);
+    perms = [{ id: 'p10', provider: 'claude', tool: 'Edit', cwd: '/demo', always: '', input: JSON.stringify({ file_path: '/demo/a.js' }) }];
+    for (let i = 0; i < 40; i++) { await sleep(100); if (await evalJs("!!document.querySelector('.dash .perm[data-id=p10]')")) break; }
+    chk('no suggestions: no 总是允许', !(await evalJs("document.querySelector('.dash .perm[data-id=p10]').textContent")).includes('总是允许'), 0);
+    perms = [];
   } catch (e) { errors.push('script: ' + e.stack); }
   finally {
     console.log(res.join('\n'));

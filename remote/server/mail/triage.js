@@ -49,7 +49,7 @@ function createTriage({ dataDir, store, accounts, ask, reports = () => null, onA
         }
         if (!mails.length) continue;
         let ans;
-        try { ans = await ask(triagePrompt(mails, interestsOf(reports(), st.interests)), TRIAGE_SCHEMA); }
+        try { ans = await ask(triagePrompt(mails, interestsOf(reports(), st.interests)), TRIAGE_SCHEMA, 'mailTriage'); }
         catch (e) { log('邮件把关：问模型失败，30 分钟后再试：' + e.message); schedule(RETRY_MS); return; }
         const byRef = new Map(((ans && ans.items) || []).map((x) => [String(x.ref || '').replace(/[^\dM]/gi, '').toUpperCase(), x]));
         for (const x of mails) {
