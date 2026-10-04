@@ -43,6 +43,7 @@ function createFakeSources() {
       if (!hit) { res.writeHead(404); return res.end('{}'); }
       return json(hit);
     }
+    if (p === '/oa/sources') return json({ results: [{ display_name: 'Radio Science', issn_l: '0048-6604', issn: ['0048-6604', '1944-799X'] }] });
     if (p === '/oa/authors') return json({ results: [{ id: 'https://openalex.org/A123', display_name: 'Wei Sun', cited_by_count: 9, works_count: 3, last_known_institutions: [{ display_name: 'CAS' }] }] });
     if (p === '/cr/works') return json({ message: { items: [] } });
     if (p === '/arxiv/api/query') return xml(`<feed><entry><id>http://arxiv.org/abs/2610.00001v1</id><title>Graph neural networks for traffic</title><summary>Traffic</summary><published>${today}T00:00:00Z</published><author><name>Ann Other</name></author></entry></feed>`);

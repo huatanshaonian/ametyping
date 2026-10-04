@@ -13,18 +13,24 @@ const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return 
 
 function questionsBlock(profile) {
   const qs = (profile.questions || []).filter((q) => q.status !== 'done');
-  return qs.length ? qs.map((q, i) => `Q${i + 1}. ${q.text}`).join('\n') : '（还没有确认的问题，按研究方向判断）';
+  return qs.length ? '（越靠前越重要）\n' + qs.map((q, i) => `Q${i + 1}. ${q.text}`).join('\n') : '（还没有确认的问题，按研究主线判断）';
+}
+// the research as the user put it (主线), with the branches the profile drew from it
+function directionOf(profile) {
+  const line = String(profile.line || profile.summary || '').trim();
+  const br = (profile.topics || []).filter((t) => t.name).map((t) => `- ${t.name}${t.coverage ? `（库里${t.coverage}）` : ''}`).join('\n');
+  return (line || '（见问题）') + (br ? '\n研究分支：\n' + br : '');
 }
 
 // cands: [{ ref, title, venue, year, abstract, source }]; fb: { kept: [titles], skipped: [titles] } -- what the user did
 // with earlier picks (the model calibrates on them)
 function rankPrompt(profile, cands, fb = { kept: [], skipped: [] }) {
   return [
-    '你在为用户挑选今天值得读的新文献（每天最多推 2 篇，宁缺毋滥）。用户的研究方向：', profile.summary || '（见问题）', '',
+    '你在为用户挑选今天值得读的新文献（每天最多推 2 篇，宁缺毋滥）。用户的研究主线：', directionOf(profile), '',
     '用户现在要解决的问题：', questionsBlock(profile), '',
     fb.kept.length ? '用户最近收下的推荐（说明这类是用户要的）：\n' + fb.kept.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
     fb.skipped.length ? '用户最近跳过的推荐（这类要更严格）：\n' + fb.skipped.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
-    '给下面每篇打分 score（0～10）：9～10 = 直接帮用户解决某个问题（方法、数据、可对比的结果）；7～8 = 和问题明显相关、值得读；5～6 = 同方向但关系不大；0～4 = 无关或只是关键词撞上。',
+    '给下面每篇打分 score（0～10）：9～10 = 直接帮用户解决某个问题（方法、数据、可对比的结果）；7～8 = 和问题或主线的某个分支明显相关、值得读（库里覆盖「较少」的分支可以放宽一点）；5～6 = 同方向但关系不大；0～4 = 无关或只是关键词撞上。',
     'question：最相关的问题编号（如 Q2 填 2），都不相关填 0。',
     'why：一句中文，说清“它和你的哪个问题有关、能拿来做什么”（例如“给出了 RAM C-II 的实测电子密度剖面，可直接作为你 RCS 计算的输入”），不要复述标题，30～60 字。',
     'fun：不直接相关但可能启发思路的有趣工作填 true。',
@@ -46,4 +52,4 @@ function reviewPrompt(profile, it, notes, card) {
   ].filter((x) => x !== '').join('\n');
 }
 
-module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt, questionsBlock };
+module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt, questionsBlock, directionOf };

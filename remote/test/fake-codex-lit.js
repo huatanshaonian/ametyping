@@ -12,10 +12,13 @@ process.stdin.on('end', () => {
   const P = schema.properties || {};
   let a;
   if (P.seeds) {
+    // 按主线补全: the branches (one the library covers, one it hardly does), a suggestion, what to follow
     const key = (/^- \[([A-Z0-9]{8})\]/m.exec(prompt) || [])[1] || '';
-    a = { summary: '再入飞行器等离子体鞘套的电磁散射与 RCS 建模', topics: [{ name: '等离子体鞘套', keywords: ['plasma sheath', 'reentry', 'electron density'] }],
-      questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取', why: '最近的日报' }, { text: 'RCS 计算结果拿什么验证', why: '批注' }],
-      venues: ['IEEE Transactions on Antennas and Propagation', 'AIAA Journal'], authors: ['Sun, Wei'], keywords: ['"plasma sheath" RCS', 'communication blackout', 'electron density profile', 'hypersonic wake', 'plasma FDTD'], arxiv: ['physics.plasm-ph'], ntrs: ['reentry plasma attenuation'], seeds: key ? [key] : [] };
+    a = { branches: [{ name: '等离子体鞘套电磁散射', desc: `库里有代表作 [${key}]，讲到了后向散射`, coverage: '充足', keywords: ['plasma sheath', 'reentry', 'electron density'], papers: key ? [key, 'NOTAKEY1'] : [] },
+        { name: '气动隐身协同优化', desc: '库里几乎没有', coverage: '较少', keywords: ['aerodynamic stealth design'], papers: [] }],
+      suggestQuestions: [{ text: '有没有可以对比的飞行试验数据', why: '主线里提到验证' }, { text: 'RCS 计算结果拿什么验证', why: '（和用户已写的重复，应被去掉）' }],
+      venues: ['IEEE Transactions on Antennas and Propagation', 'AIAA Journal'], extraVenues: ['Radio Science'], authors: ['Sun, Wei'],
+      keywords: ['"plasma sheath" RCS', 'communication blackout', 'electron density profile', 'hypersonic wake', 'plasma FDTD'], arxiv: ['physics.plasm-ph'], ntrs: ['reentry plasma attenuation'], seeds: key ? [key] : [] };
   } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.score) {
     const refs = [...prompt.matchAll(/^### (C\d+)\n题目：(.*)$/gm)];
     a = { items: refs.map((m) => /plasma|sheath/i.test(m[2]) ? { ref: m[1], score: /blackout/i.test(m[2]) ? 9 : 8, question: 1, why: '给出了鞘套电子密度的实测剖面，可作为 RCS 计算输入', fun: false }

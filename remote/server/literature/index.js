@@ -89,6 +89,12 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       card: card ? { path: card.path, text: card.text, hash: card.hash, meta: card.meta } : null, job: cards.state(key), actions: cards.actions(key), entry,
       collectionNames: it.collections.map((c) => (mirror.collections().find((x) => x.key === c) || {}).name).filter(Boolean) };
   }
+  // the profile as the window shows it: each branch's papers with their titles (keys mean nothing to the user)
+  function profileOut() {
+    const pr = profile.get(); if (!pr) return null;
+    const brief = (k) => { const it = mirror.item(k); return it ? { key: k, title: it.title, year: it.year, citekey: it.citekey } : null; };
+    return { ...pr, topics: (pr.topics || []).map((t) => ({ ...t, paperList: (t.papers || []).map(brief).filter(Boolean) })) };
+  }
   // 糖糖's morning note / the desktop: what is waiting today
   function morning() {
     const open = feed.list().filter((e) => e.status === 'new');
@@ -114,7 +120,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       res.end(f.buf); audit('lit-pdf', ip, qs('key'));
       return true;
     }
-    if (G && p === '/api/lit/profile') { json(res, 200, { profile: profile.get(), state: profile.state() }); return true; }
+    if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state() }); return true; }
     if (G && p === '/api/lit/feed') { json(res, 200, { items: feed.list(), status: feed.status(), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
@@ -135,7 +141,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       api.authorize().then((x) => { authError = x.ok ? '' : x.msg; changed('zotero'); if (x.ok) audit('lit-authorize', ip); });
       r = { ok: true, msg: '请到 Zotero 的网页桌面里点「始终允许」' };
     } else if (what === 'zotero/refresh') { r = await mirror.refresh(true).then(() => ({ ok: true }), (e) => ({ ok: false, msg: e.message })); }
-    else if (what === 'profile/draft') r = profile.draft();
+    else if (what === 'profile/fill' || what === 'profile/draft') r = profile.fill();
     else if (what === 'profile/save') r = await profile.update(d);
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }

@@ -60,8 +60,9 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     const [cname, cval] = cookie.split('=');
     // the state the window shows: library mirrored, profile confirmed, write access, the day's push, one paper kept
     await until(async () => ((await api('GET', '/api/lit')).j || { zotero: {} }).zotero.items === 2);
-    await api('POST', '/api/lit/profile/draft');
-    const prof = await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && !r.state.running && r.profile; }, 30000);
+    await api('POST', '/api/lit/profile/save', { line: '再入飞行器气动隐身：等离子体鞘套的电磁散射、RCS 高频方法与验证、气动隐身协同优化。', questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取' }, { text: 'RCS 计算结果拿什么验证' }] });
+    await api('POST', '/api/lit/profile/fill');
+    const prof = await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.filledAt && !r.state.running && r.profile; }, 30000);
     await api('POST', '/api/lit/profile/save', { questions: prof.questions, confirm: true });
     await api('POST', '/api/lit/zotero/authorize');
     await until(async () => (await api('GET', '/api/lit')).j.zotero.canWrite);
@@ -145,6 +146,11 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
 
     // 画像 and 产出
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '画像').click()");
+    chk('画像: the main line, the branches with coverage and their papers by title, a suggestion to take or drop', await waitFor("!!document.querySelector('.lp-t')") &&
+      /再入飞行器气动隐身/.test(await evalJs("document.querySelector('.lp textarea').value")) && await evalJs("[...document.querySelectorAll('.lp-papers a')].some(a => a.textContent.startsWith('Backward scattering'))") &&
+      await evalJs("!!document.querySelector('.tag.cov.thin')") && await evalJs("document.querySelectorAll('.lp-sug').length === 1") && !(await evalJs("/[A-Z0-9]{8}/.test(document.querySelector('.lp-ts').textContent)")),
+      await evalJs("(document.querySelector('.lp')||{}).textContent"));
+    chk('no stray "null" text on the profile page', !(await evalJs("/null/.test(document.querySelector('.lp').textContent)")), 0);
     chk('画像: the questions editable, the follow lists', await waitFor("document.querySelectorAll('.lp-q').length === 2") && /0018-926X/.test(await evalJs("[...document.querySelectorAll('.lp textarea')].map(t => t.value).join(' ')")), await evalJs("document.querySelector('.lp').textContent"));
     await shot('86-lit-profile.png');
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '产出').click()");

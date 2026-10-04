@@ -4,7 +4,7 @@
 //   deep   from the full text: the full card, every claim with its page ([p.5]), ending in what the user can do with it
 // The card always ends with "meaning for my question" and "actions": reading is meant to turn into work.
 'use strict';
-const { questionsBlock } = require('./feed');
+const { questionsBlock, directionOf } = require('./feed');
 
 const str = { type: 'string' }, num = { type: 'number' }, bool = { type: 'boolean' }, strs = { type: 'array', items: str };
 const obj = (props) => ({ type: 'object', additionalProperties: false, properties: props, required: Object.keys(props) });
@@ -24,7 +24,7 @@ const head = (it) => `文献：${it.title}\n作者：${(it.creators || it.author
 function quickPrompt(profile, it, pages, notes) {
   return [
     '为用户写一张文献“速读卡”（中文；术语保留英文原词）。目的不是复述，而是让用户 5 分钟内判断：这篇讲了什么、和自己的哪个问题有关、值不值得深读。',
-    '用户的研究方向：' + (profile.summary || '（见问题）'), '用户现在要解决的问题：', questionsBlock(profile), '',
+    '用户的研究主线：' + directionOf(profile), '用户现在要解决的问题：', questionsBlock(profile), '',
     head(it), `摘要：${cut(it.abstract, 3000) || '（无）'}`,
     notes.length ? '用户的批注：\n' + notes.map((n) => '- ' + cut(n, 300)).join('\n') : '',
     pages.length ? '正文开头几页（标了页码）：\n' + pagesBlock(pages) : '（没有正文，只能依据摘要）', '',
@@ -40,7 +40,7 @@ function quickPrompt(profile, it, pages, notes) {
 function deepPrompt(profile, it, pages, notes, mine, others) {
   return [
     '为用户写一张文献“深读卡”（中文；术语、公式符号保留原文；公式用 LaTeX，行内 $...$）。这张卡要帮用户把阅读变成产出：读完能用它做事。',
-    '用户的研究方向：' + (profile.summary || '（见问题）'), '用户现在要解决的问题：', questionsBlock(profile), '',
+    '用户的研究主线：' + directionOf(profile), '用户现在要解决的问题：', questionsBlock(profile), '',
     head(it), `摘要：${cut(it.abstract, 3000) || '（无）'}`,
     notes.length ? '用户的批注（用户真正在意的地方，卡片要回应它们）：\n' + notes.map((n) => '- ' + cut(n, 400)).join('\n') : '',
     mine ? '用户读前写下的理解 / 想从中得到的：\n' + cut(mine, 2000) : '', '',

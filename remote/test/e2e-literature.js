@@ -89,15 +89,26 @@ const src = createFakeSources();
 
     // ---- the profile ----
     ok('the push refuses without a profile', (await P('/api/lit/feed/run')).ok && (await until(async () => { const f = await G('/api/lit/feed'); const r = (f.status.runs || []).slice(-1)[0]; return r && r.error; })), '');
-    ok('draft started', (await P('/api/lit/profile/draft')).ok);
-    let prof = await until(async () => { const r = await G('/api/lit/profile'); return r.profile && !r.state.running && r.profile; }, 30000);
-    const venue = prof && prof.follow.venues.find((v) => /Antennas/.test(v.name)), aiaaJ = prof && prof.follow.venues.find((v) => v.name === 'AIAA Journal');
-    ok('drafted: questions, journal -> ISSN from the library, AIAA -> its feed code, author -> OpenAlex id, key paper -> OpenAlex id', prof && prof.questions.length === 2 && venue.issns[0] === '0018-926X' &&
-      aiaaJ.aiaa === 'aiaaj' && prof.follow.authors[0].openalex === 'A123' && prof.follow.seeds[0].key === 'AAAAAAA1' && prof.follow.seeds[0].openalex === 'W9' && !prof.confirmed, prof);
+    ok('filling refused before the main line is written', !(await P('/api/lit/profile/fill')).ok);
+    const LINE = '博士课题：再入飞行器气动隐身。三条线：等离子体鞘套的电磁散射；RCS 高频方法与验证；气动外形与隐身的协同优化。';
+    ok('the user writes the main line and the questions, most important first', (await P('/api/lit/profile/save', { line: LINE, questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取' }, { text: 'RCS 计算结果拿什么验证' }] })).ok);
+    ok('filling started', (await P('/api/lit/profile/fill')).ok);
+    let prof = await until(async () => { const r = await G('/api/lit/profile'); return r.profile && r.profile.filledAt && !r.state.running && r.profile; }, 30000);
+    const venue = prof && prof.follow.venues.find((v) => /Antennas/.test(v.name)), aiaaJ = prof && prof.follow.venues.find((v) => v.name === 'AIAA Journal'), extra = prof && prof.follow.venues.find((v) => v.extra);
+    ok('filled: journal -> ISSN from the library, AIAA -> its feed code, a journal the library lacks -> ISSN from OpenAlex, author -> OpenAlex id, key paper -> OpenAlex id',
+      prof && venue.issns[0] === '0018-926X' && aiaaJ.aiaa === 'aiaaj' && extra && extra.name === 'Radio Science' && extra.issns.includes('0048-6604') &&
+      prof.follow.authors[0].openalex === 'A123' && prof.follow.seeds[0].key === 'AAAAAAA1' && prof.follow.seeds[0].openalex === 'W9' && !prof.confirmed, prof);
+    const br = prof.topics.find((t) => t.name === '等离子体鞘套电磁散射'), thin = prof.topics.find((t) => t.name === '气动隐身协同优化');
+    ok('the branches: what each covers, how well the library covers it, its papers shown by title', br && br.coverage === '充足' && br.paperList[0].title.startsWith('Backward scattering') &&
+      thin && thin.coverage === '较少' && !thin.papers.length, prof.topics);
+    ok('no item key left in the prose: the paper\'s title instead', !/[A-Z0-9]{8}/.test(br.desc) && /《Backward scattering/.test(br.desc), br.desc);
+    ok('the line and the user\'s questions untouched; the model\'s questions are suggestions only', prof.line === LINE && prof.questions.map((q) => q.text).join('|') === '鞘套电子密度剖面在 RCS 计算里怎么取|RCS 计算结果拿什么验证' &&
+      prof.suggestions.length === 1 && /试验/.test(prof.suggestions[0].text), [prof.questions, prof.suggestions]);
     const log1 = fs.readFileSync(path.join(T, 'codex.log'), 'utf8');
-    ok('the draft was made from the library (annotated first) and its counts', /\[AAAAAAA1\]\*/.test(log1) && /IEEE Transactions on Antennas and Propagation（1）/.test(log1));
-    const sv = await P('/api/lit/profile/save', { questions: [...prof.questions, { text: '我自己加的问题', status: 'open' }], confirm: true });
-    ok('edited and confirmed; the user\'s own question is marked as theirs', sv.ok && sv.profile.confirmed && sv.profile.questions.find((q) => q.text === '我自己加的问题').mine, sv);
+    ok('the filling was made from the line, the questions in order, and the whole library', log1.includes('再入飞行器气动隐身') && /Q1\. 鞘套电子密度剖面/.test(log1) &&
+      /\[AAAAAAA1\]\*/.test(log1) && /\[AAAAAAA2\]/.test(log1) && /\[AAAAAAA4\]/.test(log1) && /IEEE Transactions on Antennas and Propagation（1）/.test(log1));
+    const sv = await P('/api/lit/profile/save', { questions: [...prof.questions, { text: prof.suggestions[0].text, status: 'open' }], suggestions: [], confirm: true });
+    ok('a suggestion taken in, confirmed', sv.ok && sv.profile.confirmed && sv.profile.questions.length === 3 && !sv.profile.suggestions.length, sv);
 
     // ---- the daily push ----
     await P('/api/lit/feed/run');
