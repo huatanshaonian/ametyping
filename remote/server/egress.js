@@ -7,7 +7,7 @@ const net = require('net');
 const KEEP_MS = 5 * 60e3;
 
 function createEgress({ proxies = [], log = () => {} } = {}) {
-  let cached = null; // { url, host, at }
+  const cached = new Map(); // host -> { url, at } (Codex and Claude Code reach different hosts)
 
   // CONNECT host:443 through an HTTP proxy; true when it answers 200
   function probe(proxyUrl, host, timeoutMs = 8000) {
@@ -25,15 +25,16 @@ function createEgress({ proxies = [], log = () => {} } = {}) {
 
   // the proxy to use for host, or null when none gets through
   async function pick(host = 'chatgpt.com') {
-    if (cached && cached.host === host && Date.now() - cached.at < KEEP_MS) return cached.url;
+    const c = cached.get(host);
+    if (c && Date.now() - c.at < KEEP_MS) return c.url;
     for (const url of proxies) {
       if (await probe(url, host)) {
-        if (!cached || cached.url !== url) log(`egress: using ${url} for ${host}`);
-        cached = { url, host, at: Date.now() };
+        if (!c || c.url !== url) log(`egress: using ${url} for ${host}`);
+        cached.set(host, { url, at: Date.now() });
         return url;
       }
     }
-    cached = null;
+    cached.delete(host);
     log(`egress: no proxy reaches ${host}`);
     return null;
   }
@@ -45,7 +46,8 @@ function createEgress({ proxies = [], log = () => {} } = {}) {
     return { ...e, HTTP_PROXY: url, HTTPS_PROXY: url, NO_PROXY: 'localhost,127.0.0.1' };
   }
 
-  return { pick, env, probe, forget: () => { cached = null; } };
+  // forget(host): ask again next time for that host (none: for all)
+  return { pick, env, probe, forget: (host) => { if (host) cached.delete(host); else cached.clear(); } };
 }
 
 module.exports = { createEgress };

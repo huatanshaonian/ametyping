@@ -1,7 +1,8 @@
 // The daily work summary (日报): wiring and the web API. Settings are config.json "summary" (all optional):
 //   enabled     false turns it off
 //   codex       the Codex CLI (default ~/.local/bin/codex on Linux, "codex" elsewhere), or [command, ...args]
-//   model       default "gpt-6-luna"
+//   claude      Claude Code, the same way (default ~/.local/bin/claude on Linux, "claude" elsewhere)
+//   model       default "gpt-6-luna" (控制面板 → AI 模型 picks per job, and a backup)
 //   proxies     HTTP proxies tried in order, e.g. ["http://<PC>:10810", "http://127.0.0.1:1057"] (the PC's v2rayN,
 //               then the AWS way out, deploy/nas/egress.sh); none = direct
 //   categories  [{ match, cat }] folder rules for 科研 / 个人小项目 / 杂活 (see classify.js)
@@ -42,10 +43,17 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
     pathPrefix: cfg.pathPrefix != null ? cfg.pathPrefix : (linux ? '/usr/bin' : ''),
     timeoutMs: (+cfg.timeoutMin || 20) * 60e3,
   };
+  // Claude Code, for the jobs set to a Claude model (and as the backup)
+  const claude = {
+    bin: cfg.claude || (linux ? path.join(os.homedir(), '.local', 'bin', 'claude') : 'claude'),
+    pathPrefix: codex.pathPrefix,
+    timeoutMs: codex.timeoutMs,
+  };
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
-  // which model / effort each job uses, and Codex kept up to date (控制面板 → AI 模型); cfg.codexHome: tests
-  const ai = createAi({ dataDir: path.dirname(dir), codex, egress, fallbackModel: codex.model, codexHome: cfg.codexHome, log, audit });
-  const gen = createGenerator({ store, reports, egress, classify: createClassifier(cfg.categories), codex, resumeCmd, log, pick: ai.pick,
+  // which model / effort each job uses and the backup, asking Codex or Claude Code, both kept up to date
+  // (控制面板 → AI 模型); cfg.codexHome / cfg.claudeHome: tests
+  const ai = createAi({ dataDir: path.dirname(dir), codex, claude, egress, fallbackModel: codex.model, codexHome: cfg.codexHome, claudeHome: cfg.claudeHome, log, audit });
+  const gen = createGenerator({ store, reports, classify: createClassifier(cfg.categories), ask: ai.ask, resumeCmd, log,
     artifacts, todos, calendar, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
   const weekly = createWeekly({ reports, ask: gen.ask, todos, log });
   // the short note for the pet: the latest daily report that is not a backfill, and its week when that is written

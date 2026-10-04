@@ -1,6 +1,6 @@
 // UI check (控制面板): one window for every setting -- the items with their icons, each page inside it, the old ways in
-// (start menu, the calendar's 「连接 Google 日历」, 邮件's 设置) landing on the right page, AI 模型 (models from a fake
-// Codex cache, a change saved), the phone (icons first, then the page, and back). Shots in test/out/shots/8x-control-*.png.
+// (start menu, the calendar's 「连接 Google 日历」, 邮件's 设置) landing on the right page, AI 模型 (models from fake
+// Codex and Claude Code caches, a change saved, the backup), the phone (icons first, then the page, and back). Shots in test/out/shots/8x-control-*.png.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = path.resolve(__dirname, '..');
 const WebSocket = require(R + '/node_modules/ws');
@@ -20,7 +20,10 @@ fs.writeFileSync(path.join(HOME, 'auth.json'), JSON.stringify({ auth_mode: 'chat
 const env = { ...process.env, AME_REMOTE_CONFIG: CFG, AME_SUMMARY_TICK_MS: '600000' };
 cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...env, AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' } });
 const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
-cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME };
+// Claude Code: no catalog of its own yet (its main models offered), a fake that is logged in
+const CHOME = path.join(T, 'claudehome'); fs.mkdirSync(CHOME);
+cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME,
+  claude: [process.execPath, path.join(__dirname, 'fake-claude.js')], claudeHome: CHOME };
 fs.writeFileSync(CFG, JSON.stringify(cfg));
 fs.mkdirSync(path.join(T, 'srv', 'data'), { recursive: true });
 fs.writeFileSync(path.join(T, 'srv', 'data', 'codex-check.json'), JSON.stringify({ version: '0.160.0', at: Date.now() - 2 * 86400e3, error: '' }));
@@ -80,10 +83,13 @@ function login() {
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);
     }
-    // AI 模型: the models of the account, efforts per model, a change saved; Codex's state
+    // AI 模型: the models of both accounts (Claude's, then OpenAI's), efforts per model, a change saved, the backup;
+    // both tools' state
     await sleep(800);
-    const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), codex: document.querySelector('.aim-codex').textContent }; })()");
-    chk('AI 模型: a default row + six jobs, the account\'s models, Codex version / newest / login', ai.rows === 7 && ai.models === ',gpt-6-astra,gpt-6-sol,gpt-6-luna' &&
+    const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
+    chk('AI 模型: default + backup rows and the eight jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 10 &&
+      ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude（Claude Code）|OpenAI（Codex）' &&
+      /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
     await evalJs("(() => { const row = [...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')); const [m] = row.querySelectorAll('select'); m.value = 'gpt-6-astra'; m.dispatchEvent(new Event('change')); })()"); await sleep(300);
     const efforts = await evalJs("[...[...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')).querySelectorAll('select')[1].options].map(o => o.value).join()");
@@ -92,6 +98,11 @@ function login() {
     const saved = await evalJs("fetch('/api/ai').then(r => r.json()).then(v => JSON.stringify(v.tasks.find(t => t.id === 'ask').set))");
     const uses = await evalJs("[...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')).querySelector('.aim-uses').textContent");
     chk('a job set on its own: the efforts that model has, saved, what it will use shown', efforts === ',low,medium,high,xhigh,max,ultra' && /GPT-6-Astra · 很高/.test(uses) && saved === '{"model":"gpt-6-astra","effort":"xhigh"}', [efforts, uses, saved]);
+    // the backup: Opus 5.5 picked in its row -> saved, every job says what it falls back to
+    await evalJs("(() => { const m = document.querySelector('.aim-bak select'); m.value = 'claude-opus-5-5'; m.dispatchEvent(new Event('change')); })()"); await sleep(1500);
+    const bak = await evalJs("fetch('/api/ai').then(r => r.json()).then(v => JSON.stringify(v.backup))");
+    const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
+    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 8 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);
