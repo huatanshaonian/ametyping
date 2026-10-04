@@ -37,11 +37,14 @@ function createLocalApi({ base = 'http://127.0.0.1:23119', http, dir, log = () =
     if (authorizing) return authorizing;
     authorizing = (async () => {
       try {
-        if (!serverId) await version().catch(() => {});
-        const r = await http.request(U('/api/local/authorize'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appName: APP_NAME }), timeoutMs: 10 * 60e3 });
-        if (r.status === 403) return { ok: false, msg: '在 Zotero 里点了拒绝' };
+        // (Zotero refuses any POST without its instance id -- the authorization request too: 428)
+        await version().catch(() => {});
+        if (!serverId) return { ok: false, msg: '连不上 Zotero 的本地 API（Zotero 开着吗？设置里允许其他应用通讯了吗？）' };
+        const r = await http.request(U('/api/local/authorize'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Zotero-Server-ID': serverId },
+          body: JSON.stringify({ appName: APP_NAME }), timeoutMs: 10 * 60e3 });
+        if (r.status === 403) return { ok: false, msg: '在 Zotero 里点了拒绝（或者本地 API 没开）' };
         if (r.status === 429) return { ok: false, msg: '请求太频繁，一分钟后再试' };
-        if (r.status !== 200) return { ok: false, msg: `Zotero 返回 ${r.status}` };
+        if (r.status !== 200) return { ok: false, msg: `Zotero 返回 ${r.status}：${r.body.toString('utf8').slice(0, 80)}` };
         const j = JSON.parse(r.body.toString('utf8'));
         if (!j.key) return { ok: false, msg: 'Zotero 没有给出密钥' };
         cred = { key: j.key, remember: !!j.remember, serverId, at: Date.now() };

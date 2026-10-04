@@ -56,6 +56,7 @@ function createFakeZotero({ webdavDir, items = [], collections = [] }) {
       const p = u.pathname;
       if (!/:\d+$/.test(String(req.headers.host || ''))) return send(res, 400, 'Bad request');
       if (req.method === 'POST' && p === '/api/local/authorize') {
+        if (req.headers['zotero-server-id'] !== SERVER_ID) return send(res, 428, 'Zotero-Server-ID not provided');   // (as the real one)
         if (denyAuthorize) return send(res, 403, { denied: true });
         apiKey = crypto.randomBytes(16).toString('hex');
         return setTimeout(() => send(res, 200, { key: apiKey, remember: true }), 150);

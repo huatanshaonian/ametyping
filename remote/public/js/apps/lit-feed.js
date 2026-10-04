@@ -54,7 +54,7 @@ export function mount(el, ctx) {
 
   function card(e, { spare, past } = {}) {
     const p = e.paper || {};
-    const q = e.question > 0 ? questions[e.question - 1] : null;
+    const q = e.qText ? { text: e.qText } : e.question > 0 ? questions[e.question - 1] : null;
     const kind = e.kind === 'review' ? (e.mode === 'recall' ? ['复习', 'rv'] : ['补读', 'cu']) : e.old ? ['老报告', 'old'] : e.fun ? ['有趣', 'fun'] : ['新文献', 'new'];
     const head = h('div', { class: 'lf-h' }, h('i', { class: 'tag ' + kind[1], text: kind[0] }),
       q ? h('i', { class: 'tag q', text: 'Q' + e.question, title: q.text }) : null,

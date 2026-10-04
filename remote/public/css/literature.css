@@ -107,3 +107,4 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lf-yield { flex: none; padding: 4px 12px; border-bottom: 1px solid var(--edge); background: var(--body); font-size: 12.5px; }
 .lf-yield summary { cursor: pointer; color: var(--muted); }
 .lf-y { display: flex; gap: 12px; margin: 2px 0; } .lf-y b { width: 110px; font-weight: normal; color: var(--border); } .lf-y span { color: var(--muted); } .lf-y span.ok { color: var(--ok-text); }
+.lit-auth { font-size: 12px; color: var(--border); max-width: 46%; } .lit-auth.bad { color: var(--bad); }

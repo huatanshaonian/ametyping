@@ -114,6 +114,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     const done = entries().filter((e) => e.kind === 'new' && e.decidedAt).sort((a, b) => b.decidedAt - a.decidedAt);
     return { kept: done.filter((e) => e.status === 'kept').slice(0, 10).map((e) => e.paper.title), skipped: done.filter((e) => e.status === 'skipped').slice(0, 10).map((e) => e.paper.title) };
   }
+  // the question's own text kept with a pick (its number changes when questions are reordered, solved or removed)
+  const qText = (n) => { const q = n > 0 ? profile.openQuestions()[n - 1] : null; return q ? q.text : ''; };
   async function rank(list) {
     if (!list.length) return [];
     const refs = list.map((c, i) => ({ ref: 'C' + (i + 1), c }));
@@ -177,9 +179,9 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const good = ranked.filter((r) => r.score >= minScore);
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
-        for (const r of good.slice(0, want)) { add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, why: r.why, fun: r.fun }); log1.picked++; }
+        for (const r of good.slice(0, want)) { add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun }); log1.picked++; }
         // the next best few, kept aside (更多 shows them)
-        for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, why: r.why, fun: r.fun, status: 'spare' });
+        for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' });
         let room = want - log1.picked;
         for (const x of reviewPool().slice(0, room)) { add({ date, ...(await reviewEntry(x.it)) }); st.reviewed[x.it.key] = now(); log1.reviews++; room--; }
       }
