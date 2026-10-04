@@ -64,6 +64,8 @@ function selectMachine(name) {
   dashboard.setCurrent(name);
 }
 netpanel.init(selectMachine);
+// 我的电脑's computer list: as picking it here, then its 我的电脑
+explorer.setSwitch((name) => { selectMachine(name); openMyComputer(); });
 document.getElementById('addpc').addEventListener('click', (e) => { e.stopPropagation(); computers.open(); });
 
 function render() {
