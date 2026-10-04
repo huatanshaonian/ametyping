@@ -30,6 +30,8 @@
 .aim-row .field { width: 100%; min-width: 0; }
 .aim-uses { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted); }
 .aim-def { background: var(--tint); padding: 6px 6px; border-bottom: 1px solid var(--edge); }
+.aim-bak { margin-bottom: 6px; }                                   /* 后备模型 */
+.aim-down p { margin: 2px 0; }                                     /* a model that failed lately */
 .aim-h { margin: 8px 0 4px; color: var(--border); font-size: 14px; }
 .aim-kv { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; } .aim-kv b { width: 64px; flex: none; color: var(--muted); font-weight: normal; }
 .aim-kv small { color: var(--muted); font-size: 11.5px; }
