@@ -41,7 +41,7 @@ export function panel() {
     const num = (val, min, max) => h('input', { class: 'field lset-n', type: 'number', min, max, value: val });
     const colSel = (val) => { const s = h('select', { class: 'field' }, ...[...new Set([val, ...(v.collections || [])])].filter(Boolean).map((n) => h('option', { value: n, text: n }))); s.value = val; return s; };
     F = { mailto: h('input', { class: 'field', type: 'email', value: v.mailto || '', placeholder: '可空：例如你的学校邮箱' }),
-      daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
+      daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), visionMaxPages: num(v.visionMaxPages, 0, 200), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
       reviewCollection: colSel(v.reviewCollection), inboxCollection: h('input', { class: 'field', value: v.inboxCollection }),
       s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }) };
     const row = (label, el, note) => h('div', { class: 'lset-row' }, h('label', { text: label }), h('div', {}, el, note ? h('small', { text: note }) : null));
@@ -51,6 +51,7 @@ export function panel() {
       h('h4', { class: 'aim-h', text: '每日推送' }),
       row('每天最多', h('span', {}, F.daily, ' 篇'), '是上限不是定额：不够格就不推，用复习补位。0 = 只复习。'),
       row('老报告', h('span', {}, F.oldDaily, ' 篇 / 天'), 'NTRS 和 DTIC 的老报告，另算，不占上面的名额；每次拉一页，够格的排队分几天推，用完再往后翻'),
+      row('读图', h('span', {}, '不超过 ', F.visionMaxPages, ' 页的整篇读'), '深读时把论文页面当图片给模型逐页转写（公式、表格比文字层准得多，也更费额度）；更长的只在 AI 建议、你批准后读其中几页；0 = 都要批准'),
       row('推送时间', F.at, '工作日这个时间之后推（周六只推老报告，周日不推）'),
       row('分数门槛', h('span', {}, F.minScore, ' 分以上才推（满分 10）'), '推得太杂就调高，常常没有新文献就调低'),
       row('每天检索', h('span', {}, F.searchesPerDay, ' 条检索式（轮流用）')),
@@ -62,7 +63,7 @@ export function panel() {
   async function save(quiet) {
     const keys = {};
     for (const name of ['s2', 'openalex']) { const t = K[name].box.value.trim(); if (t) keys[name] = t; else if (clear[name]) keys[name] = null; }
-    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
+    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, visionMaxPages: F.visionMaxPages.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
       reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, s2Recommend: F.s2Recommend.checked });
     msg.textContent = r.ok ? '已保存，马上生效' : r.msg || '没能保存';
     if (r.ok) { clear.s2 = clear.openalex = false; if (!quiet) await load(); }

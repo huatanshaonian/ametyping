@@ -16,7 +16,7 @@ const WHO = { codex: 'OpenAI', claude: 'Anthropic' };
 function createAsk({ codex, claude, egress = null, pick, log = () => {}, now = Date.now }) {
   const down = new Map();                     // model -> { at, error, task }
 
-  async function once(use, prompt, schema) {
+  async function once(use, prompt, schema, images) {
     const cli = use.provider === 'claude' ? claude : codex;
     let env = { ...process.env };
     if (egress) {
@@ -26,14 +26,15 @@ function createAsk({ codex, claude, egress = null, pick, log = () => {}, now = D
     }
     if (cli.pathPrefix) env.PATH = cli.pathPrefix + path.delimiter + (env.PATH || '');
     const run = use.provider === 'claude' ? runClaude : runCodex;
-    try { return await run({ bin: cli.bin, model: use.model, effort: use.effort, prompt, schema, env, timeoutMs: cli.timeoutMs }); }
+    try { return await run({ bin: cli.bin, model: use.model, effort: use.effort, prompt, schema, env, timeoutMs: cli.timeoutMs, images }); }
     catch (e) { if (egress) egress.forget(HOST[use.provider]); throw e; }
   }
 
   const resting = (u) => { const d = down.get(u.model); return !!d && now() - d.at < REST_MS; };
 
-  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft, litFeed, litRead)
-  async function ask(prompt, schema, task = 'daily') {
+  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft, litFeed, litRead, litVision);
+  // images: files the model looks at too (文献's page images)
+  async function ask(prompt, schema, task = 'daily', { images = [] } = {}) {
     const use = pick(task);
     const list = [use, use.backup].filter((u, i) => u && u.model && (i === 0 || u.model !== use.model));
     // the one that failed lately last (still tried when the other fails too)
@@ -43,7 +44,7 @@ function createAsk({ codex, claude, egress = null, pick, log = () => {}, now = D
     for (let i = 0; i < order.length; i++) {
       const u = order[i];
       try {
-        const v = await once(u, prompt, schema);
+        const v = await once(u, prompt, schema, images);
         down.delete(u.model);
         return v;
       } catch (e) {

@@ -14,6 +14,7 @@ const DEEP_SCHEMA = obj({
   oneLine: str, problem: str, method: str, assumptions: strs, results: strs, relevance: str, question: num, actions: strs,
   reusable: strs, doubts: strs, follow: strs, history: str,
   relations: { type: 'array', items: obj({ citekey: str, type: str, note: str }) },
+  vision: obj({ worth: bool, pages: str, why: str }),
 });
 
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
@@ -37,13 +38,15 @@ function quickPrompt(profile, it, pages, notes) {
 }
 
 // pages: the text (fitPages); notes: annotations; mine: the user's own understanding (if written); others: [{ citekey, title }]
-function deepPrompt(profile, it, pages, notes, mine, others) {
+// src: { n: the PDF's pages, read: the pages read as images ("1-12"), rest: other pages from the text layer, long: too long to read whole as images }
+function deepPrompt(profile, it, pages, notes, mine, others, src = {}) {
   return [
     '为用户写一张文献“深读卡”（中文；术语、公式符号保留原文；公式用 LaTeX，行内 $...$）。这张卡要帮用户把阅读变成产出：读完能用它做事。',
     '用户的研究主线：' + directionOf(profile), '用户现在要解决的问题：', questionsBlock(profile), '',
     head(it), `摘要：${cut(it.abstract, 3000) || '（无）'}`,
     notes.length ? '用户的批注（用户真正在意的地方，卡片要回应它们）：\n' + notes.map((n) => '- ' + cut(n, 400)).join('\n') : '',
     mine ? '用户读前写下的理解 / 想从中得到的：\n' + cut(mine, 2000) : '', '',
+    src.read ? `正文里第 ${src.read} 页是看原图逐页转写的（公式可信，[?] 表示原图看不清的符号）${src.rest ? `，其余是 PDF 的文字层（公式常有乱码，引用公式时要小心）` : ''}。` : '',
     '正文（标了页码）：', pagesBlock(pages), '',
     '字段：oneLine 一句话总结；problem 问题与动机；method 方法（模型、近似、数值方法、实验条件，具体）；assumptions 关键假设和适用条件（用户套用时最容易出错的地方）；',
     'results 主要结果，3～6 条，有数写数，每条句末标页码 [p.N]；relevance 对用户当前问题的意义（具体到哪个问题、能替代/验证/补充用户的什么）；question 最相关的问题编号（无关填 0）；',
@@ -52,6 +55,7 @@ function deepPrompt(profile, it, pages, notes, mine, others) {
     'history 如果是老报告/经典文献：它的时代背景、后来被谁发展或取代（不知道就写空字符串，不要编）；',
     'relations 和用户已有卡片的关系（只从下面列出的卡片里选，type 用：延续 / 对比 / 推翻 / 使用其数据 / 方法相同；没有就空数组）。',
     others.length ? '用户已有的卡片：\n' + others.map((o) => `- ${o.citekey}：${cut(o.title, 100)}`).join('\n') : '（用户还没有别的卡片）',
+    src.long ? `vision：这篇有 ${src.n} 页，太长，没有整篇看原图，你读到的大多是文字层。如果其中有值得看原图精读的部分（关键推导、公式密集的页、数据表、要读数的图），worth 填 true，pages 写页码范围（如 "12-18, 25"，只挑真正需要的，一般不超过 20 页），why 一句话说明读了能得到什么；没有必要就 worth 填 false、其余空字符串。` : 'vision：填 worth false、pages 和 why 空字符串。',
     '只依据正文；正文里没有的不要编造，不确定就写进 doubts。',
   ].filter((x) => x !== '').join('\n');
 }

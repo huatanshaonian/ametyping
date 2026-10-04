@@ -2,6 +2,8 @@
 // through pdftotext (poppler; on the NAS at /usr/bin/pdftotext -- literature config "pdftotext" to point elsewhere).
 // Kept per file content: <dataDir>/literature/text/<md5>.json { pages: [text], chars, scanned }. A scan without a text
 // layer comes out (almost) empty: `scanned` says so, and the card is then made from the abstract and the user's notes.
+// Pages read as images (vision.js) take the place of the text layer's: useOverlay(fn) puts them in (forItem's raw
+// option leaves them out). A doc may carry labels: the page number of each entry when they are not simply 1, 2, ...
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -52,19 +54,29 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
     for (const [k, v] of recent) if (Date.now() - v.at > 3600e3) recent.delete(k);
   }
 
-  // the item's PDF text, or { missing: why } -- 'nopdf' (no PDF attachment), 'nofile' (not synced to WebDAV yet),
-  // 'linked' (only a link to the PDF), or an error
-  async function forItem(key) {
+  // the item's PDF file { buf, md5, attachment }, or { missing: why } -- 'nopdf' (no PDF attachment), 'nofile' (not
+  // synced to WebDAV yet), 'linked' (only a link to the PDF), or an error
+  function fileOf(key) {
     const att = mirror.pdfOf(key);
     if (!att) return { missing: 'nopdf' };
     if (att.linkMode === 'linked_url' || att.linkMode === 'linked_file') return { missing: 'linked', attachment: att };
-    let file;
-    try { file = webdav.read(att.key, att.filename); }
+    try { const f = webdav.read(att.key, att.filename); return { buf: f.buf, md5: f.md5, attachment: att }; }
     catch (e) {
       const r = recent.get(att.key);
-      if (r) file = { buf: r.buf, md5: r.md5 };
-      else return { missing: e.code === 'ENOFILE' ? 'nofile' : 'error', error: e.message, attachment: att };
+      if (r) return { buf: r.buf, md5: r.md5, attachment: att };
+      return { missing: e.code === 'ENOFILE' ? 'nofile' : 'error', error: e.message, attachment: att };
     }
+  }
+  let overlay = (doc) => doc;
+  // the item's PDF text (with the pages read as images in their place unless raw), or { missing } as fileOf
+  async function forItem(key, { raw = false } = {}) {
+    const doc = await textOf(key);
+    return raw || doc.missing ? doc : overlay(doc);
+  }
+  async function textOf(key) {
+    const file = fileOf(key);
+    if (file.missing) return file;
+    const att = file.attachment;
     let doc;
     try { doc = { ...(await fromBuffer(file.buf, file.md5)), attachment: att, md5: file.md5 }; }
     catch (e) { log('文献：抽全文失败 ' + key + '：' + e.message); return { missing: 'error', error: e.message, attachment: att }; }
@@ -99,11 +111,12 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
     try { return { name: a.filename || 'paper.pdf', buf: webdav.read(a.key, a.filename).buf }; }
     catch { const r = recent.get(a.key); return r ? { name: a.filename || 'paper.pdf', buf: r.buf } : null; }
   }
-  return { forItem, fromBuffer, hasPdf, remember, pdfBytes };
+  return { forItem, fileOf, fromBuffer, hasPdf, remember, pdfBytes, useOverlay: (fn) => { overlay = fn; } };
 }
 
 // the pages most about `words` (case-insensitive counts), in page order, within `budget` characters; always the first page
-function pickPages(pages, words, budget = 60000) {
+// (labels: each entry's page number when they are not 1, 2, ... -- see the top)
+function pickPages(pages, words, budget = 60000, labels = null) {
   const ws = [...new Set(words.map((w) => String(w).toLowerCase()).filter((w) => w.length > 1))];
   const scored = pages.map((t, i) => {
     const low = t.toLowerCase();
@@ -112,14 +125,15 @@ function pickPages(pages, words, budget = 60000) {
   });
   const pick = new Set([0]); let used = (pages[0] || '').length;
   for (const p of scored.slice(1).sort((a, b) => b.s - a.s)) { if (used + p.len > budget) continue; pick.add(p.i); used += p.len; }
-  return [...pick].sort((a, b) => a - b).map((i) => ({ page: i + 1, text: pages[i] }));
+  return [...pick].sort((a, b) => a - b).map((i) => ({ page: labels ? labels[i] : i + 1, text: pages[i] }));
 }
 // the whole text if it fits, else the start of each page in turn (a long report keeps every page's opening)
-function fitPages(pages, budget = 90000) {
+function fitPages(pages, budget = 90000, labels = null) {
+  const no = (i) => (labels ? labels[i] : i + 1);
   const total = pages.reduce((n, s) => n + s.length, 0);
-  if (total <= budget) return pages.map((text, i) => ({ page: i + 1, text }));
+  if (total <= budget) return pages.map((text, i) => ({ page: no(i), text }));
   const per = Math.max(400, Math.floor(budget / pages.length));
-  return pages.map((t, i) => ({ page: i + 1, text: t.length > per ? t.slice(0, per) + ' …' : t }));
+  return pages.map((t, i) => ({ page: no(i), text: t.length > per ? t.slice(0, per) + ' …' : t }));
 }
 
 module.exports = { createFulltext, pickPages, fitPages, pdftotext };

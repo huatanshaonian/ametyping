@@ -30,6 +30,7 @@ const { createEgress } = require('../egress');
 const { createStats } = require('./stats');
 const { createS2 } = require('./sources/s2');
 const { createSettings } = require('./settings');
+const { createVision } = require('./vision');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -43,6 +44,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const changed = (what) => { try { onChange(what); } catch {} };
   // two jobs in 控制面板 › AI 模型, each with its own model / effort: the many small calls of the push, and the reading
   const askFeed = (p, s) => ask(p, s, 'litFeed'), askRead = (p, s) => ask(p, s, 'litRead');
+  const askVision = (p, s, o) => ask(p, s, 'litVision', o);                         // (reading pages as images)
 
   const api = createLocalApi({ base: cfg.zotero || 'http://127.0.0.1:23119', http, dir, log });
   const kb = createKb({ dir: path.resolve(cfg.kbDir || path.join(dir, 'kb')), log, onChange: () => changed('kb') });
@@ -52,6 +54,9 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, iaBase: E.dtic || undefined, log });
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
   const settings = createSettings({ dir, cfg });
+  // 读图: pages read as images take the place of the text layer's wherever the paper's text is used
+  const vision = createVision({ dir, mirror, fulltext, ask: askVision, maxPages: () => settings.feed().visionMaxPages, log, onChange: (k) => changed('vision:' + k) });
+  fulltext.useOverlay(vision.apply);
   const mailto = () => settings.mailto();
   const sources = {
     openalex: createOpenAlex({ http, base: E.openalex, key: () => settings.keyOf('openalex'), mailto }),
@@ -63,14 +68,14 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
   const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto });
   const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
     ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
   const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, log, onChange: () => changed('feed') });
-  const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, log, onChange: (k) => changed('read:' + k) });
+  const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const stats = createStats({ kb, feed, todos });
 
   mirror.start();
@@ -117,7 +122,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     const p = url.pathname, G = req.method === 'GET', qs = (k) => String(url.searchParams.get(k) || '');
     if (G && p === '/api/lit') {
       json(res, 200, { zotero: { ...mirror.status(), canWrite: api.canWrite(), authorizing: api.authorizing(), authError }, webdav: webdav.configured(), kbDir: kb.dir,
-        profile: { ...profile.state(), has: !!profile.get(), confirmed: !!(profile.get() || {}).confirmed }, feed: feed.status(), proposals: kb.proposals().length, morning: morning() });
+        profile: { ...profile.state(), has: !!profile.get(), confirmed: !!(profile.get() || {}).confirmed }, feed: feed.status(), proposals: kb.proposals().length, morning: morning(),
+        vision: vision.pending().length });
       return true;
     }
     if (G && p === '/api/lit/settings') { json(res, 200, { ...settings.view(), collections: mirror.collections().map((c) => c.name) }); return true; }
@@ -141,6 +147,9 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/topic/state') { json(res, 200, { job: reader.topicState(qs('path')) }); return true; }
     if (G && p === '/api/lit/proposals') { json(res, 200, { items: kb.proposals().map((x) => ({ ...x, title: (kb.read(x.path) || { meta: {} }).meta.title || x.path })) }); return true; }
     if (G && p === '/api/lit/proposal') { const v = kb.preview(qs('id')); json(res, v ? 200 : 404, v || { error: 'not found' }); return true; }
+    if (G && p === '/api/lit/vision') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? await vision.info(k) : { error: 'not found' }); return true; }
+    if (G && p === '/api/lit/vision/page') { const r = KEY.test(qs('key')) ? vision.page(qs('key'), Math.max(1, +qs('page') || 1)) : null; json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
+    if (G && p === '/api/lit/vision/pending') { json(res, 200, { items: vision.pending() }); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
@@ -192,6 +201,14 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       r = !todos ? { ok: false, msg: '重要计划没有开启' } : !text ? { ok: false, msg: '内容是空的' } : todos.add({ text: it ? `${text}（${it.citekey}）` : text, project: '文献' });
       if (r.ok) r = { ok: true };
     }
+    else if (what === 'vision/start') {
+      // read the paper as images: a short one whole; the pages given (the user's own choice) for any
+      if (!KEY.test(key) || !mirror.item(key)) r = { ok: false, msg: '找不到这篇' };
+      else if (typeof d.ranges === 'string' && d.ranges.trim()) r = await vision.approve(key, d.ranges);
+      else { const vi = await vision.info(key); r = !vi.pdf ? { ok: false, msg: '没有可读的 PDF' } : vi.auto ? await vision.approve(key, '全部') : { ok: false, msg: `这篇有 ${vi.n} 页，超过整篇读图的上限（${vi.max} 页），请写上要读的页码` }; }
+    }
+    else if (what === 'vision/approve') r = KEY.test(key) ? await vision.approve(key, typeof d.ranges === 'string' ? d.ranges : null) : { ok: false, msg: '找不到这篇' };
+    else if (what === 'vision/decline') r = vision.decline(key);
     else if (what === 'understand') r = reader.understand(key, d.text);
     else if (what === 'chat') r = reader.chat(key, d.q, { sel: String(d.sel || '').slice(0, 4000), page: +d.page || 0 });
     else if (what === 'distill') r = reader.distill(key);
@@ -206,7 +223,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, stop: () => { mirror.stop(); feed.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, stop: () => { mirror.stop(); feed.stop(); } };
 }
 
 module.exports = { createLiterature };

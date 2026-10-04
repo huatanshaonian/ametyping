@@ -1,7 +1,7 @@
 // 控制面板 › 文献: what the user sets for the literature module without touching config.json -- the API keys
 // (Semantic Scholar, OpenAlex), the contact address sent to Crossref / OpenAlex / Unpaywall, and the daily push.
 //   <dataDir>/literature/settings.json  (0600)  { keys: { s2, openalex }, mailto, daily, at, minScore, searchesPerDay,
-//                                                 reviewCollection, inboxCollection, s2Recommend, oldDaily }
+//                                                 reviewCollection, inboxCollection, s2Recommend, oldDaily, visionMaxPages }
 // What is set here wins over config.json's "literature"; what is not set falls back to it. Changes apply at once (the
 // sources read the keys on every call; the push reads its numbers on every run). Keys never go back to the page whole:
 // only whether one is set and its last four characters.
@@ -11,7 +11,7 @@ const path = require('path');
 
 const MAIL = /^[^\s@<>()"',;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
 const KEY = /^[\x21-\x7e]{8,200}$/;
-const NUM = { daily: [0, 5], minScore: [1, 10], searchesPerDay: [1, 10], oldDaily: [0, 3] };
+const NUM = { daily: [0, 5], minScore: [1, 10], searchesPerDay: [1, 10], oldDaily: [0, 3], visionMaxPages: [0, 200] };
 
 function createSettings({ dir, cfg = {} }) {
   const file = path.join(dir, 'settings.json');
@@ -26,7 +26,8 @@ function createSettings({ dir, cfg = {} }) {
   function feed() {
     const pick = (k, d) => (st[k] != null && st[k] !== '' ? st[k] : cfg[k] != null ? cfg[k] : d);
     return { daily: +pick('daily', 2), oldDaily: +pick('oldDaily', 1), at: String(pick('at', '07:30')), minScore: +pick('minScore', 6), searchesPerDay: +pick('searchesPerDay', 4),
-      reviewCollection: String(pick('reviewCollection', '气动隐身')), inboxCollection: String(pick('inboxCollection', '每日文献')), s2Recommend: pick('s2Recommend', true) !== false };
+      reviewCollection: String(pick('reviewCollection', '气动隐身')), inboxCollection: String(pick('inboxCollection', '每日文献')), s2Recommend: pick('s2Recommend', true) !== false,
+      visionMaxPages: +pick('visionMaxPages', 30) };
   }
   // what the page shows: whether a key is set (and its end), never the key
   function view() {

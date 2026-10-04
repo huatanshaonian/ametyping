@@ -132,3 +132,15 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lset-st { color: var(--ok-text) !important; } .lset-st.bad { color: var(--bad) !important; }
 .lset-n { width: 70px; } .lset-cb { display: flex; align-items: center; gap: 6px; }
 .lset .field:not(.lset-n):not([type="password"]) { width: 100%; max-width: 360px; }
+
+/* 读图 (lit-vision.js): a paper read as images -- progress, the AI's request to read some pages, the user's pick */
+.lv { margin: 6px 14px; padding: 6px 10px; font-size: 12.5px; border-left: 3px solid var(--accent-muted); background: var(--accent-wash); display: flex; flex-direction: column; gap: 5px; }
+.lv[hidden] { display: none; }
+.lv-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lv-run { color: var(--accent-muted); }
+.lv-req { display: flex; flex-direction: column; gap: 4px; padding: 5px 8px; border: 1px dashed var(--warn); }
+.lv-p { width: 12em; min-width: 0; }
+.lv-pick summary { cursor: pointer; color: var(--muted); }
+.lr-side > .lv { margin: 4px 8px; }
+.lf-va { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 3px 0; font-size: 13px; } .lf-va span { min-width: 0; }
+.lv-md { max-height: 40vh; overflow: auto; padding: 4px 8px; background: var(--panel); border: 1px solid var(--edge); } .lv-md[hidden] { display: none; }

@@ -2,19 +2,20 @@
 // answer forced into a JSON schema (--output-schema, last message written to a file). The prompt goes in on stdin.
 //   bin: the codex executable, or [command, ...leading args] (tests use a fake: ["node", "fake-codex.js"])
 //   model / effort: which model and how hard it thinks (ai/settings.js; effort '' = the model's own default)
+//   images: PNG / JPEG files the model looks at along with the prompt (文献's page images)
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
-function runCodex({ bin, model, effort = '', prompt, schema, env, timeoutMs = 20 * 60e3 }) {
+function runCodex({ bin, model, effort = '', prompt, schema, env, timeoutMs = 20 * 60e3, images = [] }) {
   const [cmd, ...pre] = Array.isArray(bin) ? bin : [bin];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-summary-'));
   const schemaFile = path.join(dir, 'schema.json'), outFile = path.join(dir, 'answer.json');
   fs.writeFileSync(schemaFile, JSON.stringify(schema));
   const args = [...pre, 'exec', ...(model ? ['-m', model] : []), ...(/^[a-z]{2,10}$/.test(effort) ? ['-c', `model_reasoning_effort="${effort}"`] : []), '-s', 'read-only', '--skip-git-repo-check', '--ephemeral',
-    '--color', 'never', '--output-schema', schemaFile, '-o', outFile, '-'];
+    '--color', 'never', '--output-schema', schemaFile, '-o', outFile, ...images.map((f) => '--image=' + f), '-'];
   return new Promise((resolve, reject) => {
     // the working folder is the empty temp folder: nothing of the NAS is in reach even for reading
     const p = spawn(cmd, args, { cwd: dir, env, stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });

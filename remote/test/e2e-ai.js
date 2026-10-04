@@ -68,7 +68,7 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     await until(async () => (await req('GET', '/login')).status === 200);
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     let v = (await req('GET', '/api/ai', null, cookie)).j || {};
-    ok('the jobs and the models the account has (hidden ones left out); all on the configured model at first', v.tasks.length === 8 && v.tasks.some((t) => t.id === 'litFeed') && v.tasks.some((t) => t.id === 'litRead') && v.models.filter((m) => m.provider === 'codex').map((m) => m.slug).join() === 'gpt-6-astra,gpt-6-sol,gpt-6-luna' &&
+    ok('the jobs and the models the account has (hidden ones left out); all on the configured model at first', v.tasks.length === 9 && ['litFeed', 'litRead', 'litVision'].every((id) => v.tasks.some((t) => t.id === id)) && v.models.filter((m) => m.provider === 'codex').map((m) => m.slug).join() === 'gpt-6-astra,gpt-6-sol,gpt-6-luna' &&
       v.tasks.every((t) => t.uses.model === 'gpt-6-luna' && t.uses.effort === '' && t.uses.provider === 'codex' && !t.uses.backup) && v.models[0].efforts.includes('ultra') && v.models[0].defaultEffort === 'low', v);
     const cl = v.models.filter((m) => m.provider === 'claude');
     ok('Claude Code\'s models from its newest catalog: main ones first, efforts and the recommended one, Haiku without efforts', cl.map((m) => m.slug).join() === 'claude-opus-5-5,claude-haiku-4-5-20251001,claude-sonnet-5' &&

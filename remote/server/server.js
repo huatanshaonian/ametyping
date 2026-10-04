@@ -221,7 +221,7 @@ if (searchIndex && summary) {
 // 文献 (literature/index.js): the daily papers, cards, deep reading and the knowledge base, on the NAS's Zotero
 // (config "literature"; the model is the daily report's); open pages are told what changed
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
-  ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
+  ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
   audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
 // a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
 function mailAlert(alert) {

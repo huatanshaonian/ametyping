@@ -8,6 +8,7 @@
 const path = require('path');
 const { QUICK_SCHEMA, DEEP_SCHEMA, quickPrompt, deepPrompt } = require('./prompts/card');
 const { pickPages, fitPages } = require('./fulltext');
+const { formatRanges } = require('./vision');
 
 const NOTE_TAG = 'Windose卡片';
 const USER_SECTIONS = new Set(['我的理解', '我的笔记']);
@@ -45,8 +46,8 @@ function noteHtml(md) {
   return `<div data-schema-version="9">${out.join('')}</div>`;
 }
 
-// ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读)
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, writeNotes = true, log = () => {}, onChange = () => {} }) {
+// ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js)
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, writeNotes = true, log = () => {}, onChange = () => {} }) {
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
 
@@ -87,7 +88,7 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, w
     if (notes.length) secs.push({ title: '我的批注', text: list(notes) });
     if (cur) for (const s of cur.sections) if (USER_SECTIONS.has(s.title) && s.text) secs.push(s);
     const meta = { title: item.title, zotero: item.key, citekey: path.basename(rel, '.md'), doi: item.doi || undefined, year: item.year || undefined, venue: item.venue || undefined,
-      authors: item.creators.slice(0, 8), status: kind, question: a.question > 0 ? a.question : undefined, verified: false, pdf: extra.pdf, getpdf: extra.getPdf,
+      authors: item.creators.slice(0, 8), status: kind, question: a.question > 0 ? a.question : undefined, verified: false, pdf: extra.pdf, getpdf: extra.getPdf, vision: extra.vision,
       starred: cur ? cur.meta.starred : undefined, updated: today(), ai: aiHash(secs) };
     const text = kb.stringify(meta, secs.map((s) => (s.title ? `## ${s.title}\n\n${s.text}` : s.text)).join('\n\n') + '\n');
     // the user changed what the model wrote last time: this version waits as a proposal
@@ -124,7 +125,7 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, w
     const item = mirror.item(key); if (!item) throw new Error('Zotero 里找不到这篇');
     const ft = await fulltext.forItem(key);
     // (a scan's thin text still helps a little: whatever text there is goes along)
-    const pages = ft.pages && ft.chars > 0 ? pickPages(ft.pages, profile.words(), 20000).slice(0, 6) : [];
+    const pages = ft.pages && ft.chars > 0 ? pickPages(ft.pages, profile.words(), 20000, ft.labels).slice(0, 6) : [];
     const a = await ask(quickPrompt(profile.get() || {}, item, pages, annotationLines(mirror, key)), QUICK_SCHEMA);
     const r = store(item, 'quick', a, { pdf: !!ft.pages, getPdf: !ft.pages && a.getPdf && a.getPdf.worth ? (a.getPdf.why || '值得找全文') : undefined });
     if (r.text) toZotero(item, r.text);
@@ -132,13 +133,19 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, w
   }
   async function makeDeep(key) {
     const item = mirror.item(key); if (!item) throw new Error('Zotero 里找不到这篇');
+    if (vision) await vision.prepare(key, { wait: true });       // a short paper: read whole as images first
     const ft = await fulltext.forItem(key);
     if (!ft.pages || !ft.pages.length) throw Object.assign(new Error(ft.missing === 'nofile' ? 'PDF 还没同步到群晖' : '没有可读的 PDF 正文'), { code: 'NOPDF' });
     if (ft.scanned) log(`文献：${key} 像是扫描件，正文很少，深读卡可能不准`);
     const cur = find(key);
     const mine = cur ? ((cur.sections.find((s) => s.title === '我的理解') || {}).text || '') : '';
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000), annotationLines(mirror, key), mine, others(key)), DEEP_SCHEMA);
-    const r = store(item, 'deep', a, { pdf: true });
+    const vi = vision ? await vision.info(key) : null;
+    const read = ft.vision && ft.vision.length ? formatRanges(ft.vision) : '';
+    const long = !!(vi && vi.n && !vi.auto && (ft.vision || []).length < vi.n);
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), annotationLines(mirror, key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }), DEEP_SCHEMA);
+    // a long paper with pages worth reading as images: the request waits for the user's approval
+    if (long && a.vision && a.vision.worth && String(a.vision.pages || '').trim()) vision.request(key, a.vision.pages, a.vision.why, 'model');
+    const r = store(item, 'deep', a, { pdf: true, vision: read || undefined });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: true };
   }

@@ -75,8 +75,8 @@ function login() {
       !/添加电脑|Google 账户|声音/.test(menu) && /重要计划/.test(menu) && /网上邻居/.test(menu), [desk, menu]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the seven items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 7 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the eight items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|文献' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 8 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
     for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
@@ -87,7 +87,7 @@ function login() {
     // both tools' state
     await sleep(800);
     const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
-    chk('AI 模型: default + backup rows and the eight jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 10 &&
+    chk('AI 模型: default + backup rows and the nine jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 11 &&
       ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude（Claude Code）|OpenAI（Codex）' &&
       /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
@@ -102,7 +102,7 @@ function login() {
     await evalJs("(() => { const m = document.querySelector('.aim-bak select'); m.value = 'claude-opus-5-5'; m.dispatchEvent(new Event('change')); })()"); await sleep(1500);
     const bak = await evalJs("fetch('/api/ai').then(r => r.json()).then(v => JSON.stringify(v.backup))");
     const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
-    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 8 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
+    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 9 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);

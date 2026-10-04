@@ -21,6 +21,7 @@ const TASKS = [
   { id: 'mailDraft', name: '邮件起草', note: '写信时「让 GPT 起草」' },
   { id: 'litFeed', name: '文献推送', note: '起草画像、每天挑文献并写推荐理由、复习题、速读卡' },
   { id: 'litRead', name: '文献深读', note: '深读卡、读前理解的对照、深读对话、沉淀、专题和相关工作段落' },
+  { id: 'litVision', name: '文献读图', note: '把论文页面看成图片逐页转写（公式、表格），深读前自动做；超过页数上限的要你批准' },
 ];
 const SLUG = /^[\w.:-]{1,60}$/, EFFORT = /^[a-z]{2,10}$/;
 // Claude Code's catalog missing (not run yet on this machine): its current main models

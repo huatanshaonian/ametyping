@@ -5,6 +5,7 @@ import { h } from '../util.js';
 import { openUrl } from './viewer.js';
 import { get, post, authors, STATUS } from './lit-api.js';
 import { renderMd } from './lit-md.js';
+import { visionBox } from './lit-vision.js';
 
 export function mount(el, ctx) {
   const colSel = h('select', { class: 'field lb-col', title: '分类' });
@@ -17,7 +18,7 @@ export function mount(el, ctx) {
   const view = h('div', { class: 'lb-view' }, h('p', { class: 'lit-empty', text: '点左边的一篇看详情。' }));
   el.classList.add('lb');
   el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), h('div', { class: 'lb-main' }, listEl, view));
-  let items = [], cur = null, cols = [], qT = null;
+  let items = [], cur = null, cols = [], qT = null, vbox = null;
 
   async function loadCols() {
     const r = await get('/api/lit/collections'); cols = (r && r.items) || [];
@@ -60,12 +61,15 @@ export function mount(el, ctx) {
       d.card ? btn(meta.starred ? '★ 已星标' : '☆ 星标', '星标 = 进深读清单', async () => { await post('/api/lit/card/meta', { key, starred: !meta.starred }); show(key, true); loadList(); }) : null,
       d.card && d.card.meta.status !== 'none' ? btn(meta.verified ? '✓ 已核对' : '核对过了', '你对照原文检查过这张卡片', async () => { await post('/api/lit/card/meta', { key, verified: !meta.verified }); show(key, true); }) : null,
       d.card ? btn('编辑', '直接改卡片的 Markdown（Obsidian 里改也行）', () => edit(d)) : null);
+    if (vbox && (vbox.key !== key || !quiet)) { vbox.destroy(); vbox = null; }
+    if (!vbox) { vbox = visionBox(key); vbox.key = key; }
     view.replaceChildren(...[h('div', { class: 'lb-head' },
       h('h3', { text: d.title }),
       h('div', { class: 'lf-m', text: [d.creators.join('; '), d.venue, d.year, d.number].filter(Boolean).join(' · ') }),
       h('div', { class: 'lf-m' }, h('code', { text: d.citekey }), d.doi ? h('a', { href: 'https://doi.org/' + d.doi, target: '_blank', rel: 'noopener noreferrer', text: ' doi:' + d.doi }) : null,
         d.collectionNames.length ? ' · ' + d.collectionNames.join('、') : '', d.pdf ? ' · 有 PDF' : ' · 没有 PDF'),
       acts, jobLine),
+    vbox.el,
     d.card && d.card.meta.getpdf ? h('div', { class: 'lb-tip', text: '建议找全文：' + d.card.meta.getpdf }) : null,
     d.actions.length ? h('div', { class: 'lb-sec' }, h('h4', { text: '可以采取的行动' }), ...d.actions.map((a) => h('div', { class: 'lb-act' + (a.done ? ' done' : '') },
       h('span', { text: (a.done ? '☑ ' : '☐ ') + a.text }),

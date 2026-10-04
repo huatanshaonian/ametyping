@@ -60,7 +60,7 @@ const src = createFakeSources();
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
-  cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: KB, refreshMs: 400, pdfWaitMs: 2500, pollMs: 250, at: '23:59', daily: 3,
+  cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: KB, refreshMs: 400, pdfWaitMs: 2500, pollMs: 250, at: '23:59', daily: 3, visionMaxPages: 0,
     endpoints: { openalex: base + '/oa', s2: base + '/s2', dtic: base + '/dtic', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -237,6 +237,49 @@ const src = createFakeSources();
       (await G('/api/lit/library?starred=1')).items.length === 1);
     ok('an action into 重要计划', (await P('/api/lit/action/todo', { key: 'AAAAAAA1', text: '用第 2 页的剖面重算 X 波段 RCS' })).ok &&
       ((await G('/api/todos')).items || []).some((t) => t.project === '文献' && /sun2018backward/.test(t.text)));
+
+    // ---- 读图: pages read as images ----
+    const { parseRanges, formatRanges } = require(R + '/server/literature/vision');
+    ok('page ranges read and written', parseRanges('3-5, 8，10～9 x', 9).join() === '3,4,5,8,9' && parseRanges('全部', 3).join() === '1,2,3' && formatRanges([8, 3, 4, 5, 10]) === '3-5, 8, 10');
+    let vi = await G('/api/lit/vision?key=AAAAAAA1');
+    ok('limit 0: nothing is read whole by itself, every paper asks first -- the deep cards above asked for page 2; declined', vi.pdf && vi.n === 2 && !vi.auto && vi.done === 0 && vi.request && vi.request.ranges === '2' && vi.request.by === 'model' &&
+      (await P('/api/lit/vision/decline', { key: 'AAAAAAA1' })).ok && !(await G('/api/lit/vision?key=AAAAAAA1')).request, vi);
+    ok('the limit set in 控制面板 › 文献', (await P('/api/lit/settings', { visionMaxPages: 30 })).visionMaxPages === 30 && (await G('/api/lit/vision?key=AAAAAAA1')).auto);
+    const nLog = () => fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const before = nLog().length;
+    await P('/api/lit/card', { key: 'AAAAAAA1', kind: 'deep' });
+    await until(async () => { const d = await G('/api/lit/item?key=AAAAAAA1'); return d.job && !d.job.running && d.job.at && d; }, 60000);
+    const after = nLog().slice(before), vcall = after.find((x) => x.kind === 'pages'), dcall = after.find((x) => /actions/.test(x.kind));
+    ok('the deep card waited for the paper to be read as images: both pages drawn (PNG) and sent at once, the text layer along for spelling', vcall && vcall.images === 2 && vcall.png &&
+      /第 1、2 页/.test(vcall.prompt) && /collision frequency model page two/.test(vcall.prompt), vcall && { images: vcall.images, png: vcall.png });
+    ok('the deep card was written from the transcription, and told so', dcall && /读图第 2 页/.test(dcall.prompt) && !/collision frequency model page two/.test(dcall.prompt) && /第 1-2 页是看原图逐页转写的/.test(dcall.prompt) && !/其余是 PDF 的文字层/.test(dcall.prompt));
+    vi = await G('/api/lit/vision?key=AAAAAAA1');
+    ok('what was read: both pages, one unclear symbol', vi.done === 2 && vi.ranges === '1-2' && vi.unsure === 1 && !vi.job.running && !vi.job.error, vi);
+    const pg2 = await G('/api/lit/vision/page?key=AAAAAAA1&page=2');
+    ok('the transcription of one page can be read back (to check against the page); a paper without a PDF has none', pg2.page === 2 && /读图第 2 页/.test(pg2.md) && pg2.md.includes('[?]') &&
+      (await req('GET', '/api/lit/vision/page?key=AAAAAAA2&page=1', null, cookie)).status === 404, pg2);
+    await P('/api/lit/chat', { key: 'AAAAAAA1', q: '式 (2) 怎么来的？', page: 2 });
+    await until(async () => { const r = await G('/api/lit/read?key=AAAAAAA1'); return r.turns.length === 2 && !(r.job && r.job.running) && r; });
+    ok('a question afterwards uses the transcription too', /读图第 2 页/.test(nLog().filter((x) => /answer,askBack/.test(x.kind)).pop().prompt));
+    // a paper longer than the limit: the deep card's model asks for page 2, the user approves (or declines)
+    ok('limit 1', (await P('/api/lit/settings', { visionMaxPages: 1 })).ok);
+    vi = await G('/api/lit/vision?key=' + k2.key);
+    ok('a two-page paper is now too long to read whole; starting without pages is refused', vi.n === 2 && !vi.auto && !(await P('/api/lit/vision/start', { key: k2.key })).ok, vi);
+    await P('/api/lit/card', { key: k2.key, kind: 'deep' });
+    const req2 = await until(async () => { const r = await G('/api/lit/vision/pending'); return r.items.find((x) => x.key === k2.key); }, 60000);
+    const dlong = nLog().filter((x) => /actions/.test(x.kind)).pop();
+    ok('the model was told the paper is long and asked for page 2: a request waits, nothing read yet', req2 && req2.ranges === '2' && /第 2 页有碰撞频率/.test(req2.why) && /vision：这篇有 2 页/.test(dlong.prompt) &&
+      (await G('/api/lit/vision?key=' + k2.key)).done === 0 && (await G('/api/lit')).vision === 1, req2);
+    ok('approved (the range as given)', (await P('/api/lit/vision/approve', { key: k2.key, ranges: '2' })).ok);
+    vi = await until(async () => { const v = await G('/api/lit/vision?key=' + k2.key); return v.job && !v.job.running && v; }, 60000);
+    ok('only page 2 read; the request gone', vi.done === 1 && vi.ranges === '2' && !vi.request && !(await G('/api/lit/vision/pending')).items.length, vi);
+    await P('/api/lit/card', { key: k2.key, kind: 'deep' });
+    await until(async () => (await G('/api/lit/vision/pending')).items.find((x) => x.key === k2.key), 60000);
+    const dmix = nLog().filter((x) => /actions/.test(x.kind)).pop();
+    ok('the next deep card: page 2 from the image, page 1 from the text layer, and said so', /读图第 2 页/.test(dmix.prompt) && /attenuation versus altitude/.test(dmix.prompt) === false && /blackout telemetry measurements/.test(dmix.prompt) && /其余是 PDF 的文字层/.test(dmix.prompt));
+    ok('declined', (await P('/api/lit/vision/decline', { key: k2.key })).ok && !(await G('/api/lit/vision/pending')).items.length);
+    ok('the user picks pages of a long paper themselves', (await P('/api/lit/vision/start', { key: k2.key, ranges: '1' })).ok &&
+      (await until(async () => { const v = await G('/api/lit/vision?key=' + k2.key); return v.done === 2 && !v.job.running && v; }, 60000)).ranges === '1-2');
 
     // ---- topics ----
     const tp = await P('/api/lit/topic/create', { name: '等离子体鞘套', keywords: ['plasma sheath'] });

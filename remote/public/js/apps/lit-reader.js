@@ -10,6 +10,7 @@ import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
 import { get, post, onLit, readerId } from './lit-api.js';
 import { renderMd } from './lit-md.js';
+import { visionBox } from './lit-vision.js';
 
 export function openReader(key, page) {
   const id = readerId(key);
@@ -26,7 +27,9 @@ function mountReader(key, firstPage) {
   const tabs = ['理解', '对话', '卡片'].map((t) => h('button', { class: 'lit-tab', type: 'button', text: t, dataset: { t } }));
   const pane = h('div', { class: 'lr-pane' });
   const swap = h('button', { class: 'btn lr-swap', type: 'button', text: '看 PDF / 看对话' });
-  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap), pane);
+  // 读图: how much has been read as images, a request to approve, the transcription of the page shown
+  const vbox = visionBox(key, { curPage: () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0) });
+  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap), vbox.el, pane);
   const root = h('div', { class: 'lr' }, pdfBox, side);
   let item = null, st = { turns: [] }, tab = '理解', pdf = null, destroyed = false;
   const drafts = { chat: '', mine: null };                // (what is being typed survives a refresh)
@@ -87,7 +90,7 @@ function mountReader(key, firstPage) {
       list.append(...[h('div', { class: 'lr-me' }, t.sel ? h('blockquote', { text: t.sel.slice(0, 300) + (t.sel.length > 300 ? '…' : '') }) : null, h('span', { text: t.q })), h('div', { class: 'lr-ai' }, md(t.a)),
         t.askBack ? h('div', { class: 'lr-ask' }, h('b', { text: '反问：' }), md(t.askBack)) : null].filter(Boolean));
     }
-    if (busy() && st.job.what === 'chat') list.append(h('div', { class: 'lr-ai lit-empty', text: '在读原文、组织回答…（一般半分钟到两分钟）' }));
+    if (busy() && st.job.what === 'chat') list.append(h('div', { class: 'lr-ai lit-empty', text: '在读原文、组织回答…（一般半分钟到两分钟；还在读图的页先用文字层）' }));
     if (st.job && st.job.error && st.job.what === 'chat') list.append(h('div', { class: 'lit-empty bad', text: '没回答出来：' + st.job.error }));
     if (!(st.turns || []).length && !busy()) list.append(h('p', { class: 'lit-empty', text: '问什么都行：某个推导怎么来的、假设在你的条件下成不成立、和你的仿真怎么对比。在左边 PDF 里选中文字再问，会带上那段原文。' }));
     const q = h('textarea', { class: 'field lr-in lr-q', rows: 3, placeholder: '你的问题（Ctrl+Enter 发送）' });
@@ -130,5 +133,5 @@ function mountReader(key, firstPage) {
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 760));
   ro.observe(root);
   load().then(() => { show(mineText() || (st.feedback) ? '对话' : '理解'); loadPdf(); });
-  return { root, goto, destroy() { destroyed = true; off(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
+  return { root, goto, destroy() { destroyed = true; off(); vbox.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
 }

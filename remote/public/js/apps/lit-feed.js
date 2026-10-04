@@ -11,9 +11,10 @@ export function mount(el, ctx) {
   const runBtn = h('button', { class: 'btn', type: 'button', text: '现在推送', title: '马上按画像找一次新文献（平时每个工作日早上自动）' });
   const st = h('span', { class: 'lit-st' });
   const list = h('div', { class: 'lf-list' });
+  const asks = h('div', { class: 'lf-sec lf-vision', hidden: true });     // 读图 requests waiting for approval
   // which way of finding brings the papers worth reading: the last week's runs added up
   const yieldEl = h('details', { class: 'lf-yield', hidden: true });
-  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, list);
+  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, asks, list);
   function showYield(runs) {
     const found = {}, good = {};
     for (const r of runs) { for (const [k, n] of Object.entries(r.sources || {})) found[k] = (found[k] || 0) + n; for (const [k, n] of Object.entries(r.good || {})) good[k] = (good[k] || 0) + n; }
@@ -26,7 +27,11 @@ export function mount(el, ctx) {
   let questions = [], items = [], canWrite = true, showSpare = false;
 
   async function refresh() {
-    const [f, p] = await Promise.all([get('/api/lit/feed'), get('/api/lit/profile')]);
+    const [f, p, va] = await Promise.all([get('/api/lit/feed'), get('/api/lit/profile'), get('/api/lit/vision/pending')]);
+    const reqs = (va && va.items) || [];
+    asks.hidden = !reqs.length;
+    asks.replaceChildren(h('h3', { text: `等你批准读图（${reqs.length}）` }), ...reqs.map((r) => h('div', { class: 'lf-va' },
+      h('span', { text: `${r.title}：第 ${r.ranges} 页${r.why ? ' — ' + r.why : ''}` }), h('button', { class: 'btn', type: 'button', text: '去看看', onclick: () => ctx.openItem(r.key) }))));
     if (!f) { list.replaceChildren(h('p', { class: 'lit-empty', text: '读不到推送。' })); return; }
     items = f.items || []; canWrite = f.canWrite;
     questions = ((p && p.profile && p.profile.questions) || []).filter((q) => q.status !== 'done');
@@ -101,5 +106,5 @@ export function mount(el, ctx) {
   }
 
   runBtn.addEventListener('click', async () => { runBtn.disabled = true; st.textContent = '正在找今天的文献…（几分钟）'; await post('/api/lit/feed/run', {}); });
-  return { refresh, onLit: (w) => { if (w === 'feed') refresh(); } };
+  return { refresh, onLit: (w) => { if (w === 'feed' || w.startsWith('vision:')) refresh(); } };
 }

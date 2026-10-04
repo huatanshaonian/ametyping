@@ -15,7 +15,7 @@ const { pickPages, fitPages } = require('./fulltext');
 const KEY = /^[A-Z0-9]{8}$/;
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };   // (local date)
 
-function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, log = () => {}, onChange = () => {} }) {
+function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision = null, log = () => {}, onChange = () => {} }) {
   const cdir = path.join(dir, 'chats');
   fs.mkdirSync(cdir, { recursive: true });
   const fileOf = (key) => path.join(cdir, key + '.json');
@@ -31,10 +31,13 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, log = ()
     fn().catch((e) => { x.error = e.message; log(`文献：深读（${what}）失败：` + e.message); }).finally(() => { x.running = false; onChange(key); });
     return { ok: true };
   }
+  // the paper's text (the pages read as images in their place); a short paper starts being read as images now,
+  // this question goes on with what is there
   async function textOf(key) {
+    if (vision) vision.prepare(key);
     const ft = await fulltext.forItem(key);
     if (!ft.pages || !ft.pages.length) throw new Error(ft.missing === 'nofile' ? 'PDF 还没同步到群晖，稍后再试' : '这篇没有可读的 PDF 正文');
-    return ft.pages;
+    return ft;
   }
   const cardText = (key) => { const c = cards.find(key); return c ? c.body : ''; };
 
@@ -45,9 +48,9 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, log = ()
     const w = cards.setOwn(key, '我的理解', text);
     if (!w.ok) return w;
     return job(key, 'feedback', async () => {
-      const pages = await textOf(key);
+      const ft = await textOf(key);
       const it = mirror.item(key);
-      const a = await ask(feedbackPrompt(it, cardText(key), pickPages(pages, text.split(/[\s，。,.;；]+/), 50000), text), FEEDBACK_SCHEMA);
+      const a = await ask(feedbackPrompt(it, cardText(key), pickPages(ft.pages, text.split(/[\s，。,.;；]+/), 50000, ft.labels), text), FEEDBACK_SCHEMA);
       const c = load(key);
       c.feedback = { mine: text, feedback: a.feedback || '', missed: a.missed || [], askBack: a.askBack || '', at: Date.now() };
       save(key, c);
@@ -59,11 +62,12 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, log = ()
     q = String(q || '').trim().slice(0, 3000);
     if (!q) return { ok: false, msg: '问题是空的' };
     return job(key, 'chat', async () => {
-      const pages = await textOf(key);
+      const ft = await textOf(key), pages = ft.pages;
       const c = load(key);
       const words = [...q.split(/[\s，。,.;；？?！!、（）()]+/), ...String(sel).split(/\s+/).slice(0, 40)];
-      let picked = pickPages(pages, words, 45000);
-      if (page > 0 && page <= pages.length && !picked.some((p) => p.page === page)) picked = [...picked, { page, text: pages[page - 1] }].sort((a, b) => a.page - b.page);
+      let picked = pickPages(pages, words, 45000, ft.labels);
+      const at = ft.labels ? ft.labels.indexOf(page) : page - 1;                 // (the page the user is looking at)
+      if (page > 0 && at >= 0 && at < pages.length && !picked.some((p) => p.page === page)) picked = [...picked, { page, text: pages[at] }];
       const it = mirror.item(key);
       const a = await ask(chatPrompt(profile.get() || {}, it, cardText(key), picked, c.turns.slice(-8), q, sel), CHAT_SCHEMA);
       c.turns.push({ q, a: a.answer || '', askBack: a.askBack || '', sel: String(sel).slice(0, 2000), page: page || 0, at: Date.now() });

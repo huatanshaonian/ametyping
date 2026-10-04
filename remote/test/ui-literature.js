@@ -116,6 +116,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('文献库: the card rendered (sections, question, page links)', await waitFor("!!document.querySelector('.lb-card h2')") && /与我的关系/.test(await evalJs("document.querySelector('.lb-card').textContent")) &&
       await evalJs("!!document.querySelector('.lb-card .plink')"), await evalJs("(document.querySelector('.lb-view')||{}).textContent"));
     chk('no stray "null" text in the paper', !(await evalJs("/null/.test(document.querySelector('.lb-view').textContent)")), 0);
+    chk('文献库: 读图 says a short paper will be read as images when it is read deeply', await waitFor("/读图：这篇 2 页，第一次深读时会自动看原图/.test((document.querySelector('.lb-view .lv') || {}).textContent || '')"), await evalJs("(document.querySelector('.lb-view .lv')||{}).textContent"));
     await shot('82-lit-library.png');
 
     // 深读
@@ -126,6 +127,9 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("(() => { const t = document.querySelector('.lr-pane textarea'); t.value = '它测了鞘套电子密度'; t.dispatchEvent(new Event('input')); })()");
     await evalJs("[...document.querySelectorAll('.lr-pane .btn.go')].find(b => b.textContent.includes('对照原文')).click()");
     chk('理解 -> the comparison with the paper and a question back', await waitFor("!!document.querySelector('.lr-fb') && document.querySelector('.lr-fb').textContent.includes('反问')", 25000), await evalJs("document.querySelector('.lr-pane').textContent"));
+    chk('深读: the first question had the paper read as images; the box shows it done', await waitFor("/已看原图转写 全部 2 页/.test((document.querySelector('.lr-side .lv') || {}).textContent || '')", 40000), await evalJs("(document.querySelector('.lr-side .lv')||{}).textContent"));
+    await evalJs("[...document.querySelectorAll('.lr-side .lv .btn')].find(b => b.textContent === '看这一页的转写').click()");
+    chk('深读: the transcription of the page shown, with its equation drawn', await waitFor("/第 1 页的转写/.test((document.querySelector('.lr-side .lv-md') || {}).textContent || '') && !!document.querySelector('.lr-side .lv-md .katex')"), await evalJs("(document.querySelector('.lr-side .lv-md')||{}).innerHTML"));
     await shot('83-lit-understand.png');
     await evalJs("[...document.querySelectorAll('.lr-side .lit-tab')].find(b => b.textContent === '对话').click()"); await sleep(300);
     await evalJs("(() => { const t = document.querySelector('.lr-q'); t.value = 'collision frequency 怎么取？'; t.dispatchEvent(new Event('input')); })()");

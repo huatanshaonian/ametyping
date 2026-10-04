@@ -8,10 +8,17 @@ const out = args[args.indexOf('-o') + 1];
 let prompt = '';
 process.stdin.on('data', (d) => { prompt += d; });
 process.stdin.on('end', () => {
-  if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ kind: Object.keys(schema.properties || {}).join(','), prompt }) + '\n');
+  // (the page images: real PNG files?)
+  const images = args.filter((a) => a.startsWith('--image=')).map((a) => a.slice('--image='.length));
+  const png = images.every((f) => { try { return fs.readFileSync(f).subarray(0, 8).toString('hex') === '89504e470d0a1a0a'; } catch { return false; } });
+  if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ kind: Object.keys(schema.properties || {}).join(','), prompt, images: images.length, png }) + '\n');
   const P = schema.properties || {};
   let a;
-  if (P.queries) {
+  if (P.pages && P.pages.items && P.pages.items.properties && P.pages.items.properties.md) {
+    // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
+    const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
+    a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$' : '') })) : [] };
+  } else if (P.queries) {
     // 梳理, step 1: a first line from the account, what to search, the words for the library
     const story = (/## 研究自述\n([\s\S]*?)\n\n## /.exec(prompt) || [])[1] || '';
     a = { line: '初稿：' + story.slice(0, 20), queries: ['plasma sheath electron density', 'reentry communication blackout'], libWords: ['plasma', '鞘套', 'radar cross section'] };
@@ -45,7 +52,8 @@ process.stdin.on('end', () => {
     const other = (/^- (\w+)：/m.exec(prompt.split('用户已有的卡片：')[1] || '') || [])[1];
     a = { oneLine: '深读：鞘套剖面与 RCS', problem: '问题', method: '方法 $n_e(z)$', assumptions: ['假设碰撞频率恒定'], results: ['结果一 [p.1]', '结果二 [p.2]'], relevance: '直接相关', question: 1,
       actions: ['用第 2 页的剖面重算 X 波段 RCS'], reusable: ['式 (3) 的碰撞频率模型 [p.2]'], doubts: ['推导跳步'], follow: ['Smith 1990：原始数据'], history: '',
-      relations: other ? [{ citekey: other, type: '对比', note: '方法不同' }] : [] };
+      relations: other ? [{ citekey: other, type: '对比', note: '方法不同' }] : [],
+      vision: /vision：这篇有 \d+ 页/.test(prompt) ? { worth: true, pages: '2', why: '第 2 页有碰撞频率的推导' } : { worth: false, pages: '', why: '' } };
   } else if (P.missed) a = { feedback: '你抓住了主线，但漏了假设的适用条件 [p.1]', missed: ['碰撞频率的取值'], askBack: '这个假设在 60 km 以下还成立吗？' };
   else if (P.askBack) a = { answer: '原文第 1 页给出了剖面 [p.1]。（背景知识）通常用指数分布。', askBack: '你的工况和它一样吗？' };
   else if (P.ops) a = { ops: [{ section: '疑点', text: '- 对话发现：碰撞频率取常数在低空不成立 [p.1]', reason: '第 1 轮' }, { section: '不存在的小节', text: '- 归到我的笔记', reason: '第 1 轮' }] };
