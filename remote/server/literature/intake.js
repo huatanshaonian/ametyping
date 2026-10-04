@@ -13,12 +13,13 @@ const month = (t) => { const d = new Date(t); return `${d.getFullYear()}-${Strin
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpaywall = null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
-  const pdfWaitMs = cfg.pdfWaitMs != null ? +cfg.pdfWaitMs : 180e3, pollMs = cfg.pollMs != null ? +cfg.pollMs : 20e3;
+  const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
+  const pdfWaitMs = C().pdfWaitMs != null ? +C().pdfWaitMs : 180e3, pollMs = C().pollMs != null ? +C().pollMs : 20e3;
   const working = new Set();
 
   // 每日文献 and this month's folder under it (made when missing)
   async function inbox() {
-    const name = cfg.inboxCollection || '每日文献';
+    const name = C().inboxCollection || '每日文献';
     let top = mirror.collectionByName(name);
     if (!top) { await api.write('POST', 'collections', [{ name }]); await mirror.refresh(true); top = mirror.collectionByName(name); }
     if (!top) throw new Error(`Zotero 里建不了「${name}」分类`);

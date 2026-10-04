@@ -163,6 +163,16 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('产出: the verdict and the counts', await waitFor("!!document.querySelector('.ls-v')") && /写下自己的理解/.test(await evalJs("document.querySelectorAll('.lp')[1].textContent")), await evalJs("document.body.textContent.slice(-400)"));
     await shot('87-lit-stats.png');
 
+    // 控制面板 › 文献, from the 文献 window's 设置
+    await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '设置').click()");
+    chk('设置 opens 控制面板 › 文献: the keys (not shown whole), the contact address, the push numbers', await waitFor("!!document.querySelector('.lset input[type=password]')") &&
+      /Semantic Scholar/.test(await evalJs("document.querySelector('.lset').textContent")) && /每天最多/.test(await evalJs("document.querySelector('.lset').textContent")) &&
+      await evalJs("document.querySelectorAll('.lset input[type=password]').length === 2 && [...document.querySelectorAll('.lset input[type=password]')].every(i => i.value === '')"), await evalJs("(document.querySelector('.lset')||{}).textContent"));
+    await evalJs("(() => { const b = document.querySelectorAll('.lset input[type=password]')[0]; b.value = 'S2UIKEY99999'; })()");
+    await evalJs("[...document.querySelectorAll('.lset .btn.go')].find(b => b.textContent === '保存').click()");
+    chk('a key saved from the page shows as set, its end only', await waitFor("/已填写（末 4 位 9999/.test(document.querySelectorAll('.lset input[type=password]')[0].placeholder)"), await evalJs("document.querySelectorAll('.lset input[type=password]')[0].placeholder"));
+    await shot('89-lit-settings.png');
+    await evalJs("[...document.querySelectorAll('.win')].forEach(w => { const t = w.querySelector('.title'); if (t && t.textContent.startsWith('控制面板')) w.querySelector('.tbtn.close').click(); })");
     // phone
     await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 780, deviceScaleFactor: 2, mobile: true });
     await sleep(800);

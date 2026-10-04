@@ -24,14 +24,17 @@ function rotate(list, n, day) {
 const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
 const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
-function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
+// likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
+function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now() }) {
   const file = path.join(dir, 'feed.json');
   let st = { items: {}, seen: {}, reviewed: {}, runs: [] };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
   const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
-  const daily = Math.max(0, Math.min(5, cfg.daily != null ? +cfg.daily : 2));
-  const minScore = cfg.minScore != null ? +cfg.minScore : 6;
-  const [hh, mm] = String(cfg.at || '07:30').split(':').map(Number);
+  // (cfg: an object, or a function giving the settings in effect now -- 控制面板 › 文献 changes them while running)
+  const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
+  const daily = () => Math.max(0, Math.min(5, C().daily != null ? +C().daily : 2));
+  const minScore = () => (C().minScore != null ? +C().minScore : 6);
+  const atTime = () => String(C().at || '07:30').split(':').map(Number);
   let running = null, lastError = '', lastErrorAt = 0;
 
   const entries = () => Object.values(st.items);
@@ -56,7 +59,15 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       await tryIt('期刊', () => S.openalex.byIssn(issns, since));
       await tryIt('作者', () => S.openalex.byAuthors((f.authors || []).map((a) => a.openalex).filter(Boolean), since));
       await tryIt('引用核心文献', () => S.openalex.citing((f.seeds || []).map((s) => s.openalex).filter(Boolean), since));
-      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), cfg.searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
+      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), C().searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
+    }
+    // Semantic Scholar (with a key): two of the phrases a day, and papers like the ones kept / starred, unlike the skipped
+    if (S.s2 && S.s2.enabled()) {
+      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), 2, day + 1)) await tryIt('S2 检索', () => S.s2.search(k, +since.slice(0, 4), 10));
+      if (C().s2Recommend !== false) {
+        const L = taste();
+        if (L.pos.length) await tryIt('相似推荐', () => S.s2.recommend(L.pos, L.neg, 30));
+      }
     }
     if (S.crossref) for (const i of rotate(issns, 8, day)) await tryIt('Crossref', () => S.crossref.byIssn(i, since, 20));
     if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryIt('AIAA 目录', () => S.aiaa.toc(c));
@@ -72,6 +83,14 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       counts['邮件推荐'] = picks.length;
     }
     return { cands: out, errors, counts };
+  }
+  // what the user liked and did not: kept / skipped picks (the last 4 months) and likes() (starred cards, key papers)
+  function taste() {
+    const recent = entries().filter((e) => e.kind === 'new' && e.paper && e.paper.doi && now() - (e.decidedAt || 0) < 120 * DAY_MS);
+    const x = likes() || {};
+    const pos = [...new Set([...recent.filter((e) => e.status === 'kept').map((e) => e.paper.doi), ...(x.pos || [])])].slice(0, 50);
+    const neg = [...new Set([...recent.filter((e) => e.status === 'skipped').map((e) => e.paper.doi), ...(x.neg || [])])].filter((d) => !pos.includes(d)).slice(0, 50);
+    return { pos, neg };
   }
   // drop what is in the library, was shown before, or is old; merge the same paper from several sources
   function dedupe(cands, maxAgeDays = 60) {
@@ -127,7 +146,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
 
   // ---- reviews from the user's own collection ----
   function reviewPool() {
-    const col = mirror.collectionByName(cfg.reviewCollection || '气动隐身');
+    const col = mirror.collectionByName(C().reviewCollection || '气动隐身');
     if (!col) return [];
     const pending = new Set(entries().filter((e) => e.kind === 'review' && e.status === 'new').map((e) => e.key));
     const words = profile.words().map((w) => w.toLowerCase());
@@ -159,7 +178,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     if (running) return running;
     running = (async () => {
       const already = pushedOn(date).length;
-      const want = Math.max(0, daily - already);
+      const want = Math.max(0, daily() - already);
       const dow = new Date(now()).getDay();
       const log1 = { date, at: now(), manual, found: 0, ranked: 0, picked: 0, reviews: 0, errors: [] };
       if (!profile.get()) throw new Error('还没有兴趣画像：先在「画像」里生成并确认');
@@ -176,7 +195,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const ranked = await rank(list);
         log1.ranked = ranked.length;
         for (const r of ranked) st.seen[fingerprint(r.c)] = now();
-        const good = ranked.filter((r) => r.score >= minScore);
+        const good = ranked.filter((r) => r.score >= minScore());
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
         for (const r of good.slice(0, want)) { add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun }); log1.picked++; }
@@ -203,7 +222,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     log1.found = list.length;
     const ranked = await rank(list);
     for (const r of ranked) st.seen[fingerprint(r.c)] = now();
-    const best = ranked.find((r) => r.score >= Math.max(5, minScore - 1));
+    const best = ranked.find((r) => r.score >= Math.max(5, minScore() - 1));
     if (best) { add({ kind: 'new', date, paper: best.c, score: best.score, question: best.question, why: best.why, fun: best.fun, old: true }); log1.picked = 1; }
   }
   // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse; old entries go
@@ -233,7 +252,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   // ---- the schedule: workdays (and Saturday's report) after "at"; a failure is retried after 30 minutes, 3 times a day ----
   function due(t = now()) {
     const d = new Date(t), date = ymd(t), dow = d.getDay();
-    if (dow === 0 || cfg.enabled === false) return null;
+    if (dow === 0 || C().enabled === false) return null;
+    const [hh, mm] = atTime();
     const at = new Date(t); at.setHours(hh || 0, mm || 0, 0, 0);
     if (t < at.getTime()) return null;
     const runs = st.runs.filter((r) => r.date === date && !r.manual);

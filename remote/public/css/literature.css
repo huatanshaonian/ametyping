@@ -123,3 +123,12 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lp-unclear b { color: var(--warn); font-weight: normal; } .lp-unclear ul { margin: 4px 0; padding-left: 18px; } .lp-unclear small { color: var(--muted); }
 .lp-q { align-items: start; } .lp-qt { display: flex; gap: 4px; min-width: 0; } .lp-qt .field:last-child { flex: 1; min-width: 0; } .lp-dim { width: 96px; flex: none; }
 .lp-qd { grid-column: 2 / 4; font-size: 12px; color: var(--muted); line-height: 1.55; padding: 2px 0 4px; } .lp-qd b { color: var(--accent-muted); font-weight: normal; }
+/* 控制面板 › 文献 (apps/lit-settings.js) */
+.lset { padding: 8px 14px 18px; font-size: 13px; line-height: 1.6; }
+.lset-row { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; margin: 8px 0; align-items: start; }
+.lset-row > label { padding-top: 4px; color: var(--border); }
+.lset-row small { display: block; color: var(--muted); font-size: 11.5px; } .lset-row small a { color: var(--border); }
+.lset-k { display: flex; gap: 6px; } .lset-k .field { flex: 1; min-width: 0; } .lset-k .btn { padding: 2px 10px; }
+.lset-st { color: var(--ok-text) !important; } .lset-st.bad { color: var(--bad) !important; }
+.lset-n { width: 70px; } .lset-cb { display: flex; align-items: center; gap: 6px; }
+.lset .field:not(.lset-n):not([type="password"]) { width: 100%; max-width: 360px; }

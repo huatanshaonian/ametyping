@@ -28,6 +28,8 @@ const { createOpenAlex } = require('./sources/openalex');
 const { createCrossref, createArxiv, createAiaa, createNtrs, createUnpaywall } = require('./sources/feeds');
 const { createEgress } = require('../egress');
 const { createStats } = require('./stats');
+const { createS2 } = require('./sources/s2');
+const { createSettings } = require('./settings');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -48,17 +50,25 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const mirror = createMirror({ api, dir, log, everyMs: cfg.refreshMs != null ? +cfg.refreshMs : 60e3, onChange: () => { changed('library'); if (intake) intake.onLibrary().catch(() => {}); } });
   const webdav = createWebdav({ dir: cfg.webdavDir || '' });
   const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, log });
+  // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
+  const settings = createSettings({ dir, cfg });
+  const mailto = () => settings.mailto();
   const sources = {
-    openalex: createOpenAlex({ http, base: E.openalex, key: cfg.openalexKey || '', mailto: cfg.mailto || '' }),
-    crossref: createCrossref({ http, base: E.crossref, mailto: cfg.mailto || '' }),
+    openalex: createOpenAlex({ http, base: E.openalex, key: () => settings.keyOf('openalex'), mailto }),
+    crossref: createCrossref({ http, base: E.crossref, mailto }),
+    s2: createS2({ http, base: E.s2, key: () => settings.keyOf('s2') }),
     arxiv: createArxiv({ http, base: E.arxiv }), aiaa: createAiaa({ http, base: E.aiaa }), ntrs: createNtrs({ http, base: E.ntrs }),
   };
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
-  const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto: cfg.mailto || '' });
-  const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, reports, log });
+  const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto });
+  const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log });
   const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
-  const feed = createFeed({ dir, cfg, mirror, profile, sources, ask: askFeed, cards, mail, log, onChange: () => changed('feed') });
-  intake = createIntake({ cfg, api, mirror, fulltext, cards, feed, http, unpaywall, log, onChange: () => changed('feed') });
+  const conf = () => ({ ...cfg, ...settings.feed() });
+  // the push's "like these": starred and checked cards, and the key papers (their DOIs)
+  const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
+    ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
+  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
+  intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, log, onChange: (k) => changed('read:' + k) });
   const stats = createStats({ kb, feed, todos });
 
@@ -109,6 +119,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
         profile: { ...profile.state(), has: !!profile.get(), confirmed: !!(profile.get() || {}).confirmed }, feed: feed.status(), proposals: kb.proposals().length, morning: morning() });
       return true;
     }
+    if (G && p === '/api/lit/settings') { json(res, 200, { ...settings.view(), collections: mirror.collections().map((c) => c.name) }); return true; }
     if (G && p === '/api/lit/collections') { json(res, 200, { items: mirror.collections() }); return true; }
     if (G && p === '/api/lit/library') { json(res, 200, { items: library({ col: qs('col'), q: qs('q').slice(0, 200), starred: qs('starred') === '1' }) }); return true; }
     if (G && p === '/api/lit/item') { const d = itemDetail(qs('key')); json(res, d ? 200 : 404, d || { error: 'not found' }); return true; }
@@ -141,6 +152,14 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       api.authorize().then((x) => { authError = x.ok ? '' : x.msg; changed('zotero'); if (x.ok) audit('lit-authorize', ip); });
       r = { ok: true, msg: '请到 Zotero 的网页桌面里点「始终允许」' };
     } else if (what === 'zotero/refresh') { r = await mirror.refresh(true).then(() => ({ ok: true }), (e) => ({ ok: false, msg: e.message })); }
+    else if (what === 'settings') { r = settings.set(d); if (r.ok) changed('settings'); }
+    else if (what === 'settings/test') {
+      // is the key / the source reachable? one small request
+      try {
+        if (d.which === 's2') { await sources.s2.test(); r = { ok: true, msg: sources.s2.hasKey() ? 'Semantic Scholar：key 可用' : 'Semantic Scholar：没填 key，公共额度这次能用（但常常会忙）' }; }
+        else { const w = await sources.openalex.search('radar cross section', '2024-01-01'); r = { ok: true, msg: `OpenAlex：可用（试查到 ${w.length} 篇）` }; }
+      } catch (e) { r = { ok: false, msg: e.message }; }
+    }
     else if (what === 'profile/organize') r = profile.organize();
     else if (what === 'profile/fill' || what === 'profile/draft') r = profile.fill();
     else if (what === 'profile/save') r = await profile.update(d);

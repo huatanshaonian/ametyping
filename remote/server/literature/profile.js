@@ -24,7 +24,8 @@ const id = () => crypto.randomBytes(4).toString('hex');
 const uniq = (a) => [...new Set(a.map((s) => String(s).trim()).filter(Boolean))];
 const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
 
-function createProfile({ dir, mirror, ask, openalex = null, reports = () => null, log = () => {} }) {
+// s2: Semantic Scholar (sources/s2.js), the second search engine when working out the questions (optional)
+function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports = () => null, log = () => {} }) {
   const file = path.join(dir, 'profile.json');
   let p = null; try { p = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
   const blank = () => ({ story: '', line: '', questions: [], unclear: [], suggestions: [], topics: [], follow: { venues: [], authors: [], keywords: [], arxiv: [], ntrs: [], seeds: [] } });
@@ -122,16 +123,21 @@ function createProfile({ dir, mirror, ask, openalex = null, reports = () => null
       return { it, notes, s: hits * (notes ? 2 : 1) };
     }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s || b.it.added - a.it.added).slice(0, n);
   }
-  // the last years' literature for the searches (OpenAlex, most relevant first), the library's own papers left out
-  async function frontier(queries, years = 4, per = 7, max = 50) {
-    if (!openalex || !openalex.explore) return [];
+  // the last years' literature for the searches, most relevant first -- OpenAlex, and Semantic Scholar beside it (its
+  // relevance is often better; without a key it may be busy and is then left out) -- the library's own papers left out
+  async function frontier(queries, years = 4, per = 7, max = 60) {
     const from = new Date().getFullYear() - years, seen = new Set(), out = [];
+    const add = (r) => { for (const w of r) {
+      const k = w.doi || w.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      if (!w.title || seen.has(k) || (w.doi && mirror.findDoi(w.doi)) || mirror.findTitle(w.title)) continue;
+      seen.add(k); out.push(w);
+    } };
     for (const q of queries.slice(0, 10)) {
-      let r = []; try { r = await openalex.explore(unquote(q), from, per); } catch (e) { log('文献：梳理时检索失败：' + e.message); }
-      for (const w of r) {
-        const k = w.doi || w.title.toLowerCase();
-        if (seen.has(k) || (w.doi && mirror.findDoi(w.doi)) || mirror.findTitle(w.title)) continue;
-        seen.add(k); out.push(w);
+      if (openalex && openalex.explore) { try { add(await openalex.explore(unquote(q), from, per)); } catch (e) { log('文献：梳理时 OpenAlex 检索失败：' + e.message); } }
+    }
+    if (s2) {
+      for (const q of queries.slice(0, 6)) {
+        try { add(await s2.search(unquote(q), from, 6)); } catch (e) { log('文献：梳理时 Semantic Scholar 检索失败：' + e.message); if (e.status === 429) break; }
       }
     }
     return out.slice(0, max);

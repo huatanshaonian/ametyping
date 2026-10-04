@@ -13,9 +13,10 @@ const tags = (xml, name) => [...xml.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>(
 const decode = (s) => String(s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
 function createCrossref({ http, base = 'https://api.crossref.org', mailto = '' }) {
+  const M = () => (typeof mailto === 'function' ? mailto() : mailto) || '';
   return {
     async byIssn(issn, from, rows = 40) {
-      const s = new URLSearchParams({ filter: `issn:${issn},from-pub-date:${from}`, sort: 'published', order: 'desc', rows: String(rows), ...(mailto ? { mailto } : {}) });
+      const s = new URLSearchParams({ filter: `issn:${issn},from-pub-date:${from}`, sort: 'published', order: 'desc', rows: String(rows), ...(M() ? { mailto: M() } : {}) });
       const j = await http.json(`${base}/works?${s}`);
       return ((j.message && j.message.items) || []).map((w) => {
         const dp = ((w.published || w['published-online'] || w['published-print'] || w.issued || {})['date-parts'] || [[]])[0];
@@ -91,11 +92,12 @@ function createNtrs({ http, base = 'https://ntrs.nasa.gov' }) {
 }
 
 function createUnpaywall({ http, base = 'https://api.unpaywall.org', mailto = '' }) {
+  const M = () => (typeof mailto === 'function' ? mailto() : mailto) || '';
   return {
-    enabled: () => !!mailto,
+    enabled: () => !!M(),
     async pdfFor(doi) {
-      if (!mailto || !doi) return '';
-      try { const j = await http.json(`${base}/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(mailto)}`);
+      if (!M() || !doi) return '';
+      try { const j = await http.json(`${base}/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(M())}`);
         const l = j.best_oa_location || {}; return l.url_for_pdf || ''; } catch { return ''; }
     },
   };

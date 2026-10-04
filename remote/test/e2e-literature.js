@@ -61,7 +61,7 @@ const src = createFakeSources();
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
   cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: KB, refreshMs: 400, pdfWaitMs: 2500, pollMs: 250, at: '23:59', daily: 3,
-    endpoints: { openalex: base + '/oa', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
+    endpoints: { openalex: base + '/oa', s2: base + '/s2', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = ''; srv.stdout.on('data', (d) => { out += d; }); srv.stderr.on('data', (d) => { out += d; });
@@ -89,6 +89,18 @@ const src = createFakeSources();
 
     // ---- the profile ----
     ok('the push refuses without a profile', (await P('/api/lit/feed/run')).ok && (await until(async () => { const f = await G('/api/lit/feed'); const r = (f.status.runs || []).slice(-1)[0]; return r && r.error; })), '');
+    // ---- 控制面板 › 文献 ----
+    let sv0 = await G('/api/lit/settings');
+    ok('settings: no keys yet, the push numbers from config.json, the collections offered', !sv0.keys.s2.set && !sv0.keys.openalex.set && sv0.daily === 3 && sv0.collections.includes('气动隐身'), sv0);
+    const s2off = await P('/api/lit/settings/test', { which: 's2' });
+    ok('Semantic Scholar without a key: the shared pool busy once, asked again, works', s2off.ok && /没填 key/.test(s2off.msg) && src.s2.keys.filter((k) => !k).length === 2, [s2off, src.s2.keys]);
+    ok('a bad contact address is refused', !(await P('/api/lit/settings', { mailto: 'not an address' })).ok);
+    const set1 = await P('/api/lit/settings', { keys: { s2: 'S2TESTKEY123' }, mailto: 'me@example.org', minScore: 6 });
+    sv0 = await G('/api/lit/settings');
+    ok('a key saved: shown only as set and its last four characters, never whole', set1.ok && sv0.keys.s2.set && sv0.keys.s2.tail === 'Y123' && !JSON.stringify(sv0).includes('S2TESTKEY123') && sv0.mailto === 'me@example.org', sv0);
+    ok('the settings file is private', process.platform === 'win32' || (fs.statSync(path.join(T, 'srv', 'data', 'literature', 'settings.json')).mode & 0o777) === 0o600);
+    const s2on = await P('/api/lit/settings/test', { which: 's2' });
+    ok('the key is used at once (no restart)', s2on.ok && /key 可用/.test(s2on.msg) && src.s2.keys[src.s2.keys.length - 1] === 'S2TESTKEY123', [s2on, src.s2.keys.slice(-2)]);
     ok('filling refused before there is a main line', !(await P('/api/lit/profile/fill')).ok);
     ok('organizing refused without an account of the work', !(await P('/api/lit/profile/organize')).ok);
     const STORY = '我在做再入飞行器的气动隐身，主要算等离子体鞘套对 RCS 的影响，现在卡在电子密度剖面怎么取，也没有实测数据来验证。';
@@ -106,6 +118,8 @@ const src = createFakeSources();
     ok('organizing read the account, then the library\'s papers on it and the last years\' literature (the library\'s own left out of the new)', plan && /## 研究自述\n我在做再入飞行器/.test(plan.prompt) &&
       qp && /\[L1\]\* Backward scattering/.test(qp.prompt) && /\[N1\] Plasma sheath communication blackout/.test(qp.prompt) && !/\[N\d\] Plasma sheath blackout mitigation/.test(qp.prompt) &&
       src.hits.some((h) => /sort=relevance_score/.test(h) && /search=plasma\+sheath\+electron\+density/.test(h)), qp && qp.prompt.slice(-1500));
+    ok('the last years\' literature came from Semantic Scholar too', /\[N\d\] Ionization chemistry of the reentry plasma sheath from S2/.test(qp.prompt) &&
+      src.hits.some((h) => h.startsWith('/s2/graph/v1/paper/search') && /query=plasma\+sheath\+electron\+density/.test(h) && /year=20\d\d-/.test(h)), src.hits.filter((h) => h.startsWith('/s2')));
     const LINE = '博士课题：再入飞行器气动隐身。三条线：等离子体鞘套的电磁散射；RCS 高频方法与验证；气动外形与隐身的协同优化。';
     ok('the user corrects the main line and the questions', (await P('/api/lit/profile/save', { line: LINE, questions: org.questions })).ok);
     ok('filling started', (await P('/api/lit/profile/fill')).ok);
@@ -142,6 +156,9 @@ const src = createFakeSources();
     const ax = src.hits.find((h) => h.startsWith('/arxiv/api/query')) || '';
     ok('arXiv: the categories AND one of the profile\'s phrases', /cat%3Aphysics\.plasm-ph/.test(ax) && /abs%3A%22plasma\+sheath%22/.test(ax), ax);
     const run1 = feed.status.runs.filter((r) => !r.error).pop();
+    const rec = src.s2.bodies.find((b) => b.p === '/s2/recommendations/v1/papers'), batch = src.s2.bodies.find((b) => b.p === '/s2/graph/v1/paper/batch');
+    ok('相似推荐: the key paper as the positive (by its DOI, turned into Semantic Scholar ids), its papers among the candidates', rec && rec.body.positivePaperIds.length >= 1 &&
+      batch && batch.body.ids.includes('DOI:10.1109/tap.2018.1') && run1.sources['相似推荐'] === 1, [src.s2.bodies, run1.sources]);
     ok('the run log counts each way of finding, and the good ones it brought', run1.sources['期刊'] === 3 && run1.sources['引用核心文献'] === 1 && run1.sources['AIAA 目录'] === 1 &&
       run1.good['期刊'] === 1 && run1.good['引用核心文献'] === 1 && run1.good['AIAA 目录'] === 1, run1);
     ok('the sources were asked: journals by ISSN, papers citing the key one, AIAA\'s feed, arXiv', ['/oa/works?filter=primary_location.source.issn%3A0018-926X', 'cites%3AW9', '/aiaa/action/showFeed', '/arxiv/api/query'].every((s) => src.hits.some((h) => h.includes(s))), src.hits);

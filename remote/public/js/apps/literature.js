@@ -13,6 +13,7 @@ import * as libTab from './lit-library.js';
 import * as kbTab from './lit-kb.js';
 import * as profTab from './lit-profile.js';
 import { openReader } from './lit-reader.js';
+import { open as openControl } from './control.js';
 
 const ICON = icon('help_book_big', true);
 let app = null;
@@ -28,9 +29,10 @@ function mount(first) {
   const status = h('span', { class: 'lit-st' });
   const authBtn = h('button', { class: 'btn go', type: 'button', text: '授权写入 Zotero', hidden: true, title: '收下文献、写回卡片需要 Zotero 的写入授权：点了之后到 Zotero 的网页桌面里点「始终允许」' });
   const authNote = h('span', { class: 'lit-auth', hidden: true });
+  const setBtn = h('button', { class: 'lit-tab', type: 'button', text: '设置', title: '控制面板 › 文献：文献来源的 key、联系邮箱、每日推送', onclick: () => openControl('literature') });
   const tabBtns = TABS.map(([id, label]) => h('button', { class: 'lit-tab', type: 'button', text: label, dataset: { tab: id }, onclick: () => show(id) }));
   const body = h('div', { class: 'lit-body' });
-  const root = h('div', { class: 'lit' }, h('div', { class: 'lit-bar' }, ...tabBtns, h('span', { class: 'lit-sp' }), status, authNote, authBtn), body);
+  const root = h('div', { class: 'lit' }, h('div', { class: 'lit-bar' }, ...tabBtns, h('span', { class: 'lit-sp' }), status, authNote, authBtn, setBtn), body);
   const mounted = new Map();
   let cur = null;
   const ctx = {

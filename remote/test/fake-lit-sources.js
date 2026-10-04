@@ -17,7 +17,7 @@ function work(id, doi, title, abs, pdf) {
 
 function createFakeSources() {
   let port = 0;
-  const hits = [];
+  const hits = [], s2 = { bodies: [], keys: [], noKey: 0 };
   const W = () => ({
     open: work('W1', '10.2514/1.new1', 'Electron density profiles of the RAM C-II plasma sheath', 'We measure the electron density of the plasma sheath during reentry', `http://127.0.0.1:${port}/pdf/new1.pdf`),
     closed: work('W4', '10.1109/x.closed', 'Plasma sheath communication blackout measurements', 'Blackout of telemetry in the plasma sheath was measured', null),
@@ -31,6 +31,23 @@ function createFakeSources() {
     const json = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     const xml = (s) => { res.writeHead(200, { 'Content-Type': 'application/xml' }); res.end(s); };
     const w = W();
+    // Semantic Scholar: the right key works, a wrong one is refused; without one the shared pool is busy the first time
+    if (p.startsWith('/s2/')) {
+      const k = req.headers['x-api-key'];
+      s2.keys.push(k || '');
+      if (k && k !== 'S2TESTKEY123') { res.writeHead(403); return res.end('{}'); }
+      if (!k && s2.noKey++ === 0) { res.writeHead(429); return res.end('{"message":"Too Many Requests"}'); }
+      const body = []; req.on('data', (c) => body.push(c));
+      return req.on('end', () => {
+        const b = Buffer.concat(body).toString('utf8'); if (b) s2.bodies.push({ p, body: JSON.parse(b) });
+        if (p === '/s2/graph/v1/paper/search') return json({ data: [{ paperId: 'S2A', title: 'Ionization chemistry of the reentry plasma sheath from S2', abstract: 'Ionization of air in the plasma sheath',
+          year: 2025, publicationDate: '2025-05-01', venue: 'Physics of Plasmas', externalIds: { DOI: '10.1063/s2.only' }, authors: [{ name: 'Jane Roe' }], url: 'https://www.semanticscholar.org/paper/S2A', citationCount: 3 }] });
+        if (p === '/s2/graph/v1/paper/batch') return json(((JSON.parse(b || '{}').ids) || []).map((id, i) => ({ paperId: 'P' + i })));
+        if (p === '/s2/recommendations/v1/papers') return json({ recommendedPapers: [{ paperId: 'S2R', title: 'Similar paper on wake flow turbulence', abstract: 'Turbulent wake', year: +today.slice(0, 4),
+          publicationDate: today, venue: 'Journal of Fluid Mechanics', externalIds: { DOI: '10.1017/s2.rec' }, authors: [{ name: 'Rec Author' }] }] });
+        res.writeHead(404); res.end('{}');
+      });
+    }
     if (p === '/oa/works') {
       const f = u.searchParams.get('filter') || '';
       if (f.includes('primary_location.source.issn')) return json({ results: [w.open, w.dup, w.other] });
@@ -56,7 +73,7 @@ function createFakeSources() {
     if (p === '/pdf/new1.pdf') { res.writeHead(200, { 'Content-Type': 'application/pdf' }); return res.end(makePdf(['RAM C-II electron density profile of the plasma sheath', 'Collision frequency model and RCS reduction'])); }
     res.writeHead(404); res.end('not found');
   });
-  return { server, hits, listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => { port = server.address().port; r(port); })), close: () => server.close() };
+  return { server, hits, s2, listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => { port = server.address().port; r(port); })), close: () => server.close() };
 }
 
 module.exports = { createFakeSources };
