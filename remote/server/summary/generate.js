@@ -2,9 +2,7 @@
 // (digest.js), hinted (classify.js); long ones get a summary of their own first (cached), then the model writes the
 // day (prompts.js). The numbers -- minutes, files, sessions, how to resume them -- are counted here, not by the model.
 'use strict';
-const path = require('path');
 const { digest } = require('./digest');
-const { runCodex } = require('./codex');
 const { DAY_SCHEMA, SESSION_SCHEMA, sessionPrompt, dayPrompt } = require('./prompts');
 
 const SESSION_INLINE = 20000;      // a session longer than this (chars) is summarized on its own first
@@ -17,8 +15,8 @@ const MAX_ARTIFACTS = 80;
 
 // calendar(from, to): the Google Calendar events in the window (google/index.js forReport; it also syncs 重要计划 ticked
 // off in Google Tasks first), background for the report; none when Google is not connected
-// pick(task) -> { model, effort }: what each AI job runs with (ai/settings.js); none: config.json's model for everything
-function createGenerator({ store, reports, egress, classify, codex, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, pick = null, backupBytes = 5e6 }) {
+// ask(prompt, schema, task): one question to the model that job uses, the backup when it fails (ai/ask.js)
+function createGenerator({ store, reports, classify, ask, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, backupBytes = 5e6 }) {
   // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
   // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
   // offline: its files are listed unchecked.
@@ -52,21 +50,6 @@ function createGenerator({ store, reports, egress, classify, codex, resumeCmd, l
     }
     return out.slice(0, MAX_ARTIFACTS).map((a, i) => ({ ref: 'A' + (i + 1), ...a }));
   }
-  // one question to the model, through whichever proxy gets through (none configured: direct)
-  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft) -- its model and effort
-  async function ask(prompt, schema, task = 'daily') {
-    let env = { ...process.env };
-    if (egress) {
-      const proxy = await egress.pick('chatgpt.com');
-      if (!proxy) throw new Error('连不上 OpenAI：电脑上的代理和 AWS 备用线路都不通');
-      env = egress.env(proxy);
-    }
-    if (codex.pathPrefix) env.PATH = codex.pathPrefix + path.delimiter + (env.PATH || '');
-    const use = pick ? pick(task) : { model: codex.model, effort: '' };
-    try { return await runCodex({ bin: codex.bin, model: use.model, effort: use.effort, prompt, schema, env, timeoutMs: codex.timeoutMs }); }
-    catch (e) { if (egress) egress.forget(); throw e; }
-  }
-
   // the sessions active in the window, oldest first, as S1, S2, ...
   function collect(from, to) {
     const items = [];

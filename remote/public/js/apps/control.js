@@ -20,7 +20,7 @@ const ITEMS = [
   { id: 'computers', label: '电脑', icon: 'network_normal_two_pcs', note: '添加 / 移除连到这里的电脑', panel: computersPanel },
   { id: 'google', label: 'Google 账户', icon: 'key_win', note: '日历、任务、云端硬盘、提醒到手机', panel: googlePanel },
   { id: 'mail', label: '邮箱', icon: 'outlook_express', note: '收信的邮箱、签名、推荐文献按什么判断', panel: mailPanel },
-  { id: 'ai', label: 'AI 模型', icon: 'chip_ramdrive', note: '每项工作用哪个模型、Codex 更新', panel: aiPanel },
+  { id: 'ai', label: 'AI 模型', icon: 'chip_ramdrive', note: '每项工作用哪个模型、后备模型、Claude Code / Codex 更新', panel: aiPanel },
 ];
 export const items = () => ITEMS.map(({ id, label, icon: ic, note }) => ({ id, label, icon: ic, note }));
 
