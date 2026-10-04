@@ -90,7 +90,7 @@ function fillPrompt(line, questions, lib, work) {
     '- authors：值得追的作者（出自库里反复出现的作者，写库里的写法，覆盖不同分支，最多 12 个）。',
     '- keywords：给 OpenAlex / arXiv 检索新文献用的英文检索式（2～4 个词一组，不加引号），每个分支至少 1 条，共 8～16 条，覆盖较少的分支可以多给。',
     '- arxiv：相关的 arXiv 分类代码（如 physics.plasm-ph、physics.comp-ph、eess.SP、physics.flu-dyn），最多 6 个。',
-    '- ntrs：在 NASA 技术报告库检索老报告用的英文检索式（3～10 条，挑那些 NASA/NACA 做过大量工作的分支）。',
+    '- ntrs：在 NASA 技术报告库（NTRS）和 DTIC 老报告库检索用的英文短检索式，6～12 条，每条只要 2～3 个词（这两个库是关键词检索，词多了几乎查不到），如 plasma sheath、reentry blackout、RAM C、radar cross section；挑 NASA/NACA 和美军研究机构做过大量工作的分支。',
     '- seeds：库里最核心的 4～10 篇文献编号，尽量每个分支都有一篇（系统会追踪“谁引用了它们”）。',
     '注意：文献编号（方括号里的 8 位字母数字）只用在 papers 和 seeds 里；desc、why 等说明文字里提到文献时写它的简短题目或「作者 年份」，不要写编号。',
     '',

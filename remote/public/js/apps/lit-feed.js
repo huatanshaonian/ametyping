@@ -35,6 +35,8 @@ export function mount(el, ctx) {
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
     showYield((s.runs || []).filter((r) => !r.error && r.sources));
+    if (s.archive && s.archive.queue) st.textContent += ` · 老报告还有 ${s.archive.queue} 篇在排队`;
+    if (s.dtic && s.dtic.up) st.textContent += ' · DTIC 的公共检索恢复了（告诉 Claude 接上）';
     render();
   }
   function render() {
@@ -60,7 +62,7 @@ export function mount(el, ctx) {
       q ? h('i', { class: 'tag q', text: 'Q' + e.question, title: q.text }) : null,
       e.score ? h('small', { class: 'lf-score', text: `${e.score}/10`, title: '和你当前问题的相关度（模型打分）' }) : null,
       p.url ? h('a', { class: 'lf-t', href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('b', { class: 'lf-t', text: p.title }));
-    const meta = h('div', { class: 'lf-m', text: [authors(p.authors), p.venue, p.year || (p.date || '').slice(0, 4), p.number, (e.paper && e.paper.sources || []).length > 1 ? `来自 ${e.paper.sources.join('、')}` : ''].filter(Boolean).join(' · ') });
+    const meta = h('div', { class: 'lf-m', text: [e.old ? (p.source === 'dtic' ? 'DTIC' : 'NTRS') : '', authors(p.authors), p.venue, p.year || (p.date || '').slice(0, 4), p.number, (e.paper && e.paper.sources || []).length > 1 ? `来自 ${e.paper.sources.join('、')}` : ''].filter(Boolean).join(' · ') });
     const why = e.why ? h('div', { class: 'lf-why' }, q ? h('b', { text: `Q${e.question}：${q.text}` }) : null, h('span', { text: e.why })) : null;
     const abs = p.abstract ? h('details', { class: 'lf-abs' }, h('summary', { text: '摘要' }), h('p', { text: p.abstract })) : h('div', { class: 'lf-m', text: '（没有摘要）' });
     const acts = h('div', { class: 'gbtns' });

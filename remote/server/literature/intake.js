@@ -30,7 +30,7 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
   }
   // an open-access PDF for the paper: the source's own link, else Unpaywall's; checked to really be a PDF
   async function fetchPdf(p) {
-    const urls = [p.pdf, p.doi && unpaywall ? await unpaywall.pdfFor(p.doi) : ''].filter(Boolean);
+    const urls = [p.dticPdf, p.pdf, p.doi && unpaywall ? await unpaywall.pdfFor(p.doi) : ''].filter(Boolean);
     for (const url of [...new Set(urls)]) {
       try {
         const r = await http.get(url, { timeoutMs: 90e3, maxBytes: 80 * 1024 * 1024, headers: { Accept: 'application/pdf,*/*' } });
@@ -71,7 +71,7 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
     if (!fulltext.hasPdf(key)) {
       const got = await fetchPdf(p);
       if (got) {
-        const name = (p.arxiv ? `arXiv-${p.arxiv}` : p.ntrs ? `NTRS-${p.ntrs}` : (p.doi || 'paper').replace(/[^\w.-]+/g, '_')).slice(0, 80) + '.pdf';
+        const name = (p.arxiv ? `arXiv-${p.arxiv}` : p.ntrs ? `NTRS-${p.ntrs}` : p.dtic ? `DTIC-${p.dtic}` : (p.doi || 'paper').replace(/[^\w.-]+/g, '_')).slice(0, 80) + '.pdf';
         try { const att = await api.attachPdf(key, got.buf, { filename: name, url: got.url }); fulltext.remember(att, got.buf); log(`文献：PDF 已交给 Zotero（${att}）`); }
         catch (err) { log('文献：把 PDF 交给 Zotero 失败：' + err.message); }
         await mirror.refresh(true).catch(() => {});

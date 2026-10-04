@@ -83,10 +83,48 @@ function createNtrs({ http, base = 'https://ntrs.nasa.gov' }) {
     return p;
   };
   return {
-    async search(words, size = 25) {
-      const s = new URLSearchParams({ q: words, 'page.size': String(size) });
+    // one page of results (from: the offset), and how many there are in all
+    async page(words, size = 10, from = 0) {
+      const s = new URLSearchParams({ q: words, 'page.size': String(size), 'page.from': String(from) });
       const j = await http.json(`${base}/api/citations/search?${s}`);
-      return (j.results || []).filter((x) => x.distribution === 'PUBLIC' || !x.distribution).map(fromResult);
+      return { items: (j.results || []).filter((x) => x.distribution === 'PUBLIC' || !x.distribution).map(fromResult), total: +((j.stats || {}).total) || 0 };
+    },
+    async search(words, size = 25) { return (await this.page(words, size, 0)).items; },
+  };
+}
+
+// DTIC's technical reports. DTIC's own public search is offline (since 2026-08; discover.dtic.mil says it will be back),
+// and its report pages answer 403 from here; what can be searched is Internet Archive's copy of DTIC ("dticarchive",
+// ~585k reports -- not all of them): title, date, abstract, authors and the issuing body (in its subject), the PDF and
+// its OCR text. A report's PDF is tried at DTIC first (apps.dtic.mil, the official copy, when it answers), then at the
+// Internet Archive. Through the proxy (archive.org and dtic.mil are not reachable directly from here).
+function createDtic({ http, base = 'https://archive.org', dticBase = 'https://apps.dtic.mil' }) {
+  const fromDoc = (d) => {
+    const ad = String(d.identifier || '').replace(/^DTIC_/, '');
+    const subj = (Array.isArray(d.subject) ? d.subject : String(d.subject || '').split(';')).map((s) => String(s).trim()).filter((s) => s && s !== 'DTIC Archive');
+    // the subject list holds the authors ("Papa, Robert J"), the issuing body (CAPITALS), and the keywords ("*PLASMA SHEATHS")
+    const authors = subj.filter((s) => /,/.test(s) && /[a-z]/.test(s) && !s.startsWith('*')).slice(0, 8);
+    const org = subj.find((s) => !s.includes('*') && s === s.toUpperCase() && /[A-Z]{3}/.test(s) && s.split(' ').length > 2) || '';
+    const p = paper({ source: 'dtic', sid: ad, title: String(d.title || '').replace(/^DTIC [A-Z0-9]+:\s*/, ''), authors, venue: org || 'DTIC', date: d.date || (d.year ? `${d.year}-01-01` : ''),
+      abstract: d.description || '', url: `${base}/details/${d.identifier}`, pdf: `${base}/download/${d.identifier}/${d.identifier}.pdf`, type: 'report', number: ad });
+    p.dtic = ad; p.dticPdf = `${dticBase}/sti/tr/pdf/${ad}.pdf`;
+    return p;
+  };
+  return {
+    // one page of the archive's DTIC reports matching the words (in the title, abstract or subjects), page: 1, 2, ...
+    async page(words, size = 10, page = 1) {
+      const w = String(words).replace(/["()]/g, ' ').trim();
+      const q = `collection:(dticarchive) AND (title:(${w}) OR description:(${w}) OR subject:(${w}))`;
+      const s = new URLSearchParams({ q, rows: String(size), page: String(page), output: 'json' });
+      for (const f of ['identifier', 'title', 'date', 'year', 'description', 'subject']) s.append('fl[]', f);
+      const j = await http.json(`${base}/advancedsearch.php?${s}`);
+      const r = j.response || {};
+      return { items: (r.docs || []).filter((d) => d.identifier).map(fromDoc), total: +r.numFound || 0 };
+    },
+    // is DTIC's own public search back? (its page says when it is offline)
+    async publicSearchUp() {
+      try { const r = await http.get('https://discover.dtic.mil/', { timeoutMs: 30e3 }); return r.status === 200 && !/Public Search is (temporarily )?offline/i.test(r.body.toString('utf8')); }
+      catch { return false; }
     },
   };
 }
@@ -103,4 +141,4 @@ function createUnpaywall({ http, base = 'https://api.unpaywall.org', mailto = ''
   };
 }
 
-module.exports = { createCrossref, createArxiv, createAiaa, createNtrs, createUnpaywall };
+module.exports = { createCrossref, createArxiv, createAiaa, createNtrs, createDtic, createUnpaywall };

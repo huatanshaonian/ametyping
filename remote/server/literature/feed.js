@@ -4,7 +4,8 @@
 // of journal and ResearchGate mails; anything already in the library or shown before is dropped, the rest is prefiltered
 // by the profile's words and scored by the model against the user's questions (prompts/feed.js). Fewer than `daily`
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
-// annotated papers as active recall, unread ones as catch-up. Saturdays: one old NASA report (NTRS), if any fits.
+// annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
+// day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
 // Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; after 7 days it lapses.
 //   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...] }
 'use strict';
@@ -13,6 +14,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt } = require('./prompts/feed');
 const { fingerprint, paper } = require('./sources/normalize');
+const { createArchive } = require('./archive');
 
 const DAY_MS = 86400e3;
 // n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
@@ -36,6 +38,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   const minScore = () => (C().minScore != null ? +C().minScore : 6);
   const atTime = () => String(C().at || '07:30').split(':').map(Number);
   let running = null, lastError = '', lastErrorAt = 0;
+  const oldDaily = () => Math.max(0, Math.min(3, C().oldDaily != null ? +C().oldDaily : 1));
 
   const entries = () => Object.values(st.items);
   const pushedOn = (date) => entries().filter((e) => e.date === date && e.status !== 'spare');
@@ -174,17 +177,27 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     st.items[id] = { id, status: 'new', created: now(), ...e };
     return st.items[id];
   }
+  // the old reports' queue (NTRS / DTIC), scored the same way and remembering the same "shown before"
+  const archive = createArchive({ dir, sources, profile, mirror, rank: (l) => rank(l), seen: (fp) => !!st.seen[fp], see: (fp) => { st.seen[fp] = now(); }, minScore, log, now });
+  async function oldReports(date, n, log1) {
+    if (n <= 0 || !((profile.get() || {}).follow || {}).ntrs || !(profile.get().follow.ntrs || []).length) return;
+    for (const x of await archive.take(n, log1)) {
+      add({ kind: 'new', date, paper: x.paper, score: x.score, question: x.question, qText: qText(x.question), why: x.why, fun: x.fun, old: true });
+      log1.old = (log1.old || 0) + 1;
+    }
+  }
   async function run({ date = ymd(now()), manual = false } = {}) {
     if (running) return running;
     running = (async () => {
-      const already = pushedOn(date).length;
+      const already = pushedOn(date).filter((e) => !e.old).length, oldAlready = pushedOn(date).filter((e) => e.old).length;
       const want = Math.max(0, daily() - already);
       const dow = new Date(now()).getDay();
       const log1 = { date, at: now(), manual, found: 0, ranked: 0, picked: 0, reviews: 0, errors: [] };
       if (!profile.get()) throw new Error('还没有兴趣画像：先在「画像」里生成并确认');
-      if (dow === 6 && !manual) {                            // Saturday: an old report from NTRS
-        await ntrsPick(date, log1);
-      } else if (want > 0) {
+      if (dow === 6 && !manual) {                            // Saturday: old reports only
+        await oldReports(date, Math.max(1, oldDaily()) - oldAlready, log1);
+      } else {
+       if (want > 0) {
         const last = st.runs.filter((r) => !r.error).map((r) => r.date).sort().pop();
         const since = ymd(Math.min(now() - 3 * DAY_MS, last ? Date.parse(last) - 2 * DAY_MS : now() - 14 * DAY_MS));
         const { cands, errors, counts } = await gather(since);
@@ -203,27 +216,16 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' });
         let room = want - log1.picked;
         for (const x of reviewPool().slice(0, room)) { add({ date, ...(await reviewEntry(x.it)) }); st.reviewed[x.it.key] = now(); log1.reviews++; room--; }
+       }
+        await oldReports(date, oldDaily() - oldAlready, log1);
       }
       st.runs = [...st.runs, log1].slice(-60);
       prune(); save(); onChange('feed');
-      log(`文献：今日推送 ${log1.picked} 篇新文献、${log1.reviews} 篇复习（候选 ${log1.found}，评分 ${log1.ranked}）${log1.errors.length ? '；来源出错：' + log1.errors.join('；') : ''}`);
+      log(`文献：今日推送 ${log1.picked} 篇新文献、${log1.old || 0} 篇老报告、${log1.reviews} 篇复习（候选 ${log1.found}，评分 ${log1.ranked}）${log1.errors.length ? '；来源出错：' + log1.errors.join('；') : ''}`);
       return log1;
     })().catch((e) => { lastError = e.message; lastErrorAt = now(); st.runs = [...st.runs, { date, at: now(), manual, error: e.message }].slice(-60); save(); onChange('feed'); log('文献：推送失败：' + e.message); throw e; })
       .finally(() => { running = null; });
     return running;
-  }
-  async function ntrsPick(date, log1) {
-    const qs = ((profile.get() || {}).follow || {}).ntrs || [];
-    if (!sources.ntrs || !qs.length) return;
-    const week = Math.floor(now() / (7 * DAY_MS));
-    let list = [];
-    for (let i = 0; i < Math.min(2, qs.length); i++) { try { list.push(...await sources.ntrs.search(qs[(week + i) % qs.length], 25)); } catch (e) { log1.errors.push('NTRS：' + e.message); } }
-    list = dedupe(list, 100000).slice(0, 25);
-    log1.found = list.length;
-    const ranked = await rank(list);
-    for (const r of ranked) st.seen[fingerprint(r.c)] = now();
-    const best = ranked.find((r) => r.score >= Math.max(5, minScore() - 1));
-    if (best) { add({ kind: 'new', date, paper: best.c, score: best.score, question: best.question, why: best.why, fun: best.fun, old: true }); log1.picked = 1; }
   }
   // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse; old entries go
   function prune() {
@@ -261,10 +263,13 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     if (lastError && t - lastErrorAt < 30 * 60e3) return null;
     return date;
   }
-  async function tick() { const d = due(); if (d && !running) await run({ date: d }).catch(() => {}); }
+  async function tick() {
+    if (sources.dtic && now() - (st.dtic && st.dtic.at || 0) > 7 * DAY_MS) { st.dtic = { at: now(), up: await sources.dtic.publicSearchUp() }; save(); if (st.dtic.up) log('文献：DTIC 的公共检索恢复了'); }
+    const d = due(); if (d && !running) await run({ date: d }).catch(() => {});
+  }
   let timer = null;
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }
-  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '' });
+  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null });
 
   return { run, tick, start, stop: () => timer && clearInterval(timer), list, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }

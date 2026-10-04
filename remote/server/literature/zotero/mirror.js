@@ -35,6 +35,7 @@ function slim(d) {
     added: Date.parse(d.dateAdded) || 0, modified: Date.parse(d.dateModified) || 0, number: d.reportNumber || d.number || '', version: d.version || 0,
     // a NASA report's NTRS id ("NTRS: 19700001" in Extra, as 收下 writes it; or its ntrs.nasa.gov link)
     ntrs: (/^NTRS:\s*(\d{6,})/im.exec(d.extra || '') || /ntrs\.nasa\.gov\/(?:citations|api\/citations)\/(\d{6,})/.exec(d.url || '') || [])[1] || '',
+    dtic: (/^DTIC:\s*(AD[A-Z]?\d{6,7})/im.exec(d.extra || '') || /archive\.org\/details\/DTIC_(AD[A-Z]?\d{6,7})/.exec(d.url || '') || [])[1] || '',
     // (the field often holds two run together, "0018-926X1045-9243", or none of the hyphens: each one, as NNNN-NNNN)
     issns: [...new Set((String(d.ISSN || '').toUpperCase().match(/\d{4}-?\d{3}[\dX]/g) || []).map((s) => s.replace(/^(\d{4})-?/, '$1-')))],
   };

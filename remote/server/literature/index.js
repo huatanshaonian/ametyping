@@ -25,7 +25,7 @@ const { createFeed, ymd } = require('./feed');
 const { createIntake } = require('./intake');
 const { createReader } = require('./reader');
 const { createOpenAlex } = require('./sources/openalex');
-const { createCrossref, createArxiv, createAiaa, createNtrs, createUnpaywall } = require('./sources/feeds');
+const { createCrossref, createArxiv, createAiaa, createNtrs, createDtic, createUnpaywall } = require('./sources/feeds');
 const { createEgress } = require('../egress');
 const { createStats } = require('./stats');
 const { createS2 } = require('./sources/s2');
@@ -39,7 +39,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const E = cfg.endpoints || {};                                     // (tests point the sources at fakes)
   const px = Array.isArray(cfg.proxies) ? cfg.proxies : proxies;
-  const http = createHttp({ egress: px.length ? createEgress({ proxies: px, log }) : null, viaProxy: cfg.viaProxy || ['ntrs.nasa.gov'] });
+  const http = createHttp({ egress: px.length ? createEgress({ proxies: px, log }) : null, viaProxy: cfg.viaProxy || ['ntrs.nasa.gov', 'archive.org', 'dtic.mil'] });
   const changed = (what) => { try { onChange(what); } catch {} };
   // two jobs in 控制面板 › AI 模型, each with its own model / effort: the many small calls of the push, and the reading
   const askFeed = (p, s) => ask(p, s, 'litFeed'), askRead = (p, s) => ask(p, s, 'litRead');
@@ -49,7 +49,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   let intake = null;
   const mirror = createMirror({ api, dir, log, everyMs: cfg.refreshMs != null ? +cfg.refreshMs : 60e3, onChange: () => { changed('library'); if (intake) intake.onLibrary().catch(() => {}); } });
   const webdav = createWebdav({ dir: cfg.webdavDir || '' });
-  const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, log });
+  const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, iaBase: E.dtic || undefined, log });
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
   const settings = createSettings({ dir, cfg });
   const mailto = () => settings.mailto();
@@ -58,6 +58,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     crossref: createCrossref({ http, base: E.crossref, mailto }),
     s2: createS2({ http, base: E.s2, key: () => settings.keyOf('s2') }),
     arxiv: createArxiv({ http, base: E.arxiv }), aiaa: createAiaa({ http, base: E.aiaa }), ntrs: createNtrs({ http, base: E.ntrs }),
+    dtic: createDtic({ http, base: E.dtic, dticBase: E.dticApps }),
   };
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
   const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto });

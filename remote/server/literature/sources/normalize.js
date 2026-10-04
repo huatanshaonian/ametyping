@@ -33,7 +33,7 @@ function lastFirst(name) {
 function toZotero(p, { collections = [], tags = [] } = {}) {
   const creators = (p.authors || []).map((a) => { const [last, first] = String(a).split(/,\s*/); return first ? { creatorType: 'author', lastName: last, firstName: first } : { creatorType: 'author', name: last }; });
   const base = { title: p.title, creators, abstractNote: p.abstract || '', date: p.date || (p.year ? String(p.year) : ''), url: p.url || '', collections, tags: tags.map((tag) => ({ tag })), relations: {} };
-  if (p.type === 'report') return { itemType: 'report', ...base, reportNumber: p.number || '', institution: p.venue || '', extra: p.ntrs ? `NTRS: ${p.ntrs}` : '' };
+  if (p.type === 'report') return { itemType: 'report', ...base, reportNumber: p.number || '', institution: p.venue || '', extra: p.ntrs ? `NTRS: ${p.ntrs}` : p.dtic ? `DTIC: ${p.dtic}` : '' };
   if (p.type === 'preprint') return { itemType: 'preprint', ...base, repository: p.venue || 'arXiv', archiveID: p.arxiv ? 'arXiv:' + p.arxiv : '', DOI: p.doi || '' };
   if (p.type === 'conferencePaper') return { itemType: 'conferencePaper', ...base, proceedingsTitle: p.venue || '', DOI: p.doi || '' };
   return { itemType: 'journalArticle', ...base, publicationTitle: p.venue || '', DOI: p.doi || '', ISSN: p.issn || '' };

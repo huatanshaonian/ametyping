@@ -22,7 +22,7 @@ function pdftotext(bin, buf) {
 }
 
 // http / ntrsBase: for a scanned NASA report, NTRS's own OCR text (through the proxy, like the rest of NTRS)
-function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, ntrsBase = 'https://ntrs.nasa.gov', log = () => {} }) {
+function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, ntrsBase = 'https://ntrs.nasa.gov', iaBase = 'https://archive.org', log = () => {} }) {
   const tdir = path.join(dir, 'text');
   fs.mkdirSync(tdir, { recursive: true });
   const inflight = new Map();
@@ -70,23 +70,25 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
     catch (e) { log('文献：抽全文失败 ' + key + '：' + e.message); return { missing: 'error', error: e.message, attachment: att }; }
     // an old NASA scan without a text layer: NTRS's own OCR text of the report instead
     const it = mirror.item(key);
-    if (doc.scanned && it && it.ntrs && ntrsText) { const t = await ntrsText(it.ntrs, file.md5).catch(() => null); if (t) return { ...t, attachment: att, md5: file.md5, from: 'ntrs' }; }
+    if (doc.scanned && it && it.ntrs) { const t = await ocrText(`${ntrsBase}/api/citations/${it.ntrs}/downloads/${it.ntrs}.txt`, file.md5 + '-ntrs', 'NTRS ' + it.ntrs).catch(() => null); if (t) return { ...t, attachment: att, md5: file.md5, from: 'ntrs' }; }
+    if (doc.scanned && it && it.dtic) { const t = await ocrText(`${iaBase}/download/DTIC_${it.dtic}/DTIC_${it.dtic}_djvu.txt`, file.md5 + '-dtic', 'DTIC ' + it.dtic).catch(() => null); if (t) return { ...t, attachment: att, md5: file.md5, from: 'dtic' }; }
     return doc;
   }
-  // NTRS's text file of a report, cut into pages (form feeds when it has them, else ~3000 characters), kept like a PDF's
-  async function ntrsText(id, md5) {
+  // an old report's OCR text (NTRS's own, the Internet Archive's for DTIC), cut into pages (form feeds when it has them,
+  // else ~3000 characters), kept like a PDF's
+  async function ocrText(url, cacheKey, what) {
     if (!http) return null;
-    const f = path.join(tdir, md5 + '-ntrs.json');
+    const f = path.join(tdir, cacheKey + '.json');
     try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
-    const r = await http.get(`${ntrsBase}/api/citations/${id}/downloads/${id}.txt`, { timeoutMs: 60e3 });
+    const r = await http.get(url, { timeoutMs: 60e3 });
     if (r.status !== 200) return null;
     const raw = r.body.toString('utf8').replace(/\r/g, '');
     let pages = raw.includes('\f') ? raw.split('\f') : raw.match(/[\s\S]{1,3000}(?=\s|$)/g) || [];
     pages = pages.map((s) => s.replace(/\n{3,}/g, '\n\n').trim()).filter(Boolean);
     if (!pages.length) return null;
-    const doc = { pages, chars: pages.reduce((n, s) => n + s.length, 0), scanned: false, ocr: 'ntrs' };
+    const doc = { pages, chars: pages.reduce((n, s) => n + s.length, 0), scanned: false, ocr: what };
     fs.writeFileSync(f, JSON.stringify(doc));
-    log(`文献：扫描版报告 NTRS ${id} 改用 NTRS 自带的 OCR 文本`);
+    log(`文献：扫描版报告 ${what} 改用现成的 OCR 文本`);
     return doc;
   }
   const hasPdf = (key) => { const a = mirror.pdfOf(key); return !!(a && (a.linkMode === 'imported_file' || a.linkMode === 'imported_url') && (webdav.has(a.key) || recent.has(a.key))); };

@@ -44,16 +44,15 @@ export function mount(el, ctx) {
     sugs = ((p && p.suggestions) || []).map((q) => ({ ...q }));
     topics = ((p && p.topics) || []).map((t) => ({ ...t, keywords: [...(t.keywords || [])], papers: [...(t.papers || [])], paperList: [...(t.paperList || [])] }));
     F = {
-      story: area(p && p.story, 12, '想到哪写到哪：你的课题在做什么、为什么做；现在手上在算/在写什么；用了哪些方法和软件；卡在哪里、对什么没把握；导师或组里对你有什么期待；最后想做出什么……\n不用系统，可以很长，也可以随时回来补充。AI 会把它梳理成下面的研究主线和问题。'),
-      line: area(p && p.line, 9, '研究主线：AI 梳理出来后在这里改；也可以自己写。'),
+      story: area(p && p.story, 12, '想到哪写到哪：你在做什么、卡在哪里、想做出什么。不用系统，随时可以补充。'),
+      line: area(p && p.line, 9, 'AI 梳理后在这里修改，也可以自己写。'),
       venues: area((f.venues || []).map((v) => `${v.name}${v.extra ? '（库外）' : ''}${(v.issns || []).length ? ' | ' + v.issns.join(' ') : ''}${v.aiaa ? ' | aiaa:' + v.aiaa : ''}`).join('\n'), 5, '期刊名 | ISSN ISSN | aiaa:代码（ISSN 可空：会从库里或 OpenAlex 查）'),
       authors: area((f.authors || []).map((a) => `${a.name}${a.openalex ? ` | ${a.openalex} | ${a.inst || ''}${a.guess ? '（按姓名猜的，请核对）' : ''}` : ' | （没找到）'}`).join('\n'), 4, '作者名 | OpenAlex 编号（可空：从你库里这位作者带 DOI 的论文去查）'),
       keywords: area((f.keywords || []).join('\n'), 5, '英文检索式，一行一个（每天轮流用几条）'),
       arxiv: area((f.arxiv || []).join('\n'), 2, 'physics.plasm-ph'),
-      ntrs: area((f.ntrs || []).join('\n'), 3, 'NASA 老报告检索式，周六推一篇'),
+      ntrs: area((f.ntrs || []).join('\n'), 4, '每行一条，2～3 个英文词，如 plasma sheath'),
       seeds: area((f.seeds || []).map((s) => `${s.title}${s.doi ? ' | ' + s.doi : ''}${s.openalex ? ' | ' + s.openalex : ''}`).join('\n'), 4, '核心文献（追踪「谁引用了它们」）'),
     };
-    if (p && !p.line && p.summary) F.line.placeholder = '（之前 AI 从文献库归纳的方向，仅供参考：' + p.summary + '）\n\n' + F.line.placeholder;
 
     // questions, most important first
     const qBox = h('div', { class: 'lp-qs' });
@@ -122,7 +121,7 @@ export function mount(el, ctx) {
       row('跟踪的作者', F.authors),
       row('检索式', F.keywords, '每天在 OpenAlex 里轮流检索几条；也用来筛 arXiv'),
       row('arXiv 分类', F.arxiv),
-      row('NTRS 检索', F.ntrs, '周六从 NASA 技术报告库挑一篇老报告'),
+      row('老报告检索', F.ntrs, 'NTRS（NASA）和 DTIC（经 Internet Archive）都用这些词，每次拉一页、好的排队分几天推；词要短，长了查不到'),
       row('核心文献', F.seeds, '追踪「谁引用了它们」')].filter(Boolean));
   }
 

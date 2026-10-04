@@ -67,7 +67,13 @@ function createFakeSources() {
     if (p === '/cr/works') return json({ message: { items: [] } });
     if (p === '/arxiv/api/query') return xml(`<feed><entry><id>http://arxiv.org/abs/2610.00001v1</id><title>Graph neural networks for traffic</title><summary>Traffic</summary><published>${today}T00:00:00Z</published><author><name>Ann Other</name></author></entry></feed>`);
     if (p === '/aiaa/action/showFeed') return xml(`<rdf:RDF><channel><title>AIAA Journal: Table of Contents</title></channel><item rdf:about="x"><title>Electron density profiles of the RAM C-II plasma sheath</title><link>https://arc.aiaa.org/doi/10.2514/1.new1</link><dc:creator>Sun, Wei</dc:creator><dc:date>${today}</dc:date><prism:doi>10.2514/1.new1</prism:doi></item></rdf:RDF>`);
-    if (p === '/ntrs/api/citations/search') return json({ results: [{ id: 19700001, title: 'Reentry plasma attenuation measurements on RAM C', abstract: 'RAM C flight plasma sheath', distribution: 'PUBLIC', center: { name: 'Langley Research Center' },
+    if (p === '/dtic/advancedsearch.php') {
+      const doc = (ad, title, desc) => ({ identifier: 'DTIC_' + ad, title: 'DTIC ' + ad + ': ' + title, date: '1966-03-01', year: '1966', description: desc,
+        subject: ['DTIC Archive', 'Papa, Robert J', 'AIR FORCE CAMBRIDGE RESEARCH LABS HANSCOM AFB MA', '*PLASMA SHEATHS'] });
+      return json({ response: { numFound: 3, docs: [doc('AD0407089', 'NONLINEAR TRANSMISSION OF THE PLASMA SHEATH', 'plasma sheath model'),
+        doc('AD0612345', 'PLASMA SHEATH ATTENUATION AT X BAND', 'plasma sheath attenuation'), doc('AD0700001', 'HELICOPTER ROTOR NOISE', 'rotor noise')] } });
+    }
+    if (p === '/ntrs/api/citations/search') return json({ stats: { total: 1 }, results: [{ id: 19700001, title: 'Reentry plasma attenuation measurements on RAM C', abstract: 'RAM C flight plasma sheath', distribution: 'PUBLIC', center: { name: 'Langley Research Center' },
       publications: [{ publicationDate: '1970-01-01T00:00:00Z' }], authorAffiliations: [{ meta: { author: { name: 'Grantham, W. L.' } } }], otherReportNumbers: ['NASA-TN-D-1234'], downloads: [] }] });
     if (p === '/ntrs/api/citations/19700001/downloads/19700001.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('NTRS OCR PAGE ONE plasma attenuation at 9.21 GHzNTRS OCR PAGE TWO electron density 1e12'); }
     if (p === '/pdf/new1.pdf') { res.writeHead(200, { 'Content-Type': 'application/pdf' }); return res.end(makePdf(['RAM C-II electron density profile of the plasma sheath', 'Collision frequency model and RCS reduction'])); }

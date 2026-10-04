@@ -41,7 +41,7 @@ export function panel() {
     const num = (val, min, max) => h('input', { class: 'field lset-n', type: 'number', min, max, value: val });
     const colSel = (val) => { const s = h('select', { class: 'field' }, ...[...new Set([val, ...(v.collections || [])])].filter(Boolean).map((n) => h('option', { value: n, text: n }))); s.value = val; return s; };
     F = { mailto: h('input', { class: 'field', type: 'email', value: v.mailto || '', placeholder: '可空：例如你的学校邮箱' }),
-      daily: num(v.daily, 0, 5), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
+      daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
       reviewCollection: colSel(v.reviewCollection), inboxCollection: h('input', { class: 'field', value: v.inboxCollection }),
       s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }) };
     const row = (label, el, note) => h('div', { class: 'lset-row' }, h('label', { text: label }), h('div', {}, el, note ? h('small', { text: note }) : null));
@@ -50,7 +50,8 @@ export function panel() {
       row('联系邮箱', F.mailto, '会作为联系人告诉 Crossref / OpenAlex / Unpaywall（它们的礼貌约定，回应更快）；Unpaywall 查开放获取 PDF 必须有它。不填就不发送，也不查 Unpaywall。'),
       h('h4', { class: 'aim-h', text: '每日推送' }),
       row('每天最多', h('span', {}, F.daily, ' 篇'), '是上限不是定额：不够格就不推，用复习补位。0 = 只复习。'),
-      row('推送时间', F.at, '工作日这个时间之后推（周六推一篇 NTRS 老报告，周日不推）'),
+      row('老报告', h('span', {}, F.oldDaily, ' 篇 / 天'), 'NTRS 和 DTIC 的老报告，另算，不占上面的名额；每次拉一页，够格的排队分几天推，用完再往后翻'),
+      row('推送时间', F.at, '工作日这个时间之后推（周六只推老报告，周日不推）'),
       row('分数门槛', h('span', {}, F.minScore, ' 分以上才推（满分 10）'), '推得太杂就调高，常常没有新文献就调低'),
       row('每天检索', h('span', {}, F.searchesPerDay, ' 条检索式（轮流用）')),
       row('相似推荐', h('label', { class: 'lset-cb' }, F.s2Recommend, ' 用 Semantic Scholar 按你收下 / 星标 / 核对过的文献推荐相似的新论文')),
@@ -61,7 +62,7 @@ export function panel() {
   async function save(quiet) {
     const keys = {};
     for (const name of ['s2', 'openalex']) { const t = K[name].box.value.trim(); if (t) keys[name] = t; else if (clear[name]) keys[name] = null; }
-    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
+    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
       reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, s2Recommend: F.s2Recommend.checked });
     msg.textContent = r.ok ? '已保存，马上生效' : r.msg || '没能保存';
     if (r.ok) { clear.s2 = clear.openalex = false; if (!quiet) await load(); }

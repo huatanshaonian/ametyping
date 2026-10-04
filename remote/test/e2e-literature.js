@@ -61,7 +61,7 @@ const src = createFakeSources();
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
   cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: KB, refreshMs: 400, pdfWaitMs: 2500, pollMs: 250, at: '23:59', daily: 3,
-    endpoints: { openalex: base + '/oa', s2: base + '/s2', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
+    endpoints: { openalex: base + '/oa', s2: base + '/s2', dtic: base + '/dtic', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = ''; srv.stdout.on('data', (d) => { out += d; }); srv.stderr.on('data', (d) => { out += d; });
@@ -95,7 +95,7 @@ const src = createFakeSources();
     const s2off = await P('/api/lit/settings/test', { which: 's2' });
     ok('Semantic Scholar without a key: the shared pool busy once, asked again, works', s2off.ok && /没填 key/.test(s2off.msg) && src.s2.keys.filter((k) => !k).length === 2, [s2off, src.s2.keys]);
     ok('a bad contact address is refused', !(await P('/api/lit/settings', { mailto: 'not an address' })).ok);
-    const set1 = await P('/api/lit/settings', { keys: { s2: 'S2TESTKEY123' }, mailto: 'me@example.org', minScore: 6 });
+    const set1 = await P('/api/lit/settings', { keys: { s2: 'S2TESTKEY123' }, mailto: 'me@example.org', minScore: 6, oldDaily: 2 });
     sv0 = await G('/api/lit/settings');
     ok('a key saved: shown only as set and its last four characters, never whole', set1.ok && sv0.keys.s2.set && sv0.keys.s2.tail === 'Y123' && !JSON.stringify(sv0).includes('S2TESTKEY123') && sv0.mailto === 'me@example.org', sv0);
     ok('the settings file is private', process.platform === 'win32' || (fs.statSync(path.join(T, 'srv', 'data', 'literature', 'settings.json')).mode & 0o777) === 0o600);
@@ -145,7 +145,14 @@ const src = createFakeSources();
     await P('/api/lit/feed/run');
     const feed = await until(async () => { const f = await G('/api/lit/feed'); return !f.status.running && (f.status.runs || []).filter((r) => !r.error).length && f; }, 30000);
     const open = feed.items.filter((e) => e.status === 'new');
-    const fresh = open.filter((e) => e.kind === 'new'), rev = open.filter((e) => e.kind === 'review');
+    const fresh = open.filter((e) => e.kind === 'new' && !e.old), rev = open.filter((e) => e.kind === 'review'), olds = open.filter((e) => e.old);
+    ok('old reports on their own (two a day here, not counted in the new papers): from NTRS, then DTIC through the Internet Archive', olds.length === 2 &&
+      olds.some((e) => e.paper.source === 'ntrs' && /RAM C/.test(e.paper.title)) && olds.some((e) => e.paper.source === 'dtic' && e.paper.dtic && /PLASMA SHEATH/.test(e.paper.title)), olds.map((e) => [e.paper.source, e.paper.title]));
+    const dt = olds.find((e) => e.paper.source === 'dtic');
+    ok('a DTIC report: its AD number, authors and issuing body from the archive record, the PDF at DTIC first, then the archive', dt && /^AD\d+/.test(dt.paper.number) &&
+      dt.paper.authors[0] === 'Papa, Robert J' && /AIR FORCE/.test(dt.paper.venue) && /\/sti\/tr\/pdf\/AD/.test(dt.paper.dticPdf) && /\/download\/DTIC_AD/.test(dt.paper.pdf), dt && dt.paper);
+    ok('the old reports\' queue: a page pulled, the good ones waiting for the next days, the unrelated one not queued', feed.status.archive.queue === 1 &&
+      feed.status.archive.cursors.some((c) => c.id.startsWith('ntrs|') && c.done) && feed.status.archive.cursors.some((c) => c.id.startsWith('dtic|') && c.next === 1), feed.status.archive);
     ok('two new papers (the two about plasma sheaths, best first), one review to fill the third place', fresh.length === 2 && rev.length === 1 && fresh.some((e) => /blackout measurements/.test(e.paper.title)) && fresh.some((e) => /RAM C-II/.test(e.paper.title)), open.map((e) => [e.kind, e.paper.title, e.score]));
     ok('the paper already in Zotero is not pushed; unrelated ones are not', !feed.items.some((e) => /magnetic window|stock|traffic/i.test(e.paper.title)), feed.items.map((e) => e.paper.title));
     const ramc = fresh.find((e) => /RAM C-II/.test(e.paper.title)), closed = fresh.find((e) => /blackout/.test(e.paper.title));
@@ -246,7 +253,7 @@ const src = createFakeSources();
     // ---- what reading turned into ----
     const s7 = await G('/api/lit/stats?days=7');
     ok('the output stats', s7.understanding >= 1 && s7.kept >= 2 && s7.cards.verified === 1 && s7.actions.added === 1 && s7.feed.kept === 2 && s7.feed.reviewed === 1 && /产出/.test(s7.verdict), s7);
-    ok('the morning note counts what is still open', (await G('/api/lit')).morning.new === 0);
+    ok('the morning note counts what is still open', (await G('/api/lit')).morning.new === (await G('/api/lit/feed')).items.filter((e) => e.status === 'new' && e.kind === 'new').length);
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
     srv.kill(); zot.close(); src.close(); await sleep(400);
