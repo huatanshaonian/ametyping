@@ -16,7 +16,9 @@ const HOVER_Z = 16;                         // resting height of a hand above th
 const INK = '#1c1522';
 
 const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+// willReadFrequently: false = stay on the GPU. Left unset, Chromium moves the canvas to software rendering for good once
+// the click-through probe (opaqueAt) has read it a few times, and every frame then costs about three times the CPU.
+const ctx = canvas.getContext('2d', { willReadFrequently: false });
 let scale = 0.36, debug = false;
 let kbOnly = false;                         // self-test: render the keyboard alone
 let RIG, NECK, HIP, TIE;
