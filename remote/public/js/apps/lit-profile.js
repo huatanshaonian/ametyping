@@ -10,6 +10,7 @@
 // 文献 › 产出 (mountStats): what reading turned into over the last week / month.
 import { h } from '../util.js';
 import { get, post } from './lit-api.js';
+import { confirmBox } from '../dialog.js';
 
 const lines = (ta) => ta.value.split('\n').map((s) => s.trim()).filter(Boolean);
 const COVER = { 充足: 'ok', 一般: '', 较少: 'thin' };
@@ -146,14 +147,14 @@ export function mount(el, ctx) {
   }
   async function organize() {
     if (F.story.value.trim().length < 20) { st.textContent = '先在研究自述里多写一点'; F.story.focus(); return; }
-    if (p && p.line && !confirm('重新梳理会按现在的自述重写研究主线和问题（你在上面改过的会被替换）。继续？')) return;
+    if (p && p.line && !(await confirmBox('重新梳理会按现在的自述重写研究主线和问题（你在上面改过的会被替换）。\n继续？', { title: '重新梳理', ok: '继续' }))) return;
     if (!(await save(false))) return;
     const r = await post('/api/lit/profile/organize', {});
     if (r.ok) { running = true; what = 'organize'; st.textContent = '正在梳理你的研究自述…（一两分钟）'; poll(); render(); } else st.textContent = r.msg || '没开始';
   }
   async function fill() {
     if (!F.line.value.trim()) { st.textContent = '先梳理出研究主线（或自己写）'; F.line.focus(); return; }
-    if (p && p.filledAt && !confirm('重新调研会按现在的主线和问题，重写下面的分支、期刊、作者、检索式（你在下面改过的会被替换；主线和问题不动）。继续？')) return;
+    if (p && p.filledAt && !(await confirmBox('重新调研会按现在的主线和问题，重写下面的分支、期刊、作者、检索式（你在下面改过的会被替换；主线和问题不动）。\n继续？', { title: '重新调研', ok: '继续' }))) return;
     if (!(await save(false))) return;
     const r = await post('/api/lit/profile/fill', {});
     if (r.ok) { running = true; what = 'fill'; st.textContent = '正在按主线调研你的文献库、补全下面的内容…（几分钟）'; poll(); render(); } else st.textContent = r.msg || '没开始';

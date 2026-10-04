@@ -2,6 +2,7 @@
 // and pictures the server downloaded from a URL (shared by every device). The choice is per browser.
 import { $, h, prefs } from './util.js';
 import * as sound from './sound.js';
+import { confirmBox } from './dialog.js';
 import * as theme from './theme.js';
 
 const desktop = $('#desktop');
@@ -102,7 +103,7 @@ export function settingsPanel() {
     w.server ? h('button', { class: 'del', type: 'button', title: '从服务器删除', text: '×', onclick: (e) => { e.stopPropagation(); del(w); } }) : null)));
   }
   async function del(w) {
-    if (!confirm(`从服务器删除这张壁纸？（所有设备都看不到它了）`)) return;
+    if (!(await confirmBox('从服务器删除这张壁纸？\n（所有设备都看不到它了）', { title: '删除壁纸', ok: '删除', danger: true }))) return;
     const r = await fetch('/api/wall/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: w.server }) });
     if (r.ok) { sound.play('recycle'); if (prefs.get('wall') === w.id) prefs.set('wall', 'pc'); await refreshServer(); apply(); render(); say('已删除'); }
     else say('删除失败', true);

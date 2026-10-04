@@ -5,6 +5,7 @@ import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
 import * as sound from '../sound.js';
+import { alertBox } from '../dialog.js';
 
 const KIND = { action: ['要办', 'k-action'], notice: ['通知', 'k-notice'], reading: ['推荐', 'k-reading'] };
 const pad = (n) => String(n).padStart(2, '0');
@@ -49,7 +50,7 @@ export function show() {
 
 function mount() {
   const root = h('div', { class: 'mal' });
-  const post = async (what, id) => { const r = await net.post('/api/mail/alerts/' + what, { id }); if (!r.ok && r.msg) alert(r.msg); refresh(); };
+  const post = async (what, id) => { const r = await net.post('/api/mail/alerts/' + what, { id }); if (!r.ok && r.msg) alertBox(r.msg, { title: '邮件提醒', bad: true }); refresh(); };
   function card(a) {
     const [label, cls] = KIND[a.kind] || ['邮件', ''];
     const late = a.deadline && a.deadline < today();

@@ -4,6 +4,7 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 import * as google from './google.js';
 
 let app = null;
@@ -74,7 +75,7 @@ function mount(first) {
   delBtn.addEventListener('click', async () => {
     if (!cur) return;
     const title = (text.value.split('\n').find((l) => l.trim()) || '无标题').slice(0, 30);
-    if (!confirm(`删除「${title}」？`)) return;
+    if (!(await confirmBox(`删除「${title}」？`, { title: '删除记事', ok: '删除', danger: true }))) return;
     clearTimeout(saveT); dirty = false;
     if (cur.id) await fetch('/api/notes/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: cur.id }) });
     cur = null; text.value = ''; text.disabled = true; delBtn.disabled = driveBtn.disabled = true;

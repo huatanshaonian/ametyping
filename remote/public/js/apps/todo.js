@@ -3,6 +3,7 @@
 // bottom with an optional due date. Items the morning report found done show why.
 import { h, prefs } from '../util.js';
 import * as wm from '../wm.js';
+import { confirmBox } from '../dialog.js';
 import * as todos from '../todos.js';
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -30,7 +31,7 @@ function mount({ widget = false } = {}) {
       h('div', { class: 'td-c' }, label,
         h('small', { text: [t.project, t.due ? md(t.due) + ' 截止' : '', t.done && t.doneBy && t.doneBy.startsWith('report:') ? `日报 ${md(t.doneBy.slice(7))} 判定完成` : ''].filter(Boolean).join(' · ') }),
         t.done && t.evidence ? h('small', { class: 'td-ev', text: t.evidence }) : null),
-      h('button', { class: 'td-x', type: 'button', title: '删除', text: '×', onclick: () => { if (confirm(`删除「${t.text}」？`)) todos.remove(t.id); } }));
+      h('button', { class: 'td-x', type: 'button', title: '删除', text: '×', onclick: async () => { if (await confirmBox(`删除「${t.text}」？`, { title: '删除待办', ok: '删除', danger: true })) todos.remove(t.id); } }));
     if (!t.done) label.addEventListener('click', () => {
       const ed = h('input', { class: 'field td-ed', value: t.text, maxlength: 300 });
       const end = (keep) => { if (keep && ed.value.trim() && ed.value.trim() !== t.text) todos.update(t.id, { text: ed.value.trim() }); else render(todos.list()); };

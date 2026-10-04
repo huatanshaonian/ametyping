@@ -5,6 +5,7 @@
 // Anything that changes the account asks for the code again (js/net.js post()).
 import { h } from '../util.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 
 let st = null;
 const listeners = new Set();
@@ -84,7 +85,7 @@ function mount() {
           text: sync.error ? '上次同步失败：' + sync.error : synced ? `上次同步：${when(synced)}` : '还没有同步过（几秒后开始）' }) : null,
         h('p', { class: 'ghint', text: '日历窗口会显示 Google 日历上的日程和 Google 任务；记事本里可以「转存到 Google 云端硬盘」（只能访问本程序自己建的文件）。' }),
         h('div', { class: 'gbtns' }, h('button', { class: 'btn', type: 'button', text: '断开', onclick: async () => {
-          if (!confirm('断开 Google？（授权会被撤销，之后要用需重新连接）')) return;
+          if (!(await confirmBox('断开 Google？\n（授权会被撤销，之后要用需重新连接）', { title: '断开 Google', ok: '断开', danger: true }))) return;
           await net.post('/api/google/disconnect', {}); render('已断开');
         } })));
       for (let i = parts.length - 1; i >= 0; i--) if (!parts[i]) parts.splice(i, 1);     // (replaceChildren would print null)

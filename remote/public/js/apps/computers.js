@@ -4,6 +4,7 @@
 // Removing one revokes its token and disconnects it (its stored conversations stay).
 import { h, icon } from '../util.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 
 const RAW = 'https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install';
 const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -30,7 +31,7 @@ export function panel() {
       h('button', { class: 'btn no', type: 'button', text: '移除', onclick: () => remove(a.name) }))) : [h('div', { class: 'notice', text: '还没有登记的电脑。' })]));
   }
   async function remove(n) {
-    if (!confirm(`移除「${n}」？它的令牌会作废、立刻断开；已经存下的对话记录保留。`)) return;
+    if (!(await confirmBox(`移除「${n}」？\n它的令牌会作废、立刻断开；已经存下的对话记录保留。`, { title: '移除电脑', ok: '移除', danger: true }))) return;
     const r = await net.post('/api/agents/remove', { name: n });
     say(r.ok ? `已移除 ${n}` : r.msg || '移除失败', !r.ok);
     refresh();
