@@ -129,10 +129,18 @@ public static class AmeCon {
     });
   }
   // one navigation key (for the terminal's own menus: /model, /resume, prompts): up down left right enter esc tab,
-  // btab = Shift+Tab (Claude Code: cycle the permission mode)
+  // btab = Shift+Tab (Claude Code: cycle the permission mode); Claude Code's Ctrl combinations: ctrlb (the running
+  // command to the background), ctrls (stash the draft), ctrlxs = Ctrl+X Ctrl+S (send what is queued now)
   public static string KeyPress(uint pid, string name) {
     ushort vk, scan, ch = 0; uint ctrl = 0;
     if (name == "clear") return ClearInput(pid);
+    if (name == "ctrlb" || name == "ctrls" || name == "ctrlxs") return WithConsole(pid, "CONIN$", h => {
+      var l = new List<INPUT_RECORD>();                                        // (0x0008: LEFT_CTRL_PRESSED)
+      if (name == "ctrlb") Key(l, 2, 0x42, 0x30, 0x0008);
+      if (name == "ctrlxs") Key(l, 24, 0x58, 0x2D, 0x0008);
+      if (name != "ctrlb") Key(l, 19, 0x53, 0x1F, 0x0008);
+      return Write(h, l);
+    });
     switch (name) {
       case "btab": vk = 0x09; scan = 0x0F; ch = 9; ctrl = 0x0010; break;   // SHIFT_PRESSED
       case "up": vk = 0x26; scan = 0x48; break;

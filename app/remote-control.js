@@ -9,7 +9,8 @@ const { spawn } = require('child_process');
 
 const { modeFromScreen } = require('./permission-mode');
 
-const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab']);
+// (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now)
+const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'ctrlb', 'ctrls', 'ctrlxs']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // deps: { sessions, permissions, bridge, procAlive, pushBubble, home }

@@ -60,6 +60,6 @@ module.exports = {
   },
   // (typed without Enter: tests)
   type: (pid, text) => call(`type ${pid | 0} ${b64(text)}`, 15000),
-  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab|btab|clear)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
+  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs|clear)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
   stop: () => { try { ps && ps.stdin.end(); ps && ps.kill(); } catch {} ps = null; },
 };
