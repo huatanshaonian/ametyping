@@ -11,7 +11,18 @@ export function mount(el, ctx) {
   const runBtn = h('button', { class: 'btn', type: 'button', text: '现在推送', title: '马上按画像找一次新文献（平时每个工作日早上自动）' });
   const st = h('span', { class: 'lit-st' });
   const list = h('div', { class: 'lf-list' });
-  el.append(h('div', { class: 'lit-sub' }, runBtn, st), list);
+  // which way of finding brings the papers worth reading: the last week's runs added up
+  const yieldEl = h('details', { class: 'lf-yield', hidden: true });
+  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, list);
+  function showYield(runs) {
+    const found = {}, good = {};
+    for (const r of runs) { for (const [k, n] of Object.entries(r.sources || {})) found[k] = (found[k] || 0) + n; for (const [k, n] of Object.entries(r.good || {})) good[k] = (good[k] || 0) + n; }
+    const keys = Object.keys(found).sort((a, b) => (good[b] || 0) - (good[a] || 0) || found[b] - found[a]);
+    yieldEl.hidden = !keys.length;
+    yieldEl.replaceChildren(h('summary', { text: `各来源的收获（最近 ${runs.length} 次推送）` }),
+      h('div', { class: 'lf-tip', text: '抓到多少篇 / 其中够格（6 分以上）的有几篇。长期没有够格的来源，可以在「画像」里调整。' }),
+      ...keys.map((k) => h('div', { class: 'lf-y' }, h('b', { text: k }), h('span', { text: `抓到 ${found[k]} 篇` }), h('span', { class: good[k] ? 'ok' : '', text: `够格 ${good[k] || 0}` }))));
+  }
   let questions = [], items = [], canWrite = true, showSpare = false;
 
   async function refresh() {
@@ -23,6 +34,7 @@ export function mount(el, ctx) {
     st.classList.toggle('bad', !!(last && last.error));
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
+    showYield((s.runs || []).filter((r) => !r.error && r.sources));
     render();
   }
   function render() {

@@ -31,13 +31,14 @@ function createArxiv({ http, base = 'https://export.arxiv.org' }) {
   let last = 0;
   const gap = async () => { const w = last + 3100 - Date.now(); if (w > 0) await new Promise((r) => setTimeout(r, w)); last = Date.now(); };
   return {
-    // cats: ['physics.plasm-ph', ...]; words: optional, all must be in the abstract or title
-    async recent(cats, words = '', max = 40) {
+    // cats: ['physics.plasm-ph', ...]; phrases: optional -- only papers with one of them in the title or abstract
+    async recent(cats, phrases = [], max = 40) {
       if (!cats.length) return [];
       await gap();
       const cat = cats.map((c) => `cat:${c}`).join(' OR ');
-      const w = String(words || '').trim();
-      const query = w ? `(${cat}) AND (${w.split(/\s+/).map((x) => `all:${x}`).join(' AND ')})` : cat;
+      const ps = (Array.isArray(phrases) ? phrases : [phrases]).map((p) => String(p).replace(/["()]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 15);
+      const any = ps.map((p) => (/\s/.test(p) ? `ti:"${p}" OR abs:"${p}"` : `ti:${p} OR abs:${p}`)).join(' OR ');
+      const query = any ? `(${cat}) AND (${any})` : cat;
       const s = new URLSearchParams({ search_query: query, sortBy: 'submittedDate', sortOrder: 'descending', max_results: String(max) });
       const r = await http.get(`${base}/api/query?${s}`);
       if (r.status !== 200) throw new Error('arXiv 返回 ' + r.status);

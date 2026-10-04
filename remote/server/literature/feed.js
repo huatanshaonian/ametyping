@@ -15,7 +15,14 @@ const { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt } = require('./prom
 const { fingerprint, paper } = require('./sources/normalize');
 
 const DAY_MS = 86400e3;
-const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
+function rotate(list, n, day) {
+  if (list.length <= n) return list.slice();
+  const at = (day * n) % list.length;
+  return [...list.slice(at), ...list.slice(0, at)].slice(0, n);
+}
+const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
+const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
   const file = path.join(dir, 'feed.json');
@@ -31,30 +38,40 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   const pushedOn = (date) => entries().filter((e) => e.date === date && e.status !== 'spare');
 
   // ---- gathering ----
+  // Each source's count goes into the run's log (which way brings the papers worth reading shows after a few days).
+  // The search phrases are used a few a day in turn (all of them come round), without quotes -- a quoted phrase is an
+  // exact-phrase search on OpenAlex, too narrow for finding; the model's scoring does the narrowing. arXiv's categories
+  // are broad: only papers with one of the profile's phrases in their title or abstract.
   async function gather(since) {
     const prof = profile.get() || {}, f = prof.follow || {};
-    const out = [], errors = [];
-    const tryIt = async (name, fn) => { try { const r = await fn(); if (r) out.push(...r); } catch (e) { errors.push(`${name}：${e.message}`); } };
+    const out = [], errors = [], counts = {};
+    const tryIt = async (name, fn) => {
+      try { const r = (await fn()) || []; for (const c of r) c.via = name; out.push(...r); counts[name] = (counts[name] || 0) + r.length; }
+      catch (e) { errors.push(`${name}：${e.message}`); counts[name] = counts[name] || 0; }
+    };
+    const day = Math.floor(now() / DAY_MS);
     const issns = [...new Set((f.venues || []).flatMap((v) => v.issns || []))];
     const S = sources;
     if (S.openalex) {
-      await tryIt('OpenAlex 期刊', () => S.openalex.byIssn(issns, since));
-      await tryIt('OpenAlex 作者', () => S.openalex.byAuthors((f.authors || []).map((a) => a.openalex).filter(Boolean), since));
-      await tryIt('OpenAlex 引用', () => S.openalex.citing((f.seeds || []).map((s) => s.openalex).filter(Boolean), since));
-      for (const k of (f.keywords || []).slice(0, 4)) await tryIt('OpenAlex 检索', () => S.openalex.search(k, since));
+      await tryIt('期刊', () => S.openalex.byIssn(issns, since));
+      await tryIt('作者', () => S.openalex.byAuthors((f.authors || []).map((a) => a.openalex).filter(Boolean), since));
+      await tryIt('引用核心文献', () => S.openalex.citing((f.seeds || []).map((s) => s.openalex).filter(Boolean), since));
+      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), cfg.searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
     }
-    if (S.crossref) for (const i of issns.slice(0, 8)) await tryIt('Crossref', () => S.crossref.byIssn(i, since, 20));
-    if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryIt('AIAA ' + c, () => S.aiaa.toc(c));
-    if (S.arxiv && (f.arxiv || []).length) await tryIt('arXiv', () => S.arxiv.recent(f.arxiv, '', 40));
+    if (S.crossref) for (const i of rotate(issns, 8, day)) await tryIt('Crossref', () => S.crossref.byIssn(i, since, 20));
+    if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryIt('AIAA 目录', () => S.aiaa.toc(c));
+    if (S.arxiv && (f.arxiv || []).length) {
+      const phrases = [...new Set([...(prof.topics || []).flatMap((t) => t.keywords || []), ...(f.keywords || [])].map(unquote).filter((w) => w.length > 2))];
+      if (phrases.length) await tryIt('arXiv', () => S.arxiv.recent(f.arxiv, rotate(phrases, 15, day), 60));
+    }
     // the papers the mail triage picked (titles and links only): looked up on OpenAlex by title
     const M = mail();
     if (M && M.triage) {
       const picks = M.triage.alerts().filter((a) => a.kind === 'reading' && now() - (a.at || 0) < 7 * DAY_MS).flatMap((a) => a.picks || []).slice(0, 8);
-      for (const p of picks) {
-        out.push(paper({ source: 'mail', sid: fingerprint(p), title: p.title, url: p.url, abstract: '', venue: '邮件推荐' }));
-      }
+      for (const p of picks) out.push({ ...paper({ source: 'mail', sid: fingerprint(p), title: p.title, url: p.url, abstract: '', venue: '邮件推荐' }), via: '邮件推荐' });
+      counts['邮件推荐'] = picks.length;
     }
-    return { cands: out, errors };
+    return { cands: out, errors, counts };
   }
   // drop what is in the library, was shown before, or is old; merge the same paper from several sources
   function dedupe(cands, maxAgeDays = 60) {
@@ -66,8 +83,10 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       if (st.seen[fp] || (c.doi && mirror.findDoi(c.doi)) || mirror.findTitle(c.title)) continue;
       if (c.date && c.date < oldest && c.source !== 'mail' && c.type !== 'report') continue;
       const prev = byId.get(c.id) || byFp.get(fp);
-      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), c.source])]; continue; }
-      const x = { ...c, sources: [c.source] };
+      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), c.source])];
+        prev.vias = [...new Set([...(prev.vias || []), c.via].filter(Boolean))]; continue; }
+      const { via, ...rest } = c;
+      const x = { ...rest, sources: [c.source], vias: via ? [via] : [] };
       byId.set(c.id, x); byFp.set(fp, x);
     }
     return [...byId.values()];
@@ -147,8 +166,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       } else if (want > 0) {
         const last = st.runs.filter((r) => !r.error).map((r) => r.date).sort().pop();
         const since = ymd(Math.min(now() - 3 * DAY_MS, last ? Date.parse(last) - 2 * DAY_MS : now() - 14 * DAY_MS));
-        const { cands, errors } = await gather(since);
-        log1.errors = errors; log1.found = cands.length;
+        const { cands, errors, counts } = await gather(since);
+        log1.errors = errors; log1.found = cands.length; log1.sources = counts;
         let list = dedupe(cands);
         await enrich(list);
         list = prefilter(list);
@@ -156,6 +175,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         log1.ranked = ranked.length;
         for (const r of ranked) st.seen[fingerprint(r.c)] = now();
         const good = ranked.filter((r) => r.score >= minScore);
+        // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
+        log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
         for (const r of good.slice(0, want)) { add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, why: r.why, fun: r.fun }); log1.picked++; }
         // the next best few, kept aside (更多 shows them)
         for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, why: r.why, fun: r.fun, status: 'spare' });
@@ -226,4 +247,4 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   return { run, tick, start, stop: () => timer && clearInterval(timer), list, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }
 
-module.exports = { createFeed, ymd };
+module.exports = { createFeed, ymd, rotate, unquote };

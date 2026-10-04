@@ -15,7 +15,7 @@ process.stdin.on('end', () => {
     const key = (/^- \[([A-Z0-9]{8})\]/m.exec(prompt) || [])[1] || '';
     a = { summary: '再入飞行器等离子体鞘套的电磁散射与 RCS 建模', topics: [{ name: '等离子体鞘套', keywords: ['plasma sheath', 'reentry', 'electron density'] }],
       questions: [{ text: '鞘套电子密度剖面在 RCS 计算里怎么取', why: '最近的日报' }, { text: 'RCS 计算结果拿什么验证', why: '批注' }],
-      venues: ['IEEE Transactions on Antennas and Propagation', 'AIAA Journal'], authors: ['Sun, Wei'], keywords: ['plasma sheath RCS'], arxiv: ['physics.plasm-ph'], ntrs: ['reentry plasma attenuation'], seeds: key ? [key] : [] };
+      venues: ['IEEE Transactions on Antennas and Propagation', 'AIAA Journal'], authors: ['Sun, Wei'], keywords: ['"plasma sheath" RCS', 'communication blackout', 'electron density profile', 'hypersonic wake', 'plasma FDTD'], arxiv: ['physics.plasm-ph'], ntrs: ['reentry plasma attenuation'], seeds: key ? [key] : [] };
   } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.score) {
     const refs = [...prompt.matchAll(/^### (C\d+)\n题目：(.*)$/gm)];
     a = { items: refs.map((m) => /plasma|sheath/i.test(m[2]) ? { ref: m[1], score: /blackout/i.test(m[2]) ? 9 : 8, question: 1, why: '给出了鞘套电子密度的实测剖面，可作为 RCS 计算输入', fun: false }

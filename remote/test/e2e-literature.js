@@ -109,6 +109,13 @@ const src = createFakeSources();
     const ramc = fresh.find((e) => /RAM C-II/.test(e.paper.title)), closed = fresh.find((e) => /blackout/.test(e.paper.title));
     ok('the same paper from OpenAlex and AIAA is one, with the open PDF link; the why and the question number', ramc.paper.sources.sort().join() === 'aiaa,openalex' && /\/pdf\/new1\.pdf$/.test(ramc.paper.pdf) && ramc.question === 1 && /剖面/.test(ramc.why), ramc);
     ok('the review: recall questions, from the annotated paper', rev[0].key === 'AAAAAAA1' && rev[0].mode === 'recall' && rev[0].recall.length === 2, rev[0]);
+    const searches = src.hits.filter((h) => h.startsWith('/oa/works?') && /[?&]search=/.test(h));
+    ok('search phrases: 4 of the 5 today, without their quotes', searches.length === 4 && !searches.some((h) => /%22|"/.test(h)), searches);
+    const ax = src.hits.find((h) => h.startsWith('/arxiv/api/query')) || '';
+    ok('arXiv: the categories AND one of the profile\'s phrases', /cat%3Aphysics\.plasm-ph/.test(ax) && /abs%3A%22plasma\+sheath%22/.test(ax), ax);
+    const run1 = feed.status.runs.filter((r) => !r.error).pop();
+    ok('the run log counts each way of finding, and the good ones it brought', run1.sources['期刊'] === 3 && run1.sources['引用核心文献'] === 1 && run1.sources['AIAA 目录'] === 1 &&
+      run1.good['期刊'] === 1 && run1.good['引用核心文献'] === 1 && run1.good['AIAA 目录'] === 1, run1);
     ok('the sources were asked: journals by ISSN, papers citing the key one, AIAA\'s feed, arXiv', ['/oa/works?filter=primary_location.source.issn%3A0018-926X', 'cites%3AW9', '/aiaa/action/showFeed', '/arxiv/api/query'].every((s) => src.hits.some((h) => h.includes(s))), src.hits);
 
     // ---- 收下 ----

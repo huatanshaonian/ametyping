@@ -97,6 +97,8 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('文献')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     chk('今日: the picks with why and question, the review with its recall questions', await waitFor("document.querySelectorAll('.lf-i').length >= 3") &&
       /Q1：鞘套电子密度剖面/.test(await evalJs("document.querySelector('.lf-list').textContent")) && await evalJs("document.querySelectorAll('.lf-ans').length === 2"), await evalJs("(document.querySelector('.lf-list')||{}).textContent"));
+    chk('the yield of each way of finding is shown', await evalJs("!document.querySelector('.lf-yield').hidden && /期刊/.test(document.querySelector('.lf-yield').textContent) && /够格 1/.test(document.querySelector('.lf-yield').textContent)"),
+      await evalJs("(document.querySelector('.lf-yield')||{}).textContent"));
     chk('no stray "null" text in the list', !(await evalJs("/null/.test(document.querySelector('.lf-list').textContent)")), 0);
     await shot('80-lit-feed.png');
     await evalJs("[...document.querySelectorAll('.lf-i')].find(i => i.textContent.includes('RAM C-II')).querySelector('.btn.go').click()");
