@@ -574,6 +574,7 @@ function update(dt) {
   const gx = gazeOn ? Math.max(-1, Math.min(1, (mouse.x - NECK.x) / 700)) : 0;
   const gy = gazeOn ? Math.max(-1, Math.min(1, (mouse.y - (NECK.y - 120)) / 500)) : 0;
   head.gx = ease(head.gx || 0, gx, 5, dt); head.gy = ease(head.gy || 0, gy, 5, dt);
+  stepEye(gx, gy, dt);
   const idleRot = mood.sleeping ? 0.09 : mood.face === 'half' ? 0.04 : Math.sin(t / 2100) * 0.02 + head.gx * 0.075;
   const patRot = pat.on ? Math.max(-0.06, Math.min(0.06, (mouse.x - NECK.x - body.x) / 2500)) : 0;
   head.rot = ease(head.rot, lookDown ? side * 0.07 : idleRot + patRot, mood.sleeping ? 1.5 : 8, dt);
@@ -719,8 +720,62 @@ function pickGaze() {
   }
   return (gazeDir = GAZE_DIRS[idx]);
 }
+// Smooth gaze: instead of swapping between the 8 painted eyes, one iris disc slides under the lids (three layers:
+// eye white, iris, lid lines -- assets/rig/gaze_smooth.js). The iris passes through the painted positions, so at the
+// 8 directions it looks like the painted patch. Needs the layer art; without it (and for KAngel) the eyes snap as before.
+const GS = window.GAZE_SMOOTH;
+const eye = { x: 0, y: 0, amt: 0, cv: null };          // iris offset from rest (rig px), 0..1 how far it is turned
+const EYE_RES = 2;                                      // the eye is composed at 2x so the iris can sit between pixels
+const smoothGaze = () => !!(GS && img.gaze_white && img.gaze_iris && img.gaze_lid && !KA.on);
+// where the iris should be for a gaze vector (gx, gy in -1..1): direction between the two nearest painted offsets,
+// distance grows with how far the cursor is from her face (full turn from 0.6 on)
+function gazeOffset(gx, gy) {
+  const m = Math.hypot(gx, gy);
+  if (m < 1e-3) return { x: 0, y: 0, amt: 0 };
+  const ang = (Math.atan2(gy, gx) / (Math.PI / 4) + 8) % 8, i = Math.floor(ang) % 8, f = ang - Math.floor(ang);
+  const a = GS.offset[GAZE_DIRS[i]], b = GS.offset[GAZE_DIRS[(i + 1) % 8]], amt = smooth(Math.min(1, m / 0.6));
+  return { x: (a[0] + (b[0] - a[0]) * f) * amt, y: (a[1] + (b[1] - a[1]) * f) * amt, amt };
+}
+function stepEye(gx, gy, dt) {                          // eyes are quicker than the head: they get there first
+  if (!smoothGaze()) return;
+  const o = gazeOffset(gx, gy);
+  const k = GS.speed || 16;
+  eye.x = ease(eye.x, o.x, k, dt); eye.y = ease(eye.y, o.y, k, dt); eye.amt = ease(eye.amt, o.amt, k, dt);
+}
+function drawSmoothGaze() {
+  if (!eye.cv) { eye.cv = document.createElement('canvas'); eye.cv.width = GS.w * EYE_RES; eye.cv.height = GS.h * EYE_RES; }
+  const key = eye.x.toFixed(2) + ',' + eye.y.toFixed(2) + ',' + eye.amt.toFixed(3);
+  if (key !== eye.key) { eye.key = key; composeEye(); }   // the cursor is still most of the time: reuse the composed eye
+  ctx.drawImage(eye.cv, OX + GS.x * CS, OY + GS.y * CS, GS.w * CS, GS.h * CS);
+}
+function composeEye() {
+  const g = eye.cv.getContext('2d');
+  g.setTransform(EYE_RES, 0, 0, EYE_RES, 0, 0);
+  g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, GS.w, GS.h);
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(img.gaze_white, 0, 0, GS.w, GS.h);
+  g.globalCompositeOperation = 'source-atop';           // the iris only shows inside the eye opening
+  // Foreshortening, as painted: the side of the iris she looks toward is squeezed (the rim comes in to ~2/3 of its
+  // distance from the pupil at a full sideways turn), the far side stays (grows a little). An affine map cannot be
+  // lopsided, so the disc is drawn as two halves split at the pupil, each scaled along the gaze axis by its own
+  // factor; points on the split line do not move under either, so the halves meet without a seam.
+  const d = Math.hypot(eye.x, eye.y), turn = Math.min(1, d / GS.turn), phi = d > 1e-3 ? Math.atan2(eye.y, eye.x) : 0;
+  const u = 1 + GS.restGrow * (1 - eye.amt);            // the painted neutral iris is a touch bigger than the turned ones
+  const px = GS.pupil[0] + eye.x, py = GS.pupil[1] + eye.y;
+  for (const [s, x0] of [[1 - GS.squeeze * turn, -0.5], [1 + GS.stretch * turn, -200]]) {   // near half, far half
+    g.save();
+    g.translate(px, py); g.rotate(phi);
+    g.beginPath(); g.rect(x0, -200, 200.5, 400); g.clip();
+    g.scale(u * s, u); g.rotate(-phi); g.translate(-GS.pupil[0], -GS.pupil[1]);
+    g.drawImage(img.gaze_iris, GS.irisX, GS.irisY, GS.irisW, GS.irisH);
+    g.restore();
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.drawImage(img.gaze_lid, 0, 0, GS.w, GS.h);
+}
 function drawGaze() {
   if (!RIG.gaze || mood.face !== 'neutral') return;
+  if (smoothGaze()) return drawSmoothGaze();
   const d = pickGaze();
   if (!d) return;
   const g = RIG.gaze[d];
@@ -1260,6 +1315,7 @@ function drawClaudeBubble() {
   HIP = { x: NECK.x, y: DESK_Y };
   TIE = { L: toScene(RIG.tie.L), R: toScene(RIG.tie.R) };
   if (RIG.props && RIG.props.mug) loadImg('mug', 'assets/rig/mug_hands.png').catch(() => {});
+  if (GS) for (const n of ['gaze_white', 'gaze_iris', 'gaze_lid']) loadImg(n, `assets/rig/${n}.png`).catch(() => {});   // smooth gaze (optional art)
   const names = ['head', 'tailL', 'tailR', 'torso', ...Object.keys(RIG.faces || {}).map((f) => 'face_' + f),
     ...Object.keys(RIG.gaze || {}).map((g) => 'gaze_' + g), ...(RIG.faceTop || []).map((f) => 'face_' + f + '_top'),
     ...(RIG.frontHair ? ['front_hair'] : [])];
