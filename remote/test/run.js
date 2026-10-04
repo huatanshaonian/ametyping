@@ -1,5 +1,6 @@
 // Runs the dashboard's end-to-end tests (each starts a throwaway server + agent in a temp folder; nothing real is
-// touched). Not in git (the folder is ignored). From remote/:  node test/run.js
+// touched). From remote/:  node test/run.js   (after pulling: npm install first -- a missing new dependency fails tests
+// in ways that look unrelated)
 //
 // Other tests here, run one by one:
 //   ui-*.js (ui-mail.js too)  headless Chrome screenshots + checks (needs Chrome; CHROME=<path> to override);
