@@ -12,6 +12,7 @@ import * as feedTab from './lit-feed.js';
 import * as libTab from './lit-library.js';
 import * as kbTab from './lit-kb.js';
 import * as profTab from './lit-profile.js';
+import * as reviewTab from './lit-review.js';
 import { openReader } from './lit-reader.js';
 import { open as openControl } from './control.js';
 
@@ -25,7 +26,7 @@ export function open(tab) {
 }
 
 function mount(first) {
-  const TABS = [['feed', '今日', feedTab], ['library', '文献库', libTab], ['kb', '知识库', kbTab], ['profile', '画像', profTab], ['stats', '产出', profTab]];
+  const TABS = [['feed', '今日', feedTab], ['library', '文献库', libTab], ['kb', '知识库', kbTab], ['profile', '画像', profTab], ['review', '回顾', reviewTab], ['stats', '产出', profTab]];
   const status = h('span', { class: 'lit-st' });
   const authBtn = h('button', { class: 'btn go', type: 'button', text: '授权写入 Zotero', hidden: true, title: '收下文献、写回卡片需要 Zotero 的写入授权：点了之后到 Zotero 的网页桌面里点「始终允许」' });
   const authNote = h('span', { class: 'lit-auth', hidden: true });
@@ -70,6 +71,7 @@ function mount(first) {
     authBtn.hidden = !!z.canWrite || !!z.authorizing;
     if (z.authorizing) { clearTimeout(authT); authT = setTimeout(refreshStatus, 3000); }
     for (const b of tabBtns) if (b.dataset.tab === 'kb') b.textContent = s.proposals ? `知识库（${s.proposals}）` : '知识库';
+    for (const b of tabBtns) if (b.dataset.tab === 'review') b.textContent = s.reviews ? `回顾（${s.reviews}）` : '回顾';
   }
   let authT = null;
   authBtn.addEventListener('click', async () => {
@@ -78,7 +80,7 @@ function mount(first) {
   });
 
   const off = onLit((what) => {
-    if (/^(zotero|library|proposals|kb)$/.test(what)) refreshStatus();
+    if (/^(zotero|library|proposals|kb|review)$/.test(what)) refreshStatus();
     for (const v of mounted.values()) if (v.onLit) v.onLit(what);
   });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 700));

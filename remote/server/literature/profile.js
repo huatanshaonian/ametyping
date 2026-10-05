@@ -25,12 +25,15 @@ const uniq = (a) => [...new Set(a.map((s) => String(s).trim()).filter(Boolean))]
 const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
 
 // s2: Semantic Scholar (sources/s2.js), the second search engine when working out the questions (optional)
-function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports = () => null, log = () => {} }) {
+// onEdit(before, after, by): the line and questions before and after a change by the user or a 梳理 (history.js)
+function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports = () => null, onEdit = () => {}, log = () => {} }) {
   const file = path.join(dir, 'profile.json');
   let p = null; try { p = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
   const blank = () => ({ story: '', line: '', questions: [], unclear: [], suggestions: [], topics: [], follow: { venues: [], authors: [], keywords: [], arxiv: [], ntrs: [], seeds: [] } });
   const save = () => { p.updated = Date.now(); fs.writeFileSync(file + '.tmp', JSON.stringify(p, null, 1)); fs.renameSync(file + '.tmp', file); };
   let job = null;
+  const snap = () => ({ line: (p && p.line) || '', questions: ((p && p.questions) || []).map((q) => ({ id: q.id, text: q.text, dim: q.dim, status: q.status })) });
+  const edited = (before, by) => { try { onEdit(before, snap(), by); } catch (e) { log('文献：问题历史没记上：' + e.message); } };
 
   // the whole library as the model is shown it: counts, then every item (annotated first, then the newest)
   function library() {
@@ -151,7 +154,7 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
     if (!p || String(p.story || '').trim().length < 20) return { ok: false, msg: '先写下研究自述并保存（多写一点）' };
     job = { running: true, what: 'organize', step: '读自述', started: Date.now() };
     (async () => {
-      const work = recentWork();
+      const work = recentWork(), was = snap();
       const plan = await ask(planPrompt(p.story, work, library().collections), PLAN_SCHEMA);
       job.step = '翻文献库、检索近几年的文献';
       const lib = libraryAbout([...(plan.libWords || []), ...(plan.queries || []).flatMap((q) => unquote(q).split(' '))]).map((x, i) => ({ ref: 'L' + (i + 1), key: x.it.key, title: x.it.title, venue: x.it.venue, year: x.it.year, abstract: x.it.abstract, notes: x.notes }));
@@ -170,6 +173,7 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
       p.organized = { at: Date.now(), library: lib.length, fresh: fresh.length };
       p.organizedAt = Date.now(); p.confirmed = false;
       save();
+      edited(was, 'organize');
       log(`文献：研究自述已梳理（库内 ${lib.length} 篇、近几年 ${fresh.length} 篇文献为据；${p.questions.length} 个问题，待修改）`);
     })().catch((e) => { job.error = e.message; log('文献：梳理研究自述失败：' + e.message); }).finally(() => { job.running = false; });
     return { ok: true };
@@ -181,7 +185,7 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
     if (!mirror.items().length) return { ok: false, msg: '还没有读到 Zotero 文献库' };
     job = { running: true, what: 'fill', started: Date.now() };
     (async () => {
-      const qs = (p.questions || []).filter((q) => q.status !== 'done').map((q) => q.text);
+      const qs = (p.questions || []).filter((q) => q.status !== 'done' && q.status !== 'shelved').map((q) => q.text);
       const d = await ask(fillPrompt(p.line, qs, library(), recentWork()), FILL_SCHEMA);
       const next = await shape(d);
       await resolve(next);
@@ -195,11 +199,12 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
   // the user's edits: any of line, questions (in order of importance), suggestions, topics, follow; confirm marks it confirmed
   async function update(d) {
     if (!p) p = blank();
+    const was = snap();
     if (typeof d.story === 'string') p.story = d.story.slice(0, 30000);
     if (typeof d.line === 'string') p.line = d.line.slice(0, 6000);
     if (Array.isArray(d.unclear)) p.unclear = d.unclear.map((x) => String(x).slice(0, 300)).filter(Boolean).slice(0, 6);
     if (Array.isArray(d.questions)) p.questions = d.questions.slice(0, 20).map((q) => ({ id: q.id || id(), dim: DIMS.includes(q.dim) ? q.dim : '', text: String(q.text || '').trim().slice(0, 300),
-      why: String(q.why || '').slice(0, 300), state: String(q.state || '').slice(0, 600), status: q.status === 'done' ? 'done' : 'open',
+      why: String(q.why || '').slice(0, 300), state: String(q.state || '').slice(0, 600), status: q.status === 'done' || q.status === 'shelved' ? q.status : 'open',
       refs: (Array.isArray(q.refs) ? q.refs : []).slice(0, 6).map((r) => ({ key: /^[A-Z0-9]{8}$/.test(r.key || '') ? r.key : undefined, title: String(r.title || '').slice(0, 300), year: +r.year || undefined,
         venue: r.venue ? String(r.venue).slice(0, 120) : undefined, url: /^https?:\/\//.test(r.url || '') ? String(r.url).slice(0, 500) : undefined, doi: r.doi ? String(r.doi).slice(0, 200) : undefined })).filter((r) => r.title) })).filter((q) => q.text);
     if (Array.isArray(d.suggestions)) p.suggestions = d.suggestions.slice(0, 8).map((q) => ({ id: q.id || id(), text: String(q.text || '').slice(0, 300), why: String(q.why || '').slice(0, 300) })).filter((q) => q.text);
@@ -224,6 +229,7 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
     }
     if (d.confirm) p.confirmed = true;
     save();
+    edited(was, 'user');
     return { ok: true, profile: p };
   }
   const get = () => p;
@@ -238,8 +244,10 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
   const state = () => ({ running: !!(job && job.running), what: (job && job.what) || '', step: job && job.running ? job.step || '' : '', error: job && !job.running ? job.error || '' : '' });
   // the words that say what the user cares about (for picking pages, review, prefiltering)
   const words = () => p ? uniq([...(p.topics || []).flatMap((t) => t.keywords || []), ...((p.follow || {}).keywords || [])]) : [];
-  const openQuestions = () => (p && p.questions || []).filter((q) => q.status !== 'done');
-  return { get, organize, fill, update, state, words, openQuestions, library, linkRefs };
+  const openQuestions = () => (p && p.questions || []).filter((q) => q.status !== 'done' && q.status !== 'shelved');
+  // a review's approved changes (review.js records them in the history itself)
+  function replace({ questions, line }) { if (!p) return; if (Array.isArray(questions)) p.questions = questions; if (typeof line === 'string') p.line = line; save(); }
+  return { get, organize, fill, update, state, words, openQuestions, library, linkRefs, replace, frontier };
 }
 
 module.exports = { createProfile, AIAA };

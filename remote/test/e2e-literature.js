@@ -315,6 +315,53 @@ const src = createFakeSources();
     await P('/api/lit/feed/run');
     const svE = await until(async () => (await G('/api/lit/feed')).items.find((e) => e.key === svItem.key), 30000);
     ok('the daily push offers it first when there is room: unread, from the survey', svE && svE.kind === 'review' && svE.mode === 'catchup' && svE.survey, svE);
+
+    // ---- 回顾: the questions' history; a monthly review approved change by change; a quarter's with the line ----
+    let rv = await G('/api/lit/reviews');
+    const openQs = () => G('/api/lit/profile').then((r) => r.profile.questions.filter((q) => q.status !== 'done' && q.status !== 'shelved'));
+    const qz = await openQs();
+    ok('the history so far: the questions the 梳理 raised (and the user\'s edits), the line', rv.has && !rv.items.length && qz.length >= 3 && qz.every((q) => rv.graph.nodes.some((n) => n.id === q.id && n.status === 'open' && n.events[0])) &&
+      rv.graph.nodes.some((n) => n.events.some((e) => e.by === 'organize' && e.type === '提出')) && rv.graph.line.length >= 1, rv.graph);
+    ok('monthly review started', (await P('/api/lit/review/start', { kind: 'month' })).ok);
+    rv = await until(async () => { const r = await G('/api/lit/reviews'); return r.job && !r.job.running && r.items.length && r; }, 30000);
+    let r1 = await G('/api/lit/review?id=' + rv.items[0].id);
+    const pr = fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => /progress/.test(x.kind)).pop().prompt;
+    ok('the model was shown the period: the questions, what changed, the cards read, what was kept from the push', /Q1【/.test(pr) && /这段时间读过、做了卡片的文献/.test(pr) && /用户自己的理解：它测了鞘套/.test(pr) && /每日推送里收下的/.test(pr) && /已经发生的变动/.test(pr));
+    ok('a draft: progress on every question, four changes (the nonsense ones dropped), no change of the line in a month; nothing applied yet', r1.status === 'draft' && r1.progress.length === qz.length && r1.changes.map((c) => c.type).join() === '细化,分叉,搁置,新增' &&
+      !r1.line.change && r1.next.length === 1 && (await openQs()).map((q) => q.text).join() === qz.map((q) => q.text).join() && (await G('/api/lit')).reviews === 1, r1);
+    ok('a second review while one waits: refused', !(await P('/api/lit/review/start', { kind: 'month' })).ok);
+    const cid = (t) => r1.changes.find((c) => c.type === t).id;
+    ok('decided: 细化 accepted reworded, 分叉 accepted, 搁置 rejected, 新增 left open', (await P('/api/lit/review/decide', { id: r1.id, cid: cid('细化'), decision: 'accepted', text: '剖面用 RAM C 实测' })).ok &&
+      (await P('/api/lit/review/decide', { id: r1.id, cid: cid('分叉'), decision: 'accepted' })).ok && (await P('/api/lit/review/decide', { id: r1.id, cid: cid('搁置'), decision: 'rejected' })).ok);
+    const ap = await P('/api/lit/review/apply', { id: r1.id });
+    const qa = await openQs();
+    ok('应用: only the accepted ones are in the profile -- Q1 reworded, Q2 replaced by its two children in place, Q3 still there, no new question', ap.ok && ap.applied === 2 && qa.length === qz.length + 1 && qa[0].id === qz[0].id && qa[0].text === '剖面用 RAM C 实测' &&
+      qa[1].text === '用飞行试验数据验证' && qa[2].text === '用解析解验证' && qa[3].id === qz[2].id && !qa.some((q) => /低空怎么取/.test(q.text)) && !qa.some((q) => q.id === qz[1].id), qa.map((q) => q.text));
+    rv = await G('/api/lit/reviews');
+    const nd = (id) => rv.graph.nodes.find((n) => n.id === id);
+    ok('the history: Q1 细化 (before -> after, the reason, by the review), Q2 分叉 into two that come from it', nd(qz[0].id).events.some((e) => e.type === '细化' && e.by === 'review' && e.before === qz[0].text && e.reason && e.review === r1.id) &&
+      nd(qz[1].id).status === 'split' && nd(qz[1].id).to.length === 2 && nd(qa[1].id).from[0] === qz[1].id && rv.items[0].status === 'done' && rv.items[0].accepted === 2, rv.graph.nodes);
+    const kbRev = fs.readFileSync(path.join(KB, 'reviews', r1.id + '.md'), 'utf8'), kbMap = fs.readFileSync(path.join(KB, 'reviews', '问题演化.md'), 'utf8');
+    ok('filed in the knowledge base: the review as decided, and the questions\' graph (Mermaid)', /✅ 接受（改写过） \*\*细化\*\*/.test(kbRev) && /❌ 没采纳 \*\*搁置\*\*/.test(kbRev) && /## 下一步/.test(kbRev) && /```mermaid\nflowchart LR/.test(kbMap) && /-->\|分叉\|/.test(kbMap), kbMap);
+    // the user's own edit on the 画像 page is history too
+    const pe = (await G('/api/lit/profile')).profile;
+    pe.questions.find((q) => q.id === qz[2].id).text = '我自己改过的问题';
+    ok('an edit on the 画像 page is recorded as the user\'s', (await P('/api/lit/profile/save', { questions: pe.questions })).ok &&
+      (await G('/api/lit/reviews')).graph.nodes.find((n) => n.id === qz[2].id).events.some((e) => e.type === '修改' && e.by === 'user' && e.text === '我自己改过的问题'));
+    // a quarter: the literature searched again, the line may change
+    ok('quarterly review started', (await P('/api/lit/review/start', { kind: 'quarter' })).ok);
+    rv = await until(async () => { const r = await G('/api/lit/reviews'); return r.job && !r.job.running && r.items.length === 2 && r; }, 30000);
+    const r2 = await G('/api/lit/review?id=' + rv.items[0].id), lineWas = (await G('/api/lit/profile')).profile.line;
+    ok('the quarter\'s draft proposes a new line (the old one beside it) and a new question; the search was planned first', r2.kind === 'quarter' && r2.line.change && r2.line.before === lineWas && r2.changes.length === 1 &&
+      /先决定去检索哪些近一年的文献/.test(fs.readFileSync(path.join(T, 'codex.log'), 'utf8')), r2);
+    await P('/api/lit/review/decide', { id: r2.id, cid: 'line', decision: 'accepted' }); await P('/api/lit/review/decide', { id: r2.id, cid: r2.changes[0].id, decision: 'accepted' });
+    const ap2 = await P('/api/lit/review/apply', { id: r2.id }), pf2 = (await G('/api/lit/profile')).profile;
+    ok('applied: the line changed, the new question added with its dimension; the line\'s history has both', ap2.applied === 2 && /调整后/.test(pf2.line) && pf2.questions.some((q) => q.text === '尾迹对 RCS 的贡献有多大' && q.dim === '领域前沿') &&
+      (await G('/api/lit/reviews')).graph.line.slice(-1)[0].review === r2.id, pf2.line);
+    await P('/api/lit/review/start', { kind: 'month' });
+    rv = await until(async () => { const r = await G('/api/lit/reviews'); return r.job && !r.job.running && r.items.length === 3 && r; }, 30000);
+    const nq = (await openQs()).length;
+    ok('a review discarded changes nothing', (await P('/api/lit/review/discard', { id: rv.items[0].id })).ok && (await G('/api/lit/reviews')).items[0].status === 'discarded' && (await openQs()).length === nq && !(await P('/api/lit/review/apply', { id: rv.items[0].id })).ok);
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
     srv.kill(); zot.close(); src.close(); await sleep(400);

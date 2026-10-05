@@ -69,12 +69,12 @@ export function mount(el, ctx) {
     const refLink = (r) => h('li', {}, r.key ? h('a', { href: '#', text: r.title, title: '在文献库里打开', onclick: (e) => { e.preventDefault(); ctx.openItem(r.key); } })
       : r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer', text: r.title }) : h('span', { text: r.title }),
       h('small', { text: ` ${[r.venue, r.year].filter(Boolean).join(' ')}${r.key ? ' · 库里' : ' · 新文献'}` }));
-    const drawQs = () => qBox.replaceChildren(...qs.map((q, i) => h('div', { class: 'lp-q' + (q.status === 'done' ? ' done' : '') },
+    const drawQs = () => qBox.replaceChildren(...qs.map((q, i) => h('div', { class: 'lp-q' + (q.status === 'done' || q.status === 'shelved' ? ' done' : ''), title: q.status === 'shelved' ? '搁置中：不用来挑文献' : '' },
       h('b', { text: 'Q' + (i + 1) }),
       h('span', { class: 'lp-qt' }, dimSel(q), (() => { const t = h('input', { class: 'field', value: q.text, placeholder: '一个你现在要解决的具体问题' }); t.addEventListener('input', () => { q.text = t.value; }); return t; })()),
       h('span', { class: 'lp-qb' },
         h('button', { class: 'btn', type: 'button', text: '↑', title: '更重要', disabled: i === 0, onclick: () => { [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]]; drawQs(); } }),
-        h('button', { class: 'btn', type: 'button', text: q.status === 'done' ? '重新打开' : '解决了', title: '解决了的问题不再用来挑文献', onclick: () => { q.status = q.status === 'done' ? 'open' : 'done'; drawQs(); } }),
+        h('button', { class: 'btn', type: 'button', text: q.status === 'done' ? '重新打开' : q.status === 'shelved' ? '搁置中 · 重新打开' : '解决了', title: '解决了、搁置的问题不再用来挑文献', onclick: () => { q.status = q.status === 'done' || q.status === 'shelved' ? 'open' : 'done'; drawQs(); } }),
         h('button', { class: 'btn no', type: 'button', text: '删', onclick: () => { qs.splice(i, 1); drawQs(); } })),
       q.why || q.state || (q.refs || []).length ? h('div', { class: 'lp-qd' }, q.why ? h('div', {}, h('b', { text: '为什么：' }), q.why) : null,
         q.state ? h('div', {}, h('b', { text: '领域现状：' }), q.state) : null,

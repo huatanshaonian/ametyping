@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const hash = (s) => crypto.createHash('sha1').update(String(s)).digest('hex').slice(0, 16);
-const SAFE = /^(papers|topics)\/[\p{L}\p{N}_.-]{1,120}\.md$/u;
+const SAFE = /^(papers|topics|reviews)\/[\p{L}\p{N}_.-]{1,120}\.md$/u;
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // ---- front matter: a small YAML subset (key: value, values written as JSON, which YAML reads too) ----

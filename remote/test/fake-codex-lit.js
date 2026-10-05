@@ -21,6 +21,19 @@ process.stdin.on('end', () => {
   } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.folder) {
     // 调研工作: a folder for each paper of the batch
     a = { items: [...prompt.matchAll(/^(P\d+)：(.*)$/gm)].map((m) => ({ ref: m[1], folder: /wake/i.test(m[2]) ? '高超声速尾迹' : '等离子体鞘套' })) };
+  } else if (P.progress && P.changes) {
+    // 回顾: progress on every question, changes of each kind (one of a kind that does not exist), a new line for a quarter
+    const qs = [...prompt.matchAll(/^(Q\d+)【/gm)].map((m) => m[1]), quarter = /季度研究回顾/.test(prompt);
+    a = { summary: '这段时间主要在算鞘套的 RCS，离验证还差实测数据。',
+      progress: qs.map((q, i) => ({ q, state: i === 0 ? '有进展' : '未开始', note: i === 0 ? '剖面已经能取了' : '没有记录', evidence: i === 0 ? '读了《RAM C》的卡片' : '' })),
+      changes: quarter ? [{ type: '新增', q: [], text: '尾迹对 RCS 的贡献有多大', dim: '领域前沿', children: [], reason: '近一年的文献在关注尾迹', evidence: '检索结果', refs: [] }]
+        : [{ type: '细化', q: ['Q1'], text: '鞘套电子密度剖面取 RAM C 实测还是 CFD 结果', dim: '', children: [], reason: '已经有两种来源了', evidence: '速读卡', refs: [] },
+          { type: '分叉', q: ['Q2'], text: '', dim: '', children: [{ text: '用飞行试验数据验证', dim: '方法与验证' }, { text: '用解析解验证', dim: '方法与验证' }], reason: '两条路可以分别走', evidence: '日报', refs: [] },
+          { type: '搁置', q: ['Q3'], text: '', dim: '', children: [], reason: '这段时间没碰', evidence: '', refs: [] },
+          { type: '新增', q: [], text: '碰撞频率在低空怎么取', dim: '文献空白', children: [], reason: '对话里发现的', evidence: '沉淀', refs: [] },
+          { type: '乱写', q: ['Q1'], text: 'x', dim: '', children: [], reason: '', evidence: '', refs: [] }, { type: '修改', q: ['Q99'], text: '不存在的问题', dim: '', children: [], reason: '', evidence: '', refs: [] }],
+      line: quarter ? { change: true, text: '总目标（调整后）：鞘套与尾迹的电磁散射', reason: '重心移到了尾迹' } : { change: true, text: '月度不该改主线', reason: 'x' },
+      next: ['用 RAM C 的剖面重算一次 RCS（对应 Q1）'] };
   } else if (P.folder) {
     // 收下: the folder under 每日文献 (an existing one when the list has it)
     const want = /plasma|sheath/i.test((/^文献：(.*)$/m.exec(prompt) || [])[1] || '') ? '等离子体鞘套' : '其他';

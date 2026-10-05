@@ -14,7 +14,7 @@ const FOLDERS_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, fold
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 
 function questionsBlock(profile) {
-  const qs = (profile.questions || []).filter((q) => q.status !== 'done');
+  const qs = (profile.questions || []).filter((q) => q.status !== 'done' && q.status !== 'shelved');
   return qs.length ? '（越靠前越重要；方括号里是问题的维度）\n' + qs.map((q, i) => `Q${i + 1}. ${q.dim ? `[${q.dim}] ` : ''}${q.text}`).join('\n') : '（还没有确认的问题，按研究主线判断）';
 }
 // the research as the user put it (主线), with the branches the profile drew from it

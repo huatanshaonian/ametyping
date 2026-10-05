@@ -171,6 +171,23 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('画像: the questions editable, the follow lists', await waitFor("document.querySelectorAll('.lp-q').length === 3") && /0018-926X/.test(await evalJs("[...document.querySelectorAll('.lp textarea')].map(t => t.value).join(' ')")), await evalJs("document.querySelector('.lp').textContent"));
     await shot('86-lit-profile.png');
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '产出').click()");
+    // 回顾
+    await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent.startsWith('回顾')).click()");
+    chk('回顾: the history of the questions as a tree before any review', await waitFor("document.querySelectorAll('.lrv-tree > .lrv-n').length >= 3"), await evalJs("(document.querySelector('.lrv')||{}).textContent"));
+    await evalJs("[...document.querySelectorAll('.lit-pane:not([hidden]) .lit-sub .btn')].find(b => b.textContent === '月度回顾').click()");
+    chk('回顾: a monthly review to approve -- progress, the changes with their reasons, the tab counts it', await waitFor("document.querySelectorAll('.lrv-c').length === 4 && document.querySelectorAll('.lrv-p').length >= 3", 30000) &&
+      await waitFor("[...document.querySelectorAll('.lit-tab')].some(b => b.textContent === '回顾（1）')") && /理由：已经有两种来源了/.test(await evalJs("document.querySelector('.lrv-r').textContent")), await evalJs("(document.querySelector('.lrv')||{}).textContent"));
+    await evalJs("(() => { const c = document.querySelectorAll('.lrv-c')[0]; const t = c.querySelector('textarea'); t.value = '界面里改写的问题'; t.dispatchEvent(new Event('input')); [...c.querySelectorAll('.btn')].find(b => b.textContent === '接受').click(); })()");
+    await waitFor("document.querySelectorAll('.lrv-c.accepted').length === 1");
+    await evalJs("[...document.querySelectorAll('.lrv-c')[1].querySelectorAll('.btn')].find(b => b.textContent === '接受').click()");
+    await waitFor("document.querySelectorAll('.lrv-c.accepted').length === 2");
+    await shot('87-lit-review.png');
+    await evalJs("[...document.querySelectorAll('.lrv-end .btn')].find(b => b.textContent.startsWith('应用接受的 2 条')).click()");
+    chk('回顾: applied -- the reworded question and the two split from another are in the tree, the review is filed', await waitFor("/界面里改写的问题/.test(document.querySelector('.lrv-tree').textContent) && document.querySelectorAll('.lrv-tree ul .lrv-n').length === 2 && /采纳了 2.4 条/.test(document.querySelector('.lrv').textContent)", 20000),
+      await evalJs("(document.querySelector('.lrv')||{}).textContent"));
+    chk('no stray "null" text on the review page', !(await evalJs("/null|undefined/.test(document.querySelector('.lrv').textContent)")), 0);
+    await shot('88-lit-review-done.png');
+    await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '产出').click()");
     chk('产出: the verdict and the counts', await waitFor("!!document.querySelector('.ls-v')") && /写下自己的理解/.test(await evalJs("document.querySelectorAll('.lp')[1].textContent")), await evalJs("document.body.textContent.slice(-400)"));
     await shot('87-lit-stats.png');
 

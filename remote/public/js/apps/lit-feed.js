@@ -34,7 +34,7 @@ export function mount(el, ctx) {
       h('span', { text: `${r.title}：第 ${r.ranges} 页${r.why ? ' — ' + r.why : ''}` }), h('button', { class: 'btn', type: 'button', text: '去看看', onclick: () => ctx.openItem(r.key) }))));
     if (!f) { list.replaceChildren(h('p', { class: 'lit-empty', text: '读不到推送。' })); return; }
     items = f.items || []; canWrite = f.canWrite;
-    questions = ((p && p.profile && p.profile.questions) || []).filter((q) => q.status !== 'done');
+    questions = ((p && p.profile && p.profile.questions) || []).filter((q) => q.status !== 'done' && q.status !== 'shelved');
     const s = f.status || {}, last = (s.runs || []).slice(-1)[0];
     st.classList.toggle('bad', !!(last && last.error));
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';

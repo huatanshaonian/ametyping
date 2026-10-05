@@ -144,3 +144,23 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lr-side > .lv { margin: 4px 8px; }
 .lf-va { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 3px 0; font-size: 13px; } .lf-va span { min-width: 0; }
 .lv-md { max-height: 40vh; overflow: auto; padding: 4px 8px; background: var(--panel); border: 1px solid var(--edge); } .lv-md[hidden] { display: none; }
+
+/* 回顾 (lit-review.js): a review to approve, the questions' history as a tree, the earlier reviews */
+.lrv { padding: 8px 14px; overflow: auto; flex: 1; min-height: 0; }
+.lrv-sec { margin-bottom: 18px; } .lrv-sec h3 { margin: 6px 0; font-size: 15px; } .lrv-sec h4 { margin: 12px 0 4px; font-size: 13px; color: var(--accent-muted); }
+.lrv-sum { margin: 4px 0; line-height: 1.6; white-space: pre-wrap; }
+.lrv-p, .lrv-c { margin: 6px 0; padding: 6px 10px; border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.lrv-p { border: 0; border-left: 3px solid var(--edge); display: block; } .lrv-p .tag { margin-right: 6px; }
+.lrv-c.accepted { border-color: var(--ok); background: var(--accent-wash); } .lrv-c.rejected { opacity: .55; }
+.lrv-ch { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; } .lrv-q b { color: var(--border); }
+.lrv-to { display: flex; gap: 6px; align-items: center; } .lrv-to .field { flex: 1; min-width: 0; } .lrv-kids { display: flex; flex-direction: column; gap: 3px; }
+.lrv-why { font-size: 12.5px; color: var(--muted); } .lrv-why b { color: var(--ink); font-weight: normal; } .lrv-why a { margin-right: 8px; }
+.lrv-old { white-space: pre-wrap; font-size: 12.5px; color: var(--muted); margin: 4px 0; }
+.lrv-end { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--edge); }
+.lrv .tag.st-ok, .lrv .tag.s-done { color: var(--ok-text); border-color: var(--ok); } .lrv .tag.st-bad { color: var(--bad); border-color: var(--bad); }
+.lrv .tag.s-shelved, .lrv .tag.s-split, .lrv .tag.s-merged, .lrv .tag.st-no { color: var(--muted); }
+.lrv-tree, .lrv-tree ul { list-style: none; margin: 0; padding-left: 0; } .lrv-tree ul { padding-left: 22px; border-left: 1px dashed var(--edge); margin-left: 8px; }
+.lrv-n { margin: 3px 0; font-size: 13px; } .lrv-n summary { cursor: pointer; } .lrv-n summary .tag { margin-right: 6px; } .lrv-n.s-split > details > summary span, .lrv-n.s-merged > details > summary span, .lrv-n.s-shelved > details > summary span { color: var(--muted); }
+.lrv-ev { margin: 4px 0 6px 18px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; } .lrv-ev small { color: var(--muted); } .lrv-ev s { color: var(--faint); }
+.lrv-line { margin: 6px 0; font-size: 13px; } .lrv-line summary { cursor: pointer; }
+.lrv-past { padding: 4px 8px; cursor: pointer; font-size: 13px; } .lrv-past:hover, .lrv-past.sel { background: var(--hover); } .lrv-past small { color: var(--muted); }

@@ -32,6 +32,8 @@ const { createS2 } = require('./sources/s2');
 const { createSettings } = require('./settings');
 const { createVision } = require('./vision');
 const { createSurvey } = require('./survey');
+const { createHistory } = require('./history');
+const { createReview } = require('./review');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -68,7 +70,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   };
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
   const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto });
-  const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log });
+  // 问题演化: every change of the line and the questions, whoever made it
+  const history = createHistory({ dir, onChange: () => changed('review') });
+  const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log,
+    onEdit: (before, after, by) => { if (!history.count()) history.seed({ ...before, organizedAt: Date.now() }); history.track(before, after, by); } });
   const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
@@ -79,6 +84,9 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, log, onChange: () => changed('survey') });
   const stats = createStats({ kb, feed, todos });
+  // 回顾: monthly / quarterly, proposing changes to the questions and the line for the user to approve
+  const review = createReview({ dir, kb, profile, history, feed, reports, ask: (p, s) => ask(p, s, 'litReview'), survey, canWrite: () => api.canWrite(), auto: cfg.review !== false, log, onChange: () => changed('review') });
+  if (cfg.review !== false) review.startTimer();
 
   mirror.start();
   if (cfg.feed !== false) feed.start();
@@ -125,7 +133,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit') {
       json(res, 200, { zotero: { ...mirror.status(), canWrite: api.canWrite(), authorizing: api.authorizing(), authError }, webdav: webdav.configured(), kbDir: kb.dir,
         profile: { ...profile.state(), has: !!profile.get(), confirmed: !!(profile.get() || {}).confirmed }, feed: feed.status(), proposals: kb.proposals().length, morning: morning(),
-        vision: vision.pending().length });
+        vision: vision.pending().length, reviews: review.drafts() });
       return true;
     }
     if (G && p === '/api/lit/settings') { json(res, 200, { ...settings.view(), collections: mirror.collections().map((c) => c.name) }); return true; }
@@ -152,6 +160,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/vision') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? await vision.info(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/vision/page') { const r = KEY.test(qs('key')) ? vision.page(qs('key'), Math.max(1, +qs('page') || 1)) : null; json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/vision/pending') { json(res, 200, { items: vision.pending() }); return true; }
+    if (G && p === '/api/lit/reviews') { history.seed(profile.get()); json(res, 200, { items: review.list(), job: review.state(), graph: history.graph(), has: !!(profile.get() && (profile.get().questions || []).length) }); return true; }
+    if (G && p === '/api/lit/review') { const r = review.get(qs('id')); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
@@ -180,6 +190,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       if (r.ok && d.confirm && api.canWrite() && survey.waiting().length) survey.run();
     }
     else if (what === 'survey/import') r = survey.run();
+    else if (what === 'review/start') r = review.start(d.kind);
+    else if (what === 'review/decide') r = review.decide(String(d.id || ''), String(d.cid || ''), String(d.decision || ''), { text: d.text, children: d.children });
+    else if (what === 'review/apply') r = review.apply(String(d.id || ''));
+    else if (what === 'review/discard') r = review.discard(String(d.id || ''));
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
@@ -230,7 +244,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, stop: () => { mirror.stop(); feed.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, stop: () => { mirror.stop(); feed.stop(); review.stop(); } };
 }
 
 module.exports = { createLiterature };
