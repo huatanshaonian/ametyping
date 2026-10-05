@@ -57,10 +57,12 @@ http.createServer((req, res) => {
     if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: [{ id: SID, label: 'demo', project: 'demo', state: 'idle', via: 'terminal', t0: now, last: now, lines: [], perms: [] }] }));
     if (req.url === '/control/key') {
       keys.push(d.key);
-      if (d.key !== 'btab') return res.end(JSON.stringify({ ok: true }));
+      if (d.key !== 'btab') return res.end(JSON.stringify({ ok: true, screen: d.screen === true ? 'after ' + d.key : undefined }));
       mode = CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length];
       return res.end(JSON.stringify({ ok: true, mode: bogus ? 'evil<script>' : mode }));
     }
+    // 终端画面: the terminal's screen as text (far longer than is passed on)
+    if (req.url === '/control/screen') return res.end(JSON.stringify({ ok: true, screen: 'Select model\n ❯ 1. Opus\n' + 'x'.repeat(20000) }));
     res.statusCode = 404; res.end('{}');
   });
 }).listen(PET, '127.0.0.1');
@@ -119,12 +121,24 @@ async function until(fn, ms = 10000) { const t0 = Date.now(); while (Date.now() 
     for (const k of ['ctrlb', 'ctrls', 'ctrlxs']) cs.push((await b.act({ t: 'key', machine: 'box', id: SID, key: k })).ok);
     const e2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlc' }), e3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlx' });
     ok('Ctrl+B / Ctrl+S / Ctrl+X Ctrl+S reach the pet by name; other combinations are refused', cs.every(Boolean) && keys.slice(5).join() === 'ctrlb,ctrls,ctrlxs' && !e2.ok && !e3.ok, [cs, keys, e2, e3]);
+    // one letter / digit as a key (menus take them); nothing longer, no other characters
+    const nk = keys.length;
+    const c1 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:s' }), c2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:2' });
+    const c3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:ab' }), c4 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:;' }), c5 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:S' });
+    ok('one letter or digit goes as a key; longer or other characters are refused', c1.ok && c2.ok && !c3.ok && !c4.ok && !c5.ok && keys.slice(nk).join() === 'c:s,c:2', [c1, c2, c3, c4, c5, keys.slice(nk)]);
+    // 终端画面: the screen on request, and with a key when asked for; capped; not sent along otherwise
+    const s1 = await b.act({ t: 'screen', machine: 'box', id: SID });
+    const s2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'down', screen: true }), s3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'down' });
+    ok('the terminal\'s screen on request (capped at 9000 characters)', s1.ok && s1.screen.startsWith('Select model\n ❯ 1. Opus') && s1.screen.length === 9000, [s1.ok, (s1.screen || '').length]);
+    ok('a key can bring the screen after it; without asking none comes', s2.ok && s2.screen === 'after down' && s3.ok && s3.screen === undefined, [s2, s3]);
+    const s4 = await b.act({ t: 'screen', machine: 'box', id: 'no-such-session' });
+    ok('no screen of a session that is not there', !s4.ok, s4);
     const { KEYS: TK } = require(path.resolve(R, '..', 'headless', 'tmux.js'));
     ok('tmux: the same names as send-keys keys (the chord as two)', TK.ctrlb === 'C-b' && TK.ctrls === 'C-s' && JSON.stringify(TK.ctrlxs) === '["C-x","C-s"]' && !TK.ctrlc, TK);
     const q = await Promise.race([b.act({ t: 'mode', machine: 'box', id: SID }), sleep(3000).then(() => ({ ok: false, ignored: true }))]);
     ok('there is no mode query action (no polling of screens)', !q.ok || q.mode === undefined, JSON.stringify(q));
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
-    ok('keys audited', new RegExp(`control-key .* box ${SID} btab`).test(audit));
+    ok('keys audited, reading the screen too', new RegExp(`control-key .* box ${SID} btab`).test(audit) && new RegExp(`control-screen .* box ${SID}`).test(audit));
     b.ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {

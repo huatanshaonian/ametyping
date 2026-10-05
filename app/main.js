@@ -742,7 +742,11 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/key') {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatKey(d.id, d.key));
+    return out(200, await chatKey(d.id, d.key, d.screen === true));
+  }
+  if (req.method === 'POST' && req.url === '/control/screen') {
+    if (typeof d.id !== 'string') return out(400, { ok: false, msg: '无效请求' });
+    return out(200, await chatScreen(d.id));
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
@@ -832,7 +836,7 @@ const morning = createMorning({ app, BrowserWindow, ipcMain, screen, anchor: () 
   enabled: () => settings.morningBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const mailNotice = createMailNotice({ BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
   enabled: () => settings.mailBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
-const { chatSend, chatKey, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
+const { chatSend, chatKey, chatScreen, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.

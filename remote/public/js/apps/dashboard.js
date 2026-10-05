@@ -8,6 +8,7 @@ import { createList } from './dash-list.js';
 import { createNotes } from './dash-notes.js';
 import { createBtw } from './dash-btw.js';
 import { createSlash } from './dash-slash.js';
+import { createTerm } from './dash-term.js';
 
 // the reply box's hint, by how the session can be reached
 const PLACEHOLDER = {
@@ -61,11 +62,17 @@ function mount(current) {
   const convEl = h('div', { class: 'conv' }, h('div', { class: 'pick', text: '从左边选一个会话查看完整对话。' }));
   const permsEl = h('div', { class: 'perms' });
   const note = h('div', { class: 'note' });
+  // 终端画面 (dash-term.js): the terminal's screen as text -- Claude Code's own menus are only there
+  const scrBtn = h('button', { class: 'btn kc', type: 'button', text: '画面', title: '显示 / 收起终端现在的画面（/model、/resume 这类菜单只画在终端里）' });
+  const term = createTerm({ press: (k) => pressKey(k), read: () => { const s = find(sel); return s ? net.act({ t: 'screen', machine: s.machine, id: s.id }) : { ok: false, msg: '先选一个会话' }; },
+    onToggle: (on) => scrBtn.classList.toggle('on', on) });
+  scrBtn.addEventListener('click', () => term.show(!term.open));
   const keys = h('div', { class: 'keys', hidden: true },
     ...KEYS.map(([k, l]) => h('button', { class: 'btn', type: 'button', dataset: { key: k }, text: l })),
     h('span', { class: 'ksep' }),
     ...COMBOS.map(([k, l, tip]) => h('button', { class: 'btn kc', type: 'button', dataset: { key: k }, text: l, title: tip })),
-    h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）' }));
+    h('span', { class: 'ksep' }), scrBtn,
+    h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）；「画面」看终端现在显示什么' }));
   const say = h('textarea', { class: 'say', rows: 1, placeholder: '先选一个会话', disabled: true });
   const sendBtn = h('button', { class: 'btn go', type: 'submit', text: '发送', disabled: true });
   // the key buttons are for touch screens; with a keyboard the keys themselves are enough (⌨ shows the buttons anyway)
@@ -82,7 +89,7 @@ function mount(current) {
   const btwText = new WeakMap();                     // answer element -> its text
   convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); if (b) btw.show(b.dataset.q || '', btwText.get(b)); });
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
-    resume, notes.el, convEl, btw.el, permsEl, note, keys, compose);
+    resume, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
   const root = h('div', { class: 'dash' }, side, right);
 
@@ -165,6 +172,7 @@ function mount(current) {
     sendBtn.disabled = say.disabled || !say.value.trim();
     termOk = !!(s && s.online && via === 'terminal');
     keys.hidden = !(termOk && showKeys);
+    term.target(termOk ? sel : null);
     kbdBtn.hidden = !termOk;
     renderMode(s);
     renderPerms(s);
@@ -199,9 +207,11 @@ function mount(current) {
     const s = find(sel); if (!s) return;
     const at = sel;
     if (b) b.disabled = true;
-    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key });
+    // (终端画面 open: the screen after the key comes back with the answer)
+    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key, screen: term.open || undefined });
     if (b) b.disabled = false;
     if (!r.ok) return showNote(r.msg || '按键失败', true);
+    if (typeof r.screen === 'string' && at === sel && term.open) term.set(r.screen);
     if (key === 'btab' && r.mode) {
       pressed.set(at, { mode: r.mode, base: s.mode });
       if (at === sel) { renderMode(find(sel)); showNote('权限模式：' + (MODE[r.mode] || r.mode)); }
@@ -219,6 +229,8 @@ function mount(current) {
       if (sel === key && say.value === text) { say.value = ''; fitSay(); keepDraft(); }
       else if (drafts.get(key) === text) { drafts.delete(key); prefs.set('dash.drafts', Object.fromEntries(drafts)); }
       showNote(r.msg || '已发送');
+      // a "/" command may open a menu in the terminal (/model, /resume...): the screen is shown so it can be answered
+      if (/^\s*\/\S/.test(text) && sel === key && termOk) { if (!showKeys) { showKeys = true; renderControls(); } if (term.open) term.load(900); else { term.show(true); term.load(900); } }
     } else showNote(r.msg || '发送失败', true);
     renderControls();
   });
