@@ -50,7 +50,7 @@
 .md h2 { font-size: 1.35em; border-bottom: 1px solid var(--edge); padding-bottom: .15em; }
 .md p, .md ul, .md ol, .md blockquote, .md table, .md pre { margin: 0 0 .8em; }
 .md img { max-width: 100%; image-rendering: auto; }
-.md img.loading { min-width: 60px; min-height: 40px; background: repeating-linear-gradient(45deg, var(--head-bg) 0 6px, #fff 6px 12px); }
+.md img.loading { min-width: 60px; min-height: 40px; background: repeating-linear-gradient(45deg, var(--head-bg) 0 6px, var(--surface) 6px 12px); }
 .md code { font: .9em Consolas, monospace; background: var(--tint); padding: 0 3px; }
 .md pre { padding: 8px 10px; background: var(--head-bg); border-left: 3px solid var(--border); overflow-x: auto; }
 .md pre code { background: none; padding: 0; }

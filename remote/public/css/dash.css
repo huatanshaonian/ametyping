@@ -20,7 +20,10 @@
 .dash .mc.on .dot { background: var(--ok); }
 .dash .mc.cur { color: var(--border); font-weight: bold; }
 .dash .card { padding: 6px 10px 7px; border-bottom: 1px dotted var(--edge); cursor: pointer; }
-.dash .card:hover { background: var(--hover); }
+/* hovered with a mouse; pressed with a finger (a phone's own blue flash is the same in every look: ours follows it) */
+@media (hover: hover) { .dash .card:hover { background: var(--hover); } }
+.dash .card { -webkit-tap-highlight-color: transparent; }
+.dash .card:active:not(.sel) { background: var(--accent-wash); }
 .dash .card.sel { background: var(--surface); box-shadow: inset 3px 0 0 var(--border); }
 .dash .card .nm { color: var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash .card .sm { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
@@ -130,6 +133,11 @@ html[data-theme="win98"] .dash .term { background: #000; } html[data-theme="win9
 .dash.narrow .head > span:first-child { flex: 1 0 100%; }
 .dash.narrow .head .hr { flex: 1 1 100%; justify-content: space-between; }
 .dash.narrow .head .meta { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 0 1 auto; }
+/* a phone: the reply box on a line of its own, the whole width; ⌨, the mode and 发送 on the line under it */
+.dash.narrow .compose { flex-wrap: wrap; row-gap: 5px; }
+.dash.narrow .compose .say { order: -1; flex: 1 0 100%; }
+.dash.narrow .compose .btn.go { margin-left: auto; min-width: 84px; }
+.dash.narrow .compose .kbd, .dash.narrow .compose .mode, .dash.narrow .compose .btn.go { padding-top: 5px; padding-bottom: 5px; }
 .dash .compose .kbd { padding: 3px 8px; font-size: 13px; }
 /* the permission mode button next to the reply box (click = Shift+Tab) */
 .dash .compose .mode { padding: 3px 8px; font-size: 12px; white-space: nowrap; min-width: 58px; }

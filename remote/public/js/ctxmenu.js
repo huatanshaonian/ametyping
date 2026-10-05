@@ -4,6 +4,9 @@
 import { h, zoom } from './util.js';
 
 let menus = [];                                            // the open menu and its submenu
+// when and at what window size it was opened: a phone sends "resize" and "blur" for things that are no reason to close
+// a menu (its address bar sliding, the keyboard, the menu itself widening the page for a moment before it is placed)
+let openedAt = 0, openW = 0, openH = 0;
 // a menu opened by a long press appears under the finger: some phones send a click when it lifts, which would pick the
 // item there at once -- for a moment after such an opening, items do not react
 let armedAt = 0;
@@ -17,6 +20,7 @@ export function close() { for (const m of menus) m.remove(); menus = []; }
 export function show(cx, cy, items, { touch = false } = {}) {
   close();
   armedAt = touch ? Date.now() : 0;
+  openedAt = Date.now(); openW = innerWidth; openH = innerHeight;
   const z = zoom();                                        // pointer px -> page px (the size setting zooms the page)
   open(items, cx / z, cy / z, 0);
 }
@@ -48,6 +52,7 @@ function open(items, x, y, level, fromRight) {
     }
     el.append(b);
   }
+  el.style.left = '0px'; el.style.top = '0px'; el.style.visibility = 'hidden';   // (measured in a corner: it never widens the page)
   document.body.append(el);
   menus.push(el);
   // keep it on screen: flip left / up when it would run off the page
@@ -55,7 +60,7 @@ function open(items, x, y, level, fromRight) {
   let left = x, top = y;
   if (left + w > W - 2) left = fromRight != null ? fromRight - w : W - w - 2;
   if (top + hgt > H - 2) top = Math.max(2, H - hgt - 2);
-  el.style.left = Math.max(2, left) + 'px'; el.style.top = top + 'px';
+  el.style.left = Math.max(2, left) + 'px'; el.style.top = top + 'px'; el.style.visibility = '';
   return el;
 }
 
@@ -83,7 +88,7 @@ export function attach(el, itemsFor) {
 }
 
 // a click / tap anywhere else, Escape, or the window changing closes it
-addEventListener('pointerdown', (e) => { if (menus.length && !menus.some((m) => m.contains(e.target))) close(); }, true);
+addEventListener('pointerdown', (e) => { if (menus.length && !menus.some((m) => m.contains(e.target)) && Date.now() - openedAt > 250) close(); }, true);
 // the keyboard, while a menu is open: ↑ ↓ choose, → or Enter opens a submenu, ← goes back, Enter / Space runs, Esc closes
 addEventListener('keydown', (e) => {
   if (!menus.length) return;
@@ -108,5 +113,8 @@ addEventListener('keydown', (e) => {
     done();
   } else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); done(); }
 }, true);
-addEventListener('resize', close);
-addEventListener('blur', close);
+// the window really changed (turned, resized by a good deal) or the page went out of sight; not the small "resize"
+// and "blur" a phone sends around a tap, and nothing in the first moments after opening
+addEventListener('resize', () => { if (menus.length && Date.now() - openedAt > 700 && (Math.abs(innerWidth - openW) > 60 || Math.abs(innerHeight - openH) > 160)) close(); });
+addEventListener('blur', () => { if (menus.length && Date.now() - openedAt > 700 && !matchMedia('(pointer: coarse)').matches) close(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) close(); });

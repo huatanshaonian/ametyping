@@ -18,7 +18,7 @@ html[data-shade="night"] {
   --warn: #ffb37a; --bad: #ff8fb8; --ok: #6fe0b0; --ok-text: #8fe8c4; --off: #7a6a9a;
   --surface: #2f2156; --fill: #6a4be0; --fill-d: #5539c4; --on-fill: #fff; --hi: rgba(255, 255, 255, .28);
   --mine: #4a2b73; --note-bg: rgba(255, 214, 102, .13);
-  --deep: #150d2b; --veil: rgba(8, 4, 20, .62); --press: #3b2a6b; --wall-veil: rgba(21, 13, 43, .62);
+  --halo: #150d2b; --deep: #150d2b; --veil: rgba(8, 4, 20, .62); --press: #3b2a6b; --wall-veil: rgba(21, 13, 43, .62);
   color-scheme: dark;
 }
 /* ---------- Windose: 梅子 ---------- */
@@ -33,7 +33,7 @@ html[data-shade="plum"] {
   --warn: #ffb37a; --bad: #ff8fb8; --ok: #78e0b4; --ok-text: #98e8c8; --off: #86708e;
   --surface: #392348; --fill: #9a48b4; --fill-d: #7e3698; --on-fill: #fff; --hi: rgba(255, 255, 255, .28);
   --mine: #5c2c62; --note-bg: rgba(255, 214, 102, .13);
-  --deep: #1c0f26; --veil: rgba(14, 6, 20, .62); --press: #4a2c5c; --wall-veil: rgba(28, 15, 38, .6);
+  --halo: #1c0f26; --deep: #1c0f26; --veil: rgba(14, 6, 20, .62); --press: #4a2c5c; --wall-veil: rgba(28, 15, 38, .6);
   color-scheme: dark;
 }
 /* what a dark page draws differently (both dark shades) */

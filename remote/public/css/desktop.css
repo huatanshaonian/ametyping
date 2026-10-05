@@ -17,6 +17,7 @@
   --mine: #f0d1f1;                          /* your own messages */
   --note-bg: #fffbe8;                       /* side notes (/btw) */
   --deep: #241640; --veil: rgba(42, 31, 94, .35); --press: #e0cff1;   /* behind everything; behind a dialog; a pressed button */
+  --halo: #fff;                             /* the outline that keeps a label readable on the wallpaper */
   --wall-veil: transparent;                 /* a wash over the wallpaper (the dark schemes dim it) */
   /* the other look (Windows 标准) is css/theme-win98.css, switched by html[data-theme]; shades of both by html[data-shade] */
   --tbh: 40px;                              /* taskbar */
@@ -44,13 +45,13 @@ img { image-rendering: pixelated; }
   background: none; color: inherit; user-select: none; -webkit-tap-highlight-color: transparent; }
 .dicon img { width: 32px; height: 32px; }
 .dicon span { max-width: 100%; padding: 0 3px; font-size: 12px; font-weight: bold; color: var(--border); text-align: center; line-height: 1.15;
-  text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; overflow-wrap: anywhere; }
+  text-shadow: 1px 1px 0 var(--halo), -1px -1px 0 var(--halo), 1px -1px 0 var(--halo), -1px 1px 0 var(--halo); overflow-wrap: anywhere; }
 .dicon.sel { border-color: var(--border); }
 .dicon.sel span { background: var(--fill); color: var(--on-fill); text-shadow: none; }
 .dicon.sel img { filter: drop-shadow(0 0 0 var(--border)) brightness(.85) sepia(.4) hue-rotate(200deg); }
 .dicon.off { opacity: .55; }
 #mark { position: absolute; right: 14px; bottom: 10px; text-align: right; color: var(--border); pointer-events: none;
-  text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; }
+  text-shadow: 1px 1px 0 var(--halo), -1px -1px 0 var(--halo), 1px -1px 0 var(--halo), -1px 1px 0 var(--halo); }
 #mark b { display: block; font-size: 22px; }
 #mark small { font-size: 12px; }
 

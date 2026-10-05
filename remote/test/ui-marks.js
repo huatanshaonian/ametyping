@@ -310,6 +310,19 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     const dm = await evalJs("[...document.querySelectorAll('.ctxm .ctxi')].map(e => e.textContent)");
     chk('⋯: the session\'s menu, the session not opened', dm.some((x) => x.includes('移到群组')) && !(await evalJs("document.querySelector('.dash').classList.contains('viewing')")), dm);
     await shot('94b-marks-phone-dots.png');
+    // what a real phone sends around a tap -- "resize" (its address bar, the keyboard) and "blur" -- is no reason to
+    // close the menu; the page really turning, or going out of sight, is
+    await evalJs("(() => { dispatchEvent(new Event('resize')); dispatchEvent(new Event('blur')); })()"); await sleep(200);
+    chk('a phone\'s "resize" and "blur" around the tap do not close the menu', (await evalJs("document.querySelectorAll('.ctxm').length")) === 1, 0);
+    await sleep(900);
+    await evalJs("(() => { dispatchEvent(new Event('resize')); dispatchEvent(new Event('blur')); })()"); await sleep(200);
+    chk('... nor later, while the window has not really changed', (await evalJs("document.querySelectorAll('.ctxm').length")) === 1, 0);
+    chk('the menu is on the screen, whole', await evalJs("(() => { const r = document.querySelector('.ctxm').getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight && getComputedStyle(document.querySelector('.ctxm')).visibility === 'visible'; })()"), 0);
+    await call('Emulation.setDeviceMetricsOverride', { width: 851, height: 393, deviceScaleFactor: 1, mobile: true }); await sleep(500);
+    chk('the phone turned on its side: the menu closes', (await evalJs("document.querySelectorAll('.ctxm').length")) === 0, 0);
+    await call('Emulation.setDeviceMetricsOverride', { width: 393, height: 851, deviceScaleFactor: 1, mobile: true }); await sleep(500);
+    // a pressed card: our own colour (the phone's blue flash is off), and no hover colour left behind by a finger
+    chk('a card pressed with a finger: the phone\'s own flash is off', await evalJs("getComputedStyle(document.querySelector('.dash .card')).webkitTapHighlightColor === 'rgba(0, 0, 0, 0)'"), await evalJs("getComputedStyle(document.querySelector('.dash .card')).webkitTapHighlightColor"));
     await key('Escape', 27); await sleep(200);
     const pq = await rect('.dash .card', '第二个会话');
     await call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pq.x, y: pq.y }] });
@@ -320,6 +333,11 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await sleep(500);
     const hd = await evalJs("(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(); const t = r('.dash .head b'), m = r('.dash .head .hr'), h = r('.dash .head'); return { tTop: t.top, tBottom: t.bottom, mTop: m.top, tWidth: t.width, hWidth: h.width, text: document.querySelector('.dash .head b').textContent }; })()");
     chk('phone header: the title on a line of its own, the details under it', hd.mTop >= hd.tBottom - 1, hd);
+    // the reply box on a phone: a line of its own, the whole width; ⌨, the mode and 发送 on the line under it
+    const lay = await evalJs("(() => { const r = (q) => { const e = document.querySelector(q); const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, hidden: e.hidden || getComputedStyle(e).display === 'none' }; }; return { box: r('.dash .compose'), say: r('.dash .say'), send: r('.dash .compose .btn.go'), mode: r('.dash .compose .mode'), kbd: r('.dash .compose .kbd') }; })()");
+    chk('phone: the reply box takes the whole width, the buttons sit on the line under it (发送 at the right)', lay.say.w >= lay.box.w - 24 && lay.send.t >= lay.say.b - 1 && lay.send.r >= lay.box.r - 14 &&
+      (lay.kbd.hidden || lay.kbd.t >= lay.say.b - 1) && (lay.mode.hidden || lay.mode.t >= lay.say.b - 1), lay);
+    await shot('94c-marks-phone-compose.png');
     await shot('95b-phone-header.png');
     const unauth = await new Promise((r) => http.get(`http://127.0.0.1:${PORT}/api/session/export?machine=box&id=${SID}`, (res) => { res.resume(); r(res.statusCode); }));
     chk('export: not logged in refused', unauth === 401, unauth);
