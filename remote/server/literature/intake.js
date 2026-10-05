@@ -1,5 +1,6 @@
-// 收下: a pushed paper goes into Zotero -- into 每日文献/<YYYY-MM> (config "inboxCollection"), tagged "Windose推送" --
-// through the local API. An open-access PDF (OpenAlex / arXiv / NTRS / Unpaywall) is fetched and handed to Zotero as
+// 收下: a pushed paper goes into Zotero -- into 每日文献 (config "inboxCollection"), tagged "Windose推送" -- through the
+// local API, and from there into a folder by research topic under it: the model picks one of the folders there or
+// names a new one, which is then made (the folders by month of earlier versions stay as they are, and are not offered). An open-access PDF (OpenAlex / arXiv / NTRS / Unpaywall) is fetched and handed to Zotero as
 // the paper's attachment (Zotero files it and syncs it to WebDAV). Then the module waits a little for a PDF to be there
 // (`pdfWaitMs`, default 3 minutes -- whatever put it there): with one, the card is made from the full text; without,
 // from the abstract, and the card says whether the full text is worth getting by hand (paywalled papers: through the
@@ -7,26 +8,42 @@
 // made again from it.
 'use strict';
 const { toZotero } = require('./sources/normalize');
+const { FOLDER_SCHEMA, folderPrompt } = require('./prompts/feed');
 
 const TAG = 'Windose推送';
-const month = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+const MONTH = /^\d{4}-\d{2}$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpaywall = null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
+// ask / profile: for choosing the folder (without them a paper stays in 每日文献 itself)
+function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpaywall = null, ask = null, profile = null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
   const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
   const pdfWaitMs = C().pdfWaitMs != null ? +C().pdfWaitMs : 180e3, pollMs = C().pollMs != null ? +C().pollMs : 20e3;
   const working = new Set();
 
-  // 每日文献 and this month's folder under it (made when missing)
+  // 每日文献 (made when missing)
   async function inbox() {
     const name = C().inboxCollection || '每日文献';
     let top = mirror.collectionByName(name);
     if (!top) { await api.write('POST', 'collections', [{ name }]); await mirror.refresh(true); top = mirror.collectionByName(name); }
     if (!top) throw new Error(`Zotero 里建不了「${name}」分类`);
-    const m = month(now());
-    let sub = mirror.collections().find((c) => c.parent === top.key && c.name === m);
-    if (!sub) { await api.write('POST', 'collections', [{ name: m, parentCollection: top.key }]); await mirror.refresh(true); sub = mirror.collections().find((c) => c.parent === top.key && c.name === m); }
-    return sub ? sub.key : top.key;
+    return top;
+  }
+  // the paper just put into 每日文献 moves into the topic folder the model picks (an existing one, or a new one made
+  // here); when that fails it simply stays where it is
+  async function file(id, key, p) {
+    if (!ask) return;
+    const top = await inbox();
+    const subs = () => mirror.collections().filter((c) => c.parent === top.key && !MONTH.test(c.name));
+    const a = await ask(folderPrompt((profile && profile.get()) || {}, p, subs().map((c) => ({ name: c.name, n: mirror.inCollection(c.key, false).length })), top.name), FOLDER_SCHEMA);
+    const name = String((a && a.folder) || '').replace(/[\\/\n\r]+/g, ' ').trim().slice(0, 24);
+    if (!name) return;
+    let sub = subs().find((c) => c.name === name);
+    if (!sub) { await api.write('POST', 'collections', [{ name, parentCollection: top.key }]); await mirror.refresh(true); sub = subs().find((c) => c.name === name); log(`文献：在「${top.name}」下新建了文件夹「${name}」`); }
+    if (!sub) throw new Error(`建不了文件夹「${name}」`);
+    const move = async () => { const it = mirror.item(key); if (!it) throw new Error('条目还没同步过来'); await api.patchItem(key, it.version, { collections: [...new Set([...it.collections.filter((c) => c !== top.key), sub.key])] }); };
+    try { await move(); } catch (e) { if (e.status !== 412) throw e; await mirror.refresh(true); await move(); }      // (the copy here was behind Zotero's)
+    feed.decide(id, null, { folder: name, folderWhy: String((a && a.why) || '').slice(0, 200) }); onChange('feed');
+    log(`文献：「${p.title.slice(0, 40)}」归入 ${top.name}/${name}`);
   }
   // an open-access PDF for the paper: the source's own link, else Unpaywall's; checked to really be a PDF
   async function fetchPdf(p) {
@@ -55,19 +72,21 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
       const dup = (p.doi && mirror.findDoi(p.doi)) || mirror.findTitle(p.title);
       let key = dup ? dup.key : null;
       if (!key) {
-        const col = await inbox();
-        [key] = await api.createItems([toZotero(p, { collections: [col], tags: [TAG] })]);
+        const top = await inbox();
+        [key] = await api.createItems([toZotero(p, { collections: [top.key], tags: [TAG] })]);
         if (!key) throw new Error('Zotero 没有收下这个条目');
       }
       feed.decide(id, 'kept', { zkey: key, intake: { stage: 'pdf', msg: '找开放获取的 PDF…', at: now() } });
       log(`文献：已收下「${p.title.slice(0, 60)}」→ Zotero ${key}`);
-      after(id, key, p).catch((err) => { setStage(feed.get(id), 'error', err.message); log('文献：收下后处理失败：' + err.message); }).finally(() => working.delete(id));
+      after(id, key, p, !dup).catch((err) => { setStage(feed.get(id), 'error', err.message); log('文献：收下后处理失败：' + err.message); }).finally(() => working.delete(id));
       return { ok: true, key };
     } catch (err) { working.delete(id); return { ok: false, msg: err.message, need: err.need }; }
   }
 
-  async function after(id, key, p) {
+  // fresh: the item was made just now (one already in the library stays in its own folders)
+  async function after(id, key, p, fresh = false) {
     await mirror.refresh(true).catch(() => {});
+    if (fresh) await file(id, key, p).catch((err) => log('文献：归类失败（留在原处）：' + err.message));
     if (!fulltext.hasPdf(key)) {
       const got = await fetchPdf(p);
       if (got) {

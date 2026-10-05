@@ -18,6 +18,10 @@ process.stdin.on('end', () => {
     // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
     a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$' : '') })) : [] };
+  } else if (P.folder) {
+    // 收下: the folder under 每日文献 (an existing one when the list has it)
+    const want = /plasma|sheath/i.test((/^文献：(.*)$/m.exec(prompt) || [])[1] || '') ? '等离子体鞘套' : '其他';
+    a = { folder: want, why: prompt.includes(`- ${want}（`) ? '已有这个文件夹' : '新主题' };
   } else if (P.queries) {
     // 梳理, step 1: a first line from the account, what to search, the words for the library
     const story = (/## 研究自述\n([\s\S]*?)\n\n## /.exec(prompt) || [])[1] || '';

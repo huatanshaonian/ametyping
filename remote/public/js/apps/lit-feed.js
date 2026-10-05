@@ -87,6 +87,7 @@ export function mount(el, ctx) {
     } else if (e.status === 'kept') {
       const s = e.intake || {};
       note.append(h('b', { text: STAGE[s.stage] || '' }), s.msg ? ' ' + s.msg : '');
+      if (e.folder) note.append(h('div', { class: 'lf-tip', title: e.folderWhy || '', text: `已归入 Zotero：每日文献 / ${e.folder}` }));
       if (s.stage === 'needs-pdf') note.append(h('div', { class: 'lf-tip', text: '拿到 PDF 后拖进 Zotero 里这篇下面就行，系统发现后会按全文重新生成速读卡。' }));
       if (e.zkey) acts.append(h('button', { class: 'btn', type: 'button', text: '看卡片', onclick: () => ctx.openItem(e.zkey) }),
         h('button', { class: 'btn', type: 'button', text: '深读', onclick: () => ctx.openReader(e.zkey) }));

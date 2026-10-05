@@ -74,7 +74,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
     ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
   const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
-  intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, log, onChange: () => changed('feed') });
+  intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const stats = createStats({ kb, feed, todos });
 

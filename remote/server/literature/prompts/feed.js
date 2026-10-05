@@ -8,6 +8,7 @@ const obj = (props) => ({ type: 'object', additionalProperties: false, propertie
 
 const RANK_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, score: num, question: num, why: str, fun: bool }) } });
 const REVIEW_SCHEMA = obj({ why: str, recall: { type: 'array', items: str } });
+const FOLDER_SCHEMA = obj({ folder: str, why: str });
 
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 
@@ -52,4 +53,20 @@ function reviewPrompt(profile, it, notes, card) {
   ].filter((x) => x !== '').join('\n');
 }
 
-module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt, questionsBlock, directionOf };
+// 收下: which folder under 每日文献 the paper goes into -- one of the folders there, or a new one
+// p: the paper; folders: [{ name, n }] (the folders there now and how many papers each holds)
+function folderPrompt(profile, p, folders, inbox = '每日文献') {
+  return [
+    `用户把每天收下的文献放在 Zotero 的「${inbox}」下面，按研究主题分文件夹。给下面这篇选一个文件夹。`,
+    '用户的研究主线：' + directionOf(profile), '',
+    folders.length ? '现有的文件夹：\n' + folders.map((f) => `- ${f.name}（${f.n} 篇）`).join('\n') : '（现在还没有文件夹）', '',
+    `文献：${p.title}\n来源：${p.venue || ''} ${p.year || ''}\n摘要：${String(p.abstract || '（无）').replace(/\s+/g, ' ').slice(0, 1500)}`, '',
+    '规则：',
+    '- 现有文件夹里有合适的就用它，folder 写它的原名，一字不差。',
+    '- 都不合适才新建：名字是一个研究主题（中文，4～12 个字，如“等离子体鞘套电磁散射”“RCS 高频方法”），优先沿用上面研究分支的叫法；不要按期刊、年份、方法细节或单篇文献起名。',
+    '- 粒度要粗：整个目录保持在十个文件夹以内，宁可放进相近的现有文件夹，也不要为一篇文献单开一个。',
+    '- why：一句话说明为什么放这里。',
+  ].join('\n');
+}
+
+module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, FOLDER_SCHEMA, rankPrompt, reviewPrompt, folderPrompt, questionsBlock, directionOf };

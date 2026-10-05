@@ -181,7 +181,7 @@ const src = createFakeSources();
     ok('the open PDF went to Zotero (upload flow) and the quick card was made from the text', e1 && e1.intake.stage === 'ready' && zot.writes.some((w) => w.kind === 'file'), e1 && e1.intake);
     const col = [...zot.cols.values()].find((c) => c.parent === 'JDF645IP');
     const made = zot.objs.get(k1.key);
-    ok('filed in 每日文献/<this month>, tagged, with its DOI and abstract', col && /^\d{4}-\d{2}$/.test(col.name) && made.collections.includes(col.key) && made.tags.some((t) => t.tag === 'Windose推送') && made.DOI === '10.2514/1.new1' && /electron density/.test(made.abstractNote), [col, made]);
+    ok('filed under 每日文献 in a folder by topic, which the model named and the module made; tagged, with its DOI and abstract', col && col.name === '等离子体鞘套' && made.collections.join() === col.key && e1.folder === '等离子体鞘套' && made.tags.some((t) => t.tag === 'Windose推送') && made.DOI === '10.2514/1.new1' && /electron density/.test(made.abstractNote), [col, made]);
     const d1 = await G('/api/lit/item?key=' + k1.key);
     ok('the card: from the full text (page references), in the knowledge base as Markdown with front matter', d1.card && d1.card.meta.status === 'quick' && /\[p\.1\]/.test(d1.card.text) && /^---\ntitle: /.test(d1.card.text) &&
       fs.existsSync(path.join(KB, 'papers', d1.citekey + '.md')), d1.card);
@@ -191,6 +191,8 @@ const src = createFakeSources();
     const k2 = await P('/api/lit/feed/keep', { id: closed.id });
     const e2 = await until(async () => { const f = await G('/api/lit/feed'); const e = f.items.find((x) => x.id === closed.id); return e && e.intake && /needs-pdf|ready|error/.test(e.intake.stage) && e; }, 30000);
     ok('no PDF: a card from the abstract, and the advice to get the full text', k2.ok && e2.intake.stage === 'needs-pdf' && /建议手动获取全文/.test(e2.intake.msg), e2 && e2.intake);
+    ok('the second paper on the same topic goes into the folder already there (told to the model with its count); no second folder', zot.objs.get(k2.key).collections.join() === col.key &&
+      [...zot.cols.values()].filter((c) => c.parent === 'JDF645IP').length === 1 && /- 等离子体鞘套（1 篇）/.test(fs.readFileSync(path.join(T, 'codex.log'), 'utf8')));
     const d2 = await G('/api/lit/item?key=' + k2.key);
     ok('that card says so too', d2.card && d2.card.meta.getpdf && !/\[p\.1\]/.test(d2.card.text), d2.card && d2.card.meta);
     zot.addPdf(k2.key, 'blackout.pdf', makePdf(['blackout telemetry measurements', 'attenuation versus altitude']));
