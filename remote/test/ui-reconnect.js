@@ -94,6 +94,18 @@ function login() {
     for (let i = 0; i < 24; i++) { await sleep(250); s = await st(); if (s.opens > o1 && s.online) break; }
     chk('a socket closed: connected again within a few seconds, by itself', s.online && s.opens === o1 + 1 && sockets.length === 3, [s, sockets.length]);
 
+    // a phone's background: the page hidden for a while, its socket dead meanwhile. Back on screen it is not even
+    // asked (that would cost the 4 s): a new socket at once, and the page never showed "disconnected"
+    await evalJs("(() => { window.__hid = true; Object.defineProperty(document, 'hidden', { get: () => window.__hid, configurable: true }); window.__downs = 0; window.__n.on('status', (up) => { if (!up) window.__downs++; }); document.dispatchEvent(new Event('visibilitychange')); })()");
+    freeze(); await sleep(6000);
+    const o3 = (await st()).opens, n3 = sockets.length, t3 = Date.now();
+    await evalJs("(() => { window.__hid = false; document.dispatchEvent(new Event('visibilitychange')); })()");
+    for (let i = 0; i < 30; i++) { await sleep(100); s = await st(); if (s.opens > o3 && s.online) break; }
+    const took3 = Date.now() - t3;
+    chk('back from 6 s out of sight with a dead socket: a new one at once (well under the 4 s of asking), never shown as disconnected', s.online && s.opens === o3 + 1 && sockets.length === n3 + 1 && took3 < 2000 &&
+      (await evalJs('window.__downs')) === 0, [s, sockets.length - n3, took3, await evalJs('window.__downs')]);
+    await evalJs("delete document.hidden");
+
     // the server away for a while (the tries slow down), then back: coming back on screen connects at once
     for (const p of [...pairs]) p.frozen = true;
     relay.close(); kill();

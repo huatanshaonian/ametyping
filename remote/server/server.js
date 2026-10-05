@@ -35,6 +35,7 @@ const { createBackup } = require('./backup');
 const { createMail } = require('./mail');
 const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
+const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
 const { createPushEvents } = require('./push/events');
@@ -386,14 +387,14 @@ const server = http.createServer(async (req, res) => {
   const ip = clientIp(req);
 
   // --- public: the login page (it gives nothing away) ---
-  if (req.method === 'GET' && (p === '/login' || p === '/login.html')) return serveFile(res, 'login.html');
-  if (req.method === 'GET' && p === '/login.js') return serveFile(res, 'login.js');
+  if (req.method === 'GET' && (p === '/login' || p === '/login.html')) return serveFile(req, res, 'login.html');
+  if (req.method === 'GET' && p === '/login.js') return serveFile(req, res, 'login.js');
   if (req.method === 'GET' && p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
   // the installable web app and its notifications: the service worker (at the root: its scope is the whole site) and
   // the app icons -- fetched by the browser without the login cookie, and nothing in them says what this is (the
   // manifest, which does, is fetched with the cookie: below)
-  if (req.method === 'GET' && p === '/sw.js') return serveFile(res, 'sw.js', 'no-cache');
-  if (req.method === 'GET' && /^\/app\/[a-z0-9-]+\.png$/.test(p)) return serveFile(res, p.slice(1), 'max-age=86400');
+  if (req.method === 'GET' && p === '/sw.js') return serveFile(req, res, 'sw.js', 'no-cache');
+  if (req.method === 'GET' && /^\/app\/[a-z0-9-]+\.png$/.test(p)) return serveFile(req, res, p.slice(1), 'max-age=86400');
   // Google's consent screen sends the browser back here without the (SameSite=Strict) login cookie: the one-time
   // state it carries is the check (google/account.js)
   if (req.method === 'GET' && p === '/api/google/callback') return google.handleCallback(req, res, url, send);
@@ -415,9 +416,9 @@ const server = http.createServer(async (req, res) => {
     return json(res, 401, { error: 'unauthorized' });
   }
 
-  if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, 'index.html');
-  if (req.method === 'GET' && p === '/manifest.webmanifest') return serveFile(res, 'manifest.webmanifest', 'no-cache');
-  if (req.method === 'GET' && STATIC.test(p)) return serveFile(res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
+  if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(req, res, 'index.html');
+  if (req.method === 'GET' && p === '/manifest.webmanifest') return serveFile(req, res, 'manifest.webmanifest', 'no-cache');
+  if (req.method === 'GET' && STATIC.test(p)) return serveFile(req, res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
@@ -485,10 +486,11 @@ const server = http.createServer(async (req, res) => {
   return send(res, 404, 'not found');
 });
 
-function serveFile(res, name, cache) {
+function serveFile(req, res, name, cache) {
   const f = path.join(PUBLIC, name);
   if (!f.startsWith(PUBLIC + path.sep)) return send(res, 404, 'not found');
-  fs.readFile(f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, TYPES[path.extname(f)] || 'application/octet-stream', cache ? { 'Cache-Control': cache } : undefined));
+  // (static.js: ETag / 304 and gzip, so loading the page again costs little)
+  sendFile(req, res, f, { ...SEC_HEADERS, 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream', ...(cache ? { 'Cache-Control': cache } : {}) }, () => send(res, 404, 'not found'));
 }
 function serveAsset(res, rel) {
   rel = rel.replace(/\\/g, '/');

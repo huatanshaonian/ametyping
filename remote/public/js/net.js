@@ -2,14 +2,17 @@
 // Kept alive across what phones do to a page in the background: the system freezes it and drops the socket, often
 // without telling the page -- back on screen it would look connected and show old data. So whenever the page comes
 // back (visible, focused, the network back) and every 30 s while it is on screen, the socket is checked: gone ->
-// connect at once; there -> a ping that must be answered within 4 s, or it is replaced.
+// connect at once; there -> a ping that must be answered within 4 s, or it is replaced. Back from more than a few
+// seconds out of sight (a phone's background), the socket is not even asked: a new one right away -- asking a dead
+// one only costs the 4 s.
 import { askCode } from './gate.js';
 import * as sound from './sound.js';
 
 const handlers = new Map();
 let ws = null, ridN = 0;
 let retryT = null, tries = 0, lastMsg = 0, probeT = null;
-const RETRY = [1000, 2000, 4000, 8000, 15000], PROBE_MS = 4000, BEAT_MS = 30000;
+const RETRY = [1000, 2000, 4000, 8000, 15000], PROBE_MS = 4000, BEAT_MS = 30000, AWAY_MS = 5000;
+let hiddenAt = 0;
 const waiting = new Map();                 // rid -> callback
 export const state = { sessions: [], online: false };
 
@@ -59,15 +62,24 @@ export function connect() {
 }
 
 // Is the socket still good? Asked when the page comes back on screen and now and then while it is there.
+// a new socket in place of this one, without a word to the rest of the page unless connecting fails
+function replace(s) {
+  s.onclose = s.onmessage = s.onopen = null; try { s.close(); } catch {}
+  ws = null; clearTimeout(probeT); clearTimeout(retryT); tries = 0;
+  for (const [rid, f] of waiting) { waiting.delete(rid); f({ ok: false, msg: '连接断了，结果不确定，请看对话确认' }); }
+  connect();
+}
 export function check() {
-  if (document.hidden) return;
+  if (document.hidden) { if (!hiddenAt) hiddenAt = Date.now(); return; }
+  const away = hiddenAt ? Date.now() - hiddenAt : 0; hiddenAt = 0;
   if (!ws || ws.readyState > 1) { tries = 0; return connect(); }
   if (ws.readyState !== 1) return;                   // still connecting
+  if (away >= AWAY_MS) return replace(ws);           // out of sight for a while: most likely dead, not worth asking
   const s = ws, at = Date.now();
   send({ t: 'ping' });
   clearTimeout(probeT);
   // no word back: it is dead without having said so (closing it properly could take minutes) -- replaced now
-  probeT = setTimeout(() => { if (s === ws && lastMsg < at) { s.onclose = null; try { s.close(); } catch {} tries = 0; lost(s); clearTimeout(retryT); connect(); } }, PROBE_MS);
+  probeT = setTimeout(() => { if (s === ws && lastMsg < at) replace(s); }, PROBE_MS);
 }
 document.addEventListener('visibilitychange', check);
 for (const ev of ['pageshow', 'focus', 'online']) addEventListener(ev, check);
