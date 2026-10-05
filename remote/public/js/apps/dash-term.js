@@ -1,8 +1,19 @@
 // 终端画面 in the dashboard: what the session's terminal shows right now, as text. Claude Code's own menus (/model,
 // /resume, /config, a prompt) are drawn on the terminal's screen and never reach the conversation -- here they can be
 // seen, and worked with the key buttons (each key press brings the screen after it). Read when you ask (opening it,
-// 刷新, a key, a "/" command sent), never polled.
+// 刷新, a key, a command sent that opens a menu), never polled.
 import { h } from '../util.js';
+
+// Claude Code's commands that open a menu or a screen of their own in the terminal (the panel opens by itself for
+// these only; others -- /compact, /clear, a skill -- just run). The first group only when sent bare: with an
+// argument ("/model opus") they act at once.
+const MENU_BARE = new Set(['model', 'effort', 'resume', 'theme', 'output-style', 'rename', 'export', 'add-dir', 'fast']);
+const MENU = new Set(['config', 'permissions', 'mcp', 'agents', 'hooks', 'plugin', 'memory', 'status', 'usage', 'help', 'rewind', 'login', 'logout',
+  'ide', 'tasks', 'bashes', 'statusline', 'terminal-setup', 'doctor', 'privacy-settings', 'tui']);
+export function opensMenu(text) {
+  const m = /^\s*\/([\w-]+)(\s+\S)?/.exec(String(text || ''));
+  return !!m && (MENU.has(m[1]) || (MENU_BARE.has(m[1]) && !m[2]));
+}
 
 const pad = (n) => String(n).padStart(2, '0');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

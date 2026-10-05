@@ -126,7 +126,14 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("[...document.querySelectorAll('.dash .keys .btn')].find(b => b.textContent === '画面').click()"); await sleep(1200);
     chk('「画面」: the terminal\'s screen as text (the prompt, the mode line), read once', /shift\+tab to cycle/.test(await scr() || '') && /❯/.test(await scr() || '') && screens === 1, [await scr(), screens]);
     await evalJs("[...document.querySelectorAll('.dash .term .tbar .btn')].find(b => b.textContent === '×').click()"); await sleep(300);
-    await evalJs("(() => { const s = document.querySelector('.dash .say'); s.value = '/model'; s.dispatchEvent(new Event('input')); document.querySelector('.dash .compose').requestSubmit(); })()");
+    // only the commands that open a menu bring the screen up: not /compact, not a command given its argument
+    const say = async (t) => { await evalJs(`(() => { const s = document.querySelector('.dash .say'); s.value = ${JSON.stringify(t)}; s.dispatchEvent(new Event('input')); document.querySelector('.dash .compose').requestSubmit(); })()`); };
+    const menus = await evalJs("import('/js/apps/dash-term.js').then(m => ['/model', ' /resume', '/config', '/permissions', '/mcp', '/model opus', '/compact', '/clear', '/compact 留下要点', '/my-skill', 'model', '说说 /model'].map(t => m.opensMenu(t) ? 1 : 0).join(''))");
+    chk('which commands open a menu: /model /resume /config /permissions /mcp -- not with an argument, not /compact, /clear, a skill, plain text', menus === '111110000000', menus);
+    await say('/compact'); await sleep(1800); await say('/model opus'); await sleep(1800);
+    chk('"/compact" and "/model opus" sent: the screen stays closed, nothing read', sent.join() === '/compact,/model opus' && (await scr()) === null && screens === 1, [sent, await scr(), screens]);
+    sent.length = 0;
+    await say('/model');
     for (let i = 0; i < 30 && !/Select model/.test(await scr() || ''); i++) await sleep(200);
     chk('"/model" sent: the screen opens by itself with the terminal\'s menu, ❯ on the first model', sent.join() === '/model' && /Select model/.test(await scr() || '') && /❯ 1\. Opus 5\.5/.test(await scr() || ''), [sent, await scr()]);
     await shot('51b-term-menu.png');

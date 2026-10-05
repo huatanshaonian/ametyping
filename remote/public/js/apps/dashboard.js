@@ -8,7 +8,7 @@ import { createList } from './dash-list.js';
 import { createNotes } from './dash-notes.js';
 import { createBtw } from './dash-btw.js';
 import { createSlash } from './dash-slash.js';
-import { createTerm } from './dash-term.js';
+import { createTerm, opensMenu } from './dash-term.js';
 
 // the reply box's hint, by how the session can be reached
 const PLACEHOLDER = {
@@ -229,8 +229,8 @@ function mount(current) {
       if (sel === key && say.value === text) { say.value = ''; fitSay(); keepDraft(); }
       else if (drafts.get(key) === text) { drafts.delete(key); prefs.set('dash.drafts', Object.fromEntries(drafts)); }
       showNote(r.msg || '已发送');
-      // a "/" command may open a menu in the terminal (/model, /resume...): the screen is shown so it can be answered
-      if (/^\s*\/\S/.test(text) && sel === key && termOk) { if (!showKeys) { showKeys = true; renderControls(); } if (term.open) term.load(900); else { term.show(true); term.load(900); } }
+      // a command that opens a menu in the terminal (/model, /resume...): the screen is shown so it can be answered
+      if (opensMenu(text) && sel === key && termOk) { if (!showKeys) { showKeys = true; renderControls(); } if (term.open) term.load(900); else { term.show(true); term.load(900); } }
     } else showNote(r.msg || '发送失败', true);
     renderControls();
   });
