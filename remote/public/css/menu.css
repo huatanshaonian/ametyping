@@ -5,11 +5,11 @@
 .ctxi .ck { flex: none; width: 18px; text-align: center; }
 .ctxi .lb { flex: 1; }
 .ctxi .ar { flex: none; margin-left: 14px; font-size: 10px; }
-.ctxi:hover:not(:disabled), .ctxi.open, .ctxi:focus { background: var(--border); color: #fff; outline: none; }
+.ctxi:hover:not(:disabled), .ctxi.open, .ctxi:focus { background: var(--fill); color: var(--on-fill); outline: none; }
 .ctxi:disabled { opacity: .45; cursor: default; }
 .ctxsep { height: 1px; margin: 3px 4px; background: var(--edge); }
 
-.dlg { position: fixed; inset: 0; z-index: 110; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(42, 31, 94, .35); }
+.dlg { position: fixed; inset: 0; z-index: 110; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--veil); }
 .dlgbox { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: 6px 6px 0 rgba(77, 35, 207, .3); }
 .dlgt { padding: 5px 10px; font-weight: bold; color: var(--border); background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
 .dlgb { padding: 12px 14px 14px; }
@@ -29,7 +29,7 @@ html[data-theme="win98"] .dlgb p { color: #000; }
 /* message boxes (js/dialog.js msgBox: Windose's own confirm / alert) */
 .dlgmsg { width: 360px; }
 .dlgt { display: flex; align-items: center; gap: 8px; } .dlgt > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dlgx { flex: none; width: 20px; height: 18px; padding: 0; line-height: 1; font-size: 14px; font-weight: bold; cursor: pointer; border: 2px solid var(--pink-d); background: var(--pink); color: #fff; }
+.dlgx { flex: none; width: 20px; height: 18px; padding: 0; line-height: 1; font-size: 14px; font-weight: bold; cursor: pointer; border: 2px solid var(--pink-d); background: var(--pink); color: var(--on-fill); }
 .dlgm { display: flex; gap: 12px; align-items: flex-start; }
 .dlgm img { flex: none; width: 32px; height: 32px; image-rendering: pixelated; }
 .dlgtx { flex: 1; min-width: 0; padding-top: 2px; font-size: 13px; line-height: 1.6; color: var(--ink); white-space: pre-line; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }

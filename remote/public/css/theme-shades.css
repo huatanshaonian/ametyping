@@ -1,0 +1,60 @@
+/* 色调: other colours for each look, switched by html[data-shade] (js/theme.js; js/theme-boot.js before the first
+   paint). A shade only gives the tokens of desktop.css / theme-win98.css other values -- the rules themselves take
+   every surface and fill from those tokens -- plus the few things a dark page needs drawn differently.
+     Windose（粉）:   深夜 (night: deep violet)   梅子 (plum: warmer)
+     Windows 标准:   沙漠 (desert: parchment)    豆沙绿 (green)        -- the grey frame stays, only the white goes
+   夜灯 (html[data-nl], strength in --nl 0..1): nothing recoloured, the whole page warmed and dimmed a little, as
+   Windows' own night light does. It works over any look and shade. */
+
+/* ---------- Windose: 深夜 ---------- */
+html[data-shade="night"] {
+  --border: #a890ff; --border-d: #8a70e8; --title: #46296f; --title-2: #63307a; --body: #261a47;
+  --cyan: #7ef0e0; --cyan-d: #58cfc6; --pink: #ff8fd0; --pink-d: #e868b4; --ink: #f1e6ff;
+  --gamepink: #2b1d50; --panel: #2b1d50; --edge: rgba(168, 144, 255, .38);
+  --muted: rgba(241, 230, 255, .68); --faint: rgba(241, 230, 255, .46);
+  --tint: rgba(168, 144, 255, .16); --tint-soft: rgba(168, 144, 255, .09);
+  --head-bg: #31225c; --hover: rgba(255, 255, 255, .09);
+  --accent-muted: rgba(168, 144, 255, .55); --accent-wash: rgba(168, 144, 255, .18); --quote-bg: rgba(255, 143, 208, .08);
+  --warn: #ffb37a; --bad: #ff8fb8; --ok: #6fe0b0; --ok-text: #8fe8c4; --off: #7a6a9a;
+  --surface: #2f2156; --fill: #6a4be0; --fill-d: #5539c4; --on-fill: #fff; --hi: rgba(255, 255, 255, .28);
+  --mine: #4a2b73; --note-bg: rgba(255, 214, 102, .13);
+  --deep: #150d2b; --veil: rgba(8, 4, 20, .62); --press: #3b2a6b; --wall-veil: rgba(21, 13, 43, .62);
+  color-scheme: dark;
+}
+/* ---------- Windose: 梅子 ---------- */
+html[data-shade="plum"] {
+  --border: #e0a0f0; --border-d: #c880dc; --title: #5a2c63; --title-2: #7a2f66; --body: #2f1c3d;
+  --cyan: #8cf0dc; --cyan-d: #62cfc0; --pink: #ff9ad2; --pink-d: #ea70b6; --ink: #fbeaf8;
+  --gamepink: #341f43; --panel: #341f43; --edge: rgba(224, 160, 240, .36);
+  --muted: rgba(251, 234, 248, .68); --faint: rgba(251, 234, 248, .46);
+  --tint: rgba(224, 160, 240, .15); --tint-soft: rgba(224, 160, 240, .08);
+  --head-bg: #3b244c; --hover: rgba(255, 255, 255, .09);
+  --accent-muted: rgba(224, 160, 240, .55); --accent-wash: rgba(224, 160, 240, .18); --quote-bg: rgba(255, 154, 210, .08);
+  --warn: #ffb37a; --bad: #ff8fb8; --ok: #78e0b4; --ok-text: #98e8c8; --off: #86708e;
+  --surface: #392348; --fill: #9a48b4; --fill-d: #7e3698; --on-fill: #fff; --hi: rgba(255, 255, 255, .28);
+  --mine: #5c2c62; --note-bg: rgba(255, 214, 102, .13);
+  --deep: #1c0f26; --veil: rgba(14, 6, 20, .62); --press: #4a2c5c; --wall-veil: rgba(28, 15, 38, .6);
+  color-scheme: dark;
+}
+/* what a dark page draws differently (both dark shades) */
+html[data-shade="night"] a, html[data-shade="plum"] a { color: #9fd8ff; }
+html[data-shade="night"] ::selection, html[data-shade="plum"] ::selection { background: var(--fill); color: #fff; }
+html[data-shade="night"] .dash .term, html[data-shade="plum"] .dash .term { background: #0f0920; }
+/* the window frame is a picture and stays pink and cyan: its title keeps the dark ink it was drawn for */
+html[data-shade="night"] .win .title, html[data-shade="plum"] .win .title { color: #4d23cf; }
+html[data-shade="night"] .win.inactive .title, html[data-shade="plum"] .win.inactive .title { color: #8a8a8a; }
+
+/* ---------- Windows 标准: 沙漠 ---------- */
+/* (your own messages were the tooltip yellow: on parchment they would vanish, so they turn pale blue) */
+html[data-theme="win98"][data-shade="desert"] {
+  --body: #f3ead6; --surface: #f6efdf; --tint: #e7dcc4; --quote-bg: #ece2cb; --mine: #dbe6f2; --note-bg: #f1e2b4;
+  --dither: repeating-conic-gradient(#f3ead6 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
+}
+/* ---------- Windows 标准: 豆沙绿 ---------- */
+html[data-theme="win98"][data-shade="green"] {
+  --body: #cfe6cf; --surface: #d7ebd7; --tint: #bedabe; --quote-bg: #c6dfc6; --note-bg: #f2f2c4;
+  --dither: repeating-conic-gradient(#cfe6cf 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
+}
+
+/* ---------- 夜灯 ---------- */
+html[data-nl] { filter: sepia(calc(var(--nl, .5) * .55)) brightness(calc(1 - var(--nl, .5) * .13)) saturate(calc(1 - var(--nl, .5) * .14)); }

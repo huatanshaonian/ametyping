@@ -10,7 +10,7 @@
 .ml-list { width: 330px; flex: none; overflow-y: auto; border-right: 1px solid var(--edge); background: var(--body); }
 .ml-i { padding: 5px 9px; border-bottom: 1px dotted var(--edge); cursor: pointer; font-size: 12.5px; }
 .ml-i:hover { background: var(--hover); }
-.ml-i.sel { background: var(--border); } .ml-i.sel * { color: #fff !important; }
+.ml-i.sel { background: var(--fill); } .ml-i.sel * { color: var(--on-fill) !important; }
 .ml-i.bulk { opacity: .75; }
 .ml-l1 { display: flex; gap: 6px; } .ml-l1 b { flex: 1; min-width: 0; color: var(--border); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ml-l1 small { flex: none; font-size: 11px; color: var(--muted); }
@@ -20,7 +20,7 @@
 .ml-i .tag.d { color: var(--bad); } .ml-i .tag.c { color: var(--warn); } .ml-i .tag.b { color: var(--faint); } .ml-i .tag.a { color: var(--accent-muted); }
 .ml-more { display: block; margin: 8px auto; }
 .ml-empty { padding: 12px; font-size: 12px; color: var(--muted); }
-.ml-view { flex: 1; min-width: 0; overflow-y: auto; background: #fff; }
+.ml-view { flex: 1; min-width: 0; overflow-y: auto; background: var(--surface); }
 .ml-head { padding: 8px 12px; border-bottom: 1px solid var(--edge); background: var(--body); font-size: 12.5px; }
 .ml-head h3 { margin: 2px 0 6px; font-size: 15px; color: var(--border); }
 .ml-hl { display: flex; gap: 8px; } .ml-hl b { flex: none; width: 48px; color: var(--muted); font-weight: normal; } .ml-hl span { min-width: 0; word-break: break-all; }
@@ -48,7 +48,7 @@
 .ml-text a { color: var(--border); text-decoration: underline; word-break: break-all; }
 /* what the model made of a mail (the list's line, the message's box) and 邮件提醒 (.mal) */
 .ml-t em { font-style: normal; color: var(--bad); }
-.tag.k-action { color: #fff !important; background: var(--bad); border-color: var(--bad); }
+.tag.k-action { color: var(--on-fill) !important; background: var(--bad); border-color: var(--bad); }
 .tag.k-notice { color: var(--warn) !important; }
 .tag.k-reading { color: var(--ok-text) !important; }
 .tag.fun { color: var(--accent-muted); }

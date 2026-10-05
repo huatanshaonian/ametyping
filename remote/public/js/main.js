@@ -20,6 +20,7 @@ import * as literature from './apps/literature.js';
 import * as control from './apps/control.js';
 import * as sound from './sound.js';
 import * as push from './push.js';
+import * as shade from './shade.js';
 import './alerts.js';
 import './volume.js';
 
@@ -86,6 +87,7 @@ net.on('sessions', render);
 
 wallpaper.init();
 todo.initWidget(document.getElementById('desktop'));        // 重要计划, pinned to the desktop
+shade.start();                                   // 色调 / 夜灯: in force now, looked at again as the day goes
 net.connect();
 openDashboard();
 // #report=<date | week-date | draft>: opened from the pet's morning bubble -- show that report (then forget the link)

@@ -10,10 +10,10 @@
 .np-i b { display: block; font-weight: normal; color: var(--border); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .np-i small { font-size: 11px; color: var(--muted); }
 .np-i:hover { background: var(--hover); }
-.np-i.sel { background: var(--border); } .np-i.sel b, .np-i.sel small { color: #fff; }
+.np-i.sel { background: var(--fill); } .np-i.sel b, .np-i.sel small { color: var(--on-fill); }
 .np-empty { padding: 12px; font-size: 12px; color: var(--muted); }
 .np-text { flex: 1; min-width: 0; resize: none; border: 0; outline: none; padding: 10px 12px; font: 14px/1.6 "Microsoft YaHei UI", system-ui, sans-serif;
-  color: var(--ink); background: #fff; }
+  color: var(--ink); background: var(--surface); }
 .np-text:disabled { background: var(--body); }
 .notepad.narrow .np-list { width: 100%; border-right: 0; }
 .notepad.narrow.editing .np-list, .notepad.narrow:not(.editing) .np-text { display: none; }

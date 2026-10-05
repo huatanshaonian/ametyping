@@ -8,7 +8,7 @@
 .cp-item .cp-l { font-size: 13px; color: var(--border); }
 .cp-item small { font-size: 11px; color: var(--muted); line-height: 1.3; }
 .cp-item:hover { background: var(--hover); }
-.cp-item.sel { background: var(--border); } .cp-item.sel .cp-l, .cp-item.sel small { color: #fff; }
+.cp-item.sel { background: var(--fill); } .cp-item.sel .cp-l, .cp-item.sel small { color: var(--on-fill); }
 .cp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .cp-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
 .cp-title { color: var(--border); }

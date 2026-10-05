@@ -8,6 +8,8 @@ html[data-theme="win98"] {
   --muted: #404040; --faint: #808080; --tint: #ececec; --tint-soft: #c0c0c0; --head-bg: #c0c0c0; --hover: rgba(0, 0, 128, .08);
   --accent-muted: #5b5b9b; --accent-wash: rgba(0, 0, 128, .06); --quote-bg: #f4f4f4;
   --warn: #b04a10; --bad: #a00000; --ok: #008000; --ok-text: #006000; --off: #808080;
+  --surface: #fff; --fill: #000080; --fill-d: #000060; --on-fill: #fff; --hi: #fff; --mine: #ffffe1; --note-bg: #ffffe1;
+  --deep: #008080; --veil: rgba(0, 0, 0, .25); --press: #c0c0c0; --wall-veil: transparent;
   --wt: 22px; --wr: 4px; --wb: 4px; --wl: 4px;                 /* 2 px bevel + face; 18 px title bar */
   /* bevels: raised button, raised window edge, pressed button, sunken field */
   --raised: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
@@ -16,7 +18,7 @@ html[data-theme="win98"] {
   --sunken: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
   --dither: repeating-conic-gradient(#fff 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
 }
-html[data-theme="win98"] body { background: #008080; }
+html[data-theme="win98"] body { background: var(--deep); }
 
 /* ---------- scrollbars ---------- */
 html[data-theme="win98"] ::-webkit-scrollbar,
@@ -57,7 +59,7 @@ html[data-theme="win98"] .win .resize { right: calc(2px - var(--wr)); bottom: ca
 html[data-theme="win98"] #netpanel { background: #c0c0c0; border-left: 0; box-shadow: var(--raised-outer); padding: 3px; }
 html[data-theme="win98"] #netpanel .ptitle { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
 html[data-theme="win98"] #netpanel .ptitle .padd { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); padding: 0 6px; line-height: 16px; }
-html[data-theme="win98"] #machines { margin-top: 4px; background: #fff; box-shadow: var(--sunken); padding: 4px; }
+html[data-theme="win98"] #machines { margin-top: 4px; background: var(--surface); box-shadow: var(--sunken); padding: 4px; }
 html[data-theme="win98"] .mach .mn { color: #000; }
 html[data-theme="win98"] .mach.sel .mn { color: #fff; }
 
@@ -90,7 +92,7 @@ html[data-theme="win98"] .btn:active:not(:disabled) { box-shadow: var(--pressed)
 html[data-theme="win98"] .btn.go { background: #c0c0c0; color: #000; outline: 1px solid #000; outline-offset: 0; }
 html[data-theme="win98"] .btn.no { background: #c0c0c0; color: var(--bad); }
 html[data-theme="win98"] .btn:disabled { opacity: 1; color: #808080; text-shadow: 1px 1px 0 #fff; }
-html[data-theme="win98"] .field { border: 0; background: #fff; color: #000; box-shadow: var(--sunken); padding: 5px 7px; }
+html[data-theme="win98"] .field { border: 0; background: var(--surface); color: #000; box-shadow: var(--sunken); padding: 5px 7px; }
 
 /* ---------- step-up dialog ---------- */
 html[data-theme="win98"] #gate { background: rgba(0, 0, 0, .25); }
@@ -100,7 +102,7 @@ html[data-theme="win98"] #gate p { color: #000; }
 html[data-theme="win98"] #gate input { border: 0; box-shadow: var(--sunken); color: #000; }
 
 /* ---------- apps ---------- */
-html[data-theme="win98"] .dash .side { background: #fff; border-right: 0; box-shadow: inset -1px 0 #808080; }
+html[data-theme="win98"] .dash .side { background: var(--surface); border-right: 0; box-shadow: inset -1px 0 #808080; }
 html[data-theme="win98"] .dash .ltool { background: #c0c0c0; border-bottom: 0; box-shadow: inset 0 -1px #808080; }
 html[data-theme="win98"] .dash .seg { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); }
 html[data-theme="win98"] .dash .seg.on { box-shadow: var(--sunken); background: #dfdfdf; color: #000; }
@@ -110,7 +112,7 @@ html[data-theme="win98"] .dash .card.sel { background: #000080; box-shadow: none
 html[data-theme="win98"] .dash .card.sel .nm, html[data-theme="win98"] .dash .card.sel .sm, html[data-theme="win98"] .dash .card.sel .st { color: #fff; }
 html[data-theme="win98"] .dash .compose { border-top: 0; box-shadow: inset 0 1px #808080, inset 0 2px #fff; }
 html[data-theme="win98"] .dash .say { border: 0; box-shadow: var(--sunken); }
-html[data-theme="win98"] .dash .m.user { background: #ffffe1; border-color: #808080; }
+html[data-theme="win98"] .dash .m.user { background: var(--mine); border-color: #808080; }
 html[data-theme="win98"] .dash .m.assistant { border-color: #808080; }
 html[data-theme="win98"] .xlist th { background: #c0c0c0; color: #000; border-bottom: 0; box-shadow: var(--raised); }
 html[data-theme="win98"] .xlist tbody tr:hover { background: var(--hover); }
@@ -119,6 +121,6 @@ html[data-theme="win98"] .xstatus { box-shadow: inset 1px 1px #808080, inset -1p
 html[data-theme="win98"] .xlaunch { background: #c0c0c0; }
 html[data-theme="win98"] .cmpresult { border: 0; box-shadow: var(--sunken); }
 html[data-theme="win98"] .wall { border-color: #c0c0c0; }
-html[data-theme="win98"] .dash .slash { background: #fff; border: 1px solid #000; box-shadow: 2px 2px 0 rgba(0, 0, 0, .3); }
+html[data-theme="win98"] .dash .slash { background: var(--surface); border: 1px solid #000; box-shadow: 2px 2px 0 rgba(0, 0, 0, .3); }
 html[data-theme="win98"] .dash .slash .sl.on { background: #000080; }
-html[data-theme="win98"] .dash .btwpop { background: #ffffe1; border: 1px solid #000; box-shadow: 2px 2px 0 rgba(0, 0, 0, .3); }
+html[data-theme="win98"] .dash .btwpop { background: var(--mine); border: 1px solid #000; box-shadow: 2px 2px 0 rgba(0, 0, 0, .3); }

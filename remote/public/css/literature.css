@@ -2,7 +2,7 @@
 .lit { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .lit-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
 .lit-tab { font: inherit; font-size: 12.5px; padding: 2px 12px; cursor: pointer; border: 1px solid var(--edge); background: var(--body); color: var(--border); }
-.lit-tab.on { background: var(--border); color: #fff; border-color: var(--border); }
+.lit-tab.on { background: var(--fill); color: var(--on-fill); border-color: var(--border); }
 .lit-sp { flex: 1; }
 .lit-st { font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lit-st.bad, .lit-empty.bad, .lb-job.bad { color: var(--bad); }
@@ -16,13 +16,13 @@
 /* 今日 */
 .lf-list { flex: 1; overflow-y: auto; padding: 8px 12px; background: var(--body); font-size: 13px; }
 .lf-sec h3 { margin: 6px 0; font-size: 13.5px; color: var(--border); }
-.lf-i { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--edge); border-left: 4px solid var(--border); background: #fff; line-height: 1.55; }
+.lf-i { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--edge); border-left: 4px solid var(--border); background: var(--surface); line-height: 1.55; }
 .lf-i.k-rv, .lf-i.k-cu { border-left-color: var(--ok-text); } .lf-i.k-old { border-left-color: var(--warn); } .lf-i.k-fun { border-left-color: var(--pink); }
 .lf-i.past { opacity: .7; }
 .lf-h { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
 .lf-t { font-weight: bold; color: var(--ink); text-decoration: none; } a.lf-t:hover { text-decoration: underline; }
 .tag.new { color: var(--border) !important; } .tag.rv, .tag.cu { color: var(--ok-text) !important; } .tag.old { color: var(--warn) !important; } .tag.fun { color: var(--pink-d) !important; }
-.tag.q { color: #fff !important; background: var(--border); border-color: var(--border) !important; } .tag.c { color: var(--ok-text) !important; }
+.tag.q { color: var(--on-fill) !important; background: var(--fill); border-color: var(--border) !important; } .tag.c { color: var(--ok-text) !important; }
 .lf-score { font-size: 11px; color: var(--muted); }
 .lf-m { font-size: 12px; color: var(--muted); }
 .lf-why { margin: 4px 0; padding: 4px 8px; background: var(--tint); } .lf-why b { display: block; font-size: 12px; color: var(--border); font-weight: normal; }
@@ -44,7 +44,7 @@
 .lb-t .star { font-style: normal; color: var(--warn); }
 .lb-m { display: flex; gap: 4px; align-items: center; font-size: 11.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lb-m span { overflow: hidden; text-overflow: ellipsis; }
-.lb-view, .lk-view { flex: 1; min-width: 0; overflow-y: auto; background: #fff; }
+.lb-view, .lk-view { flex: 1; min-width: 0; overflow-y: auto; background: var(--surface); }
 .lb-head { padding: 8px 14px; border-bottom: 1px solid var(--edge); background: var(--body); }
 .lb-head h3 { margin: 2px 0 4px; font-size: 15px; color: var(--border); }
 .lb-head code { font: 11.5px Consolas, monospace; background: var(--tint); padding: 0 3px; }
@@ -89,12 +89,12 @@
 .lr-sec { display: flex; flex-direction: column; gap: 6px; }
 .lr-tip { margin: 2px 0; font-size: 12px; color: var(--muted); }
 .lr-in { width: 100%; resize: vertical; font: 13px/1.55 "Microsoft YaHei UI", system-ui, sans-serif; }
-.lr-fb { margin-top: 8px; padding: 6px 10px; border: 1px dashed var(--border); background: #fff; } .lr-fb h4 { margin: 2px 0; color: var(--border); }
+.lr-fb { margin-top: 8px; padding: 6px 10px; border: 1px dashed var(--border); background: var(--surface); } .lr-fb h4 { margin: 2px 0; color: var(--border); }
 .lr-md { padding: 0; max-width: none; font-size: 13px; }
 .lr-chat { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; }
-.lr-me { align-self: flex-end; max-width: 88%; padding: 5px 9px; background: var(--border); color: #fff; white-space: pre-wrap; }
+.lr-me { align-self: flex-end; max-width: 88%; padding: 5px 9px; background: var(--fill); color: var(--on-fill); white-space: pre-wrap; }
 .lr-me blockquote { margin: 0 0 4px; padding-left: 6px; border-left: 2px solid rgba(255, 255, 255, .6); font-size: 12px; opacity: .85; }
-.lr-ai { align-self: stretch; padding: 5px 9px; background: #fff; border: 1px solid var(--edge); }
+.lr-ai { align-self: stretch; padding: 5px 9px; background: var(--surface); border: 1px solid var(--edge); }
 .lr-ask { padding: 4px 9px; border-left: 3px solid var(--pink); background: var(--quote-bg); font-size: 12.5px; } .lr-ask .md { font-size: 12.5px; }
 .lr-box { flex: none; border-top: 1px solid var(--edge); padding-top: 6px; }
 .lr-sel { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -115,7 +115,7 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lp-sug { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; margin: 4px 0; padding: 4px 8px; border: 1px dashed var(--border); background: var(--tint); }
 .lp-sug small { grid-column: 1; color: var(--muted); } .lp-sug .lp-qb { grid-row: 1 / 3; grid-column: 2; }
 .lp-ts { display: flex; flex-direction: column; gap: 8px; }
-.lp-t { padding: 6px 8px; border: 1px solid var(--edge); border-left: 3px solid var(--border); background: #fff; display: flex; flex-direction: column; gap: 4px; }
+.lp-t { padding: 6px 8px; border: 1px solid var(--edge); border-left: 3px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 4px; }
 .lp-th { display: flex; align-items: center; gap: 6px; } .lp-tn { flex: 1; font-weight: bold; } .lp-th .btn { padding: 1px 8px; }
 .tag.cov { font-style: normal; font-size: 11px; padding: 0 5px; border: 1px solid var(--edge); color: var(--muted); } .tag.cov.ok { color: var(--ok-text); border-color: var(--ok-text); } .tag.cov.thin { color: var(--warn); border-color: var(--warn); }
 .lp-papers { margin: 0; padding-left: 18px; font-size: 12px; } .lp-papers a { color: var(--border); } .lp-papers small { color: var(--muted); }

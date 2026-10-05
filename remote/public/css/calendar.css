@@ -11,7 +11,7 @@
 .cal-d { background: var(--body); min-height: 76px; padding: 2px 4px; overflow: hidden; cursor: pointer; font-size: 11.5px; line-height: 1.35; }
 .cal-d:hover { background: var(--hover); }
 .cal-d.out { opacity: .45; }
-.cal-d.today .cal-n { background: var(--border); color: #fff; }
+.cal-d.today .cal-n { background: var(--fill); color: var(--on-fill); }
 .cal-d.sel { box-shadow: inset 0 0 0 2px var(--border); }
 .cal-n { display: inline-block; min-width: 18px; padding: 0 3px; text-align: center; font-weight: bold; color: var(--border); }
 .cal-rep { color: var(--ink); background: var(--tint); padding: 0 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

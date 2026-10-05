@@ -6,7 +6,7 @@
 .pdf-no { width: 52px; }
 .pdf-zoom { min-width: 40px; text-align: center; color: var(--muted); }
 .pdf-pages { flex: 1; min-height: 0; overflow: auto; background: #8a8a96; padding: 12px; }
-.pdf-page { position: relative; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
+.pdf-page { position: relative; margin: 0 auto 12px; background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
 .pdf-page canvas { display: block; }
 
 .textLayer { color-scheme: only light; position: absolute; text-align: initial; inset: 0; overflow: clip; opacity: 1; line-height: 1;

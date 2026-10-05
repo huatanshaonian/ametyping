@@ -1,7 +1,8 @@
 // Appearance, picked in 显示属性 and remembered per browser (js/theme-boot.js applies both before the first paint):
-//   colour scheme  Windose（粉, default) or Windows 标准 (css/theme-win98.css)
+//   colour scheme  Windose（粉, default) or Windows 标准 (css/theme-win98.css); each has shades of its own (js/shade.js)
 //   size           five steps of zoom over the whole page; 小 is the original size, 中 the default (小 on phones)
 import { h, prefs } from './util.js';
+import * as shade from './shade.js';
 
 export const THEMES = [['windose', 'Windose（粉）'], ['win98', 'Windows 标准']];
 // the wallpaper that goes with each scheme, used when switching while the other scheme's default is on
@@ -14,6 +15,7 @@ export function set(theme, onWall) {
   prefs.set('theme', theme);
   if (theme === 'windose') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
+  shade.apply();                               // each look has its own shades (js/shade.js)
   const wall = prefs.get('wall', 'pc');
   if (wall === WALL[prev] || (theme === 'win98' && wall === 'plain')) { prefs.set('wall', WALL[theme]); onWall && onWall(); }
 }
