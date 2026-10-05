@@ -142,8 +142,9 @@ function login() {
     chk('the tray opens 邮箱设置: both mailboxes, the refused one says so, the form, the help', /所里/.test(setTxt) && /登录被拒/.test(setTxt) && /添加邮箱/.test(setTxt) && /客户端专用密码/.test(setTxt), setTxt.slice(0, 300));
     await shot('71-mail-settings.png');
     await evalJs("[...document.querySelectorAll('.win')].forEach(w => { const t = w.querySelector('.title'); if (t && t.textContent === '邮箱设置') w.querySelector('.tbtn.close').click(); })"); await sleep(300);
-    // 回复: the compose window filled in; 让 GPT 起草; 发送 (confirmed) -> out by SMTP
-    await evalJs("window.confirm = () => true; window.alert = (m) => { window.__alerted = m; };");
+    // 回复: the compose window filled in; 让 GPT 起草; 发送 (confirmed in Windose's own message box, never the
+    // browser's) -> out by SMTP
+    await evalJs("window.confirm = () => { window.__native = 'confirm'; return false; }; window.alert = () => { window.__native = 'alert'; };");
     await evalJs("[...document.querySelectorAll('.ml-i')].find(i => i.textContent.includes('组会改到')).click()"); await sleep(800);
     await evalJs("[...document.querySelectorAll('.ml-acts .btn')].find(b => b.textContent === '回复').click()"); await sleep(1500);
     const comp = await evalJs("(() => { const c = document.querySelector('.mcomp'); if (!c) return null; const f = [...c.querySelectorAll('.mc-row .field')].map(x => x.value); return { fields: f, quote: (c.querySelector('.mc-quote pre') || {}).textContent || '', sig: c.querySelector('.mc-sig').textContent }; })()");
@@ -157,9 +158,24 @@ function login() {
     await sleep(1500);
     await shot('78-mail-compose.png');
     await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '发送').click()");
+    for (let i = 0; i < 20 && !(await evalJs("!!document.querySelector('.dlgmsg')")); i++) await sleep(250);
+    const box = await evalJs("(() => { const b = document.querySelector('.dlgmsg'); return b ? { title: b.querySelector('.dlgt span').textContent, text: b.querySelector('.dlgtx').textContent, icon: b.querySelector('.dlgm img').getAttribute('src'), btns: [...b.querySelectorAll('.dlga .btn')].map(x => x.textContent).join('|'), focus: document.activeElement.textContent } : null; })()");
+    chk('发送 asks in Windose\'s own message box (title, icon, who it goes to, 发送 / 取消; nothing sent yet)', box && box.title === '发送邮件' && /发送这封邮件/.test(box.text) && /li@test\.ac\.cn/.test(box.text) &&
+      box.icon === '/icons/msg_question.png' && box.btns === '发送|取消' && box.focus === '发送' && smtp.got.length === 0, box);
+    await shot('78b-mail-send-box.png');
+    // Esc: not sent, the box gone; again and 发送
+    await evalJs("document.querySelector('.dlgmsg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))"); await sleep(600);
+    chk('Esc: the box closes, nothing sent, the letter still there', await evalJs("!document.querySelector('.dlgmsg') && !!document.querySelector('.mcomp')") && smtp.got.length === 0, 0);
+    await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '发送').click()");
+    for (let i = 0; i < 20 && !(await evalJs("!!document.querySelector('.dlgmsg')")); i++) await sleep(250);
+    await evalJs("document.querySelector('.dlgmsg .btn.go').click()");
     for (let i = 0; i < 30 && !smtp.got.length; i++) await sleep(500);
-    chk('发送: out by SMTP to the sender, the window closed, told it went', smtp.got.length === 1 && JSON.stringify(smtp.got[0].rcpt) === '["li@test.ac.cn"]' &&
-      await evalJs("!document.querySelector('.mcomp') && /已发出/.test(window.__alerted || '')"), [smtp.got.map((g) => g.rcpt), await evalJs("window.__alerted || ''")]);
+    for (let i = 0; i < 20 && !(await evalJs("!!document.querySelector('.dlgmsg')")); i++) await sleep(250);
+    const told = await evalJs("(document.querySelector('.dlgmsg .dlgtx') || {}).textContent || ''");
+    chk('发送: out by SMTP to the sender, the window closed, told it went (Windose\'s box, the browser\'s never used)', smtp.got.length === 1 && JSON.stringify(smtp.got[0].rcpt) === '["li@test.ac.cn"]' &&
+      await evalJs("!document.querySelector('.mcomp') && !window.__native") && /已发出/.test(told), [smtp.got.map((g) => g.rcpt), told, await evalJs("window.__native || ''")]);
+    await evalJs("document.querySelector('.dlgmsg .btn').click()"); await sleep(300);
+    chk('确定: the box gone', await evalJs("!document.querySelector('.dlg')"), 0);
     // Markdown with LaTeX formulas (the viewer's renderer): drawn by KaTeX, prices and code left alone
     const MD = String.raw`## 散射
 RCS 定义为 $\sigma = \lim_{R\to\infty} 4\pi R^2 \frac{|E_s|^2}{|E_i|^2}$。

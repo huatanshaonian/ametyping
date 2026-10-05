@@ -46,7 +46,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
-  cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: path.join(T, 'kb'), refreshMs: 400, pdfWaitMs: 1500, pollMs: 250, at: '23:59', daily: 4,
+  cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: path.join(T, 'kb'), refreshMs: 400, pdfWaitMs: 1500, pollMs: 250, at: '23:59', daily: 5,
     endpoints: { openalex: base + '/oa', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const errors = [], res = [];
@@ -58,18 +58,21 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     const lg = await api('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     cookie = String(lg.h['set-cookie'] || '').split(';')[0];
     const [cname, cval] = cookie.split('=');
-    // the state the window shows: library mirrored, profile confirmed, write access, the day's push, one paper kept
-    await until(async () => ((await api('GET', '/api/lit')).j || { zotero: {} }).zotero.items === 2);
+    // the state the window shows: library mirrored, profile confirmed, write access, the day's push, one paper kept.
+    // Each step is waited for generously (a busy machine takes its time) and says so when it never comes -- the
+    // checks below would otherwise fail one after another for a reason that is not theirs.
+    const step = async (name, fn, ms = 120000) => { const t = Date.now(); const v = await until(fn, ms); if (!v) throw new Error(`setup: ${name} did not happen within ${ms / 1000} s`); if (process.env.TEST_TIMES) console.log(`  (${name}: ${Date.now() - t} ms)`); return v; };
+    await step('the library mirrored', async () => ((await api('GET', '/api/lit')).j || { zotero: {} }).zotero.items === 2);
     await api('POST', '/api/lit/profile/save', { story: '再入飞行器气动隐身：我在算等离子体鞘套对 RCS 的影响，卡在电子密度剖面怎么取，也缺验证数据。' });
     await api('POST', '/api/lit/profile/organize');
-    await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.organizedAt && !r.state.running; }, 30000);
+    await step('the profile organized', async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.organizedAt && !r.state.running; });
     await api('POST', '/api/lit/profile/fill');
-    const prof = await until(async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.filledAt && !r.state.running && r.profile; }, 30000);
+    const prof = await step('the profile filled', async () => { const r = (await api('GET', '/api/lit/profile')).j; return r.profile && r.profile.filledAt && !r.state.running && r.profile; });
     await api('POST', '/api/lit/profile/save', { questions: prof.questions, confirm: true });
     await api('POST', '/api/lit/zotero/authorize');
-    await until(async () => (await api('GET', '/api/lit')).j.zotero.canWrite);
+    await step('write access to Zotero', async () => (await api('GET', '/api/lit')).j.zotero.canWrite);
     await api('POST', '/api/lit/feed/run');
-    await until(async () => { const f = (await api('GET', '/api/lit/feed')).j; return !f.status.running && f.items.length && f; }, 30000);
+    await step('the day\'s push', async () => { const f = (await api('GET', '/api/lit/feed')).j; return !f.status.running && f.status.runs.length && f.items.length && f; });
 
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
       `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
@@ -98,8 +101,12 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     // 今日
     chk('the desktop has a 文献 icon', await evalJs("[...document.querySelectorAll('.dicon')].some(b => b.textContent.includes('文献'))"), 0);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('文献')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
-    chk('今日: the picks with why and question, the review with its recall questions', await waitFor("document.querySelectorAll('.lf-i').length >= 3") &&
-      /Q1：鞘套电子密度剖面/.test(await evalJs("document.querySelector('.lf-list').textContent")) && await evalJs("document.querySelectorAll('.lf-ans').length === 2"), await evalJs("(document.querySelector('.lf-list')||{}).textContent"));
+    // (how many new papers are good enough varies by a paper with how the fake sources answer in time; what is left
+    // of the day's five is filled with reviews -- so: at least one review with its two recall questions, not a count)
+    chk('今日: the picks with why and question, a review with its recall questions', await waitFor("document.querySelectorAll('.lf-i').length >= 3") &&
+      /Q1：鞘套电子密度剖面/.test(await evalJs("document.querySelector('.lf-list').textContent")) &&
+      await evalJs("(() => { const r = [...document.querySelectorAll('.lf-i')].find(e => e.textContent.startsWith('复习')); return !!r && r.querySelectorAll('.lf-ans').length === 2 && [...document.querySelectorAll('.lf-i')].some(e => e.textContent.startsWith('新文献')); })()"),
+      await evalJs("({ items: document.querySelectorAll('.lf-i').length, answers: document.querySelectorAll('.lf-ans').length, kinds: [...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12)) })"));
     chk('the yield of each way of finding is shown', await evalJs("!document.querySelector('.lf-yield').hidden && /期刊/.test(document.querySelector('.lf-yield').textContent) && /够格 1/.test(document.querySelector('.lf-yield').textContent)"),
       await evalJs("(document.querySelector('.lf-yield')||{}).textContent"));
     chk('no stray "null" text in the list', !(await evalJs("/null/.test(document.querySelector('.lf-list').textContent)")), 0);

@@ -2,6 +2,7 @@
 // release (looked up every 5 days; 「现在检查」 asks now), 「更新」 (asks for a code), whether it is logged in.
 import { h } from '../util.js';
 import * as net from '../net.js';
+import { confirmBox, alertBox } from '../dialog.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 export const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -33,9 +34,9 @@ export function cliBox(name) {
       h('div', { class: 'gbtns' },
         h('button', { class: 'btn', type: 'button', text: '现在检查', onclick: () => load(true) }),
         h('button', { class: 'btn' + (newer ? ' go' : ''), type: 'button', text: `更新 ${t.label}`, disabled: !!c.updating, onclick: async () => {
-          if (!confirm(`现在更新群晖上的 ${t.label}？\n（正在进行的任务会用旧版本做完）`)) return;
+          if (!(await confirmBox(`现在更新群晖上的 ${t.label}？\n（正在进行的任务会用旧版本做完）`, { title: `更新 ${t.label}`, ok: '更新' }))) return;
           const r = await net.post(`/api/ai/${name}/update`, {});
-          if (!r.ok) return alert(r.msg || '没能开始更新');
+          if (!r.ok) return alertBox(r.msg || '没能开始更新', { title: `更新 ${t.label}`, bad: true });
           load(false); poll();
         } }))].filter(Boolean));                                  // (replaceChildren would print null)
   }

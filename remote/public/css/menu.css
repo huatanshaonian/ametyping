@@ -1,4 +1,4 @@
-/* right-click menus (js/ctxmenu.js) and the one-line text dialog (js/dialog.js); the Windows 标准 look is at the end */
+/* right-click menus (js/ctxmenu.js) and the dialogs (js/dialog.js: one line of text, message boxes); the Windows 标准 look is at the end */
 .ctxm { position: fixed; z-index: 120; min-width: 150px; padding: 3px; background: var(--body); border: 2px solid var(--border);
   box-shadow: 4px 4px 0 rgba(20, 10, 90, .35); user-select: none; }
 .ctxi { display: flex; align-items: center; width: 100%; padding: 4px 8px 4px 2px; border: 0; background: none; text-align: left; font-size: 12.5px; white-space: nowrap; }
@@ -25,3 +25,15 @@ html[data-theme="win98"] .dlg { background: rgba(0, 0, 0, .25); }
 html[data-theme="win98"] .dlgbox { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }
 html[data-theme="win98"] .dlgt { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
 html[data-theme="win98"] .dlgb p { color: #000; }
+
+/* message boxes (js/dialog.js msgBox: Windose's own confirm / alert) */
+.dlgmsg { width: 360px; }
+.dlgt { display: flex; align-items: center; gap: 8px; } .dlgt > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlgx { flex: none; width: 20px; height: 18px; padding: 0; line-height: 1; font-size: 14px; font-weight: bold; cursor: pointer; border: 2px solid var(--pink-d); background: var(--pink); color: #fff; }
+.dlgm { display: flex; gap: 12px; align-items: flex-start; }
+.dlgm img { flex: none; width: 32px; height: 32px; image-rendering: pixelated; }
+.dlgtx { flex: 1; min-width: 0; padding-top: 2px; font-size: 13px; line-height: 1.6; color: var(--ink); white-space: pre-line; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
+.dlgmsg .dlga { justify-content: center; } .dlgmsg .dlga .btn { min-width: 76px; }
+.dlgmsg .btn:focus-visible { outline: 1px dotted currentColor; outline-offset: -4px; }
+html[data-theme="win98"] .dlgx { width: 16px; height: 14px; font-size: 11px; border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .dlgtx { color: #000; }

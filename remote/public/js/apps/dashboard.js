@@ -20,6 +20,10 @@ const PLACEHOLDER = {
   off: '没开远程控制，只能看',
 };
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
+// Claude Code's own Ctrl combinations (buttons only): [key, label, what it does]
+const COMBOS = [['ctrlb', '转后台', 'Ctrl+B：把正在跑的命令放到后台，Claude 接着往下做'],
+  ['ctrlxs', '立刻发', 'Ctrl+X Ctrl+S：排队的消息和输入框里的草稿马上交给 Claude，不等这一步跑完'],
+  ['ctrls', '暂存', 'Ctrl+S：把终端输入框里写了一半的话先暂存起来，输入框清空']];
 // keyboard keys that go to the terminal while the reply box is empty (its menus: /model, /resume, prompts;
 // Shift+Tab cycles Claude Code's permission mode)
 const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab' };
@@ -59,6 +63,8 @@ function mount(current) {
   const note = h('div', { class: 'note' });
   const keys = h('div', { class: 'keys', hidden: true },
     ...KEYS.map(([k, l]) => h('button', { class: 'btn', type: 'button', dataset: { key: k }, text: l })),
+    h('span', { class: 'ksep' }),
+    ...COMBOS.map(([k, l, tip]) => h('button', { class: 'btn kc', type: 'button', dataset: { key: k }, text: l, title: tip })),
     h('span', { class: 'kh', text: '操作终端里的菜单（如 /model、/resume）' }));
   const say = h('textarea', { class: 'say', rows: 1, placeholder: '先选一个会话', disabled: true });
   const sendBtn = h('button', { class: 'btn go', type: 'submit', text: '发送', disabled: true });

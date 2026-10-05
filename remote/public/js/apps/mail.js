@@ -8,6 +8,7 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 import * as settings from './mail-accounts.js';
 import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (also puts the bell in the tray)
 import { openUrl } from './viewer.js';
@@ -211,7 +212,7 @@ function mount(first) {
   allBtn.addEventListener('click', () => {
     const keys = items.filter((m) => !m.seen).flatMap((m) => m.copies.filter((c) => !c.seen).map((c) => c.key));
     if (!keys.length) { status.textContent = '列表里没有未读的'; return; }
-    if (confirm(`把列表里 ${items.filter((m) => !m.seen).length} 封未读的都标为已读？（邮箱里也会变成已读）`)) mark(keys, true);
+    confirmBox(`把列表里 ${items.filter((m) => !m.seen).length} 封未读的都标为已读？\n（邮箱里也会变成已读）`, { title: '全部标为已读', ok: '标为已读' }).then((yes) => { if (yes) mark(keys, true); });
   });
 
   const off = net.on('mail', (d) => { if (d && (d.what === 'new' || d.what === 'seen' || d.what === 'alerts')) loadList(); else loadAccounts(); });

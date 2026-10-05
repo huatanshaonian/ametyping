@@ -7,6 +7,7 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import { confirmBox, alertBox } from '../dialog.js';
 
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 const pad = (n) => String(n).padStart(2, '0');
@@ -15,13 +16,13 @@ const MODE = { new: '写邮件', reply: '回复', all: '回复全部', forward: 
 
 export async function compose(o = {}) {
   const r = await net.post('/api/mail/compose/start', o);
-  if (!r.ok) { alert(r.msg || '没能开始写信'); return; }
+  if (!r.ok) { alertBox(r.msg || '没能开始写信', { title: '写邮件', bad: true }); return; }
   show(r.draft);
 }
 export async function openDraft(id) {
   if (wm.has('mail-compose:' + id)) { wm.open({ id: 'mail-compose:' + id }); return; }
   let d = null; try { const r = await fetch('/api/mail/draft?id=' + encodeURIComponent(id)); if (r.ok) d = await r.json(); } catch {}
-  if (d) show(d); else alert('这份草稿已经没有了');
+  if (d) show(d); else alertBox('这份草稿已经没有了', { title: '草稿' });
 }
 
 function show(d) {
@@ -111,14 +112,14 @@ function show(d) {
     const r = await net.post('/api/mail/compose/ai', { id: d.id, points: aiPoints.value, tone: aiTone.value });
     aiBtn.disabled = false;
     if (!r.ok) return say(r.msg || '没能起草', true);
-    if (text.value.trim() && !confirm('用 GPT 写的替换现在的正文？')) return say('');
+    if (text.value.trim() && !(await confirmBox('用 GPT 写的替换现在的正文？', { title: '让 GPT 起草', ok: '替换' }))) return say('');
     text.value = r.text;
     if (!subject.value.trim() || d.mode === 'new') subject.value = r.subject;
     ai.hidden = true; edited(); say('GPT 起草好了，看一下、改一改再发');
   });
 
   async function drop() {
-    if (!confirm('删除这份草稿？')) return;
+    if (!(await confirmBox('删除这份草稿？', { title: '删除草稿', ok: '删除', danger: true }))) return;
     await net.post('/api/mail/drafts/delete', { id: d.id });
     dirty = false; wm.close(id);
   }
@@ -128,7 +129,7 @@ function show(d) {
     const a = accounts.find((x) => x.id === from.value);
     const lines = [`从：${a ? a.address : ''}`, `给：${to.value || '（没填）'}`, cc.value ? `抄送：${cc.value}` : '', bcc.value ? `密送：${bcc.value}` : '',
       `主题：${subject.value || '（没填）'}`, (d.atts || []).length ? `附件：${d.atts.map((x) => x.name).join('、')}` : '', quote && quoteOn.checked ? '（附上原文）' : ''].filter(Boolean);
-    if (!confirm('发送这封邮件？\n\n' + lines.join('\n'))) return;
+    if (!(await confirmBox('发送这封邮件？\n\n' + lines.join('\n'), { title: '发送邮件', ok: '发送' }))) return;
     sendBtn.disabled = true; say('发送中…');
     const r = await net.post('/api/mail/send', { id: d.id });
     sendBtn.disabled = false;
@@ -136,6 +137,6 @@ function show(d) {
     dirty = false;
     wm.close(id);
     const notes = (r.notes || []).join('；');
-    alert('已发出' + (r.saved ? '，副本存进了「已发送」' : '') + (r.answered ? '，原邮件标为已回复' : '') + (notes ? '。\n' + notes : '。'));
+    alertBox('已发出' + (r.saved ? '，副本存进了「已发送」' : '') + (r.answered ? '，原邮件标为已回复' : '') + (notes ? '。\n' + notes : '。'), { title: '邮件已发出' });
   });
 }

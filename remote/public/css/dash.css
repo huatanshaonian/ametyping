@@ -91,6 +91,7 @@
 .dash .note.show { display: block; } .dash .note.bad { color: var(--bad); }
 .dash .keys { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 10px; border-top: 1px dotted var(--edge); background: var(--tint-soft); }
 .dash .keys .btn { padding: 1px 9px; font-size: 12px; min-width: 32px; }
+.dash .keys .ksep { width: 1px; align-self: stretch; margin: 1px 3px; background: var(--edge); }      /* then Claude Code's Ctrl combinations */
 .dash .keys .kh { font-size: 11px; color: var(--faint); margin-left: 4px; }
 .dash .compose { flex: none; display: flex; gap: 6px; align-items: flex-end; padding: 6px 10px; border-top: 2px solid var(--border); background: var(--tint-soft); }
 .dash .say { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 13px; line-height: 18px; color: var(--ink); max-height: 140px;

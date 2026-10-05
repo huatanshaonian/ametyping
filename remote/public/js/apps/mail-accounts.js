@@ -4,6 +4,7 @@
 // (mail.cstnet.cn, IMAP 993 / SMTP 465), changeable under 服务器设置.
 import { h } from '../util.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 
 // 邮箱 lives in 控制面板 (control.js): this opens it there
 export function open() { import('./control.js').then((c) => c.open('mail')); }
@@ -71,8 +72,8 @@ function mount() {
       h('div', { class: 'gbtns' },
         h('button', { class: 'btn', type: 'button', text: '修改', onclick: () => showForm(a) }),
         h('button', { class: 'btn', type: 'button', text: '删除', onclick: async () => {
-          if (!confirm(`删除邮箱 ${a.address}？\n（之后不再收它的信）`)) return;
-          const purge = confirm('已经收下来的邮件也一起删掉吗？\n确定：删掉；取消：保留在群晖上');
+          if (!(await confirmBox(`删除邮箱 ${a.address}？\n（之后不再收它的信）`, { title: '删除邮箱', ok: '删除', danger: true }))) return;
+          const purge = await confirmBox('已经收下来的邮件也一起删掉吗？', { title: '删除邮箱', ok: '一起删掉', cancel: '保留在群晖上', danger: true });
           const r = await net.post('/api/mail/accounts/remove', { id: a.id, purge });
           await load(r.ok ? '已删除' : r.msg); showForm(null);
         } })));

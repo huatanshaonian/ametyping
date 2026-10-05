@@ -114,6 +114,13 @@ async function until(fn, ms = 10000) { const t0 = Date.now(); while (Date.now() 
     ok('a mode the server does not know is not passed on', bg.ok && bg.mode === undefined, JSON.stringify(bg));
     const e1 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'shift+tab' });
     ok('unknown key names refused by the server', !e1.ok && keys.length === 5, JSON.stringify(e1));
+    // Claude Code's Ctrl combinations: three fixed names reach the pet; any other combination does not
+    const cs = [];
+    for (const k of ['ctrlb', 'ctrls', 'ctrlxs']) cs.push((await b.act({ t: 'key', machine: 'box', id: SID, key: k })).ok);
+    const e2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlc' }), e3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlx' });
+    ok('Ctrl+B / Ctrl+S / Ctrl+X Ctrl+S reach the pet by name; other combinations are refused', cs.every(Boolean) && keys.slice(5).join() === 'ctrlb,ctrls,ctrlxs' && !e2.ok && !e3.ok, [cs, keys, e2, e3]);
+    const { KEYS: TK } = require(path.resolve(R, '..', 'headless', 'tmux.js'));
+    ok('tmux: the same names as send-keys keys (the chord as two)', TK.ctrlb === 'C-b' && TK.ctrls === 'C-s' && JSON.stringify(TK.ctrlxs) === '["C-x","C-s"]' && !TK.ctrlc, TK);
     const q = await Promise.race([b.act({ t: 'mode', machine: 'box', id: SID }), sleep(3000).then(() => ({ ok: false, ignored: true }))]);
     ok('there is no mode query action (no polling of screens)', !q.ok || q.mode === undefined, JSON.stringify(q));
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');

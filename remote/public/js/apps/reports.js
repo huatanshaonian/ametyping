@@ -3,6 +3,7 @@
 // everything since the last report. open(date) shows one report (the pet's morning bubble links to #report=<date>).
 import { h } from '../util.js';
 import * as wm from '../wm.js';
+import { confirmBox } from '../dialog.js';
 import { render, renderWeek, weekNo, dayName, minutes } from './report-view.js';
 import { renderResults, renderAnswer } from './report-search.js';
 
@@ -94,7 +95,7 @@ function mount(first) {
     let days = [];
     try { days = (await (await fetch('/api/report/backfill')).json()).days || []; } catch {}
     if (!days.length) { status.textContent = '最近 30 天都有日报了，没有要补的'; return; }
-    if (!confirm(`补录 ${days.length} 天（${md(days[0])} ~ ${md(days[days.length - 1])}）的简略日报。\n没有会话的日子会跳过；每天调用一次 Codex（很长的会话另算），总共大约 ${Math.ceil(days.length * 0.7)} 分钟。\n\n开始吗？`)) return;
+    if (!(await confirmBox(`补录 ${days.length} 天（${md(days[0])} ~ ${md(days[days.length - 1])}）的简略日报。\n没有会话的日子会跳过；每天调用一次模型（很长的会话另算），总共大约 ${Math.ceil(days.length * 0.7)} 分钟。\n\n开始吗？`, { title: '补录日报', ok: '开始' }))) return;
     fillBtn.disabled = true;
     try { const r = await (await fetch('/api/report/backfill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json(); if (!r.ok) status.textContent = r.msg || '没能开始'; } catch {}
     refresh();

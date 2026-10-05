@@ -358,7 +358,7 @@ function onBrowserAction(c, d) {
     out = { t: 'send', id: s.id, text };
     audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
   } else if (d.t === 'key') {
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab)$/.test(d.key)) return reply(false, '不支持的按键');
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs)$/.test(d.key)) return reply(false, '不支持的按键');
     out = { t: 'key', id: s.id, key: d.key };
     audit('control-key', c.ip, m.name, s.id, d.key);
   } else {

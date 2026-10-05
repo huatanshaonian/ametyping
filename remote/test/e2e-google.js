@@ -216,9 +216,9 @@ async function e2e() {
       const n1 = own().length;
       const b2 = await runBackfill();
       const pv = (e) => e.extendedProperties.private;
-      ok('past reports into the calendar: every daily (backfilled ones too) and weekly report, once', b1.b.ok && !b1.st.running && b1.st.failed === 0 && b1.st.total === 3 &&
+      ok('past reports into the calendar: every daily (backfilled ones too) and weekly report, once', b1.b.ok && !b1.st.running && b1.st.failed === 0 && b1.st.total >= 3 &&   // (3, and the week's own report when the day before the run was a Sunday)
         own().some((e) => pv(e).ameReport === '2026-09-02' && e.summary === '日报：补录的一天') && own().some((e) => pv(e).ameWeek === '2026-08-31' && e.start.date === '2026-09-06') &&
-        own().some((e) => pv(e).ameReport === rep.slice(0, 10)) && b2.st.done === 3 && own().length === n1, [b1, b2, own().map((e) => e.summary)]);
+        own().some((e) => pv(e).ameReport === rep.slice(0, 10)) && b2.st.done === b1.st.total && own().length === n1, [b1, b2, own().map((e) => e.summary)]);
       const sl = ((await req('GET', '/api/google', null, c2)).j || {}).diaryLast || {};
       ok('the account window shows the last write', sl.ok === true && sl.at > 0 && /周报|日报/.test(sl.what), sl);
       // the access token runs out: renewed with the refresh token

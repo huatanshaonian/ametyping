@@ -29,11 +29,14 @@ async function send(target, text) {
   return tmux(target.socket, ['send-keys', '-t', target.pane, 'Enter']);
 }
 
-// one navigation key (the terminal's own menus: /model, /resume, prompts); btab = Shift+Tab (permission mode)
-const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab', btab: 'BTab' };
+// one navigation key (the terminal's own menus: /model, /resume, prompts); btab = Shift+Tab (permission mode);
+// Claude Code's Ctrl combinations: the running command to the background, stash the draft, send what is queued now
+// (send-keys goes to the pane itself: tmux's own C-b prefix is not in the way)
+const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab', btab: 'BTab',
+  ctrlb: 'C-b', ctrls: 'C-s', ctrlxs: ['C-x', 'C-s'] };
 function key(target, name) {
   if (!KEYS[name]) return Promise.resolve({ ok: false, err: 'unknown key' });
-  return tmux(target.socket, ['send-keys', '-t', target.pane, KEYS[name]]);
+  return tmux(target.socket, ['send-keys', '-t', target.pane, ...[].concat(KEYS[name])]);
 }
 
 // the visible text of the pane (null when it cannot be read)
