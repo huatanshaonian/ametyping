@@ -8,6 +8,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const { modeFromScreen } = require('./permission-mode');
+const { tidyScreen } = require('./screen-text');
 
 // (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now)
 const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'ctrlb', 'ctrls', 'ctrlxs']);
@@ -74,18 +75,32 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   }
 
   // one navigation key into the session's terminal (only a live terminal session; menus and prompts are its use)
-  async function chatKey(id, key) {
-    if (!KEYS.has(key)) return { ok: false, msg: '不支持的按键' };
+  // wantScreen: the screen as it is a moment after the key comes with the answer (the dashboard's 终端画面 is open)
+  // "c:x": one letter or digit, for the menus that take them ("s to use this session only", "2" for the second)
+  async function chatKey(id, key, wantScreen = false) {
+    const ch = /^c:([a-z0-9])$/.exec(key);
+    if (!KEYS.has(key) && !ch) return { ok: false, msg: '不支持的按键' };
     const t = await terminalOf(sessions.get(id));
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
-    const r = await bridge.key(t.pid, key);
+    const r = ch ? await bridge.type(t.pid, ch[1]) : await bridge.key(t.pid, key);
     if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
-    if (key !== 'btab') return { ok: true };
+    if (key !== 'btab' && !wantScreen) return { ok: true };
     // Shift+Tab: the mode it switched to, read once from the redrawn status line (the transcript only records the
     // mode with the next message)
     await sleep(350);
-    return { ok: true, mode: modeFromScreen(await bridge.screen(t.pid)) };
+    const text = await bridge.screen(t.pid);
+    return { ok: true, mode: key === 'btab' ? modeFromScreen(text) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
+  }
+
+  // what the session's terminal shows right now (asked for by you in the dashboard, never polled): Claude Code's own
+  // menus and prompts are only there
+  async function chatScreen(id) {
+    const t = await terminalOf(sessions.get(id));
+    if (t.msg) return { ok: false, msg: t.msg };
+    if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，没有画面' };
+    const text = await bridge.screen(t.pid);
+    return text == null ? { ok: false, msg: '读不到终端画面' } : { ok: true, screen: tidyScreen(text) };
   }
 
   // a new Claude Code session in a folder (checked by the agent), in its own console window; its hooks make it
@@ -119,7 +134,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     return { ok: true, msg: '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 
-  return { chatSend, chatKey, launch, KEYS };
+  return { chatSend, chatKey, chatScreen, launch, KEYS };
 }
 
 module.exports = { createRemoteControl };

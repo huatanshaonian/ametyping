@@ -28,6 +28,12 @@ fs.writeFileSync(path.join(HOME, '.ametyping', `control-token-${PET}`), petToken
 const CYCLE = ['auto', 'manual', 'acceptEdits', 'plan'];
 let mode = 'plan', perms = [];
 const keys = [], decisions = [];
+// what the fake terminal shows (终端画面): Claude Code's prompt, or its /model menu after "/model" was sent
+const MODELS = ['Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5'], sent = [];
+let menu = -1, picked = '', screens = 0;
+const screen = () => (menu >= 0
+  ? [' Select model', ' Switch between Claude models.', '', ...MODELS.map((m, i) => `${i === menu ? ' ❯' : '  '} ${i + 1}. ${m}`), '', ' Enter to confirm · Esc to exit'].join('\n')
+  : [picked ? `  ⎿  Set model to ${picked}` : '● 计划如下……', '', '─'.repeat(60), '❯ ', '─'.repeat(60), '  ⏸ plan mode on (shift+tab to cycle)'].join('\n'));
 http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => b += c); req.on('end', () => {
     res.setHeader('Content-Type', 'application/json');
@@ -37,8 +43,17 @@ http.createServer((req, res) => {
     if (req.url === '/control/key') {
       keys.push(d.key);
       if (d.key === 'btab') { mode = CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length]; return res.end(JSON.stringify({ ok: true, mode })); }
-      return res.end(JSON.stringify({ ok: true }));
+      // the terminal's own /model menu: the arrows move ❯, Enter picks, Esc leaves
+      if (menu >= 0) {
+        if (d.key === 'down') menu = Math.min(MODELS.length - 1, menu + 1);
+        if (d.key === 'up') menu = Math.max(0, menu - 1);
+        if (d.key === 'enter') { picked = MODELS[menu]; menu = -1; }
+        if (d.key === 'esc') menu = -1;
+      }
+      return res.end(JSON.stringify({ ok: true, screen: d.screen === true ? screen() : undefined }));
     }
+    if (req.url === '/control/send') { sent.push(d.text); if (d.text.trim() === '/model') menu = 0; return res.end(JSON.stringify({ ok: true })); }
+    if (req.url === '/control/screen') { screens++; return res.end(JSON.stringify({ ok: true, screen: screen() })); }
     if (req.url === '/control/decide') { decisions.push(d); perms = perms.filter((p) => p.id !== d.id); return res.end(JSON.stringify({ ok: true })); }
     res.statusCode = 404; res.end('{}');
   });
@@ -102,6 +117,35 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await key('Tab', 9); await sleep(800);
     chk('plain Tab still goes as tab', keys[2] === 'tab', keys);
     await shot('51-mode-manual.png');
+    // 终端画面: Claude Code's own menus are only on the terminal's screen. 「画面」 shows it; "/model" sent opens the
+    // menu there, the key buttons work it and each brings the screen after it; nothing is polled
+    const scr = () => evalJs("(() => { const t = document.querySelector('.dash .term'); return t && !t.hidden ? t.querySelector('.tscr').textContent : null; })()");
+    const press = async (k) => { await evalJs(`document.querySelector('.dash .keys button[data-key=${k}]').click()`); await sleep(1300); };
+    await evalJs("(() => { const k = document.querySelector('.dash .keys'); if (k.hidden) document.querySelector('.dash .kbd').click(); })()"); await sleep(300);
+    chk('终端画面 closed at first: nothing read', (await scr()) === null && screens === 0, [await scr(), screens]);
+    await evalJs("[...document.querySelectorAll('.dash .keys .btn')].find(b => b.textContent === '画面').click()"); await sleep(1200);
+    chk('「画面」: the terminal\'s screen as text (the prompt, the mode line), read once', /shift\+tab to cycle/.test(await scr() || '') && /❯/.test(await scr() || '') && screens === 1, [await scr(), screens]);
+    await evalJs("[...document.querySelectorAll('.dash .term .tbar .btn')].find(b => b.textContent === '×').click()"); await sleep(300);
+    // only the commands that open a menu bring the screen up: not /compact, not a command given its argument
+    const say = async (t) => { await evalJs(`(() => { const s = document.querySelector('.dash .say'); s.value = ${JSON.stringify(t)}; s.dispatchEvent(new Event('input')); document.querySelector('.dash .compose').requestSubmit(); })()`); };
+    const menus = await evalJs("import('/js/apps/dash-term.js').then(m => ['/model', ' /resume', '/config', '/permissions', '/mcp', '/model opus', '/compact', '/clear', '/compact 留下要点', '/my-skill', 'model', '说说 /model'].map(t => m.opensMenu(t) ? 1 : 0).join(''))");
+    chk('which commands open a menu: /model /resume /config /permissions /mcp -- not with an argument, not /compact, /clear, a skill, plain text', menus === '111110000000', menus);
+    await say('/compact'); await sleep(1800); await say('/model opus'); await sleep(1800);
+    chk('"/compact" and "/model opus" sent: the screen stays closed, nothing read', sent.join() === '/compact,/model opus' && (await scr()) === null && screens === 1, [sent, await scr(), screens]);
+    sent.length = 0;
+    await say('/model');
+    for (let i = 0; i < 30 && !/Select model/.test(await scr() || ''); i++) await sleep(200);
+    chk('"/model" sent: the screen opens by itself with the terminal\'s menu, ❯ on the first model', sent.join() === '/model' && /Select model/.test(await scr() || '') && /❯ 1\. Opus 5\.5/.test(await scr() || ''), [sent, await scr()]);
+    await shot('51b-term-menu.png');
+    const n0 = screens;
+    await press('down');
+    chk('↓: the screen after the key (❯ on the second), without another read', /❯ 2\. Sonnet 5\.5/.test(await scr() || '') && !/❯ 1\./.test(await scr() || '') && screens === n0, [await scr(), screens - n0]);
+    await press('enter');
+    chk('回车: picked, the menu gone, the terminal says so', picked === 'Sonnet 5.5' && /Set model to Sonnet 5\.5/.test(await scr() || '') && !/Select model/.test(await scr() || ''), [picked, await scr()]);
+    await sleep(2500);
+    chk('nothing polled: no read since', screens === n0, screens - n0);
+    await evalJs("[...document.querySelectorAll('.dash .term .tbar .btn')].find(b => b.textContent === '×').click()"); await sleep(300);
+    keys.length = 3;                                                    // (the checks below count from here)
     // a permission card: an Enter right away does nothing, one after the grace time allows it
     perms = [{ id: 'p1', provider: 'claude', tool: 'Bash', cwd: '/demo', input: JSON.stringify({ command: 'rm -rf build', description: '清理构建目录' }, null, 2) }];
     let seen = false;

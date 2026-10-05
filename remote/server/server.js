@@ -281,7 +281,7 @@ function onAgentMessage(m, raw, ws) {
   }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
-  if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode);
+  if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
@@ -324,11 +324,12 @@ const pending = new Map();         // rid -> { c, crid, machine, timer }
 const ACTION_MAX = 60, ACTION_WIN = 60e3;
 // Claude Code permission modes (app/permission-mode.js): a Shift+Tab's result carries the one it switched to
 const MODES = new Set(['auto', 'manual', 'acceptEdits', 'plan', 'bypassPermissions']);
-function finishAction(rid, machineName, ok, msg, mode) {
+// screen: the terminal's visible text, when the action asked for it (终端画面)
+function finishAction(rid, machineName, ok, msg, mode, screen) {
   const p = pending.get(rid);
   if (!p || p.machine !== machineName) return;
   pending.delete(rid); clearTimeout(p.timer);
-  try { p.c.ws.send(JSON.stringify({ t: 'result', rid: p.crid, ok, msg, mode: MODES.has(mode) ? mode : undefined })); } catch {}
+  try { p.c.ws.send(JSON.stringify({ t: 'result', rid: p.crid, ok, msg, mode: MODES.has(mode) ? mode : undefined, screen })); } catch {}
 }
 function onBrowserAction(c, d) {
   const reply = (ok, msg, need) => { try { c.ws.send(JSON.stringify({ t: 'result', rid: d.rid, ok, msg, need })); } catch {} };
@@ -358,9 +359,13 @@ function onBrowserAction(c, d) {
     out = { t: 'send', id: s.id, text };
     audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
   } else if (d.t === 'key') {
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs)$/.test(d.key)) return reply(false, '不支持的按键');
-    out = { t: 'key', id: s.id, key: d.key };
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs|c:[a-z0-9])$/.test(d.key)) return reply(false, '不支持的按键');
+    out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true };
     audit('control-key', c.ip, m.name, s.id, d.key);
+  } else if (d.t === 'screen') {
+    // what that session's terminal shows now (Claude Code's own menus are only there); asked for, never polled
+    out = { t: 'screen', id: s.id };
+    audit('control-screen', c.ip, m.name, s.id);
   } else {
     if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
     if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
@@ -589,13 +594,15 @@ wssBrowser.on('connection', (ws, req, sid) => {
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
     } else if (d.t === 'unwatch') c.sub = null;
+    // the page asking whether this socket still works (back from the background on a phone: public/js/net.js)
+    else if (d.t === 'ping') { try { ws.send('{"t":"pong"}'); } catch {} }
     // this page on screen or not (its own push subscription): a device showing Windose gets no notifications meanwhile
     else if (d.t === 'push-here' && typeof d.endpoint === 'string' && d.endpoint.length < 1000) push.here(d.endpoint, d.on === true);
     else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
       fsRelay.fromBrowser(c, d);                                       // read-only file explorer
     }
-    else if ((d.t === 'send' || d.t === 'key' || d.t === 'decide' || d.t === 'launch') && typeof d.rid === 'string' && d.rid.length < 40) {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch') && typeof d.rid === 'string' && d.rid.length < 40) {
       // the login may have expired or been logged out while the socket stayed open
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
       onBrowserAction(c, d);

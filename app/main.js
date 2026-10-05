@@ -9,6 +9,7 @@ const { createRemoteControl } = require('./remote-control');
 const { createMorning } = require('./morning');
 const { createMailNotice } = require('./mail-notice');
 const { adoptRunning } = require('./session-adopt');
+const { inTerminal } = require('./session-terminal');
 const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -616,7 +617,8 @@ const anyWorking = (exceptId) => [...sessions.values()].some((s) => s.id !== exc
 
 // Which process is this session, and does it sit in a terminal? The hook sends its parent pid; walk up to
 // the Claude Code process (claude.exe, or node/bun for an npm install) and look at what started it: a shell
-// or terminal = an interactive session we can type into; an IDE / the desktop app = no console to use.
+// or terminal = an interactive session we can type into; an IDE / the desktop app = no console to use; Claude Code
+// itself = a background session in its own pseudo-terminal, usable all the same (session-terminal.js).
 const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
 const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|WindowsTerminal|OpenConsole|conhost|explorer|wezterm-gui|alacritty|mintty|Tabby|Hyper|ConEmu64|ConEmuC64|ConEmu|ConEmuC|wsl|wslhost|tmux)\.exe$/i;
 async function locateSession(s, pid) {
@@ -629,7 +631,7 @@ async function locateSession(s, pid) {
   s.claudePid = chain[i].pid;
   const parent = chain[i + 1];
   s.headless = !!parent && parent.pid === process.pid;           // a `claude -p --resume` we started ourselves
-  s.terminal = !!parent && TERM_HOSTS.test(parent.name);
+  s.terminal = await inTerminal({ parent, pid: s.claudePid, isTermHost: (n) => TERM_HOSTS.test(n), screen: (p) => bridge.screen(p) });
   pushBubble(null);                                                // the reply box may have become usable
 }
 async function procAlive(pid) {
@@ -742,7 +744,11 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/key') {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatKey(d.id, d.key));
+    return out(200, await chatKey(d.id, d.key, d.screen === true));
+  }
+  if (req.method === 'POST' && req.url === '/control/screen') {
+    if (typeof d.id !== 'string') return out(400, { ok: false, msg: '无效请求' });
+    return out(200, await chatScreen(d.id));
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
@@ -832,7 +838,7 @@ const morning = createMorning({ app, BrowserWindow, ipcMain, screen, anchor: () 
   enabled: () => settings.morningBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const mailNotice = createMailNotice({ BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
   enabled: () => settings.mailBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
-const { chatSend, chatKey, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
+const { chatSend, chatKey, chatScreen, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.

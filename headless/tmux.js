@@ -34,7 +34,11 @@ async function send(target, text) {
 // (send-keys goes to the pane itself: tmux's own C-b prefix is not in the way)
 const KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', enter: 'Enter', esc: 'Escape', tab: 'Tab', btab: 'BTab',
   ctrlb: 'C-b', ctrls: 'C-s', ctrlxs: ['C-x', 'C-s'] };
+// "c:x": one letter or digit as it is (menus that take them)
+const CHAR = /^c:([a-z0-9])$/;
 function key(target, name) {
+  const ch = CHAR.exec(name);
+  if (ch) return tmux(target.socket, ['send-keys', '-t', target.pane, '-l', ch[1]]);
   if (!KEYS[name]) return Promise.resolve({ ok: false, err: 'unknown key' });
   return tmux(target.socket, ['send-keys', '-t', target.pane, ...[].concat(KEYS[name])]);
 }
@@ -45,4 +49,4 @@ async function screen(target) {
   return r.ok ? r.out : null;
 }
 
-module.exports = { send, key, screen, KEYS };
+module.exports = { send, key, screen, KEYS, CHAR };

@@ -1,9 +1,15 @@
 // The one WebSocket to the server: session list, conversations, and actions (send / key / decide) with results.
+// Kept alive across what phones do to a page in the background: the system freezes it and drops the socket, often
+// without telling the page -- back on screen it would look connected and show old data. So whenever the page comes
+// back (visible, focused, the network back) and every 30 s while it is on screen, the socket is checked: gone ->
+// connect at once; there -> a ping that must be answered within 4 s, or it is replaced.
 import { askCode } from './gate.js';
 import * as sound from './sound.js';
 
 const handlers = new Map();
 let ws = null, ridN = 0;
+let retryT = null, tries = 0, lastMsg = 0, probeT = null;
+const RETRY = [1000, 2000, 4000, 8000, 15000], PROBE_MS = 4000, BEAT_MS = 30000;
 const waiting = new Map();                 // rid -> callback
 export const state = { sessions: [], online: false };
 
@@ -17,18 +23,30 @@ function emit(type, d) { for (const fn of handlers.get(type) || []) { try { fn(d
 
 export function send(o) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); } catch {} }
 
+// this socket is no more (closed, or it stopped answering): tell everyone, try again -- sooner at first
+function lost(s) {
+  if (s !== ws) return;                              // (an older one: already replaced)
+  ws = null; clearTimeout(probeT);
+  if (state.online) { state.online = false; emit('status', false); }
+  for (const [rid, f] of waiting) { waiting.delete(rid); f({ ok: false, msg: '连接断了，结果不确定，请看对话确认' }); }
+  clearTimeout(retryT);
+  retryT = setTimeout(connect, RETRY[Math.min(tries++, RETRY.length - 1)]);
+}
 export function connect() {
-  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-  ws.onopen = () => { state.online = true; emit('status', true); emit('open'); };
-  ws.onclose = (e) => {
+  clearTimeout(retryT);
+  if (ws && ws.readyState <= 1) return;              // there already, or on its way
+  const s = ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  s.onopen = () => { if (s !== ws) return; tries = 0; lastMsg = Date.now(); state.online = true; emit('status', true); emit('open'); };
+  s.onclose = (e) => {
     if (e.code === 4401) { location.href = '/login'; return; }
-    state.online = false; emit('status', false);
-    setTimeout(connect, 2000);
-    for (const [rid, f] of waiting) { waiting.delete(rid); f({ ok: false, msg: '连接断了，结果不确定，请看对话确认' }); }
+    lost(s);
   };
-  ws.onerror = () => { try { ws.close(); } catch {} };
-  ws.onmessage = (e) => {
+  s.onerror = () => { try { s.close(); } catch {} };
+  s.onmessage = (e) => {
+    if (s !== ws) return;
+    lastMsg = Date.now();
     let d; try { d = JSON.parse(e.data); } catch { return; }
+    if (d.t === 'pong') return;
     if (d.t === 'sessions') { state.sessions = d.data || []; emit('sessions', state.sessions); }
     else if (d.t === 'conv') emit('conv', d);
     else if (d.t === 'result') { const f = waiting.get(d.rid); if (f) { waiting.delete(d.rid); f(d); } }
@@ -39,6 +57,21 @@ export function connect() {
     else if (typeof d.t === 'string') emit(d.t, d);                                // anything else by its name (google, mail, ...)
   };
 }
+
+// Is the socket still good? Asked when the page comes back on screen and now and then while it is there.
+export function check() {
+  if (document.hidden) return;
+  if (!ws || ws.readyState > 1) { tries = 0; return connect(); }
+  if (ws.readyState !== 1) return;                   // still connecting
+  const s = ws, at = Date.now();
+  send({ t: 'ping' });
+  clearTimeout(probeT);
+  // no word back: it is dead without having said so (closing it properly could take minutes) -- replaced now
+  probeT = setTimeout(() => { if (s === ws && lastMsg < at) { s.onclose = null; try { s.close(); } catch {} tries = 0; lost(s); clearTimeout(retryT); connect(); } }, PROBE_MS);
+}
+document.addEventListener('visibilitychange', check);
+for (const ev of ['pageshow', 'focus', 'online']) addEventListener(ev, check);
+setInterval(check, BEAT_MS);
 
 // an action on a machine; acting needs a recently entered code: ask for it and retry. A failure plays the error sound.
 export async function act(o) {
