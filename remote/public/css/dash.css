@@ -46,6 +46,7 @@
 .dash .head .meta .cx.bad { color: var(--bad); font-weight: bold; }
 .dash .card .cxb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--warn); border: 1px solid var(--warn); }
 .dash .card .pin { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--border); border: 1px solid var(--border); }
+.dash .card .bgb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--muted); border: 1px dotted var(--muted); }   /* a background session (Claude Code's agent view) */
 .dash .more { padding: 5px 10px; font-size: 11.5px; color: var(--border); cursor: pointer; border-bottom: 1px dotted var(--edge); }
 .dash .more:hover { background: var(--hover); }
 .dash .empty, .dash .pick { padding: 20px 12px; color: var(--faint); font-size: 12px; }

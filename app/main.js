@@ -10,6 +10,7 @@ const { createMorning } = require('./morning');
 const { createMailNotice } = require('./mail-notice');
 const { adoptRunning } = require('./session-adopt');
 const { inTerminal } = require('./session-terminal');
+const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -582,6 +583,17 @@ ipcMain.handle('permission-decide', (e, id, choice) => {
 });
 app.on('before-quit', () => permissions.clear());
 // how a reply typed in the panel reaches this session
+// Background sessions and the terminals parked on them (running-sessions.js lineage): a parked terminal is the
+// background session's window, so it is not listed; the background one is marked. Looked up at most every 3 s.
+let lineageAt = 0, lineageNow = { bg: new Set(), parked: new Set() };
+function sessionLineage() {
+  if (Date.now() - lineageAt > 3000) {
+    lineageAt = Date.now();
+    try { lineageNow = lineage(app.getPath('home'), (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }); } catch {}
+  }
+  return lineageNow;
+}
+const listed = () => { const { parked } = sessionLineage(); return [...sessions.values()].filter((s) => !parked.has(s.id)); };
 function replyVia(s) {
   if (s.provider === 'codex') return 'codex';
   if (s.state === 'ended') return 'resume';
@@ -591,8 +603,8 @@ function replyVia(s) {
 }
 function pushBubble(changedId) {
   if (!bubbleWin) return;
-  const list = [...sessions.values()].sort((x, y) => x.born - y.born).map((s) => ({   // stable order: cards never jump
-    id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last,
+  const list = listed().sort((x, y) => x.born - y.born).map((s) => ({   // stable order: cards never jump
+    id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last, bg: sessionLineage().bg.has(s.id),
     provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id),
   }));
   sendPanel();
@@ -720,8 +732,8 @@ function controlOk(req) {
   return !req.headers.origin && t.length === CONTROL_TOKEN.length && crypto.timingSafeEqual(t, Buffer.from(CONTROL_TOKEN));
 }
 function controlState() {
-  return [...sessions.values()].sort((x, y) => x.born - y.born).map((s) => ({
-    id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s),
+  return listed().sort((x, y) => x.born - y.born).map((s) => ({
+    id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
     t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8),
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),

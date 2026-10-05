@@ -143,7 +143,7 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
+        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
@@ -299,6 +299,7 @@ function onAgentMessage(m, raw, ws) {
       cur.t0 = +s.t0 || Date.now(); cur.last = +s.last || Date.now();
       cur.lines = Array.isArray(s.lines) ? s.lines.slice(-8).map((l) => ({ text: String(l.text || '').slice(0, 300), t: +l.t || 0, type: String(l.type || '').slice(0, 16) })) : [];
       cur.via = VIA.includes(s.via) ? s.via : 'off';
+      cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
         cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000) })) : [];

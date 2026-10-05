@@ -108,7 +108,7 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
-    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + esc(s.label) + (mk.pinned ? '<span class="pin">置顶</span>' : '') +
+    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
     if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
     // while searching, the passage found in its conversation

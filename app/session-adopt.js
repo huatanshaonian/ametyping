@@ -3,14 +3,15 @@
 // record's pid must still be a Claude process (not a reused pid); what started it says whether it sits in a terminal
 // we can type into. The state is "idle" until the session's own hooks say more.
 'use strict';
-const { listRunning, transcriptOf, projectOf } = require('./running-sessions');
+const { listRunning, lineage, transcriptOf, projectOf } = require('./running-sessions');
 const { inTerminal } = require('./session-terminal');
 
 // deps: sessions (the pet's Map), bridge (ancestors, screen), home, isClaude(name), isTerminal(name), onChange()
 async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onChange }) {
   let n = 0;
+  const { parked } = lineage(home);
   for (const r of listRunning(home)) {
-    if (sessions.has(r.sessionId)) continue;
+    if (sessions.has(r.sessionId) || parked.has(r.sessionId)) continue;       // (a terminal parked on a background session: its window)
     const chain = await bridge.ancestors(r.pid);
     if (!chain.length || chain[0].pid !== r.pid || !isClaude(chain[0].name)) continue;       // gone, or the pid is reused
     const t = Date.now(), parent = chain[1];

@@ -194,7 +194,7 @@ function stateList() {
     return { id, label: c.title || (p && p.label) || c.project || 'Claude', project: c.project || '',
       state: p ? p.state : deriveState(c),
       steps: 0, t0: msgs[0] ? msgs[0].t : c.mtime, last: c.mtime, lines: msgs.slice(-8).map(lineOf).filter((l) => l.text),
-      via: p ? p.via : 'off', perms: p ? p.perms : [] };
+      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) };
   });
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {

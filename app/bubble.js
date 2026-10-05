@@ -47,7 +47,7 @@ function renderList() {
     if (list.children[i] !== c) list.insertBefore(c, list.children[i] || null);
     const [cls, name] = stateName(s.state);
     c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
-    c.querySelector('.nm').textContent = s.label;
+    c.querySelector('.nm').textContent = s.label + (s.bg ? '（后台）' : '');     // (Claude Code's background session: no terminal window of its own)
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
     st.textContent = `${s.provider === 'codex' ? 'Codex' : 'Claude'} · ${name}`;

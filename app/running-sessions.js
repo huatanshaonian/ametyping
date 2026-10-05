@@ -7,7 +7,35 @@
 const fs = require('fs');
 const path = require('path');
 
-// [{ pid, sessionId, cwd, name, kind, entrypoint }] -- interactive sessions only (not `claude -p` runs)
+// the records as they are: [{ pid, sessionId, kind, jobId, parkedJobId, ... }]
+function records(home) {
+  const dir = path.join(home, '.claude', 'sessions');
+  let names = []; try { names = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    if (!/^\d+\.json$/.test(n)) continue;
+    let r; try { r = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); } catch { continue; }
+    if (r && Number.isInteger(r.pid) && typeof r.sessionId === 'string' && /^[0-9a-f-]{36}$/.test(r.sessionId)) out.push(r);
+  }
+  return out;
+}
+
+// Background sessions (Claude Code's agent view: /bg, ← on an empty prompt, `claude --bg`). Moving a session to the
+// background copies it into a new session run by Claude Code's daemon (kind "bg", jobId), and the terminal it came
+// from stays open as that session's window: its record says parkedJobId, what is typed there goes to the background
+// session, its own conversation has ended where it was copied. So:
+//   bg      the ids of the background sessions (still running: alive(pid))
+//   parked  the ids of the terminals parked on one of those -- windows, not sessions of their own
+// (These fields are Claude Code's own and not documented: when they are not there, nothing is parked.)
+function lineage(home, alive = () => true) {
+  const rs = records(home), jobs = new Set(), bg = new Set(), parked = new Set();
+  for (const r of rs) if (r.kind === 'bg' && typeof r.jobId === 'string' && alive(r.pid)) { jobs.add(r.jobId); bg.add(r.sessionId); }
+  for (const r of rs) if (typeof r.parkedJobId === 'string' && jobs.has(r.parkedJobId) && !bg.has(r.sessionId)) parked.add(r.sessionId);
+  return { bg, parked };
+}
+
+// [{ pid, sessionId, cwd, name, kind, entrypoint }] -- sessions with Claude Code's own interface: in a terminal
+// ("interactive") or in the background ("bg"); not `claude -p` runs
 function listRunning(home) {
   const dir = path.join(home, '.claude', 'sessions');
   let names = []; try { names = fs.readdirSync(dir); } catch { return []; }
@@ -16,7 +44,7 @@ function listRunning(home) {
     if (!/^\d+\.json$/.test(n)) continue;
     let r; try { r = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); } catch { continue; }
     if (!r || !Number.isInteger(r.pid) || typeof r.sessionId !== 'string' || !/^[0-9a-f-]{36}$/.test(r.sessionId)) continue;
-    if (r.kind && r.kind !== 'interactive') continue;
+    if (r.kind && r.kind !== 'interactive' && r.kind !== 'bg') continue;
     out.push({ pid: r.pid, sessionId: r.sessionId, cwd: typeof r.cwd === 'string' ? r.cwd : '', name: typeof r.name === 'string' ? r.name.slice(0, 60) : '',
       kind: r.kind || '', entrypoint: r.entrypoint || '' });
   }
@@ -36,4 +64,4 @@ function projectOf(cwd) {
   return !s || /^[A-Za-z]:$/.test(s) ? '' : s.split(/[\\/]/).pop();
 }
 
-module.exports = { listRunning, transcriptOf, projectOf };
+module.exports = { listRunning, lineage, transcriptOf, projectOf };
