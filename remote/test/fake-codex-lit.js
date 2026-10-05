@@ -18,6 +18,9 @@ process.stdin.on('end', () => {
     // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
     a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$' : '') })) : [] };
+  } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.folder) {
+    // 调研工作: a folder for each paper of the batch
+    a = { items: [...prompt.matchAll(/^(P\d+)：(.*)$/gm)].map((m) => ({ ref: m[1], folder: /wake/i.test(m[2]) ? '高超声速尾迹' : '等离子体鞘套' })) };
   } else if (P.folder) {
     // 收下: the folder under 每日文献 (an existing one when the list has it)
     const want = /plasma|sheath/i.test((/^文献：(.*)$/m.exec(prompt) || [])[1] || '') ? '等离子体鞘套' : '其他';
@@ -33,7 +36,7 @@ process.stdin.on('end', () => {
       questions: [
         { dim: '贴合工作', text: '鞘套电子密度剖面在 RCS 计算里怎么取', why: '自述里说卡在剖面', state: '[N1] 测了黑障时的剖面，[L1] 用流场算过后向散射', refs: ['L1', 'N1'] },
         { dim: '方法与验证', text: 'RCS 计算结果拿什么验证', why: '自述里提到没有实测数据', state: '公开的飞行试验数据很少', refs: ['N2', 'X9'] },
-        { dim: '领域前沿', text: '近几年的鞘套剖面测量能否给出可用的输入', why: '新文献', state: '见 [N2]', refs: ['N2'] }],
+        { dim: '领域前沿', text: '近几年的鞘套剖面测量能否给出可用的输入', why: '新文献', state: '见 [N2]', refs: ['N2', 'N3'] }],
       unclear: ['气动隐身协同优化是你自己做，还是合作方做？'] };
   } else if (P.seeds) {
     // 按主线补全: the branches (one the library covers, one it hardly does), a suggestion, what to follow

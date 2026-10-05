@@ -124,7 +124,7 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
       } finally { working.delete(e.id); }
     }
   }
-  return { keep, onLibrary, TAG };
+  return { keep, onLibrary, fetchPdf, TAG };
 }
 
 module.exports = { createIntake };

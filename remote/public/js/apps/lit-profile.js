@@ -21,7 +21,8 @@ export function mount(el, ctx) {
   const st = h('span', { class: 'lit-st' });
   const saveBtn = h('button', { class: 'btn go', type: 'button', text: '保存并确认' });
   const body = h('div', { class: 'lp' });
-  el.append(h('div', { class: 'lit-sub' }, saveBtn, st), body);
+  const sv = h('div', { class: 'lf-tip lp-sv', hidden: true });        // 调研工作: the questions' new papers into Zotero
+  el.append(h('div', { class: 'lit-sub' }, saveBtn, st), sv, body);
   let p = null, qs = [], sugs = [], topics = [], running = false, what = '', F = {};
 
   async function refresh() {
@@ -34,6 +35,11 @@ export function mount(el, ctx) {
         : !p || (!p.story && !p.line) ? '先写研究自述' : !p.line ? '写好自述后，点「让 AI 梳理成主线和问题」' : p.confirmed ? '已确认（改了记得保存）'
           : p.filledAt ? 'AI 已按主线补全：看一遍、改一改，再点「保存并确认」' : '改好主线和问题后，点「按主线调研补全」';
     what = s.what || '';
+    const v = (r && r.survey) || {}, vj = v.job && v.job.running ? v.job : null;
+    sv.hidden = !(vj || v.waiting || (v.job && v.job.error));
+    sv.replaceChildren(...[h('span', { text: vj ? `调研文献入库中：${vj.step}${vj.total ? `（${vj.done}/${vj.total}）` : ''}…` : v.job && v.job.error && !v.waiting ? '调研文献入库失败：' + v.job.error
+      : `问题引用的文献里有 ${v.waiting} 篇还不在 Zotero 里。入库后放进「${v.name}」并按主题分文件夹，没读过的会排进每日阅读。${v.canWrite ? '' : '（要先授权写入 Zotero）'}` }),
+      !vj && v.waiting && v.canWrite ? h('button', { class: 'btn', type: 'button', text: '入库', onclick: async () => { await post('/api/lit/survey/import', {}); refresh(); } }) : null].filter(Boolean));
     render();
     if (running) poll();
   }
@@ -162,7 +168,7 @@ export function mount(el, ctx) {
   saveBtn.addEventListener('click', async () => { if (await save(true)) { st.textContent = '已保存并确认'; refresh(); } });
   let pt = null;
   function poll() { clearTimeout(pt); pt = setTimeout(async () => { const r = await get('/api/lit/profile'); if (r && r.state && r.state.running) { if (r.state.what === 'organize') st.textContent = `正在梳理：${r.state.step || '读自述'}…（几分钟）`; return poll(); } refresh(); }, 4000); }
-  return { refresh, destroy() { clearTimeout(pt); } };
+  return { refresh, destroy() { clearTimeout(pt); }, onLit: (w) => { if (w === 'survey' && !running) refresh(); } };
 }
 
 export function mountStats(el) {

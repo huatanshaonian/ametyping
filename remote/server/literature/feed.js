@@ -148,27 +148,30 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   }
 
   // ---- reviews from the user's own collection ----
+  // (and the papers of 调研工作 -- the ones the questions rest on -- that have no card yet: those first)
   function reviewPool() {
-    const col = mirror.collectionByName(C().reviewCollection || '气动隐身');
-    if (!col) return [];
+    const col = mirror.collectionByName(C().reviewCollection || '气动隐身'), sv = mirror.collectionByName(C().surveyCollection || '调研工作');
+    if (!col && !sv) return [];
+    const survey = new Set(sv ? mirror.inCollection(sv.key).filter((it) => { const c = cards.find(it.key); return !c || c.meta.status === 'none'; }).map((it) => it.key) : []);
+    const pool = new Map([...(col ? mirror.inCollection(col.key) : []), ...(sv ? mirror.inCollection(sv.key).filter((it) => survey.has(it.key)) : [])].map((it) => [it.key, it]));
     const pending = new Set(entries().filter((e) => e.kind === 'review' && e.status === 'new').map((e) => e.key));
     const words = profile.words().map((w) => w.toLowerCase());
-    return mirror.inCollection(col.key).filter((it) => !pending.has(it.key) && now() - (st.reviewed[it.key] || 0) > 90 * DAY_MS).map((it) => {
+    return [...pool.values()].filter((it) => !pending.has(it.key) && now() - (st.reviewed[it.key] || 0) > 90 * DAY_MS).map((it) => {
       const notes = mirror.annotationCount(it.key);
       const t = (it.title + ' ' + it.abstract).toLowerCase();
       const rel = words.reduce((s, w) => s + (t.includes(w) ? 1 : 0), 0);
       // (a little day-to-day variety: a stable hash of the key and the date)
       const jitter = parseInt(crypto.createHash('md5').update(it.key + ymd(now())).digest('hex').slice(0, 4), 16) / 65536;
-      return { it, notes, s: (notes ? 2 : 0) + Math.min(rel, 4) * 0.5 + jitter * 1.5 };
+      return { it, notes, survey: survey.has(it.key), s: (survey.has(it.key) ? 4 : 0) + (notes ? 2 : 0) + Math.min(rel, 4) * 0.5 + jitter * 1.5 };
     }).sort((a, b) => b.s - a.s);
   }
-  async function reviewEntry(it) {
+  async function reviewEntry(it, survey = false) {
     const card = cards.find(it.key);
     const notes = cards.annotationLines(it.key);
     let r = { why: '', recall: [] };
     try { r = await ask(reviewPrompt(profile.get() || {}, it, notes, card ? card.body : ''), REVIEW_SCHEMA); } catch (e) { log('文献：复习题生成失败：' + e.message); }
     return { kind: 'review', mode: notes.length ? 'recall' : 'catchup', key: it.key, paper: { title: it.title, authors: it.creators, venue: it.venue, year: it.year, abstract: it.abstract, doi: it.doi },
-      why: r.why || (notes.length ? '你批注过这篇，很久没回顾了' : '收藏了还没读过'), recall: (r.recall || []).slice(0, 3), notes: notes.length };
+      survey: survey || undefined, why: r.why || (survey ? '梳理问题时调研到的文献，还没读过' : notes.length ? '你批注过这篇，很久没回顾了' : '收藏了还没读过'), recall: (r.recall || []).slice(0, 3), notes: notes.length };
   }
 
   // ---- the daily run ----
@@ -215,7 +218,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         // the next best few, kept aside (更多 shows them)
         for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' });
         let room = want - log1.picked;
-        for (const x of reviewPool().slice(0, room)) { add({ date, ...(await reviewEntry(x.it)) }); st.reviewed[x.it.key] = now(); log1.reviews++; room--; }
+        for (const x of reviewPool().slice(0, room)) { add({ date, ...(await reviewEntry(x.it, x.survey)) }); st.reviewed[x.it.key] = now(); log1.reviews++; room--; }
        }
         await oldReports(date, oldDaily() - oldAlready, log1);
       }

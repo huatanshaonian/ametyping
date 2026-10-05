@@ -227,11 +227,19 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
     return { ok: true, profile: p };
   }
   const get = () => p;
+  // the questions' references that are in the library now (调研工作: just put there) get the item's key
+  function linkRefs() {
+    if (!p) return 0;
+    let n = 0;
+    for (const q of p.questions || []) for (const r of q.refs || []) { if (r.key) continue; const it = (r.doi && mirror.findDoi(r.doi)) || mirror.findTitle(r.title); if (it) { r.key = it.key; n++; } }
+    if (n) save();
+    return n;
+  }
   const state = () => ({ running: !!(job && job.running), what: (job && job.what) || '', step: job && job.running ? job.step || '' : '', error: job && !job.running ? job.error || '' : '' });
   // the words that say what the user cares about (for picking pages, review, prefiltering)
   const words = () => p ? uniq([...(p.topics || []).flatMap((t) => t.keywords || []), ...((p.follow || {}).keywords || [])]) : [];
   const openQuestions = () => (p && p.questions || []).filter((q) => q.status !== 'done');
-  return { get, organize, fill, update, state, words, openQuestions, library };
+  return { get, organize, fill, update, state, words, openQuestions, library, linkRefs };
 }
 
 module.exports = { createProfile, AIAA };

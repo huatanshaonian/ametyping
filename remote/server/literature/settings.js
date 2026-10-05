@@ -1,7 +1,8 @@
 // 控制面板 › 文献: what the user sets for the literature module without touching config.json -- the API keys
 // (Semantic Scholar, OpenAlex), the contact address sent to Crossref / OpenAlex / Unpaywall, and the daily push.
 //   <dataDir>/literature/settings.json  (0600)  { keys: { s2, openalex }, mailto, daily, at, minScore, searchesPerDay,
-//                                                 reviewCollection, inboxCollection, s2Recommend, oldDaily, visionMaxPages }
+//                                                 reviewCollection, inboxCollection, surveyCollection, s2Recommend, oldDaily,
+//                                                 visionMaxPages }
 // What is set here wins over config.json's "literature"; what is not set falls back to it. Changes apply at once (the
 // sources read the keys on every call; the push reads its numbers on every run). Keys never go back to the page whole:
 // only whether one is set and its last four characters.
@@ -26,7 +27,7 @@ function createSettings({ dir, cfg = {} }) {
   function feed() {
     const pick = (k, d) => (st[k] != null && st[k] !== '' ? st[k] : cfg[k] != null ? cfg[k] : d);
     return { daily: +pick('daily', 2), oldDaily: +pick('oldDaily', 1), at: String(pick('at', '07:30')), minScore: +pick('minScore', 6), searchesPerDay: +pick('searchesPerDay', 4),
-      reviewCollection: String(pick('reviewCollection', '气动隐身')), inboxCollection: String(pick('inboxCollection', '每日文献')), s2Recommend: pick('s2Recommend', true) !== false,
+      reviewCollection: String(pick('reviewCollection', '气动隐身')), inboxCollection: String(pick('inboxCollection', '每日文献')), surveyCollection: String(pick('surveyCollection', '调研工作')), s2Recommend: pick('s2Recommend', true) !== false,
       visionMaxPages: +pick('visionMaxPages', 30) };
   }
   // what the page shows: whether a key is set (and its end), never the key
@@ -46,7 +47,7 @@ function createSettings({ dir, cfg = {} }) {
     if (typeof d.mailto === 'string') { const m = d.mailto.trim(); if (!m || MAIL.test(m)) st.mailto = m; else errs.push('联系邮箱格式不对'); }
     for (const [k, [lo, hi]] of Object.entries(NUM)) if (d[k] != null && d[k] !== '') { const n = Math.round(+d[k]); if (n >= lo && n <= hi) st[k] = n; else errs.push(`${k} 要在 ${lo}～${hi} 之间`); }
     if (typeof d.at === 'string') { if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(d.at.trim())) st.at = d.at.trim(); else errs.push('推送时间要写成 07:30 这样'); }
-    for (const k of ['reviewCollection', 'inboxCollection']) if (typeof d[k] === 'string' && d[k].trim()) st[k] = d[k].trim().slice(0, 60);
+    for (const k of ['reviewCollection', 'inboxCollection', 'surveyCollection']) if (typeof d[k] === 'string' && d[k].trim()) st[k] = d[k].trim().slice(0, 60);
     if (typeof d.s2Recommend === 'boolean') st.s2Recommend = d.s2Recommend;
     save();
     for (const fn of listeners) try { fn(); } catch {}

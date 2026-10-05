@@ -9,6 +9,7 @@ const obj = (props) => ({ type: 'object', additionalProperties: false, propertie
 const RANK_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, score: num, question: num, why: str, fun: bool }) } });
 const REVIEW_SCHEMA = obj({ why: str, recall: { type: 'array', items: str } });
 const FOLDER_SCHEMA = obj({ folder: str, why: str });
+const FOLDERS_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, folder: str }) } });
 
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 
@@ -69,4 +70,15 @@ function folderPrompt(profile, p, folders, inbox = '每日文献') {
   ].join('\n');
 }
 
-module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, FOLDER_SCHEMA, rankPrompt, reviewPrompt, folderPrompt, questionsBlock, directionOf };
+// 调研工作: folders by topic for all the papers of a survey at once -- papers: [{ ref, title, venue, year, abstract }]
+function foldersPrompt(profile, papers, folders, top = '调研工作') {
+  return [
+    `下面这些文献是梳理用户的研究问题时调研到的，要放进 Zotero 的「${top}」，按研究主题分文件夹。给每一篇选一个文件夹（items: [{ ref, folder }]，每篇都要有）。`,
+    '用户的研究主线：' + directionOf(profile), '',
+    folders.length ? '现有的文件夹：\n' + folders.map((f) => `- ${f.name}（${f.n} 篇）`).join('\n') : '（现在还没有文件夹）', '',
+    '文献：', ...papers.map((p) => `${p.ref}：${p.title}（${p.venue || ''} ${p.year || ''}）${p.abstract ? '\n  ' + String(p.abstract).replace(/\s+/g, ' ').slice(0, 400) : ''}`), '',
+    '规则：现有文件夹合适就用原名，一字不差；否则新起主题名（中文，4～12 个字，优先沿用上面研究分支的叫法）。粒度要粗：这批文献一共分成 3～8 个文件夹，不要按期刊、年份或单篇文献起名。',
+  ].join('\n');
+}
+
+module.exports = { RANK_SCHEMA, REVIEW_SCHEMA, FOLDER_SCHEMA, FOLDERS_SCHEMA, foldersPrompt, rankPrompt, reviewPrompt, folderPrompt, questionsBlock, directionOf };

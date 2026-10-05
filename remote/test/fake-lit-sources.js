@@ -22,6 +22,7 @@ function createFakeSources() {
     open: work('W1', '10.2514/1.new1', 'Electron density profiles of the RAM C-II plasma sheath', 'We measure the electron density of the plasma sheath during reentry', `http://127.0.0.1:${port}/pdf/new1.pdf`),
     closed: work('W4', '10.1109/x.closed', 'Plasma sheath communication blackout measurements', 'Blackout of telemetry in the plasma sheath was measured', null),
     dup: work('W2', '10.2514/1.exist', 'Plasma sheath blackout mitigation by magnetic window', 'Already in the library', null),
+    survey: work('W7', '10.1000/survey1', 'Hypersonic wake plasma scattering review', 'A review of wake plasma scattering', `http://127.0.0.1:${port}/pdf/new1.pdf`),
     other: work('W3', '10.1000/stocks', 'Deep learning for stock prices', 'Stocks', null),
     seed: work('W9', '10.1109/tap.2018.1', 'Backward scattering of a reentry vehicle in plasma sheath', 'The key paper', null),     // (the library's key paper)
   });
@@ -53,7 +54,7 @@ function createFakeSources() {
       if (f.includes('primary_location.source.issn')) return json({ results: [w.open, w.dup, w.other] });
       if (f.includes('cites:')) return json({ results: [w.closed] });
       // (梳理: the last years' literature, most relevant first; the paper already in the library is in it too)
-      if (u.searchParams.get('sort') === 'relevance_score:desc') return json({ results: [w.closed, w.dup, w.open] });
+      if (u.searchParams.get('sort') === 'relevance_score:desc') return json({ results: [w.closed, w.dup, w.open, w.survey] });
       return json({ results: [] });
     }
     if (p.startsWith('/oa/works/doi:')) {

@@ -31,6 +31,7 @@ const { createStats } = require('./stats');
 const { createS2 } = require('./sources/s2');
 const { createSettings } = require('./settings');
 const { createVision } = require('./vision');
+const { createSurvey } = require('./survey');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -76,6 +77,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
+  const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, log, onChange: () => changed('survey') });
   const stats = createStats({ kb, feed, todos });
 
   mirror.start();
@@ -138,7 +140,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       res.end(f.buf); audit('lit-pdf', ip, qs('key'));
       return true;
     }
-    if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state() }); return true; }
+    if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state(), survey: { ...survey.status(), canWrite: api.canWrite() } }); return true; }
     if (G && p === '/api/lit/feed') { json(res, 200, { items: feed.list(), status: feed.status(), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
@@ -172,7 +174,12 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     }
     else if (what === 'profile/organize') r = profile.organize();
     else if (what === 'profile/fill' || what === 'profile/draft') r = profile.fill();
-    else if (what === 'profile/save') r = await profile.update(d);
+    else if (what === 'profile/save') {
+      r = await profile.update(d);
+      // confirmed: the new papers the questions rest on go into 调研工作 (when Zotero may be written)
+      if (r.ok && d.confirm && api.canWrite() && survey.waiting().length) survey.run();
+    }
+    else if (what === 'survey/import') r = survey.run();
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
@@ -223,7 +230,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, stop: () => { mirror.stop(); feed.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, stop: () => { mirror.stop(); feed.stop(); } };
 }
 
 module.exports = { createLiterature };

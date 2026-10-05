@@ -299,6 +299,22 @@ const src = createFakeSources();
     const s7 = await G('/api/lit/stats?days=7');
     ok('the output stats', s7.understanding >= 1 && s7.kept >= 2 && s7.cards.verified === 1 && s7.actions.added === 1 && s7.feed.kept === 2 && s7.feed.reviewed === 1 && /产出/.test(s7.verdict), s7);
     ok('the morning note counts what is still open', (await G('/api/lit')).morning.new === (await G('/api/lit/feed')).items.filter((e) => e.status === 'new' && e.kind === 'new').length);
+
+    // ---- 调研工作: the new papers the questions rest on go into Zotero ----
+    let pv0 = await G('/api/lit/profile');
+    ok('one paper the questions cite is not in the library yet (the two others were 收下 above)', pv0.survey.waiting === 1 && pv0.survey.name === '调研工作' && pv0.survey.canWrite, pv0.survey);
+    ok('import started', (await P('/api/lit/survey/import')).ok);
+    pv0 = await until(async () => { const r = await G('/api/lit/profile'); return r.survey.job && !r.survey.job.running && r; }, 30000);
+    const svTop = [...zot.cols.values()].find((c) => c.name === '调研工作'), svSub = svTop && [...zot.cols.values()].find((c) => c.parent === svTop.key);
+    const svItem = [...zot.objs.values()].find((o) => o.DOI === '10.1000/survey1');
+    ok('it is in 调研工作, in a folder by topic the model named, tagged, with its authors and abstract from OpenAlex and its open PDF', svSub && svSub.name === '高超声速尾迹' && svItem && svItem.collections.join() === svSub.key &&
+      svItem.tags.some((t) => t.tag === 'Windose调研') && /wake plasma/.test(svItem.abstractNote) && (await G('/api/lit/item?key=' + svItem.key)).pdf && !pv0.survey.job.error && pv0.survey.waiting === 0, [svSub, svItem, pv0.survey]);
+    ok('the question\'s reference now opens the paper in the library', pv0.profile.questions.some((q) => q.refs.some((r) => r.key === svItem.key)));
+    ok('nothing left to import: refused', !(await P('/api/lit/survey/import')).ok);
+    await P('/api/lit/settings', { daily: 5 });               // (today's places were taken above: two more)
+    await P('/api/lit/feed/run');
+    const svE = await until(async () => (await G('/api/lit/feed')).items.find((e) => e.key === svItem.key), 30000);
+    ok('the daily push offers it first when there is room: unread, from the survey', svE && svE.kind === 'review' && svE.mode === 'catchup' && svE.survey, svE);
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
     srv.kill(); zot.close(); src.close(); await sleep(400);
