@@ -594,6 +594,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
     } else if (d.t === 'unwatch') c.sub = null;
+    // the page asking whether this socket still works (back from the background on a phone: public/js/net.js)
+    else if (d.t === 'ping') { try { ws.send('{"t":"pong"}'); } catch {} }
     // this page on screen or not (its own push subscription): a device showing Windose gets no notifications meanwhile
     else if (d.t === 'push-here' && typeof d.endpoint === 'string' && d.endpoint.length < 1000) push.here(d.endpoint, d.on === true);
     else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
