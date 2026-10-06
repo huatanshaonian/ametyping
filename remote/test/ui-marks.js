@@ -357,6 +357,17 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await tapCard('第二个会话');
     await evalJs('history.back()'); await sleep(400); await evalJs('history.back()'); await sleep(500); nv = await nav();
     chk('opened again from the taskbar: back twice -- list, then desktop', !nv.viewing && nv.min && nv.at === '/', nv);
+    // at the desktop one more back would leave the page: asked first (the gesture is easily made by accident)
+    const box = () => evalJs("(() => { const b = document.querySelector('.dlgmsg'); return b ? b.querySelector('.dlgtx').textContent + ' [' + [...b.querySelectorAll('.dlga .btn')].map(x => x.textContent).join('|') + ']' : ''; })()");
+    await evalJs('history.back()'); await sleep(600);
+    chk('back at the desktop: asked whether to leave, still on the page', /要离开 Windose 吗/.test(await box()) && /离开|留下/.test(await box()) && (await nav()).at === '/', [await box(), await nav()]);
+    await evalJs("[...document.querySelectorAll('.dlgmsg .dlga .btn')].find(b => b.textContent === '留下').click()"); await sleep(400);
+    chk('留下: the question gone, still here', (await box()) === '' && (await nav()).at === '/', [await box(), await nav()]);
+    await evalJs('history.back()'); await sleep(600);
+    chk('back again: asked again (staying did not use the question up)', /要离开 Windose 吗/.test(await box()), await box());
+    await evalJs("setTimeout(() => [...document.querySelectorAll('.dlgmsg .dlga .btn')].find(b => b.textContent === '离开').click(), 50)");   // (the page goes away under the call otherwise)
+    let gone = false; for (let i = 0; i < 30 && !gone; i++) { await sleep(200); try { gone = (await evalJs('location.pathname + location.protocol')) !== '/http:'; } catch {} }
+    chk('离开: the page is left', gone, 0);
     await shot('95b-phone-header.png');
     const unauth = await new Promise((r) => http.get(`http://127.0.0.1:${PORT}/api/session/export?machine=box&id=${SID}`, (res) => { res.resume(); r(res.statusCode); }));
     chk('export: not logged in refused', unauth === 401, unauth);
