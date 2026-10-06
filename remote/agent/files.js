@@ -17,7 +17,7 @@ const WIN = process.platform === 'win32';
 const MAX = 100 * 1024 * 1024;            // larger files cannot be opened from the dashboard
 const MAX_ENTRIES = 5000;
 const DENY_DIRS = new Set(['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.ametyping', '.password-store']);
-const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.pgpass|\.git-credentials|\.npmrc|\.pypirc|\.credentials\.json|agent\.json|control-token-.*|.*\.(pem|key|p12|pfx|kdbx|keystore|jks))$/i;
+const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.pgpass|\.git-credentials|\.npmrc|\.pypirc|\.credentials\.json|agent\.json|control-token-.*|ntuser.(dat|ini|pol)(..*)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks))$/i;
 
 const denied = (name) => DENY_DIRS.has(WIN ? name.toLowerCase() : name) || DENY_FILE.test(name);
 const norm = (p) => (WIN ? p.toLowerCase() : p);                // (Windows names: the case does not matter)
@@ -84,6 +84,13 @@ function createFiles(cfg) {
     const at = await rootOf(real);
     for (const e of ents) {
       if (denied(e.name) || (at && hidden(at.r, path.join(at.rel, e.name)))) continue;
+      // a link (Windows: the old "Application Data", "Local Settings", "Cookies" ... junctions of a home folder):
+      // shown only when what it leads to may be seen
+      if (e.isSymbolicLink()) {
+        let to = null; try { to = await fsp.realpath(path.join(real, e.name)); } catch { continue; }
+        const t = await rootOf(to);
+        if (!t || hidden(t.r, t.rel)) continue;
+      }
       if (entries.length >= MAX_ENTRIES) break;
       let st = null;
       try { st = await fsp.stat(path.join(real, e.name)); } catch { continue; }   // broken links, locked system files

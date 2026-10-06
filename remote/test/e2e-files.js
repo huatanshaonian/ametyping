@@ -100,11 +100,18 @@ function login() {
         fs.mkdirSync(path.join(H, d), { recursive: true });
       for (const f of ['Desktop/a.txt', 'AppData/Local/Google/Login Data', '.claude/x.jsonl', '.codex/auth.json', '.gitconfig', 'Documents/b.txt', 'Documents/.hidden/c.txt', 'Documents/AppData/d.txt', 'Work/.keep.txt', 'Work/sub/.note'])
         fs.writeFileSync(path.join(H, f), 'x');
+      // links: Windows keeps old names in a home folder that lead into AppData ("Application Data", "Local Settings");
+      // one that leads somewhere allowed is an ordinary entry. And the user's registry files.
+      let links = true;
+      try { fs.symlinkSync(path.join(H, 'AppData', 'Local'), path.join(H, 'Application Data'), 'junction'); fs.symlinkSync(path.join(H, 'Desktop'), path.join(H, 'MyDesk'), 'junction'); } catch { links = false; }
+      fs.writeFileSync(path.join(H, 'NTUSER.DAT'), 'x'); fs.writeFileSync(path.join(H, 'ntuser.dat.LOG1'), 'x');
       const fz = createFiles({ roots: [path.join(H, 'Work'), { path: H, hideDot: true, deny: ['AppData', 'documents/appdata/'] }] });
       const names = async (p) => (await fz.list(p)).entries.map((e) => e.name).sort().join();
       const refused = async (p, op = 'list') => { try { await fz[op](p); return ''; } catch (e) { return e.message; } };
       const win = process.platform === 'win32';
-      ok('a home folder opened: its folders, not the ones starting with ".", not AppData', (await names(H)) === 'Desktop,Documents,Work', await names(H));
+      ok('a home folder opened: its folders, not the ones starting with ".", not AppData', (await names(H)) === (links ? 'Desktop,Documents,MyDesk,Work' : 'Desktop,Documents,Work'), await names(H));
+      ok('a link into what is left out is not listed and does not open; one to an allowed folder is an ordinary entry; the registry files are hidden',
+        !links || (/受保护/.test(await refused(path.join(H, 'Application Data'))) && (await names(path.join(H, 'MyDesk'))) === 'a.txt' && /受保护/.test(await refused(path.join(H, 'NTUSER.DAT'), 'open'))), [links, await refused(path.join(H, 'Application Data'))]);
       ok('... and they cannot be opened by their path either (.claude, .codex/auth.json, .gitconfig, AppData and what is in it)',
         /受保护/.test(await refused(path.join(H, '.claude'))) && /受保护/.test(await refused(path.join(H, '.codex', 'auth.json'), 'open')) && /受保护/.test(await refused(path.join(H, '.gitconfig'), 'open')) &&
         /受保护/.test(await refused(path.join(H, 'AppData'))) && /受保护/.test(await refused(path.join(H, 'AppData', 'Local', 'Google', 'Login Data'), 'open')),
