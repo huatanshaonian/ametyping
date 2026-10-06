@@ -99,8 +99,8 @@ function login() {
     chk('Windows 标准: its own shades offered, none chosen yet -- white as before, your messages the tooltip yellow', (await opts('#sh-day')) === '标准（白底）|沙漠|豆沙绿' && v.theme === 'win98' && v.shade === '' &&
       v.list === 'rgb(255, 255, 255)' && v.page === 'rgb(255, 255, 255)' && v.mine === 'rgb(255, 255, 225)' && v.taskbar === 'rgb(192, 192, 192)', [await opts('#sh-day'), v]);
     await pick('#sh-day', 'desert'); v = await look();
-    chk('沙漠: every white surface parchment -- the list on the left too -- the grey frame kept; your messages pale blue', v.shade === 'desert' && v.list === 'rgb(246, 239, 223)' && v.page === 'rgb(243, 234, 214)' &&
-      v.mine === 'rgb(219, 230, 242)' && v.taskbar === 'rgb(192, 192, 192)' && v.ink === 'rgb(0, 0, 0)', v);
+    chk('沙漠: every white surface parchment -- the list on the left too -- the grey frame kept; your messages pale blue', v.shade === 'desert' && v.list === 'rgb(240, 229, 203)' && v.page === 'rgb(236, 223, 194)' &&
+      v.mine === 'rgb(211, 224, 239)' && v.taskbar === 'rgb(192, 192, 192)' && v.ink === 'rgb(0, 0, 0)', v);
     await shot('91-shade-desert.png');
     await pick('#sh-day', 'green'); v = await look();
     chk('豆沙绿: green surfaces, your messages stay yellow', v.shade === 'green' && v.list === 'rgb(215, 235, 215)' && v.page === 'rgb(207, 230, 207)' && v.mine === 'rgb(255, 255, 225)' && v.taskbar === 'rgb(192, 192, 192)', v);

@@ -46,8 +46,8 @@ html[data-shade="night"] .win.inactive .title, html[data-shade="plum"] .win.inac
 /* ---------- Windows 标准: 沙漠 ---------- */
 /* (your own messages were the tooltip yellow: on parchment they would vanish, so they turn pale blue) */
 html[data-theme="win98"][data-shade="desert"] {
-  --body: #f3ead6; --surface: #f6efdf; --tint: #e7dcc4; --quote-bg: #ece2cb; --mine: #dbe6f2; --note-bg: #f1e2b4;
-  --dither: repeating-conic-gradient(#f3ead6 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
+  --body: #ecdfc2; --surface: #f0e5cb; --tint: #dccfb0; --quote-bg: #e4d7b9; --mine: #d3e0ef; --note-bg: #ead69a;
+  --dither: repeating-conic-gradient(#ecdfc2 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px;
 }
 /* ---------- Windows 标准: 豆沙绿 ---------- */
 html[data-theme="win98"][data-shade="green"] {
