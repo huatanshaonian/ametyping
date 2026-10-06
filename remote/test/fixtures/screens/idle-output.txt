@@ -1,0 +1,23 @@
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /theme
+  ⎿  Theme picker dismissed
+
+❯ /output-style
+  ⎿  Output style: default
+
+     Available styles:
+     - default (current)
+     - Proactive: Claude executes immediately, minimizes interruptions, and prefers action over planning
+     - Concise: Claude responds tersely, leading with results and skipping preamble and narration
+     - Explanatory: Claude explains its implementation choices and codebase patterns
+     - Learning: Claude pauses and asks you to write small pieces of code for hands-on practice
+
+     Usage: /output-style <style>
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PE…
+  ⏵⏵ auto mode on (shift+tab to cycle)

@@ -1,0 +1,21 @@
+     - Proactive: Claude executes immediately, minimizes interruptions, and prefers action over planning
+     - Concise: Claude responds tersely, leading with results and skipping preamble and narration
+     - Explanatory: Claude explains its implementation choices and codebase patterns
+     - Learning: Claude pauses and asks you to write small pieces of code for hands-on practice
+
+     Usage: /output-style <style>
+
+❯ /rename
+  ⎿  Session renamed to: git-bash-path-conversion-issue
+
+❯ /export
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Export conversation
+  Select export method
+
+  ❯ 1. Copy to clipboard  Copy the conversation to your system clipboard
+    2. Save to file       Save the conversation to a file in the current directory
+
+  Esc to cancel
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─

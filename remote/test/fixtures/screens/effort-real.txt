@@ -1,0 +1,21 @@
+  当前会话使用的模型是 Opus 5.5（claude-opus-5-5）。
+
+  如果这次是通过脚本或 Git Bash 命令行把 /model 作为参数传进来的，可以设置环境变量 MSYS_NO_PATHCONV=1，或者改用
+  PowerShell 启动，来避免这种路径转换。
+
+✻ Worked for 6s · done 2:56
+
+❯ /model
+  ⎿  Kept model as Opus 5.5
+
+❯ /effort
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Effort
+
+                             Faster                             Smarter
+                             ────────────────────▲─────────────────────      Ultracode  off
+                             low     medium     high     xhigh      max      Tab to toggle
+
+
+  ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel

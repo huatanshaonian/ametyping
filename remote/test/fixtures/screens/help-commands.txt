@@ -1,0 +1,28 @@
+  Browse default commands
+
+  ❯ /add-dir
+    Add a new working directory
+    /advisor
+    Let Claude consult a stronger model at key moments
+    /artifact-capabilities
+    Runtime capabilities a published Artifact page can be granted — behavior static HTML cannot provide on its own, s…
+    /artifact-diagramming
+    Diagramming know-how for Artifacts - when a picture earns its place, how to draw one that shows the real mechanis…
+    /artifacts
+    Browse your published and shared artifacts
+    /auto-mode-setup
+    Teach auto mode about your environment, plus optional rule tweaks
+    /autocompact
+    Set how full the context gets before auto-summarizing
+    /autofix-pr
+    Monitor and autofix any issues with the current PR
+    /background
+    Send this session to the background and free the terminal
+
+    ↓ 96 more
+
+
+  For more help: https://code.claude.com/docs/en/overview
+
+  Esc to cancel
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─

@@ -25,6 +25,7 @@ function toolLine(name, i) {
     case 'Agent': case 'Task': return `子代理 ${cut(i.description || i.prompt, 60)}`;
     case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': return '更新任务列表';
     case 'ExitPlanMode': return '提交计划';
+    case 'AskUserQuestion': { const q = Array.isArray(i.questions) ? i.questions : []; return `提问 ${cut(q.map((x) => x && x.question).filter(Boolean).join(' / '), 90)}`; }
     case 'Skill': return `技能 ${cut(i.skill, 30)}`;
     default: return name && name.startsWith('mcp__') ? `调用 ${name.split('__').slice(1).join('/')}` : `使用 ${name}`;
   }
@@ -48,7 +49,20 @@ function toolExtra(name, i) {
   }
 }
 
+const FORK = /⑂ forked (\S+) \(([0-9a-f]+)\)/;
+// What a slash command printed (<local-command-stdout> / -stderr): the terminal's colours taken out, as text.
+// null: nothing worth a record (empty, "(no content)", /btw's fork line -- that one is paired with its answer below).
+const CMD_OUT = 20000;
+function commandOutput(s) {
+  const parts = [...String(s || '').matchAll(/<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g)].map((m) => m[1]);
+  if (!parts.length) return null;
+  const text = parts.join('\n').replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '').split('\n').map((l) => l.replace(/\s+$/, '')).join('\n').replace(/^\n+|\n+$/g, '');
+  if (!text.trim() || text.trim() === '(no content)' || FORK.test(text)) return null;
+  return text.length > CMD_OUT ? text.slice(0, CMD_OUT) + '\n…' : text;
+}
+
 // a user "message" that is really the harness talking (slash commands, ! shell, reminders): tidy or drop it
+// (a string: what you typed; { sys }: a note; { cmd }: what a slash command printed)
 function userText(s) {
   s = String(s || '');
   const cmd = /<command-name>([^<]*)<\/command-name>/.exec(s);
@@ -57,6 +71,7 @@ function userText(s) {
   if (bash) return '! ' + bash[1].trim();
   const out = /<bash-stdout>([\s\S]*?)<\/bash-stdout>/.exec(s);
   if (out) return out[1].trim() ? { sys: cut(out[1], 300) } : null;
+  if (/^\s*<local-command-std(out|err)>/.test(s)) { const c = commandOutput(s); return c ? { cmd: c } : null; }
   if (/^\s*<(local-command-|system-reminder|task-notification)/.test(s)) return null;
   if (/^\[Request interrupted/.test(s)) return { sys: '已中断' };
   return s.trim() || null;
@@ -70,7 +85,6 @@ function userText(s) {
 // with the answer in <result>. st (any object kept per transcript) pairs the two: the question becomes a user record,
 // the answer a "btw" record. Without st the answers are left out. A reader that starts after the question (a restart)
 // finds it through st.forkLookup (forkLookup(file): the transcript searched for that fork line).
-const FORK = /⑂ forked (\S+) \(([0-9a-f]+)\)/;
 const isFork = (key, id) => { const [name, suf] = key.split('|'); return id.startsWith('a' + name + '-') && id.endsWith(suf); };
 function forkLookup(file) {
   const found = new Set();
@@ -112,7 +126,18 @@ function btwRecords(o, st, t) {
 function recordsOf(o, st) {
   const out = [];
   if (!o || o.isSidechain || o.isMeta) return out;
-  if (o.type === 'system' || o.type === 'queue-operation') return btwRecords(o, st, o.timestamp ? Date.parse(o.timestamp) : Date.now());
+  if (o.type === 'system' || o.type === 'queue-operation') {
+    const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
+    // a slash command that ran in the terminal alone (/context, /resume, /rename ...): the command as you typed it, and
+    // what it printed. /btw is told apart: its question and answer are paired (btwRecords).
+    if (o.type === 'system' && o.subtype === 'local_command' && !(o.commandRun && o.commandRun.command === 'btw')) {
+      const u = userText(o.content);
+      if (typeof u === 'string' && u && !/^\/btw(\s|$)/.test(u)) out.push({ role: 'user', text: u, t });
+      else if (u && u.cmd) out.push({ role: 'cmd', text: u.cmd, t });
+      return out;
+    }
+    return btwRecords(o, st, t);
+  }
   // a message you sent while Claude was busy: it waits in a queue and is handed to Claude mid-turn -- written then as an
   // attachment, not as a user message (background tasks' notifications come the same way: not yours, left out)
   if (o.type === 'attachment' && o.attachment && o.attachment.type === 'queued_command') {
@@ -128,10 +153,19 @@ function recordsOf(o, st) {
   if (o.type === 'user' && m) {
     const parts = typeof m.content === 'string' ? [m.content]
       : (m.content || []).filter((b) => b.type === 'text').map((b) => b.text);
-    if (!parts.length) return out;                                // tool results
+    // tool results are left out -- but for what you answered when Claude asked (AskUserQuestion): question → answer
+    if (!parts.length) {
+      const a = o.toolUseResult && o.toolUseResult.answers;
+      if (a && typeof a === 'object' && !Array.isArray(a)) {
+        const said = Object.entries(a).filter(([, v]) => typeof v === 'string' && v).map(([q, v]) => `${cut(q, 80)} → ${cut(v, 200)}`);
+        if (said.length) out.push({ role: 'sys', text: '回答：' + said.join('；'), t });
+      }
+      return out;
+    }
     const u = userText(parts.join('\n'));
     if (!u) return out;
-    if (typeof u === 'object') out.push({ role: 'sys', text: u.sys, t });
+    if (u.cmd) out.push({ role: 'cmd', text: u.cmd, t });
+    else if (typeof u === 'object') out.push({ role: 'sys', text: u.sys, t });
     else out.push({ role: 'user', text: u, t });
   } else if (o.type === 'assistant' && m && Array.isArray(m.content)) {
     for (const b of m.content) {

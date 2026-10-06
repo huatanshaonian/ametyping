@@ -10,7 +10,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     `(Start-Process -FilePath '${process.execPath}' -ArgumentList '"${path.join(SP, 'win-keytest-target.js')}"','"${LOG}"' -PassThru).Id`]);
   const pid = +String(ps.stdout).trim();
   await sleep(1500);
-  const expect = { up: '\u001b[A', down: '\u001b[B', right: '\u001b[C', left: '\u001b[D', enter: '\r', esc: '\u001b', tab: '\t' };
+  // (bksp, ctrla: what Claude Code's menus take -- a search box emptied, "Ctrl+A to show all projects" in /resume)
+  const expect = { up: '\u001b[A', down: '\u001b[B', right: '\u001b[C', left: '\u001b[D', enter: '\r', esc: '\u001b', tab: '\t', bksp: '\x7f', ctrla: '\u0001', ctrlr: '\u0012' };
   const sent = [];
   for (const k of Object.keys(expect)) { const r = await bridge.key(pid, k); sent.push(`${k}:${r.ok ? 'ok' : r.err}`); await sleep(300); }
   const bad = await bridge.key(pid, 'pageup');
@@ -20,6 +21,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const want = Object.values(expect).join('');
   console.log('sent:', sent.join(' '), '| unknown key rejected:', !bad.ok);
   console.log('received:', JSON.stringify(got));
-  console.log(got === want ? 'PASS all seven keys arrived as terminal sequences' : 'FAIL expected ' + JSON.stringify(want));
+  console.log(got === want ? 'PASS all the keys arrived as terminal sequences' : 'FAIL expected ' + JSON.stringify(want));
   process.exit(0);
 })();

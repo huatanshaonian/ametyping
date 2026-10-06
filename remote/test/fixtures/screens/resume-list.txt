@@ -1,0 +1,29 @@
+❯ /resume
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Resume session (1 of 40)
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ❯ 看板的审批卡片
+    4 minutes ago · HEAD · 3.6MB · D:\proj
+
+    desktop-session-persistence
+    56 minutes ago · HEAD · 6.9MB
+
+    论文推送和知识库
+    5 hours ago · feature/literature · 15.5MB · D:\proj-literature
+
+    组网方案的疑虑
+    1 day ago · HEAD · 352.8KB · C:\Users\me\Desktop
+
+    出口节点和代理
+    1 day ago · HEAD · 612.6KB · D:\
+
+  ↓ 邮件相关
+    2 days ago · feature/settings · 15MB · D:\proj-mail
+
+    Ctrl+A to only show current repo · Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type
+    to search · Esc to cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

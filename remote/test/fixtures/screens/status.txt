@@ -1,0 +1,25 @@
+❯ /status
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Settings  Status   Config   Usage   Stats
+
+  Version:           2.1.289
+  Session name:      git-bash-path-conversion-issue
+  Session ID:        11111111-2222-3333-4444-555555555555
+  Session kind:      interactive
+  Peer address:      uds:\\.\pipe\LOCAL\cc-msg-0000
+  cwd:               C:\Users\me\AppData\Local\Temp\claude\D--ametyping\c1f80451-56d9-4491-ba5d-81ff76fb038f\scratchp
+                     ad\probe
+  Login method:      Claude Max account
+  Organization:      Someone
+  Email:             someone@example.com
+  Cloud sessions:    GitHub connected
+  Proxy:             http://127.0.0.1:10808
+
+  Model:             opus (claude-opus-5-5)
+  MCP servers:       5 connected, 2 need auth, 1 failed · /mcp
+  Setting sources:   User settings
+  Auto mode server:  Enabled
+
+  Esc to cancel

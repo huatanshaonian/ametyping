@@ -166,16 +166,16 @@ async function control(d) {
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
-  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs|c:[a-z0-9])$/.test(d.key)) {
-    r = await petCall('POST', '/control/key', { id: d.id, key: d.key, screen: d.screen === true });
+  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
+    r = await petCall('POST', '/control/key', { id: d.id, key: d.key, screen: d.screen === true, hl: d.hl === true });
   } else if (d.t === 'screen' && typeof d.id === 'string') {
-    r = await petCall('POST', '/control/screen', { id: d.id });
+    r = await petCall('POST', '/control/screen', { id: d.id, hl: d.hl === true });
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
     r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
-  } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer'].includes(d.choice)) {
-    r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice });
+  } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
+    r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
   } else return { ok: false, msg: '无效请求' };
   if (!r) return { ok: false, msg: '本机糖糖没在运行，没法操作' };
   if (r.ok === false && !petAllows) return { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' };

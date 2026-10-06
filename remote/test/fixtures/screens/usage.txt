@@ -1,0 +1,29 @@
+  Current week (all models)
+  ███████████████▌                                   31% used
+  Resets Oct 6, 6pm (Asia/Shanghai)
+
+  What's contributing to your limits usage?
+  Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+
+  Last 24h · these are independent characteristics of your usage, not a breakdown
+
+  93% of your usage was at >150k context
+   Longer sessions are more expensive even when cached. /compact mid-task, /clear
+   when switching to new tasks.
+
+  54% of your usage came from subagent-heavy sessions
+   Each subagent runs its own requests. Be deliberate about spawning them — and
+   consider configuring a cheaper model for simpler subagents.
+
+  54% of your usage came from sessions active for 8+ hours
+   These are often background/loop sessions. Continuous usage can add up quickly
+   so make sure it is intentional.
+
+  Skills, subagents, plugins, and MCP servers
+  No attribution data yet · accumulates as you use Claude
+
+  d to day · w to week
+
+  Refreshing…
+
+  Esc to cancel

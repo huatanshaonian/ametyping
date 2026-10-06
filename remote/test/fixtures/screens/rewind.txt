@@ -1,0 +1,28 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore the code and/or conversation to the point before…
+
+    ↑ 1 more
+    /effort
+    No code changes
+
+    /output-style
+    No code changes
+
+    /export
+    No code changes
+
+    /add-dir
+    No code changes
+
+    /agents
+    No code changes
+
+  ❯ (current)
+
+
+
+
+  Enter to continue · Esc to cancel
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─

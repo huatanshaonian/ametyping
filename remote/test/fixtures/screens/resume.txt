@@ -1,0 +1,23 @@
+  PowerShell 启动，来避免这种路径转换。
+
+✻ Worked for 6s · done 2:56
+
+❯ /model
+  ⎿  Kept model as Opus 5.5
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /resume
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Resume session
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+    probe
+
+   No conversations found in this project.
+   Ctrl+A to show all projects
+
+    Ctrl+A to show all projects · Ctrl+B to only show current branch · Type to search · Esc to cancel

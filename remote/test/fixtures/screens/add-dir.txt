@@ -1,0 +1,25 @@
+     - Learning: Claude pauses and asks you to write small pieces of code for hands-on practice
+
+     Usage: /output-style <style>
+
+❯ /rename
+  ⎿  Session renamed to: git-bash-path-conversion-issue
+
+❯ /export
+  ⎿  Export cancelled
+
+❯ /add-dir
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Add directory to workspace
+
+  Claude Code will be able to read files in this directory and make edits when auto-accept edits is on.
+
+  Enter the path to the directory:
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ Directory path…                                                                                                  │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  Tab to complete · Enter to add · Esc to cancel
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─

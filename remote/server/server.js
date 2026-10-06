@@ -302,7 +302,7 @@ function onAgentMessage(m, raw, ws) {
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
-        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000) })) : [];
+        cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000), ask: p.ask === true || undefined })) : [];
     }
     for (const id of [...m.sessions.keys()]) if (!keep.has(id)) m.sessions.delete(id);
     broadcast({ t: 'sessions', data: snapshot() });
@@ -311,7 +311,7 @@ function onAgentMessage(m, raw, ws) {
     const s = m.sessions.get(d.id);
     if (!s) return;
     s.msgs = d.msgs.slice(-300).map((x) => ({
-      role: ['user', 'assistant', 'tool', 'sys'].includes(x.role) ? x.role : 'sys',
+      role: ['user', 'assistant', 'tool', 'sys', 'cmd'].includes(x.role) ? x.role : 'sys',
       text: typeof x.text === 'string' ? x.text.slice(0, 20000) : undefined,
       items: Array.isArray(x.items) ? x.items.slice(0, 40).map((i) => String(i).slice(0, 200)) : undefined,
       t: +x.t || 0,
@@ -361,17 +361,26 @@ function onBrowserAction(c, d) {
     out = { t: 'send', id: s.id, text };
     audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
   } else if (d.t === 'key') {
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs|c:[a-z0-9])$/.test(d.key)) return reply(false, '不支持的按键');
-    out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true };
-    audit('control-key', c.ip, m.name, s.id, d.key);
+    // a key by name, Ctrl+letter (not C / D / Z: they interrupt or end the session), or "c:" and text typed as it is,
+    // without Enter (a menu's search box, a path, the letter a menu takes)
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
+    out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true, hl: d.hl === true };
+    audit('control-key', c.ip, m.name, s.id, d.key.length > 3 && d.key.startsWith('c:') ? `c:(len=${d.key.length - 2})` : d.key);
   } else if (d.t === 'screen') {
     // what that session's terminal shows now (Claude Code's own menus are only there); asked for, never polled
-    out = { t: 'screen', id: s.id };
+    // (hl: with what is highlighted there marked -- a menu's current tab; see app/screen-text.js)
+    out = { t: 'screen', id: s.id, hl: d.hl === true };
     audit('control-screen', c.ip, m.name, s.id);
   } else {
-    if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer'].includes(d.choice)) return reply(false, '无效请求');
+    if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) return reply(false, '无效请求');
     if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
     out = { t: 'decide', id: s.id, perm: d.perm, choice: d.choice };
+    // Claude's questions answered on the card: { question: answer } (the pet checks them against what was asked)
+    if (d.choice === 'answer') {
+      const a = d.answers, ks = a && typeof a === 'object' && !Array.isArray(a) ? Object.keys(a) : [];
+      if (!ks.length || ks.length > 8 || !ks.every((k) => k.length <= 2000 && typeof a[k] === 'string' && a[k].length <= 4000)) return reply(false, '无效请求');
+      out.answers = Object.fromEntries(ks.map((k) => [k, a[k]]));
+    }
     audit('control-decide', c.ip, m.name, s.id, d.choice);
   }
   const rid = crypto.randomBytes(12).toString('hex');

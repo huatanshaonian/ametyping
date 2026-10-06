@@ -80,6 +80,11 @@
   .m.tool { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .5); margin: 2px 0 6px; }
   .m.tool b { color: rgba(77, 35, 207, .55); font-weight: normal; }
   .m.sys { font-size: 11px; color: rgba(58, 34, 84, .45); text-align: center; max-width: none; }
+  /* what a slash command printed in the terminal (/context, /model ...); a long one folded, a click unfolds it */
+  .m.cmd { max-width: 100%; background: rgba(240, 209, 241, .3); border: 1px dotted var(--blue); padding: 3px 8px 4px; }
+  .m.cmd .ch { font-size: 11px; color: rgba(77, 35, 207, .55); }
+  .m.cmd pre { margin: 2px 0 0; padding: 0; background: none; border: 0; overflow-x: auto; white-space: pre; }
+  .m.cmd .cmore { font-size: 11px; color: var(--blue); text-decoration: underline; cursor: pointer; }
   .m .tm { font-size: 10px; color: rgba(77, 35, 207, .4); margin-left: 6px; }
   #sendb { font: inherit; font-size: 12px; color: var(--blue); background: var(--pink); border: 1px solid var(--blue);
     padding: 0 7px; height: 20px; cursor: pointer; }
@@ -104,6 +109,18 @@
   .permission button:hover { background: #fff; }
   .permission button:disabled { opacity: .5; cursor: default; }
   .permission-status { font-size: 11px; }
+  /* Claude asking you something: the questions and their options instead of 允许 / 拒绝 */
+  .permission.ask .ask-q { margin: 5px 0 7px; }
+  .permission.ask .ask-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; margin-bottom: 4px; overflow-wrap: anywhere; }
+  .permission.ask .ask-t { padding: 0 5px; font-size: 11px; color: #fff; background: var(--blue); }
+  .permission.ask .ask-h i { font-style: normal; font-size: 11px; opacity: .6; }
+  .permission.ask .ask-o { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+  .permission.ask .ask-opt { flex: 1 1 120px; max-width: 100%; text-align: left; padding: 2px 7px 3px; color: inherit; }
+  .permission.ask .ask-opt b { display: block; font-weight: normal; color: var(--blue); }
+  .permission.ask .ask-opt span { display: block; font-size: 11px; opacity: .7; }
+  .permission.ask .ask-opt.on { background: var(--blue); }
+  .permission.ask .ask-opt.on b, .permission.ask .ask-opt.on span { color: #fff; opacity: 1; }
+  .permission.ask .ask-own { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 1px 5px; border: 1px solid var(--blue); background: #fff; user-select: text; }
 </style>
 </head>
 <body>

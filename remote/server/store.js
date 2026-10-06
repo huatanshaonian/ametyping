@@ -29,7 +29,7 @@ function merge(out, recs) {
   }
   if (out.length > TAIL) out.splice(0, out.length - TAIL);
 }
-const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title', 'mode', 'ctx', 'btw']);
+const ROLES = new Set(['user', 'assistant', 'tool', 'sys', 'title', 'mode', 'ctx', 'btw', 'cmd']);
 function clean(r) {
   if (!r || !ROLES.has(r.role)) return null;
   const o = { u: typeof r.u === 'string' ? r.u.slice(0, 64) : null, i: +r.i || 0, role: r.role, t: +r.t || Date.now() };

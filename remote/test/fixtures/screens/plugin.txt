@@ -1,0 +1,10 @@
+❯ /hooks
+  ⎿  Hooks dialog dismissed
+
+❯ /plugins
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Plugins  Discover   Installed   Marketplaces   Errors   Stats
+
+  ✽  Loading…
