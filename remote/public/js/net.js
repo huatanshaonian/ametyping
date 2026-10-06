@@ -81,6 +81,11 @@ export function check() {
   // no word back: it is dead without having said so (closing it properly could take minutes) -- replaced now
   probeT = setTimeout(() => { if (s === ws && lastMsg < at) replace(s); }, PROBE_MS);
 }
+// 「重新连接」 (the connection mark in the tray): a new socket now, whatever the one there looks like
+export function reconnect() {
+  if (state.online) { state.online = false; emit('status', false); }
+  if (ws && ws.readyState <= 1) replace(ws); else { clearTimeout(retryT); tries = 0; connect(); }
+}
 document.addEventListener('visibilitychange', check);
 for (const ev of ['pageshow', 'focus', 'online']) addEventListener(ev, check);
 setInterval(check, BEAT_MS);

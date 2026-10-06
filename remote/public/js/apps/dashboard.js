@@ -9,6 +9,7 @@ import { createNotes } from './dash-notes.js';
 import { createBtw } from './dash-btw.js';
 import { createSlash } from './dash-slash.js';
 import { createTerm, opensMenu } from './dash-term.js';
+import * as backnav from '../backnav.js';
 import { askCard, questionsOf } from './dash-ask.js';
 
 // the reply box's hint, by how the session can be reached
@@ -118,13 +119,19 @@ function mount(current) {
   const sessionList = createList({ el: list, current, selected: () => sel, onSelect: select, onNote: (m, bad) => showNote(m, bad) });
   side.prepend(sessionList.tool);
   const renderList = () => sessionList.render();
-  back.addEventListener('click', () => root.classList.remove('viewing'));
+  // a phone's back gesture (js/backnav.js): a conversation open in the narrow layout is one level; back shows the list
+  const navLevel = () => backnav.level('dash', root.isConnected && root.classList.contains('narrow') && root.classList.contains('viewing') ? 1 : 0);
+  backnav.step(() => {
+    if (!root.isConnected || !root.offsetParent || !root.classList.contains('narrow') || !root.classList.contains('viewing')) return false;
+    root.classList.remove('viewing'); navLevel(); return true;
+  }, 10);
+  back.addEventListener('click', () => { root.classList.remove('viewing'); navLevel(); });
 
   function select(key) {
     if (key !== sel) keepDraft();                   // the one we leave keeps its unsent text
     sel = key;
     renderList();
-    root.classList.add('viewing');
+    root.classList.add('viewing'); navLevel();
     const s = find(key), [machine, id] = key.split('|');
     const cached = convCache.get(key);
     if (cached) renderConv(cached); else convEl.replaceChildren(h('div', { class: 'pick', text: '加载对话…' }));
@@ -356,7 +363,7 @@ function mount(current) {
     net.on('open', () => { if (sel) { const [machine, id] = sel.split('|'); net.send({ t: 'watch', machine, id }); } }),
   ];
   const tickT = setInterval(renderList, 15000);               // "N分前" labels
-  const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 620));
+  const ro = new ResizeObserver(() => { root.classList.toggle('narrow', root.clientWidth < 620); navLevel(); });
   ro.observe(root);
   renderList();
 
@@ -364,6 +371,6 @@ function mount(current) {
     root,
     setCurrent(c) { sessionList.setCurrent(c); },
     select,
-    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); },
+    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); backnav.level('dash', 0); },
   };
 }

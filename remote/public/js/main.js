@@ -21,6 +21,7 @@ import * as control from './apps/control.js';
 import * as sound from './sound.js';
 import * as push from './push.js';
 import * as shade from './shade.js';
+import * as backnav from './backnav.js';
 import './alerts.js';
 import './volume.js';
 
@@ -87,6 +88,9 @@ net.on('sessions', render);
 
 wallpaper.init();
 todo.initWidget(document.getElementById('desktop'));        // 重要计划, pinned to the desktop
+// a phone's back gesture: each window on screen is a level; back puts the one in front away (to the taskbar)
+wm.onChange((list) => backnav.level('windows', list.filter((w) => !w.minimized).length));
+backnav.step(() => { const l = wm.list().filter((w) => !w.minimized); const w = l.find((x) => x.active) || l[l.length - 1]; if (!w) return false; wm.minimize(w.id); return true; }, 0);
 shade.start();                                   // 色调 / 夜灯: in force now, looked at again as the day goes
 net.connect();
 openDashboard();

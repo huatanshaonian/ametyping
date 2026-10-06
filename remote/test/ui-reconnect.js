@@ -106,6 +106,13 @@ function login() {
       (await evalJs('window.__downs')) === 0, [s, sockets.length - n3, took3, await evalJs('window.__downs')]);
     await evalJs("delete document.hidden");
 
+    // the connection mark in the tray: a click connects again at once, whatever the socket looks like
+    const o4 = (await st()).opens, n4 = sockets.length;
+    chk('the connection mark can be clicked', await evalJs("(() => { const c = document.querySelector('#conn'); return c.getAttribute('role') === 'button' && getComputedStyle(c).cursor === 'pointer' && /重新连接/.test(c.title); })()"), await evalJs("document.querySelector('#conn').title"));
+    await evalJs("document.querySelector('#conn').click()");
+    for (let i = 0; i < 30; i++) { await sleep(100); s = await st(); if (s.opens > o4 && s.online) break; }
+    chk('a click on it: a new socket, connected again', s.online && s.opens === o4 + 1 && sockets.length === n4 + 1, [s, sockets.length - n4]);
+
     // the server away for a while (the tries slow down), then back: coming back on screen connects at once
     for (const p of [...pairs]) p.frozen = true;
     relay.close(); kill();

@@ -338,6 +338,25 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('phone: the reply box takes the whole width, the buttons sit on the line under it (发送 at the right)', lay.say.w >= lay.box.w - 24 && lay.send.t >= lay.say.b - 1 && lay.send.r >= lay.box.r - 14 &&
       (lay.kbd.hidden || lay.kbd.t >= lay.say.b - 1) && (lay.mode.hidden || lay.mode.t >= lay.say.b - 1), lay);
     await shot('94c-marks-phone-compose.png');
+    // a phone's back gesture (js/backnav.js) goes back inside Windose first: conversation -> list -> desktop
+    const nav = () => evalJs("({ viewing: document.querySelector('.dash').classList.contains('viewing'), min: [...document.querySelectorAll('.win')].find(w => w.querySelector('.dash')).classList.contains('minimized'), at: location.pathname })");
+    const tapCard = async (t) => { const r = await rect('.dash .card', t); await call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: r.x, y: r.y }] }); await call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await sleep(600); };
+    let nv = await nav();
+    chk('(a conversation is open on the phone)', nv.viewing && !nv.min, nv);
+    await evalJs('history.back()'); await sleep(500); nv = await nav();
+    chk('back: from the conversation to the list (the window stays, the page stays)', !nv.viewing && !nv.min && nv.at === '/', nv);
+    // back inside the page by its own button, then the gesture: straight to the desktop, not a step that does nothing
+    await tapCard('第二个会话'); nv = await nav();
+    chk('(opened again)', nv.viewing, nv);
+    await evalJs("document.querySelector('.dash .back').click()"); await sleep(500);
+    chk('‹ 返回: the list', !(await nav()).viewing, await nav());
+    await evalJs('history.back()'); await sleep(500); nv = await nav();
+    chk('back from the list: to the desktop (the window put away to the taskbar), still on the page', nv.min && nv.at === '/', nv);
+    // the window brought back from the taskbar is a level again
+    await evalJs("document.querySelector('#dock .dockbtn').click()"); await sleep(500);
+    await tapCard('第二个会话');
+    await evalJs('history.back()'); await sleep(400); await evalJs('history.back()'); await sleep(500); nv = await nav();
+    chk('opened again from the taskbar: back twice -- list, then desktop', !nv.viewing && nv.min && nv.at === '/', nv);
     await shot('95b-phone-header.png');
     const unauth = await new Promise((r) => http.get(`http://127.0.0.1:${PORT}/api/session/export?machine=box&id=${SID}`, (res) => { res.resume(); r(res.statusCode); }));
     chk('export: not logged in refused', unauth === 401, unauth);

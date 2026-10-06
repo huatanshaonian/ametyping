@@ -32,7 +32,12 @@ wm.onChange((list) => {
   }
 });
 
-net.on('status', (up) => { conn.textContent = up ? '已连接' : '重连中'; conn.classList.toggle('bad', !up); });
+net.on('status', (up) => { conn.textContent = up ? '已连接' : '重连中'; conn.classList.toggle('bad', !up); conn.title = up ? '已连接（点一下重新连接）' : '正在重连（点一下马上再试）'; });
+// a click on it: connect again now (a connection that looks alive but brings nothing)
+conn.setAttribute('role', 'button'); conn.tabIndex = 0;
+const again = () => { conn.classList.add('busy'); setTimeout(() => conn.classList.remove('busy'), 900); net.reconnect(); };
+conn.addEventListener('click', again);
+conn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); again(); } });
 
 function tick() { const d = new Date(); clock.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
 tick(); setInterval(tick, 10e3);
