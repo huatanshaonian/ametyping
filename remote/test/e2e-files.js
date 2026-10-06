@@ -121,6 +121,34 @@ function login() {
       ok('a folder cannot be started in from there either', /受保护/.test(await refused(path.join(H, 'AppData', 'Local'), 'folder')) && (await fz.folder(path.join(H, 'Desktop'))) === fs.realpathSync(path.join(H, 'Desktop')), 0);
       ok('a root inside it without those rules: its own rules count (dot files shown there, secrets still not)', (await names(path.join(H, 'Work'))) === '.keep.txt,sub' && (await names(path.join(H, 'Work', 'sub'))) === '.note', [await names(path.join(H, 'Work')), await names(path.join(H, 'Work', 'sub'))]);
       ok('outside every root: refused as before', /不在允许浏览的范围内/.test(await refused(T)), await refused(T));
+      // "~": the home folder of whoever the agent runs as -- the same line in every computer's agent.json
+      const fh = createFiles({ roots: [{ path: '~', hideDot: true, deny: ['AppData'] }] });
+      const hr = (await fh.roots())[0] || {};
+      ok('"~" is the home folder of the user the agent runs as, with its rules', hr.path === fs.realpathSync(os.homedir()) && hr.hideDot === true && hr.deny.length === 1, hr);
+      // "*" (Windows): which drives there are is looked up when asked -- a drive put in later (a USB stick) is there
+      // when the explorer asks for the roots, or when a path on it is used; nothing polls for drives
+      if (win) {
+        const fsp = fs.promises, access0 = fsp.access, realpath0 = fsp.realpath;
+        let stick = false, looks = 0;
+        fsp.access = async (p, ...r) => { if (/^[A-Z]:\\$/.test(String(p))) looks++; if (String(p) === 'Q:\\') { if (stick) return; throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } return access0.call(fsp, p, ...r); };
+        fsp.realpath = async (p, ...r) => { if (/^Q:/i.test(String(p))) { if (stick) return String(p); throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } return realpath0.call(fsp, p, ...r); };
+        try {
+          const fd = createFiles({ roots: ['*'], exclude: ['C:'] });
+          const has = async (fresh) => (await fd.roots(fresh)).some((r) => r.name === 'Q:');
+          const first = await has(false); const n1 = looks;
+          await fd.roots(); await fd.roots();
+          ok('the drives are looked up once, not on every use', !first && looks === n1 && n1 > 0, [first, looks, n1]);
+          stick = true;
+          ok('a drive put in since: not known until it is asked for', !(await has(false)), 0);
+          const e1 = await (async () => { try { await fd.open('Q:\\a.txt', 1); return 'opened'; } catch (e) { return e.message; } })();
+          ok('a path on it is used: the drives are looked up again and it is allowed (the file itself is not there)', !/不在允许浏览的范围内/.test(e1) && (await has(false)), e1);
+          stick = false;
+          ok('taken out: gone when the explorer asks for the roots afresh', !(await has(true)), 0);
+          stick = true; const n2 = looks;
+          const e2 = await (async () => { try { await fd.list('C:\\Windows'); return 'listed'; } catch (e) { return e.message; } })();
+          ok('a path on an excluded drive does not make the drives be looked up again', /不在允许浏览的范围内/.test(e2) && looks === n2, [e2, looks - n2]);
+        } finally { fsp.access = access0; fsp.realpath = realpath0; }
+      }
     }
     ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }

@@ -5,13 +5,17 @@
 //   own -- hideDot: nothing in it whose name starts with "." (.claude, .codex, .gitconfig: tools keep their logins
 //   and histories there); deny: folders in it, by their path from the root, that are left out with all they hold
 //   (AppData: browsers' saved passwords and cookies, every program's tokens). Where roots overlap, the innermost one's
-//   rules count.
+//   rules count. A path may be "~" (or start with "~/"): the folder of the user the agent runs as, whatever its name
+//   on that machine -- the same line then works on every computer.
+// Which drives "*" stands for is looked up when it is asked: when the explorer asks for the list of roots, and when a
+// path is on a drive not known yet (a USB stick put in since). Nothing watches or polls for drives.
 // Every path is resolved to its real location first (symlinks, "..", letter case) and must lie inside a root.
 // Secrets are never listed or read, wherever they are (keys, tokens, credentials, this agent's own config).
 'use strict';
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
+const os = require('os');
 
 const WIN = process.platform === 'win32';
 const MAX = 100 * 1024 * 1024;            // larger files cannot be opened from the dashboard
@@ -21,16 +25,21 @@ const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.p
 
 const denied = (name) => DENY_DIRS.has(WIN ? name.toLowerCase() : name) || DENY_FILE.test(name);
 const norm = (p) => (WIN ? p.toLowerCase() : p);                // (Windows names: the case does not matter)
+// "~" and "~/x": in the home folder of the user the agent runs as
+const expand = (p) => (p === '~' ? os.homedir() : /^~[\\/]/.test(p) ? path.join(os.homedir(), p.slice(2)) : p);
 
 function createFiles(cfg) {
   const enabled = !!(cfg && Array.isArray(cfg.roots) && cfg.roots.length);
   const exclude = new Set(((cfg && cfg.exclude) || []).map((x) => String(x).replace(/[\\/:]+$/, '').toUpperCase()));
-  let realRoots = null;                    // [{ name, path }] resolved once
+  let realRoots = null;                    // [{ name, path }] as last looked up
+  const anyDrive = WIN && enabled && cfg.roots.includes('*');
 
-  async function roots() {
-    if (realRoots) return realRoots;
+  // fresh: look again (the drives there are now)
+  async function roots(fresh = false) {
+    if (realRoots && !fresh) return realRoots;
     const out = [];
-    for (const r of cfg.roots) {
+    for (let r of cfg.roots) {
+      if (typeof r === 'string') r = expand(r); else if (r && typeof r === 'object' && typeof r.path === 'string') r = { ...r, path: expand(r.path) };
       if (r === '*' && WIN) {              // every drive letter that exists, minus the excluded ones
         for (let c = 65; c <= 90; c++) {
           const L = String.fromCharCode(c);
@@ -49,12 +58,15 @@ function createFiles(cfg) {
   }
 
   // the root a real path is under: the innermost one (its rules count), or null
-  async function rootOf(real) {
+  async function rootOf(real, again = false) {
     let best = null;
     for (const r of await roots()) {
       const rel = path.relative(r.path, real);
       if ((rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) && (!best || r.path.length > best.r.path.length)) best = { r, rel };
     }
+    // on a drive that was not there when the drives were last looked up (and is not an excluded one): look again, once
+    if (!best && anyDrive && !again && /^[A-Za-z]:/.test(real) && !exclude.has(real[0].toUpperCase()) &&
+      !(await roots()).some((r) => r.name === real[0].toUpperCase() + ':')) { await roots(true); return rootOf(real, true); }
     return best;
   }
   // is this path (from its root) kept out by the root's own rules or by being a secret?

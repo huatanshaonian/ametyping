@@ -42,7 +42,7 @@ function createFsServe(files, send) {
     if (d.t !== 'fs' || typeof d.rid !== 'string') return;
     if (!files.enabled) return fail(d.rid, '这台电脑没开放文件浏览（agent.json 里设 "files"）');
     try {
-      if (d.op === 'roots') send({ t: 'fs-res', rid: d.rid, ok: true, roots: await files.roots() });
+      if (d.op === 'roots') send({ t: 'fs-res', rid: d.rid, ok: true, roots: await files.roots(true) });   // (looked up now: a drive put in since is there)
       else if (d.op === 'list') send({ t: 'fs-res', rid: d.rid, ok: true, ...(await files.list(d.path)) });
       else if (d.op === 'read') await read(d.rid, d.path);
       else fail(d.rid, '无效请求');
