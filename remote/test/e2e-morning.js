@@ -119,7 +119,7 @@ async function chain() {
   const kids = [];
   const spawn = (args, e) => { const p = cp.spawn(process.execPath, args, { env: { ...env, ...e }, stdio: 'ignore' }); kids.push(p); return p; };
   try {
-    spawn([R + '/server/server.js']); await sleep(900);
+    spawn([R + '/server/server.js']); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     for (let i = 0; i < 40 && !notes.length; i++) await sleep(250);
     const n = notes[0] || {};

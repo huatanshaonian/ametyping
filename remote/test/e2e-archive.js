@@ -58,7 +58,7 @@ const storedLines = () => {
 
 (async () => {
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(800);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     let agent = spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     let box = null;

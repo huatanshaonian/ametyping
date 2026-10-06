@@ -141,7 +141,9 @@ async function onControl(req, res, body) {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
     // the environment of the most recently active session you started yourself (proxy, API settings)
     const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
-    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', env: withEnv ? withEnv.env : process.env }));
+    const resume = typeof d.resume === 'string' ? d.resume : '';
+    if (resume) { const s = sessions.map.get(resume); if (s && s.claudePid && proc.alive(s.claudePid, s.claudeComm)) return out(200, { ok: false, msg: '这个会话还开着' }); }
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, env: withEnv ? withEnv.env : process.env }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

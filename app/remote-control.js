@@ -126,16 +126,30 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     };
     setTimeout(tick, 1000);
   }
-  async function launch(cwd, prompt) {
-    let st; try { st = fs.statSync(cwd); } catch { return { ok: false, msg: '找不到这个文件夹' }; }
+  // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
+  // own transcript, is what the agent passes as cwd)
+  async function launch(cwd, prompt, resume = '') {
+    if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return { ok: false, msg: '无效请求' };
+    if (resume) { const s = sessions.get(resume); if (s && s.claudePid && await procAlive(s.claudePid)) return { ok: false, msg: '这个会话还开着' }; }
+    let st; try { st = fs.statSync(cwd); } catch { return { ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }; }
     if (!st.isDirectory()) return { ok: false, msg: '这不是文件夹' };
     const exe = claudeExe();
     if (!exe) return { ok: false, msg: '找不到 claude.exe' };
     const first = String(prompt || '').trim();
-    const pid = await bridge.launch(exe, first ? [first] : [], cwd);
+    const args = resume ? ['--resume', resume] : first ? [first] : [];
+    // ~/.ametyping/launch.ps1, when it is there, runs first in the new window (e.g. `proxy`, a function of your PowerShell
+    // profile: the pet's own environment has no proxy set) -- Claude Code is then started from that PowerShell, as you
+    // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.
+    const pre = path.join(home(), '.ametyping', 'launch.ps1');
+    let pid;
+    if (fs.existsSync(pre)) {
+      const ps = (x) => "'" + String(x).replace(/'/g, "''") + "'";
+      const cmd = `. ${ps(pre)}; & ${ps(exe)} ${args.map(ps).join(' ')}`;
+      pid = await bridge.launch('powershell.exe', ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
+    } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
     answerTrust(pid);
-    return { ok: true, msg: '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
+    return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 
   return { chatSend, chatKey, chatScreen, launch, KEYS };

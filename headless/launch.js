@@ -26,10 +26,12 @@ function claudeBin(env) {
   return fs.existsSync(f) ? f : null;
 }
 
-// cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message
-function launch({ cwd, prompt, env }) {
+// cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
+// resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session
+function launch({ cwd, prompt, env, resume = '' }) {
   return new Promise((resolve) => {
-    let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: '找不到这个文件夹' }); }
+    if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
+    let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
     const bin = claudeBin(env);
     if (!bin) return resolve({ ok: false, msg: '找不到 claude' });
@@ -39,11 +41,11 @@ function launch({ cwd, prompt, env }) {
     const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k)).map(([k, v]) => `export ${k}=${q(v)}`);
     try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { return resolve({ ok: false, msg: '写临时文件失败' }); }
     const pre = path.join(os.homedir(), '.ametyping', 'launch.sh');
-    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
+    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
     execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, cmd], { timeout: 8000 }, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
       answerTrust(name);
-      resolve({ ok: true, msg: `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
+      resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
   });
 }

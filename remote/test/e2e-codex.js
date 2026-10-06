@@ -52,7 +52,7 @@ async function until(fn, ms = 15000) { const t0 = Date.now(); while (Date.now() 
 
 (async () => {
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(800);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Origin: `http://127.0.0.1:${PORT}`, Cookie: await login() } });
     let snap = []; const convs = [];

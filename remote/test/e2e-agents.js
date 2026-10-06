@@ -35,12 +35,12 @@ const agentConnects = (tok) => new Promise((resolve) => {
 (async () => {
   try {
     // a server whose fresh window is tiny: the login's own code is stale at once
-    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1' }); await sleep(900);
+    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1' }); await sleep(3000);
     let login = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: code() });
     const r0 = await req('POST', '/api/agents/add', { name: 'newbox' }, login.cookie);
     ok('adding without a fresh code asks for it', r0.j && r0.j.need === 'totp' && !r0.j.token, JSON.stringify(r0.j));
     for (const k of kids.splice(0)) k.kill(); await sleep(500);
-    spawn([R + '/server/server.js']); await sleep(900);
+    spawn([R + '/server/server.js']); await sleep(3000);
     login = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: code(1) });
     const bad = await req('POST', '/api/agents/add', { name: '../evil' }, login.cookie);
     ok('bad name refused', bad.j && bad.j.ok === false, JSON.stringify(bad.j));

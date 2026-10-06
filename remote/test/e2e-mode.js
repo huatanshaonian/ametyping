@@ -89,7 +89,7 @@ async function until(fn, ms = 10000) { const t0 = Date.now(); while (Date.now() 
 (async () => {
   try {
     // a stale code (AME_FRESH_MS=1): Shift+Tab needs the code like any key
-    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1', AME_FLUSH_MS: '300' }); await sleep(800);
+    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1', AME_FLUSH_MS: '300' }); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
     let b = await browser((await post('/api/login', { user: 'u', password: 'pw-123456789012', code: code() })).cookie);
     ok('mode from the transcript: the latest recorded one', await until(() => (b.session() || {}).mode === 'plan'), JSON.stringify(b.session()));

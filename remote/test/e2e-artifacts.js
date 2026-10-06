@@ -82,7 +82,7 @@ async function e2e() {
     r.end(data);
   });
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(900);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     for (let i = 0; i < 60; i++) { const s = (await req('GET', '/api/sessions', null, cookie)).j; const m = s && s.data.find((x) => x.machine === 'box'); if (m && m.sessions.length) break; await sleep(250); }

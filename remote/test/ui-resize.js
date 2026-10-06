@@ -47,7 +47,7 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
   const errors = [];
   let chrome;
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(800);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,

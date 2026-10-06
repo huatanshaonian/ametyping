@@ -8,6 +8,10 @@ const HOME = path.join(T, 'home'); fs.mkdirSync(path.join(HOME, '.claude', 'proj
 fs.mkdirSync(path.join(HOME, '.ametyping'));
 const ROOT = path.join(T, 'share'); fs.mkdirSync(path.join(ROOT, 'proj', '.ssh'), { recursive: true }); fs.writeFileSync(path.join(ROOT, 'proj', 'a.txt'), 'x');
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
+// a past conversation of this machine, in a folder that is not one of the browsable roots (「在电脑上继续」 needs none)
+const RID = 'abcdef01-1111-2222-3333-444444444444', WORK = path.join(T, 'work'); fs.mkdirSync(WORK);
+fs.mkdirSync(path.join(HOME, '.claude', 'projects', '-work'), { recursive: true });
+fs.writeFileSync(path.join(HOME, '.claude', 'projects', '-work', RID + '.jsonl'), JSON.stringify({ uuid: 'u1', cwd: WORK, timestamp: new Date(Date.now() - 5000).toISOString(), type: 'user', message: { role: 'user', content: '上次说到一半' } }) + '\n');
 const PORT = 18792, PET = 18793;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
@@ -46,7 +50,7 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
 (async () => {
   try {
     // AME_FRESH_MS=1: the login's own code is stale at once, so the step-up path is exercised
-    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1' }); await sleep(800);
+    spawn([R + '/server/server.js'], { AME_FRESH_MS: '1' }); await sleep(3000);          // (0.8 s was not always enough on a busy machine)
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
     const login = await post('/api/login', { user: 'u', password: 'pw-123456789012', code: code() });
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Origin: `http://127.0.0.1:${PORT}`, Cookie: login.cookie } });
@@ -73,7 +77,17 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     ok(`a file refused (${r3.msg})`, r3.ok === false && launches.length === 1, JSON.stringify(r3));
     const r4 = await act2({ t: 'launch', machine: 'box', cwd: path.join(ROOT, 'proj', '.ssh'), prompt: '' });
     ok(`a protected folder refused (${r4.msg})`, r4.ok === false && launches.length === 1, JSON.stringify(r4));
+    // 在电脑上继续: a past conversation opened again there -- the folder comes from its own transcript on that machine
+    const n0 = launches.length;
+    const q1 = await act2({ t: 'resume', machine: 'box', id: RID });
+    const got = launches[launches.length - 1] || {};
+    ok('在电脑上继续: forwarded to the pet with the id of the conversation and the folder its transcript names', q1.ok === true && launches.length === n0 + 1 && got.resume === RID && fs.realpathSync(got.cwd) === fs.realpathSync(WORK) && !got.prompt, JSON.stringify([q1, got]));
+    const q2 = await act2({ t: 'resume', machine: 'box', id: 'abcdef01-9999-2222-3333-444444444444' });
+    ok(`a conversation this machine does not have: refused (${q2.msg})`, q2.ok === false && launches.length === n0 + 1, JSON.stringify(q2));
+    const q3 = await act2({ t: 'resume', machine: 'box', id: 'codex:abc' }), q4 = await act2({ t: 'resume', machine: 'box', id: RID + ' --dangerously-skip-permissions' }), q5 = await act2({ t: 'resume', machine: 'box' });
+    ok('a Codex session, an id with anything else in it, no id: refused', !q3.ok && /Codex/.test(q3.msg) && !q4.ok && !q5.ok && launches.length === n0 + 1, JSON.stringify([q3, q4, q5]));
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
+    ok('written to the audit log', new RegExp('control-resume .* box ' + RID).test(audit));
     ok('launch written to the audit log', /control-launch .* box /.test(audit));
     ws.close(); ws2.close();
   } catch (e) { fail++; console.log('ERROR', e); }

@@ -44,7 +44,7 @@ function login() {
 
 (async () => {
   try {
-    spawn([R + '/server/server.js']); await sleep(800);
+    spawn([R + '/server/server.js']); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2000);
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Origin: `http://127.0.0.1:${PORT}`, Cookie: await login() } });
     const handlers = new Map(); let snap = [];

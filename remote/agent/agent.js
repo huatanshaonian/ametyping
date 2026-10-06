@@ -182,6 +182,12 @@ async function control(d) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
     r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
+  } else if (d.t === 'resume' && typeof d.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id)) {
+    // a past conversation of this machine opened again: the folder is the one its own transcript says it ran in
+    const f = sessionFile(d.id);
+    const cwd = f && !f.codex ? records.firstCwd(f.file) : '';
+    if (!cwd) return { ok: false, msg: '这台电脑上找不到这个会话的记录' };
+    r = await petCall('POST', '/control/launch', { cwd, resume: d.id });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
   } else return { ok: false, msg: '无效请求' };
@@ -275,7 +281,7 @@ function connect() {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));
     }
-    else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch') && typeof d.rid === 'string') {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });

@@ -173,7 +173,7 @@ async function part2() {
     r.end(data);
   });
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(900);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     const code = auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000));
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code });

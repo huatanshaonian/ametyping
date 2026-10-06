@@ -54,7 +54,17 @@ function mount(current) {
   const hname = h('b', { text: '选择一个会话' }), hmeta = h('span', { class: 'meta' });
   const back = h('button', { class: 'btn back', type: 'button', text: '‹ 返回' });
   const rcmd = h('code', { class: 'rcmd' });
-  const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume }));
+  // 「在电脑上继续」: a terminal on that machine, in the conversation's folder, `claude --resume` -- then it is live
+  // here again and can be replied to (shown for a conversation that is over, on a machine that is online)
+  const reopen = h('button', { class: 'btn go', type: 'button', text: '在电脑上继续', title: '在那台电脑上打开一个终端窗口（Linux：一个 tmux 会话），进到这个对话原来的文件夹并接着它', hidden: true });
+  reopen.addEventListener('click', async () => {
+    const s = find(sel); if (!s) return;
+    reopen.disabled = true; showNote('正在那台电脑上打开…', false, 20000);
+    const r = await net.act({ t: 'resume', machine: s.machine, id: s.id });
+    reopen.disabled = false;
+    showNote(r.msg || (r.ok ? '已打开' : '没能打开'), !r.ok, r.ok ? 9000 : 6000);
+  });
+  const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume }), reopen);
   // 对话摘要 (dash-notes.js): the conversation's daily notes, above it while the 摘要 button is on
   const notes = createNotes();
   let showNotes = prefs.get('dash.notes', false);
@@ -154,6 +164,7 @@ function mount(current) {
         title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${s.id.startsWith('codex:') ? 'Codex' : '到自动压缩前'}）` }));
     }
     resume.hidden = !(s && s.resume);
+    reopen.hidden = !(s && s.online && s.via !== 'terminal' && !String(s.id).startsWith('codex:'));
     if (s && s.resume && rcmd.textContent !== s.resume) rcmd.textContent = s.resume;
   }
   async function copyResume() {
