@@ -7,6 +7,6 @@
     "roots": [
       "/home/你的用户名"
     ],
-    "//": "Windows 上可写 { \"roots\": [\"*\"], \"exclude\": [\"C:\"] }：除 C 盘外的所有盘；不写 files 则不开放文件浏览"
+    "//": "Windows 上可写 { \"roots\": [\"*\"], \"exclude\": [\"C:\"] }：除 C 盘外的所有盘；再加一项 { \"path\": \"C:\\Users\\你\", \"hideDot\": true, \"deny\": [\"AppData\"] } 可以只开放用户目录（不含 . 开头的和 AppData）；不写 files 则不开放文件浏览"
   }
 }

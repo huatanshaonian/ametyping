@@ -91,6 +91,30 @@ function login() {
     ok(`cancel stops the stream (got ${c.chunks} chunks of 60)`, c.cancelled && c.chunks < 45, JSON.stringify(c));   // (well before all 60, even on a busy machine)
     const after = await read(path.join(rootReal, 'docs', 'readme.md'));
     ok('works after a cancel', after.ok);
+    // a root with rules of its own (as a home folder is opened): nothing whose name starts with ".", some folders
+    // left out with all they hold; the innermost root's rules count where roots overlap; plain roots as before
+    {
+      const { createFiles } = require(R + '/agent/files');
+      const H = path.join(T, 'home2');
+      for (const d of ['Desktop', 'AppData/Local/Google', '.claude', '.codex', 'Documents/.hidden', 'Documents/AppData', 'Work/sub'])
+        fs.mkdirSync(path.join(H, d), { recursive: true });
+      for (const f of ['Desktop/a.txt', 'AppData/Local/Google/Login Data', '.claude/x.jsonl', '.codex/auth.json', '.gitconfig', 'Documents/b.txt', 'Documents/.hidden/c.txt', 'Documents/AppData/d.txt', 'Work/.keep.txt', 'Work/sub/.note'])
+        fs.writeFileSync(path.join(H, f), 'x');
+      const fz = createFiles({ roots: [path.join(H, 'Work'), { path: H, hideDot: true, deny: ['AppData', 'documents/appdata/'] }] });
+      const names = async (p) => (await fz.list(p)).entries.map((e) => e.name).sort().join();
+      const refused = async (p, op = 'list') => { try { await fz[op](p); return ''; } catch (e) { return e.message; } };
+      const win = process.platform === 'win32';
+      ok('a home folder opened: its folders, not the ones starting with ".", not AppData', (await names(H)) === 'Desktop,Documents,Work', await names(H));
+      ok('... and they cannot be opened by their path either (.claude, .codex/auth.json, .gitconfig, AppData and what is in it)',
+        /受保护/.test(await refused(path.join(H, '.claude'))) && /受保护/.test(await refused(path.join(H, '.codex', 'auth.json'), 'open')) && /受保护/.test(await refused(path.join(H, '.gitconfig'), 'open')) &&
+        /受保护/.test(await refused(path.join(H, 'AppData'))) && /受保护/.test(await refused(path.join(H, 'AppData', 'Local', 'Google', 'Login Data'), 'open')),
+        [await refused(path.join(H, '.claude')), await refused(path.join(H, 'AppData', 'Local', 'Google', 'Login Data'), 'open')]);
+      ok('deeper down as well: a "." folder inside Documents is hidden; a folder left out by its path' + (win ? ' (the case does not matter on Windows)' : ''),
+        (await names(path.join(H, 'Documents'))) === (win ? 'b.txt' : 'AppData,b.txt') && /受保护/.test(await refused(path.join(H, 'Documents', '.hidden', 'c.txt'), 'open')), await names(path.join(H, 'Documents')));
+      ok('a folder cannot be started in from there either', /受保护/.test(await refused(path.join(H, 'AppData', 'Local'), 'folder')) && (await fz.folder(path.join(H, 'Desktop'))) === fs.realpathSync(path.join(H, 'Desktop')), 0);
+      ok('a root inside it without those rules: its own rules count (dot files shown there, secrets still not)', (await names(path.join(H, 'Work'))) === '.keep.txt,sub' && (await names(path.join(H, 'Work', 'sub'))) === '.note', [await names(path.join(H, 'Work')), await names(path.join(H, 'Work', 'sub'))]);
+      ok('outside every root: refused as before', /不在允许浏览的范围内/.test(await refused(T)), await refused(T));
+    }
     ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
