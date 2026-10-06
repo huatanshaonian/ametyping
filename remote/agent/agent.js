@@ -21,6 +21,7 @@ const os = require('os');
 const http = require('http');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
+const { lineage } = require('../../app/running-sessions');
 const records = require('./records');
 const commands = require('./commands');
 const codex = require('./codex-records');
@@ -85,11 +86,18 @@ function projectOf(file) {
   return parts.length ? parts[parts.length - 1] : '';
 }
 
+// Background sessions of Claude Code's and the terminals parked on them (app/running-sessions.js lineage). A parked
+// terminal is the background session's window, not a session: it is left out here too -- the pet not listing it is
+// not enough, for its old transcript keeps being written to and would count as a session with recent activity.
+let line = { bg: new Set(), parked: new Set() };
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 function scan() {
   const now = Date.now();
   const files = newestFiles();
   const seen = new Set();
+  try { line = lineage(os.homedir(), pidAlive); } catch {}
   for (const f of files) {
+    if (line.parked.has(f.id)) continue;
     if (now - f.mtime > IDLE_DROP_MS && !pet.has(f.id)) continue;   // the pet still lists it: keep it (can be resumed)
     seen.add(f.id);
     let c = sess.get(f.id);
@@ -194,11 +202,11 @@ function stateList() {
     return { id, label: c.title || (p && p.label) || c.project || 'Claude', project: c.project || '',
       state: p ? p.state : deriveState(c),
       steps: 0, t0: msgs[0] ? msgs[0].t : c.mtime, last: c.mtime, lines: msgs.slice(-8).map(lineOf).filter((l) => l.text),
-      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) };
+      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id) };
   });
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
-    if (sess.has(id)) continue;
+    if (sess.has(id) || line.parked.has(id)) continue;
     out.push({ id, label: p.label || 'Claude', project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
       lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [] });
   }
@@ -281,7 +289,8 @@ function pushRecords() {
   if (!serverOff || !ws || ws.readyState !== 1) return;
   archive.scan();
   for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !archive.map.has(id)) readers.delete(id);
-  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id));
+  // (a terminal parked on a background session: what it still writes is that session's, already sent as such)
+  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id) && !line.parked.has(id));
   for (const [id, c] of [...sess, ...codexSess, ...old]) {
     let r = readers.get(id);
     if (!r || r.file !== c.file) {
@@ -327,10 +336,10 @@ async function tick(force) {
     await pollPet();
     scan();
     const list = stateList();
-    const sig = JSON.stringify([controlOn(), ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
+    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
-      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, sessions: list });
+      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, sessions: list, parked: [...line.parked] });
       for (const s of list) {
         if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
         const cs = `${s.last}|${tailT(s)}`;

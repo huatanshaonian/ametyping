@@ -148,7 +148,7 @@ function snapshot() {
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -286,6 +286,8 @@ function onAgentMessage(m, raw, ws) {
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
+    // terminals parked on a background session of Claude Code's: windows, not sessions (their stored history stays)
+    m.parked = new Set(Array.isArray(d.parked) ? d.parked.filter((x) => typeof x === 'string' && /^[\w:-]{1,64}$/.test(x)).slice(0, 50) : []);
     const keep = new Set();
     for (const s of d.sessions) {
       if (!s || typeof s.id !== 'string') continue;
