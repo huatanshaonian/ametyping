@@ -357,6 +357,30 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await tapCard('第二个会话');
     await evalJs('history.back()'); await sleep(400); await evalJs('history.back()'); await sleep(500); nv = await nav();
     chk('opened again from the taskbar: back twice -- list, then desktop', !nv.viewing && nv.min && nv.at === '/', nv);
+    // the other windows with a list and an item (控制面板, 记事本 ...): back shows the list again, then puts the window away
+    const openIcon = async (t) => { await evalJs(`[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('${t}')).click()`); await sleep(1200); };
+    const winOf = (sel) => evalJs(`(() => { const r = document.querySelector('${sel}'); const w = r && r.closest('.win'); return w ? { there: true, min: w.classList.contains('minimized'), cls: r.className } : { there: false }; })()`);
+    await openIcon('控制面板');
+    let cpw = await winOf('.cp');
+    chk('控制面板 on the phone: it opens on its first item', cpw.there && /narrow/.test(cpw.cls) && /picked/.test(cpw.cls), cpw);
+    await evalJs('history.back()'); await sleep(500); cpw = await winOf('.cp');
+    chk('back: 控制面板 的 icons, the window stays', !/picked/.test(cpw.cls) && !cpw.min, cpw);
+    await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('声音')).click()"); await sleep(600);
+    chk('(an item opened)', /picked/.test((await winOf('.cp')).cls), await winOf('.cp'));
+    await evalJs('history.back()'); await sleep(500); cpw = await winOf('.cp');
+    chk('back: from the item to 控制面板 的 icons, the window stays', !/picked/.test(cpw.cls) && !cpw.min, cpw);
+    await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('声音')).click()"); await sleep(500);
+    await evalJs("document.querySelector('.cp-back').click()"); await sleep(500);
+    await evalJs('history.back()'); await sleep(500); cpw = await winOf('.cp');
+    chk('its own ‹ button, then back: the window is put away (no step that does nothing)', cpw.min && (await nav()).at === '/', cpw);
+    await openIcon('记事本');
+    await evalJs("[...document.querySelectorAll('.notepad .btn')].find(b => /新/.test(b.textContent)).click()"); await sleep(600);
+    let npw = await winOf('.notepad');
+    chk('记事本: a note open', npw.there && /editing/.test(npw.cls), npw);
+    await evalJs('history.back()'); await sleep(500); npw = await winOf('.notepad');
+    chk('back: the list of notes', !/editing/.test(npw.cls) && !npw.min, npw);
+    await evalJs('history.back()'); await sleep(500); npw = await winOf('.notepad');
+    chk('back again: 记事本 put away, the desktop', npw.min && (await nav()).at === '/', npw);
     // at the desktop one more back would leave the page: asked first (the gesture is easily made by accident)
     const box = () => evalJs("(() => { const b = document.querySelector('.dlgmsg'); return b ? b.querySelector('.dlgtx').textContent + ' [' + [...b.querySelectorAll('.dlga .btn')].map(x => x.textContent).join('|') + ']' : ''; })()");
     await evalJs('history.back()'); await sleep(600);

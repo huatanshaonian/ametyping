@@ -6,6 +6,7 @@ import { openUrl } from './viewer.js';
 import { get, post, authors, STATUS } from './lit-api.js';
 import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
+import * as backnav from '../backnav.js';
 
 export function mount(el, ctx) {
   const colSel = h('select', { class: 'field lb-col', title: '分类' });
@@ -14,6 +15,7 @@ export function mount(el, ctx) {
     h('option', { value: 'card', text: '有卡片' }), h('option', { value: 'nocard', text: '没卡片' }), h('option', { value: 'notes', text: '有批注' }), h('option', { value: 'nopdf', text: '没 PDF' }));
   const count = h('span', { class: 'lit-st' });
   const back = h('button', { class: 'btn lb-back', type: 'button', text: '‹ 列表', onclick: () => el.classList.remove('viewing') });
+  backnav.pane(el, 'viewing', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   const listEl = h('div', { class: 'lb-list' });
   const view = h('div', { class: 'lb-view' }, h('p', { class: 'lit-empty', text: '点左边的一篇看详情。' }));
   el.classList.add('lb');

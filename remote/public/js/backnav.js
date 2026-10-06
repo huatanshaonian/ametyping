@@ -51,3 +51,28 @@ addEventListener('popstate', () => {
   finally { popping = false; }
   sync();                                            // (nothing could be undone, or more than one level went: in step again)
 });
+
+// A window that shows a list and one item of it side by side, and one at a time when it is narrow (a phone): the item
+// open is a level; back shows the list again -- by the window's own ‹ button (goBack), so both do exactly the same.
+//   root: the element that gets `deepClass` while an item is open; it, or something around it, has .narrow when narrow
+let panes = 0;
+export function pane(root, deepClass, goBack) {
+  const name = 'pane' + (++panes);
+  const deep = () => root.isConnected && root.classList.contains(deepClass) && !!root.closest('.narrow');
+  const mo = new MutationObserver(() => report());
+  function report() {
+    if (!root.isConnected && mo.seen) { mo.disconnect(); levels.delete(name); const i = steps.indexOf(entry); if (i >= 0) steps.splice(i, 1); sync(); return; }
+    if (root.isConnected) mo.seen = true;
+    level(name, deep() ? 1 : 0);
+  }
+  const entry = { prio: 10, fn: () => {
+    if (!root.isConnected) { report(); return false; }          // (its window was closed: forgotten)
+    if (!deep() || !root.offsetParent) return false;            // (not open, or its window is put away)
+    goBack(); report(); return true;
+  } };
+  steps.push(entry); steps.sort((a, b) => b.prio - a.prio);
+  mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+  // narrow comes and goes with the window's width (a class on the root or around it): looked at again then
+  const ro = new ResizeObserver(() => report()); ro.observe(root);
+  report();
+}

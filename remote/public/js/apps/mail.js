@@ -14,6 +14,7 @@ import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (als
 import { openUrl } from './viewer.js';
 import { compose, openDraft } from './mail-compose.js';
 import { kindOf as fileKind } from '../filetypes.js';
+import * as backnav from '../backnav.js';
 
 let app = null;
 const pad = (n) => String(n).padStart(2, '0');
@@ -217,6 +218,7 @@ function mount(first) {
 
   const off = net.on('mail', (d) => { if (d && (d.what === 'new' || d.what === 'seen' || d.what === 'alerts')) loadList(); else loadAccounts(); });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 620));
+  backnav.pane(root, 'reading', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   ro.observe(root);
   view.replaceChildren(h('p', { class: 'ml-empty', text: '点左边的一封邮件看全文。' }));
   loadAccounts().then(() => loadList()).then(() => { if (first) show(first); });

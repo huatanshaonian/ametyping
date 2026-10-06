@@ -6,6 +6,7 @@ import * as wm from '../wm.js';
 import { confirmBox } from '../dialog.js';
 import { render, renderWeek, weekNo, dayName, minutes } from './report-view.js';
 import { renderResults, renderAnswer } from './report-search.js';
+import * as backnav from '../backnav.js';
 
 let app = null;
 
@@ -131,6 +132,7 @@ function mount(first) {
 
   // a narrow window shows the list or one report
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 560));
+  backnav.pane(root, 'viewing', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   ro.observe(root);
   refresh();
   return { root, refresh, show: (date) => load(date), destroy() { clearTimeout(poll); clearTimeout(askT); ro.disconnect(); } };

@@ -6,6 +6,7 @@ import * as wm from '../wm.js';
 import * as net from '../net.js';
 import { confirmBox } from '../dialog.js';
 import * as google from './google.js';
+import * as backnav from '../backnav.js';
 
 let app = null;
 const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -93,6 +94,7 @@ function mount(first) {
 
   const off = net.on('notes', loadList);
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 520));
+  backnav.pane(root, 'editing', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   ro.observe(root);
   loadList().then(() => { if (first) select(first); else if (items[0]) select(items[0].id, true); });
   return { root, select: (id) => select(id), destroy() { flush(); off(); offG(); ro.disconnect(); } };

@@ -13,6 +13,7 @@ import { panel as mailPanel } from './mail-accounts.js';
 import { panel as aiPanel } from './ai-models.js';
 import { panel as notifyPanel } from './notify.js';
 import { panel as litPanel } from './lit-settings.js';
+import * as backnav from '../backnav.js';
 
 const ITEMS = [
   { id: 'display', label: '显示属性', icon: 'display_properties', note: '壁纸、配色、界面大小', panel: displayPanel },
@@ -42,6 +43,7 @@ function mount() {
   const back = h('button', { class: 'btn cp-back', type: 'button', text: '‹ 控制面板', onclick: () => home() });
   const title = h('b', { class: 'cp-title' });
   const root = h('div', { class: 'cp' }, nav, h('div', { class: 'cp-main' }, h('div', { class: 'cp-head' }, back, title), pane));
+  backnav.pane(root, 'picked', () => back.click());       // (a phone's back gesture: js/backnav.js)
   let cur = null;                                       // { id, panel: { root, destroy?, show? } }
 
   nav.replaceChildren(...ITEMS.map((it) => h('button', { class: 'cp-item', type: 'button', dataset: { id: it.id }, title: it.note, onclick: () => show(it.id) },

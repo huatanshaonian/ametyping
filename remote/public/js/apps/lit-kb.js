@@ -6,11 +6,13 @@
 import { h } from '../util.js';
 import { get, post } from './lit-api.js';
 import { renderMd, lineDiff } from './lit-md.js';
+import * as backnav from '../backnav.js';
 
 export function mount(el, ctx) {
   const left = h('div', { class: 'lk-left' });
   const view = h('div', { class: 'lk-view' }, h('p', { class: 'lit-empty', text: '左边选一条修改建议或一个专题。' }));
   const back = h('button', { class: 'btn lb-back', type: 'button', text: '‹ 列表', onclick: () => el.classList.remove('viewing') });
+  backnav.pane(el, 'viewing', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   el.classList.add('lb');
   el.append(h('div', { class: 'lit-sub' }, back, h('span', { class: 'lit-st', text: '卡片和专题是群晖上的 Markdown 文件，Obsidian 打开同一个文件夹也能看、能改。' })), h('div', { class: 'lb-main' }, left, view));
   const q = h('input', { class: 'field', type: 'search', placeholder: '搜卡片和专题' });
