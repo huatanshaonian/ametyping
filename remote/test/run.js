@@ -15,7 +15,7 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const TESTS = ['e2e-records.js', 'e2e-sessions.js', 'e2e-files.js', 'e2e-launch.js', 'e2e-walls.js', 'e2e-agents.js', 'e2e-codex.js', 'e2e-summary.js', 'e2e-mode.js', 'e2e-archive.js', 'e2e-artifacts.js', 'e2e-morning.js', 'e2e-notes.js', 'e2e-google.js', 'e2e-google-tasks.js', 'e2e-google-more.js', 'e2e-backup.js', 'e2e-mail.js', 'e2e-mail-triage.js', 'e2e-mail-send.js', 'e2e-marks.js', 'e2e-ctx.js', 'e2e-btw.js', 'e2e-search-index.js', 'e2e-search-docs.js', 'e2e-always.js', 'e2e-deploy.js', 'e2e-ai.js', 'e2e-queued.js', 'e2e-session-terminal.js', 'e2e-static.js', 'e2e-push.js', 'e2e-literature.js'];
+const TESTS = ['e2e-records.js', 'e2e-sessions.js', 'e2e-files.js', 'e2e-launch.js', 'e2e-walls.js', 'e2e-agents.js', 'e2e-codex.js', 'e2e-summary.js', 'e2e-mode.js', 'e2e-archive.js', 'e2e-artifacts.js', 'e2e-morning.js', 'e2e-notes.js', 'e2e-google.js', 'e2e-google-tasks.js', 'e2e-google-more.js', 'e2e-backup.js', 'e2e-mail.js', 'e2e-mail-triage.js', 'e2e-mail-send.js', 'e2e-marks.js', 'e2e-ctx.js', 'e2e-btw.js', 'e2e-search-index.js', 'e2e-search-docs.js', 'e2e-always.js', 'e2e-deploy.js', 'e2e-ai.js', 'e2e-queued.js', 'e2e-session-terminal.js', 'e2e-static.js', 'e2e-push.js', 'e2e-literature.js', 'e2e-term.js', 'e2e-ask.js'];
 let failed = 0;
 for (const t of TESTS) {
   const r = spawnSync(process.execPath, [path.join(__dirname, t)], { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 10 * 60e3 });

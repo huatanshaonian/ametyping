@@ -1,0 +1,19 @@
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /help
+  ⎿  Help dialog dismissed
+
+❯ /ide
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Select IDE
+  Connect to an IDE for integrated development features.
+
+  No available IDEs detected. Make sure your IDE has the Claude Code extension or plugin installed and is running.
+
+  Enter to confirm · Esc to cancel
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─

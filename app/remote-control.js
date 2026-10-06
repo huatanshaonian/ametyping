@@ -8,10 +8,13 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const { modeFromScreen } = require('./permission-mode');
-const { tidyScreen } = require('./screen-text');
+const { tidyScreen, plainScreen } = require('./screen-text');
 
-// (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now)
-const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'ctrlb', 'ctrls', 'ctrlxs']);
+// (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
+// ctrl<letter>: the Ctrl combinations its menus name, e.g. Ctrl+A in /resume -- never C, D or Z, which interrupt or
+// end the session; bksp: Backspace, for what was typed into a menu's box)
+const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'bksp', 'ctrlxs']);
+const CTRL = /^ctrl[abe-y]$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // deps: { sessions, permissions, bridge, procAlive, pushBubble, home }
@@ -76,10 +79,11 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
 
   // one navigation key into the session's terminal (only a live terminal session; menus and prompts are its use)
   // wantScreen: the screen as it is a moment after the key comes with the answer (the dashboard's 终端画面 is open)
-  // "c:x": one letter or digit, for the menus that take them ("s to use this session only", "2" for the second)
-  async function chatKey(id, key, wantScreen = false) {
-    const ch = /^c:([a-z0-9])$/.exec(key);
-    if (!KEYS.has(key) && !ch) return { ok: false, msg: '不支持的按键' };
+  // "c:text": typed as it is, without Enter -- the letter a menu takes ("s to use this session only", "2" for the
+  // second), what goes into a menu's search box, a path
+  async function chatKey(id, key, wantScreen = false, hl = false) {
+    const ch = /^c:([^\x00-\x1f\x7f]{1,200})$/.exec(key);
+    if (!KEYS.has(key) && !CTRL.test(key) && !ch) return { ok: false, msg: '不支持的按键' };
     const t = await terminalOf(sessions.get(id));
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
@@ -87,19 +91,19 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
     if (key !== 'btab' && !wantScreen) return { ok: true };
     // Shift+Tab: the mode it switched to, read once from the redrawn status line (the transcript only records the
-    // mode with the next message)
-    await sleep(350);
-    const text = await bridge.screen(t.pid);
-    return { ok: true, mode: key === 'btab' ? modeFromScreen(text) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
+    // mode with the next message). (Text typed into a menu's search box: the list under it takes a little longer.)
+    await sleep(ch && ch[1].length > 1 ? 700 : 350);
+    const text = await bridge.screen(t.pid, hl);
+    return { ok: true, mode: key === 'btab' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
   }
 
   // what the session's terminal shows right now (asked for by you in the dashboard, never polled): Claude Code's own
   // menus and prompts are only there
-  async function chatScreen(id) {
+  async function chatScreen(id, hl = false) {
     const t = await terminalOf(sessions.get(id));
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，没有画面' };
-    const text = await bridge.screen(t.pid);
+    const text = await bridge.screen(t.pid, hl);
     return text == null ? { ok: false, msg: '读不到终端画面' } : { ok: true, screen: tidyScreen(text) };
   }
 

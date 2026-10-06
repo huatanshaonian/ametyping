@@ -9,6 +9,7 @@ import { createNotes } from './dash-notes.js';
 import { createBtw } from './dash-btw.js';
 import { createSlash } from './dash-slash.js';
 import { createTerm, opensMenu } from './dash-term.js';
+import { askCard, questionsOf } from './dash-ask.js';
 
 // the reply box's hint, by how the session can be reached
 const PLACEHOLDER = {
@@ -62,9 +63,9 @@ function mount(current) {
   const convEl = h('div', { class: 'conv' }, h('div', { class: 'pick', text: '从左边选一个会话查看完整对话。' }));
   const permsEl = h('div', { class: 'perms' });
   const note = h('div', { class: 'note' });
-  // 终端画面 (dash-term.js): the terminal's screen as text -- Claude Code's own menus are only there
-  const scrBtn = h('button', { class: 'btn kc', type: 'button', text: '画面', title: '显示 / 收起终端现在的画面（/model、/resume 这类菜单只画在终端里）' });
-  const term = createTerm({ press: (k) => pressKey(k), read: () => { const s = find(sel); return s ? net.act({ t: 'screen', machine: s.machine, id: s.id }) : { ok: false, msg: '先选一个会话' }; },
+  // 终端画面 (dash-term.js): the terminal's screen as a card -- Claude Code's own menus are only there
+  const scrBtn = h('button', { class: 'btn kc', type: 'button', text: '画面', title: '显示 / 收起终端现在的画面（/model、/resume 这类菜单只画在终端里），排成卡片' });
+  const term = createTerm({ press: (k) => pressKey(k), read: () => { const s = find(sel); return s ? net.act({ t: 'screen', machine: s.machine, id: s.id, hl: true }) : { ok: false, msg: '先选一个会话' }; },
     onToggle: (on) => scrBtn.classList.toggle('on', on) });
   scrBtn.addEventListener('click', () => term.show(!term.open));
   const keys = h('div', { class: 'keys', hidden: true },
@@ -204,18 +205,19 @@ function mount(current) {
     if (e.key === 'Enter' && !e.shiftKey && !coarse) { e.preventDefault(); compose.requestSubmit(); }
   });
   async function pressKey(key, b) {
-    const s = find(sel); if (!s) return;
+    const s = find(sel); if (!s) return false;
     const at = sel;
     if (b) b.disabled = true;
     // (终端画面 open: the screen after the key comes back with the answer)
-    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key, screen: term.open || undefined });
+    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key, screen: term.open || undefined, hl: term.open || undefined });
     if (b) b.disabled = false;
-    if (!r.ok) return showNote(r.msg || '按键失败', true);
+    if (!r.ok) { showNote(r.msg || '按键失败', true); return false; }
     if (typeof r.screen === 'string' && at === sel && term.open) term.set(r.screen);
     if (key === 'btab' && r.mode) {
       pressed.set(at, { mode: r.mode, base: s.mode });
       if (at === sel) { renderMode(find(sel)); showNote('权限模式：' + (MODE[r.mode] || r.mode)); }
     }
+    return true;
   }
   compose.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -243,6 +245,9 @@ function mount(current) {
     for (const [id, el] of permCards) if (!ids.has(id)) { el.remove(); permCards.delete(id); }
     for (const p of perms) {
       if (permCards.has(p.id)) continue;
+      // Claude's own questions (dash-ask.js): answered here, not allowed
+      const qs = p.ask ? questionsOf(p) : null;
+      if (qs) { const card = askCard(p, qs); card.dataset.shown = Date.now(); permCards.set(p.id, card); permsEl.append(card); continue; }
       let i = {}; try { i = JSON.parse(p.input); } catch {}
       const choices = [['allow', '允许', 'btn go'], ['deny', '拒绝', 'btn no']];
       if (p.always) choices.splice(1, 0, ['always', '总是允许', 'btn']);   // Claude Code's "Yes, and don't ask again for ..."
@@ -261,13 +266,16 @@ function mount(current) {
     }
   }
   permsEl.addEventListener('click', async (e) => {
-    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    const b = e.target.closest('button'); if (!b || b.disabled || !b.dataset.choice) return;   // (not a question's option)
     const card = b.closest('.perm'), s = find(sel); if (!s) return;
-    for (const x of card.querySelectorAll('button')) x.disabled = true;
+    const answers = b.dataset.choice === 'answer' ? card.answers() : undefined;
+    if (b.dataset.choice === 'answer' && !answers) return;
+    const was = [...card.querySelectorAll('button, input')].filter((x) => !x.disabled);
+    for (const x of was) x.disabled = true;
     const st = $('.ps', card); st.textContent = '提交中…';
-    const r = await net.act({ t: 'decide', machine: s.machine, id: s.id, perm: card.dataset.id, choice: b.dataset.choice });
+    const r = await net.act({ t: 'decide', machine: s.machine, id: s.id, perm: card.dataset.id, choice: b.dataset.choice, answers });
     st.textContent = r.ok ? '已提交' : (r.msg || '提交失败');
-    if (!r.ok) for (const x of card.querySelectorAll('button')) x.disabled = false;
+    if (!r.ok) for (const x of was) x.disabled = false;
   });
   // Enter allows the oldest open card -- when this window is the active one and no other control has the focus
   // (the reply box is disabled while a card is open, so the key arrives at the page). Not a held-down Enter, and not
@@ -302,8 +310,27 @@ function mount(current) {
     else if (m.role === 'btw') { d.innerHTML = '<div class="btwh">顺带一问的回答 · 点开单独看</div>' + md(m.text || ''); d.title = '点开单独看'; }
     else if (m.role === 'tool') d.innerHTML = `<b>⚙</b> ${(m.items || []).slice(-5).map(esc).join(' · ')}${tm}`;
     else if (m.role === 'user') { d.textContent = m.text || ''; d.insertAdjacentHTML('beforeend', tm); }
+    else if (m.role === 'cmd') cmdEl(d, m);
     else d.textContent = m.text || '';
     return d;
+  }
+  // what a slash command printed in the terminal (/context, /model ...): as it was laid out there; a long one folded
+  // (the ones you unfolded stay so while the conversation is redrawn)
+  const CMD_FOLD = 12, cmdOpen = new Set();
+  function cmdEl(d, m) {
+    const text = m.text || '', lines = text.split('\n'), key = m.t + ':' + text.length;
+    const long = lines.length > CMD_FOLD + 2;
+    const pre = h('pre', { text: long && !cmdOpen.has(key) ? lines.slice(0, CMD_FOLD).join('\n') : text });
+    d.append(h('div', { class: 'ch', text: '命令输出' + (m.t ? ' · ' + hhmm(m.t) : '') }), pre);
+    if (!long) return;
+    const b = h('button', { class: 'cmore', type: 'button', text: cmdOpen.has(key) ? '收起' : `展开全部（共 ${lines.length} 行）` });
+    b.addEventListener('click', () => {
+      const open = !cmdOpen.has(key);
+      if (open) cmdOpen.add(key); else cmdOpen.delete(key);
+      pre.textContent = open ? text : lines.slice(0, CMD_FOLD).join('\n');
+      b.textContent = open ? '收起' : `展开全部（共 ${lines.length} 行）`;
+    });
+    d.append(b);
   }
   function renderConv(msgs) {
     const atBottom = convEl.scrollHeight - convEl.scrollTop - convEl.clientHeight < 60;

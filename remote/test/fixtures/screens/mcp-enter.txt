@@ -1,0 +1,22 @@
+  ⎿  Config dialog dismissed
+
+❯ /permissions
+  ⎿  Permissions dialog dismissed
+
+❯ /mcp
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Notebooklm-mcp MCP Server
+
+  Status:           ✔ connected
+  Command:          notebooklm-mcp
+  Config location:  C:\Users\me\.claude.json
+  Capabilities: tools
+  Tools: 39 tools
+
+  ❯ 1. View tools
+    2. Reconnect
+    3. Disable
+
+  ↑/↓ to navigate · Enter to select · Esc to back

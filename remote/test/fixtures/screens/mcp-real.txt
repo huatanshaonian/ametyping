@@ -1,0 +1,29 @@
+  ⎿  Config dialog dismissed
+
+❯ /permissions
+  ⎿  Permissions dialog dismissed
+
+❯ /mcp
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Manage MCP servers
+  8 servers
+
+    User MCPs (C:\Users\me\.claude.json)
+  ❯ ✔ notebooklm-mcp              39 tools
+    ✘ pycharm
+
+    claude.ai
+    ✔ claude.ai Claude Docs       8 tools
+    ⚠ claude.ai Gmail             needs authentication
+    ⚠ claude.ai Google Calendar   needs authentication
+    ✔ claude.ai Google Drive      11 tools
+    ✔ claude.ai Notion            44 tools
+
+    Built-in MCPs (always available)
+    ✔ claude-in-chrome            22 tools
+
+  ※ Run claude --debug to see error logs
+  https://code.claude.com/docs/en/mcp for help
+ ↑/↓ to navigate · Enter to confirm · Esc to cancel

@@ -38,11 +38,10 @@ html[data-shade="plum"] {
 }
 /* what a dark page draws differently (both dark shades) */
 html[data-shade="night"] a, html[data-shade="plum"] a { color: #9fd8ff; }
-html[data-shade="night"] ::selection, html[data-shade="plum"] ::selection { background: var(--fill); color: #fff; }
-html[data-shade="night"] .dash .term, html[data-shade="plum"] .dash .term { background: #0f0920; }
+html[data-shade="night"] ::selection, html[data-shade="plum"] ::selection { background: var(--fill); color: var(--on-fill); }
 /* the window frame is a picture and stays pink and cyan: its title keeps the dark ink it was drawn for */
 html[data-shade="night"] .win .title, html[data-shade="plum"] .win .title { color: #4d23cf; }
-html[data-shade="night"] .win.inactive .title, html[data-shade="plum"] .win.inactive .title { color: #8a8a8a; }
+html[data-shade="night"] .win.inactive .title, html[data-shade="plum"] .win.inactive .title { color: var(--faint); }
 
 /* ---------- Windows 标准: 沙漠 ---------- */
 /* (your own messages were the tooltip yellow: on parchment they would vanish, so they turn pale blue) */

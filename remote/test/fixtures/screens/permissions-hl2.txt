@@ -1,0 +1,23 @@
+     · 喝什么 → 茶
+  ⎿  Allowed by PermissionRequest hook
+
+● "要哪些配菜"="青菜, 鸡蛋, 再加点辣椒", "喝什么"="茶"
+
+✻ Cooked for 5s · done 4:50
+
+❯ /config
+  ⎿  Settings dialog dismissed
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code will always ask for confirmation before using these tools.
+  ╭────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                          │
+  ╰────────────────────────────────────────────────────────────────────╯
+
+    1. Add a new rule…
+
+  ←/→ to switch · ↓ to select · Esc to cancel

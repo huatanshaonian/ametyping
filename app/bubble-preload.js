@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('bubble', {
   onHide: (fn) => ipcRenderer.on('bubble-hide', () => fn()),
   size: (h) => ipcRenderer.send('bubble-size', h),
   close: () => ipcRenderer.send('bubble-close'),
-  decidePermission: (id, choice) => ipcRenderer.invoke('permission-decide', id, choice),
+  decidePermission: (id, choice, extra) => ipcRenderer.invoke('permission-decide', id, choice, extra),
   collapse: (v) => ipcRenderer.send('bubble-collapse', v),
   onCollapsed: (fn) => ipcRenderer.on('bubble-collapsed', (_e, v) => fn(v)),
   unread: (n) => ipcRenderer.send('bubble-unread', n),

@@ -1,5 +1,7 @@
 // Client for console-bridge.ps1: one hidden powershell started on demand, commands answered in order.
-// The script is passed with -EncodedCommand so it also works from inside the packaged app.asar.
+// The script is handed over in an environment variable (read here, so it also works from inside the packaged
+// app.asar): on the command line (-EncodedCommand) it has to stay under Windows' 32767 characters, which the script
+// reaches at about 12 KB; a variable holds as much again as text, without the base64.
 'use strict';
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -10,8 +12,12 @@ let ps = null, buf = '', queue = [], ready = null;
 function start() {
   if (ps) return ready;
   const script = fs.readFileSync(path.join(__dirname, 'console-bridge.ps1'), 'utf8');
-  ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true });
+  // (a script that outgrew even that fails to start here, at once: every call then answers "bridge exited")
+  try {
+    ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-Command', '$s = $env:AME_BRIDGE_PS; $env:AME_BRIDGE_PS = $null; Invoke-Expression $s'],
+    { windowsHide: true, env: { ...process.env, AME_BRIDGE_PS: script } });
+  } catch { ps = null; return Promise.resolve(); }
   ready = new Promise((res) => queue.push({ res, t: Date.now() }));      // the first line is "ready"
   ps.stdout.on('data', (d) => {
     buf += d;
@@ -52,7 +58,8 @@ module.exports = {
   },
   alive: async (pid) => { const r = await call(`alive ${pid | 0}`, 3000); return r.ok && r.v === '1'; },
   send: (pid, text) => call(`send ${pid | 0} ${b64(text)}`, 15000),
-  screen: async (pid) => { const r = await call(`screen ${pid | 0}`, 5000); return r.ok ? Buffer.from(r.v || '', 'base64').toString('utf8') : null; },
+  // hl: with what is highlighted on the screen (a menu's current tab) between U+E000 and U+E001
+  screen: async (pid, hl) => { const r = await call(`screen ${pid | 0}${hl ? ' hl' : ''}`, 5000); return r.ok ? Buffer.from(r.v || '', 'base64').toString('utf8') : null; },
   // start exe in a new console window (in cwd); resolves the pid or null
   launch: async (exe, args, cwd) => {
     const r = await call(`launch ${b64(JSON.stringify({ exe, args: args.map(winArg).join(' '), cwd }))}`, 10000);
@@ -60,6 +67,6 @@ module.exports = {
   },
   // (typed without Enter: tests)
   type: (pid, text) => call(`type ${pid | 0} ${b64(text)}`, 15000),
-  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab|btab|ctrlb|ctrls|ctrlxs|clear)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
+  key: (pid, name) => (/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|clear)$/.test(name) ? call(`key ${pid | 0} ${name}`, 5000) : Promise.resolve({ ok: false, err: 'unknown key' })),
   stop: () => { try { ps && ps.stdin.end(); ps && ps.kill(); } catch {} ps = null; },
 };

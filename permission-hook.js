@@ -42,8 +42,12 @@ process.stdin.on('end', () => {
 
 function reply(d, p) {
   let decision = null;
-  if (d.choice === 'allow') decision = { behavior: 'allow' };
-  else if (d.choice === 'always') {
+  if (d.choice === 'allow') {
+    decision = { behavior: 'allow' };
+    // an answer given on a card (AskUserQuestion: the tool's input with the answers filled in, as Claude Code's own
+    // prompt would hand it on)
+    if (d.updatedInput && typeof d.updatedInput === 'object' && !Array.isArray(d.updatedInput)) decision.updatedInput = d.updatedInput;
+  } else if (d.choice === 'always') {
     // allow, and add what the terminal offers as "Yes, and don't ask again for ...": Claude Code's own suggestions,
     // unchanged (rule and where it is kept -- this session, or the project's local settings); the cards show them
     decision = { behavior: 'allow' };

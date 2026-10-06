@@ -116,16 +116,18 @@ async function until(fn, ms = 10000) { const t0 = Date.now(); while (Date.now() 
     ok('a mode the server does not know is not passed on', bg.ok && bg.mode === undefined, JSON.stringify(bg));
     const e1 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'shift+tab' });
     ok('unknown key names refused by the server', !e1.ok && keys.length === 5, JSON.stringify(e1));
-    // Claude Code's Ctrl combinations: three fixed names reach the pet; any other combination does not
+    // Claude Code's Ctrl combinations reach the pet by name (the ones its menus name too, e.g. Ctrl+A in /resume) and
+    // Backspace; never Ctrl+C / D / Z, which would interrupt or end the session
     const cs = [];
-    for (const k of ['ctrlb', 'ctrls', 'ctrlxs']) cs.push((await b.act({ t: 'key', machine: 'box', id: SID, key: k })).ok);
-    const e2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlc' }), e3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlx' });
-    ok('Ctrl+B / Ctrl+S / Ctrl+X Ctrl+S reach the pet by name; other combinations are refused', cs.every(Boolean) && keys.slice(5).join() === 'ctrlb,ctrls,ctrlxs' && !e2.ok && !e3.ok, [cs, keys, e2, e3]);
-    // one letter / digit as a key (menus take them); nothing longer, no other characters
+    for (const k of ['ctrlb', 'ctrls', 'ctrlxs', 'ctrla', 'bksp']) cs.push((await b.act({ t: 'key', machine: 'box', id: SID, key: k })).ok);
+    const e2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlc' }), e3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrld' }), e4 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'ctrlz' });
+    ok('Ctrl+B / Ctrl+S / Ctrl+X Ctrl+S / Ctrl+A / Backspace reach the pet by name; Ctrl+C / D / Z are refused', cs.every(Boolean) && keys.slice(5).join() === 'ctrlb,ctrls,ctrlxs,ctrla,bksp' && !e2.ok && !e3.ok && !e4.ok, [cs, keys, e2, e3, e4]);
+    // "c:text": typed into the terminal as it is, without Enter (the letter a menu takes, a search, a path); no
+    // control characters, nothing empty, nothing longer than 200
     const nk = keys.length;
-    const c1 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:s' }), c2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:2' });
-    const c3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:ab' }), c4 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:;' }), c5 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:S' });
-    ok('one letter or digit goes as a key; longer or other characters are refused', c1.ok && c2.ok && !c3.ok && !c4.ok && !c5.ok && keys.slice(nk).join() === 'c:s,c:2', [c1, c2, c3, c4, c5, keys.slice(nk)]);
+    const c1 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:s' }), c2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:D:\\proj 中文' });
+    const c3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:a\nb' }), c4 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:' }), c5 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'c:' + 'x'.repeat(201) });
+    ok('text goes as it is; control characters, nothing, too much are refused', c1.ok && c2.ok && !c3.ok && !c4.ok && !c5.ok && keys.slice(nk).join('|') === 'c:s|c:D:\\proj 中文', [c1, c2, c3, c4, c5, keys.slice(nk)]);
     // 终端画面: the screen on request, and with a key when asked for; capped; not sent along otherwise
     const s1 = await b.act({ t: 'screen', machine: 'box', id: SID });
     const s2 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'down', screen: true }), s3 = await b.act({ t: 'key', machine: 'box', id: SID, key: 'down' });
@@ -134,11 +136,12 @@ async function until(fn, ms = 10000) { const t0 = Date.now(); while (Date.now() 
     const s4 = await b.act({ t: 'screen', machine: 'box', id: 'no-such-session' });
     ok('no screen of a session that is not there', !s4.ok, s4);
     const { KEYS: TK } = require(path.resolve(R, '..', 'headless', 'tmux.js'));
-    ok('tmux: the same names as send-keys keys (the chord as two)', TK.ctrlb === 'C-b' && TK.ctrls === 'C-s' && JSON.stringify(TK.ctrlxs) === '["C-x","C-s"]' && !TK.ctrlc, TK);
+    ok('tmux: the same names as send-keys keys (the chord as two); no Ctrl+C / D / Z', TK.ctrlb === 'C-b' && TK.ctrls === 'C-s' && TK.ctrla === 'C-a' && TK.bksp === 'BSpace' && JSON.stringify(TK.ctrlxs) === '["C-x","C-s"]' && !TK.ctrlc && !TK.ctrld && !TK.ctrlz, TK);
     const q = await Promise.race([b.act({ t: 'mode', machine: 'box', id: SID }), sleep(3000).then(() => ({ ok: false, ignored: true }))]);
     ok('there is no mode query action (no polling of screens)', !q.ok || q.mode === undefined, JSON.stringify(q));
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
     ok('keys audited, reading the screen too', new RegExp(`control-key .* box ${SID} btab`).test(audit) && new RegExp(`control-screen .* box ${SID}`).test(audit));
+    ok('text typed into a menu is audited by its length, not its words', /control-key .* c:s/.test(audit) && /control-key .* c:\(len=10\)/.test(audit) && !audit.includes('proj 中文'), audit.split('\n').filter((l) => l.includes('c:')));
     b.ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {

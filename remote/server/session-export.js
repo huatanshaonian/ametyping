@@ -48,6 +48,8 @@ function createExport({ store, resumeCmd }) {
       if (ymd(m.t) !== day) { day = ymd(m.t); lines.push(md ? `## ${dayTitle(m.t)}` : `==== ${dayTitle(m.t)} ====`, ''); }
       if (m.role === 'tool') { lines.push(md ? `> 工具（${hm(m.t)}）：${m.items.join(' · ')}` : `  · 工具（${hm(m.t)}）：${m.items.join(' · ')}`, ''); continue; }
       if (m.role === 'sys') { lines.push(md ? `*（${m.text}）*` : `（${m.text}）`, ''); continue; }
+      // what a slash command printed in the terminal (/context, /model ...)
+      if (m.role === 'cmd') { lines.push(md ? `> 命令输出（${hm(m.t)}）` : `  · 命令输出（${hm(m.t)}）：`, '', md ? '```\n' + m.text + '\n```' : m.text, ''); continue; }
       const who = m.role === 'user' ? '我' : m.role === 'btw' ? bot + '（顺带一问的回答）' : bot;
       lines.push(md ? `### ${who} · ${hm(m.t)}` : `[${hm(m.t)}] ${who}：`, '', m.text, '');
     }

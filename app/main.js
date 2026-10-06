@@ -571,15 +571,15 @@ function sessionLabel(s) {
 // A card answered (here, on the dashboard or in the terminal) puts the session back to work. Left "waiting" with
 // 需要确认 as its last line, the panel would take the vanished card for a timed-out one ("请到终端里回答") and the
 // reply box would stay blocked until the next hook event. Only a real timeout keeps that hint: the terminal still asks.
-const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : e.choice === 'always' ? '已总是允许' : '已拒绝'), closed: () => '已在终端处理', advanced: () => '已在终端处理' };
+const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : e.choice === 'always' ? '已总是允许' : e.choice === 'answer' ? '已回答' : e.choice === 'chat' ? '先聊聊' : '已拒绝'), closed: () => '已在终端处理', advanced: () => '已在终端处理' };
 const permissions = createPermissions((sid, end) => {
   const s = sessions.get(sid), say = end && PERM_END[end.why];
   if (say && s && s.state === 'waiting' && !permissions.list(sid).length) onClaudeEvent('thinking', { session: sid, text: `${say(end)}：${end.tool}` });
   else pushBubble(null);
 });
-ipcMain.handle('permission-decide', (e, id, choice) => {
+ipcMain.handle('permission-decide', (e, id, choice, extra) => {
   if (!bubbleWin || e.sender !== bubbleWin.webContents) return { ok: false };
-  return { ok: permissions.decide(id, choice) };
+  return { ok: permissions.decide(id, choice, extra) };
 });
 app.on('before-quit', () => permissions.clear());
 // how a reply typed in the panel reaches this session
@@ -735,7 +735,7 @@ function controlState() {
   return listed().sort((x, y) => x.born - y.born).map((s) => ({
     id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
     t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8),
-    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always,
+    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
 }
@@ -756,11 +756,11 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/key') {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatKey(d.id, d.key, d.screen === true));
+    return out(200, await chatKey(d.id, d.key, d.screen === true, d.hl === true));
   }
   if (req.method === 'POST' && req.url === '/control/screen') {
     if (typeof d.id !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatScreen(d.id));
+    return out(200, await chatScreen(d.id, d.hl === true));
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
@@ -768,7 +768,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
-    return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
+    return out(200, permissions.decide(d.id, d.choice, { answers: d.answers }) ? { ok: true } : { ok: false, msg: '请求已结束' });
   }
   return out(404, { ok: false });
 }

@@ -119,6 +119,8 @@ function renderPermissions() {
   for (const [id, el] of permissionCards) if (!ids.has(id)) { el.remove(); permissionCards.delete(id); }
   for (const p of requests) {
     if (permissionCards.has(p.id)) continue;
+    // Claude's own questions: answered here, not allowed
+    if (p.ask && askQuestions(p)) { const c = askCard(p, askQuestions(p)); permissionCards.set(p.id, c); $('permissions').appendChild(c); continue; }
     const card = document.createElement('div'); card.className = 'permission'; card.dataset.id = p.id;
     const title = document.createElement('div'); title.className = 'permission-title';
     title.textContent = `需要你确认 · ${p.tool}${p.subagent ? ` · ${p.subagent}` : ''}`;
@@ -143,17 +145,80 @@ function renderPermissions() {
     permissionCards.set(p.id, card); $('permissions').appendChild(card);
   }
 }
+// Claude asking you something (its AskUserQuestion tool): the questions with their options -- one answer or several,
+// or your own words -- instead of 允许 / 拒绝. They come with the permission request, and the answer goes back the
+// same way: { question: the option's label | labels joined with ", " | your own words }. 先聊聊 is the terminal's
+// "Chat about this". (The dashboard's card: remote/public/js/apps/dash-ask.js.)
+function askQuestions(p) {
+  const qs = p.input && p.input.questions;
+  return Array.isArray(qs) && qs.length && qs.every((q) => q && typeof q.question === 'string' && q.question && Array.isArray(q.options)) ? qs : null;
+}
+function askCard(p, qs) {
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const card = el('div', 'permission ask'); card.dataset.id = p.id;
+  card.append(el('div', 'permission-title', `Claude 在问你${qs.length > 1 ? ` · ${qs.length} 个问题` : ''}${p.subagent ? ` · ${p.subagent}` : ''}`));
+  const state = qs.map(() => ({ picked: new Set(), own: '' }));
+  const go = el('button', '', '提交回答'); go.type = 'button'; go.dataset.choice = 'answer'; go.disabled = true;
+  card.answers = () => {
+    const out = {};
+    for (let n = 0; n < qs.length; n++) {
+      const q = qs[n], st = state[n], own = st.own.trim();
+      const a = q.multiSelect ? [...q.options.map((o) => o.label).filter((l) => st.picked.has(l)), ...(own ? [own] : [])].join(', ') : own || [...st.picked][0] || '';
+      if (!a) return null;
+      out[q.question] = a;
+    }
+    return out;
+  };
+  const fresh = () => { go.disabled = !card.answers(); };
+  qs.forEach((q, n) => {
+    const st = state[n], box = el('div', 'ask-q'), head = el('div', 'ask-h');
+    if (q.header) head.append(el('span', 'ask-t', q.header));
+    head.append(el('span', '', q.question));
+    if (q.multiSelect) head.append(el('i', '', '可多选'));
+    const row = el('div', 'ask-o');
+    const own = el('input', 'ask-own'); own.placeholder = q.multiSelect ? '还有别的：自己填写' : '都不是：自己填写'; own.spellcheck = false;
+    const opts = q.options.map((o) => {
+      const b = el('button', 'ask-opt'); b.type = 'button'; b.title = o.description || '';
+      b.append(el('b', '', o.label)); if (o.description) b.append(el('span', '', o.description));
+      b.pick = () => {
+        if (q.multiSelect) { if (st.picked.has(o.label)) st.picked.delete(o.label); else st.picked.add(o.label); }
+        else { st.picked.clear(); st.picked.add(o.label); st.own = ''; own.value = ''; }
+        opts.forEach((x, k) => x.classList.toggle('on', st.picked.has(q.options[k].label)));
+        fresh();
+      };
+      row.append(b);
+      return b;
+    });
+    own.addEventListener('input', () => {
+      st.own = own.value;
+      if (!q.multiSelect && own.value.trim()) { st.picked.clear(); opts.forEach((x) => x.classList.remove('on')); }
+      fresh();
+    });
+    own.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.isComposing && !go.disabled) { e.preventDefault(); decidePermission(go); } });
+    box.append(head, row, own); card.append(box);
+  });
+  const actions = el('div', 'permission-actions');
+  const chat = el('button', '', '先聊聊'); chat.type = 'button'; chat.dataset.choice = 'chat'; chat.title = '先不回答：让 Claude 问你想澄清什么（终端里的 Chat about this）';
+  const no = el('button', '', '不回答'); no.type = 'button'; no.dataset.choice = 'deny';
+  actions.append(go, chat, no, el('span', 'permission-status', '也可在终端回答'));
+  card.append(actions);
+  return card;
+}
 async function decidePermission(button) {
   if (button.disabled) return;
+  if (button.pick) return button.pick();                        // a question's option: chosen, nothing sent yet
   const card = button.closest('.permission');
-  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  const extra = button.dataset.choice === 'answer' ? { answers: card.answers() } : undefined;
+  if (extra && !extra.answers) return;
+  const was = [...card.querySelectorAll('button, input')].filter((x) => !x.disabled);
+  for (const b of was) b.disabled = true;
   const status = card.querySelector('.permission-status'); status.textContent = '提交中…';
   try {
-    const r = await window.bubble.decidePermission(card.dataset.id, button.dataset.choice);
+    const r = await window.bubble.decidePermission(card.dataset.id, button.dataset.choice, extra);
     status.textContent = r.ok ? '已提交' : '请求已结束';
   } catch {
     status.textContent = '提交失败，请重试或在终端回答';
-    for (const b of card.querySelectorAll('button')) b.disabled = false;
+    for (const b of was) b.disabled = false;
   }
 }
 document.addEventListener('pointerdown', (e) => {
@@ -284,8 +349,19 @@ function msgEl(m) {
     const shown = m.items.slice(-4).map(esc).join(' · ');
     d.innerHTML = `<b>⚙</b> ${m.items.length > 4 ? `…等 ${m.items.length} 步 · ` : ''}${shown}${tm}`;
   } else if (m.role === 'user') { d.textContent = m.text; d.insertAdjacentHTML('beforeend', tm); }
+  else if (m.role === 'cmd') cmdEl(d, m);
   else d.textContent = m.text;
   return d;
+}
+// what a slash command printed in the terminal (/context, /model ...): as it was laid out there; a long one folded
+// (the ones you unfolded stay so while the chat is redrawn)
+const CMD_FOLD = 8, cmdOpen = new Set();
+function cmdEl(d, m) {
+  const text = m.text || '', lines = text.split('\n'), key = m.t + ':' + text.length;
+  const long = lines.length > CMD_FOLD + 2, open = cmdOpen.has(key);
+  d.innerHTML = `<div class="ch">命令输出 · ${hhmm(m.t)}</div><pre>${esc(long && !open ? lines.slice(0, CMD_FOLD).join('\n') : text)}</pre>`
+    + (long ? `<span class="cmore">${open ? '收起' : `展开全部（共 ${lines.length} 行）`}</span>` : '');
+  if (long) d.querySelector('.cmore').addEventListener('click', () => { if (open) cmdOpen.delete(key); else cmdOpen.add(key); d.replaceWith(msgEl(m)); });
 }
 window.bubble.onChat(({ id, msgs }) => {
   if (id !== selected) return;

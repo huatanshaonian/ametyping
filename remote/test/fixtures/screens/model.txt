@@ -1,0 +1,29 @@
+  /model 是 Claude Code 的内置命令，我无法代为执行。请在输入框里直接重新输入 /model，即可查看或切换模型。
+
+  当前会话使用的模型是 Opus 5.5（claude-opus-5-5）。
+
+  如果这次是通过脚本或 Git Bash 命令行把 /model 作为参数传进来的，可以设置环境变量 MSYS_NO_PATHCONV=1，或者改用
+  PowerShell 启动，来避免这种路径转换。
+
+✻ Worked for 6s · done 2:56
+
+❯ /model
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Select model
+  Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
+  specify with --model.
+
+    1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks
+  ❯ 2.  Opus 5.5 ✔             For complex work and everyday tasks
+    3.  Fable 5.1              For your toughest challenges
+    4.  Sonnet 5.5             Most efficient for simpler tasks
+    5.  Haiku 4.5              Fastest for quick answers
+  ↓ 6.  Sonnet 5               Efficient for routine tasks
+     … +6 models
+
+  ● High effort ←/→ to adjust
+
+  Use /fast to turn on Fast mode (Opus 5.5).
+
+  Enter to set as default · s to use this session only · Esc to cancel

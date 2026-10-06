@@ -1,0 +1,18 @@
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /help
+  ⎿  Help dialog dismissed
+
+❯ /tasks
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Background
+
+  No tasks currently running
+
+  ↑/↓ to select · Enter to view · Esc to close

@@ -1,0 +1,24 @@
+❯ /hooks
+  ⎿  Hooks dialog dismissed
+
+❯ /plugins
+─────────────────────────────────────────────────────────────────────────────────────── git-bash-path-conversion-issue ─
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Plugins  Discover   Installed   Marketplaces   Errors   Stats
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+    Needs attention
+  ❯ ✘ pycharm                         MCP     failed
+    ⚠ claude.ai Gmail                 MCP     Enter to auth
+    ⚠ claude.ai Google Calendar       MCP     Enter to auth
+
+    User
+    ✔ notebooklm-mcp                  MCP
+
+   ↓ more below
+
+   Type to search · Space to toggle · f to favorite · Enter to view · Esc to go back

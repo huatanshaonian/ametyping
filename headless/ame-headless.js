@@ -18,7 +18,7 @@ const { createSessions } = require('./sessions');
 const proc = require('./proc-linux');
 const tmux = require('./tmux');
 const { modeFromScreen } = require('../app/permission-mode');
-const { tidyScreen } = require('../app/screen-text');
+const { tidyScreen, plainScreen } = require('../app/screen-text');
 const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
 const { resume } = require('./resume');
 const { launch } = require('./launch');
@@ -73,7 +73,7 @@ async function chatSend(id, text) {
 }
 
 // one navigation key into the session's tmux pane (menus and prompts are what it is for)
-async function chatKey(id, key, wantScreen = false) {
+async function chatKey(id, key, wantScreen = false, hl = false) {
   if (!tmux.KEYS[key] && !tmux.CHAR.test(key)) return { ok: false, msg: '不支持的按键' };
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
@@ -85,17 +85,17 @@ async function chatKey(id, key, wantScreen = false) {
   // Shift+Tab: the mode it switched to, read once from the redrawn status line (the transcript only records the
   // mode with the next message); wantScreen: the screen after the key too (the dashboard's 终端画面 is open)
   await new Promise((res) => setTimeout(res, 350));
-  const text = await tmux.screen(s.target);
-  return { ok: true, mode: key === 'btab' ? modeFromScreen(text) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
+  const text = await tmux.screen(s.target, hl);
+  return { ok: true, mode: key === 'btab' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
 }
 
 // what the session's tmux pane shows right now (asked for in the dashboard, never polled): Claude Code's own menus
-async function chatScreen(id) {
+async function chatScreen(id, hl = false) {
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
   if (!s.claudePid || !proc.alive(s.claudePid, s.claudeComm)) return { ok: false, msg: '这个会话已经不在终端里运行，没有画面' };
   if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里看' };
-  const text = await tmux.screen(s.target);
+  const text = await tmux.screen(s.target, hl);
   return text == null ? { ok: false, msg: '读不到终端画面' } : { ok: true, screen: tidyScreen(text) };
 }
 
@@ -115,7 +115,7 @@ function controlState() {
   return sessions.list().map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s),
     t0: s.t0, last: s.last, lines: s.lines.slice(-8),
-    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always,
+    perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
 }
@@ -131,11 +131,11 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/key') {
     if (typeof d.id !== 'string' || typeof d.key !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatKey(d.id, d.key, d.screen === true));
+    return out(200, await chatKey(d.id, d.key, d.screen === true, d.hl === true));
   }
   if (req.method === 'POST' && req.url === '/control/screen') {
     if (typeof d.id !== 'string') return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await chatScreen(d.id));
+    return out(200, await chatScreen(d.id, d.hl === true));
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
@@ -145,7 +145,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
-    return out(200, permissions.decide(d.id, d.choice) ? { ok: true } : { ok: false, msg: '请求已结束' });
+    return out(200, permissions.decide(d.id, d.choice, { answers: d.answers }) ? { ok: true } : { ok: false, msg: '请求已结束' });
   }
   return out(404, { ok: false });
 }
