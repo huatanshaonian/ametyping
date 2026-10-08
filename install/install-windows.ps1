@@ -9,7 +9,8 @@
 # 需要：Node.js 18+、git（没有会提示用 winget 安装），这台电脑已加入 Tailscale（agent 经它连群晖）。
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 无人值守：设了下面这些环境变量就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
-#   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
+#   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_HOME（保留已有配置时，是否把用户文件夹补进去，y/n）、
+#   AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
 #   另外 AME_DIR（装到哪）、AME_BRANCH（用哪个分支）、AME_SERVER（看板地址）可以覆盖下面三个默认值。
 # 不用 param()：用环境变量覆盖，跟上面 AME_* 那套约定一致（irm | iex 跑法下 param 也没法传参）。
 # 本文件是 UTF-8 无 BOM：带 BOM 的话 irm 会把它当普通字符留在字符串里，iex 拿它当命令名，报一行错。
@@ -78,8 +79,20 @@ if ($e2) { throw '糖糖（app）依赖安装失败' }
 Step '配置 agent'
 $agentFile = Join-Path $Dir 'remote\agent\agent.json'
 $control = $true
+# your own folder (C:\Users\<you>) as a root of the file explorer: "~" is whoever the agent runs as; nothing in it whose
+# name starts with "." (tools keep logins and histories there), and not AppData (browsers' passwords, programs' tokens)
+$homeRoot = [ordered]@{ path = '~'; hideDot = $true; deny = @('AppData') }
 if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME_KEEP')) {
-  $control = ((Get-Content $agentFile -Raw) | ConvertFrom-Json).control -eq $true
+  $old = (Get-Content $agentFile -Raw -Encoding UTF8) | ConvertFrom-Json
+  $control = $old.control -eq $true
+  # a config from before the home folder could be opened: every drive but C:, and nothing of C: at all
+  $roots = @(); if ($old.files -and $old.files.roots) { $roots = @($old.files.roots) }
+  $hasHome = @($roots | Where-Object { $_ -isnot [string] -and $_.path }).Count -gt 0
+  if (($roots -contains '*') -and -not $hasHome -and (Yes '文件浏览：把你的用户文件夹（桌面、文档、下载…，不含 . 开头的和 AppData）也开放？' 'y' 'AME_HOME')) {
+    $old.files.roots = @($roots) + $homeRoot
+    WriteUtf8 $agentFile ($old | ConvertTo-Json -Depth 6)
+    Info '已把用户文件夹加进 agent.json 的 files.roots'
+  }
 } else {
   $server = Ask '看板服务器（群晖的 agent 入口）' $Server
   $name = Ask '这台电脑在看板上的名字' $env:COMPUTERNAME.ToLower() 'AME_NAME'
@@ -91,11 +104,11 @@ if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME
   }
   if ($token.Trim().Length -lt 30) { throw '令牌不对（太短）' }
   $control = Yes '允许从看板远程控制（回复、审批、在文件夹启动 Claude）？' 'y' 'AME_CONTROL'
-  $f = Ask '文件浏览：all=除 C 盘外所有盘，none=不开放，或写文件夹（逗号分隔）' 'all' 'AME_FILES'
+  $f = Ask '文件浏览：all=除 C 盘外所有盘 + 你的用户文件夹（不含 . 开头的和 AppData），none=不开放，或写文件夹（逗号分隔）' 'all' 'AME_FILES'
   $cfg = [ordered]@{ server = $server; token = $token.Trim(); name = $name; control = $control }
-  if ($f -eq 'all') { $cfg.files = [ordered]@{ roots = @('*'); exclude = @('C:') } }
+  if ($f -eq 'all') { $cfg.files = [ordered]@{ roots = @('*', $homeRoot); exclude = @('C:') } }
   elseif ($f -ne 'none') { $cfg.files = [ordered]@{ roots = @($f.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } }
-  WriteUtf8 $agentFile ($cfg | ConvertTo-Json -Depth 5)
+  WriteUtf8 $agentFile ($cfg | ConvertTo-Json -Depth 6)
   Info "已写入 $agentFile"
 }
 

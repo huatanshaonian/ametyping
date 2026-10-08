@@ -20,7 +20,7 @@ const os = require('os');
 const WIN = process.platform === 'win32';
 const MAX = 100 * 1024 * 1024;            // larger files cannot be opened from the dashboard
 const MAX_ENTRIES = 5000;
-const DENY_DIRS = new Set(['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.ametyping', '.password-store']);
+const DENY_DIRS = new Set(['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.ametyping', '.password-store', '.codex']);   // (.codex: its auth.json is the login)
 const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.pgpass|\.git-credentials|\.npmrc|\.pypirc|\.credentials\.json|agent\.json|control-token-.*|ntuser.(dat|ini|pol)(..*)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks))$/i;
 
 const denied = (name) => DENY_DIRS.has(WIN ? name.toLowerCase() : name) || DENY_FILE.test(name);

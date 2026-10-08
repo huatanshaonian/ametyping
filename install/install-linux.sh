@@ -9,7 +9,7 @@
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 环境变量可改默认值：AME_DIR（安装目录，默认 ~/ametyping）、AME_BRANCH、AME_SERVER。
 # 无人值守：设了下面这些就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
-#   AME_CONTROL（y/n）、AME_FILES（文件夹，逗号分隔，或 none）、AME_LAUNCH（启动前命令，空=跳过）、AME_LINGER（y/n）。
+#   AME_CONTROL（y/n）、AME_FILES（home / 文件夹逗号分隔 / none）、AME_LAUNCH（启动前命令，空=跳过）、AME_LINGER（y/n）。
 set -euo pipefail
 REPO=https://github.com/huatanshaonian/ametyping.git
 DIR=${AME_DIR:-$HOME/ametyping}
@@ -63,11 +63,14 @@ else
   if [ -n "${AME_TOKEN:-}" ]; then token=$AME_TOKEN; else read -r -s -p '   把打印出来的令牌粘贴到这里（不显示）: ' token </dev/tty; echo; fi
   [ ${#token} -ge 30 ] || { warn '令牌不对（太短）'; exit 1; }
   if yes '允许从看板远程控制（回复、审批、在文件夹启动 Claude）？' y AME_CONTROL; then control=true; else control=false; fi
-  files=$(ask '文件浏览：写文件夹（逗号分隔），none=不开放' "$HOME" AME_FILES)
+  # the default is your home folder without what starts with "." (tools keep logins and histories there); folders you
+  # name yourself are opened as they are
+  files=$(ask '文件浏览：home=你的主目录（不含 . 开头的），或写文件夹（逗号分隔），none=不开放' home AME_FILES)
   # written by node: proper JSON escaping, readable by this user only
   AME_S="$server" AME_T="$token" AME_N="$name" AME_C="$control" AME_F="$files" "$NODE" -e '
     const e = process.env, j = { server: e.AME_S, token: e.AME_T.trim(), name: e.AME_N, control: e.AME_C === "true" };
-    if (e.AME_F !== "none") j.files = { roots: e.AME_F.split(",").map((s) => s.trim()).filter(Boolean) };
+    if (e.AME_F === "home") j.files = { roots: [{ path: "~", hideDot: true }] };
+    else if (e.AME_F !== "none") j.files = { roots: e.AME_F.split(",").map((s) => s.trim()).filter(Boolean) };
     require("fs").writeFileSync(process.argv[1], JSON.stringify(j, null, 2) + "\n", { mode: 0o600 });' "$AGENT"
   chmod 600 "$AGENT"
   info "已写入 $AGENT"
