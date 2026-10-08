@@ -11,16 +11,37 @@ const MAX_READ = 4e6;          // bytes of transcript read per call
 const MAX_BATCH = 800e3;       // approx. JSON size of one message to the server
 const MAX_TEXT = 200e3;        // one record's text is cut beyond this (a huge paste)
 
-// the working directory from the first lines of a transcript (every line carries it)
+const NL = String.fromCharCode(10);
+const cwdOf = (l) => { try { const o = JSON.parse(l); return o && typeof o.cwd === 'string' && o.cwd ? o.cwd : null; } catch { return null; } };
+// the working directory a transcript starts in: the first line that carries one. Most lines do, but a session copied
+// from another (a background session, a fork) can begin with hundreds of kilobytes of lines that do not (file-history
+// snapshots) -- so it is read on, a piece at a time, until one is found (4 MB at most).
 function firstCwd(file) {
+  let fd = null;
   try {
-    const fd = fs.openSync(file, 'r'), buf = Buffer.alloc(65536);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd);
-    for (const l of buf.toString('utf8', 0, n).split(String.fromCharCode(10))) {
-      try { const o = JSON.parse(l); if (o && typeof o.cwd === 'string' && o.cwd) return o.cwd; } catch {}
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(262144); let rest = '', pos = 0;
+    while (pos < 4e6) {
+      const n = fs.readSync(fd, buf, 0, buf.length, pos); if (n <= 0) break;
+      pos += n;
+      const ls = (rest + buf.toString('latin1', 0, n)).split(NL);
+      rest = ls.pop();                                              // (a line still going on in the next piece)
+      for (const l of ls) { const c = cwdOf(Buffer.from(l, 'latin1').toString('utf8')); if (c) return c; }
     }
-  } catch {}
-  return null;
+    return cwdOf(Buffer.from(rest, 'latin1').toString('utf8'));
+  } catch { return null; } finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+}
+// the working directory a transcript ends in (a session can move: /cd, a worktree) -- where to open it again
+function lastCwd(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size, len = Math.min(size, 1048576), buf = Buffer.alloc(len);
+    const n = fs.readSync(fd, buf, 0, len, size - len);
+    const ls = buf.toString('latin1', 0, n).split(NL);
+    for (let i = ls.length - 1; i >= (size > len ? 1 : 0); i--) { const c = cwdOf(Buffer.from(ls[i], 'latin1').toString('utf8')); if (c) return c; }
+  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+  return firstCwd(file);
 }
 
 // parse: one parsed line -> records (Claude Code's recordsOf by default; codex-records.js for Codex sessions)
@@ -89,4 +110,4 @@ function withWindow(r, used) {
   return used + '/' + (r.big ? 1e6 : claudeWindow());
 }
 
-module.exports = { createReader, readNext, firstCwd };
+module.exports = { createReader, readNext, firstCwd, lastCwd };

@@ -183,9 +183,9 @@ async function control(d) {
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
     r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
   } else if (d.t === 'resume' && typeof d.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id)) {
-    // a past conversation of this machine opened again: the folder is the one its own transcript says it ran in
+    // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);
-    const cwd = f && !f.codex ? records.firstCwd(f.file) : '';
+    const cwd = f && !f.codex ? records.lastCwd(f.file) : '';              // (where it was last, not where it began)
     if (!cwd) return { ok: false, msg: '这台电脑上找不到这个会话的记录' };
     r = await petCall('POST', '/control/launch', { cwd, resume: d.id });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {

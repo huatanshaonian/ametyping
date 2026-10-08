@@ -11,7 +11,15 @@ const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 // a past conversation of this machine, in a folder that is not one of the browsable roots (「在电脑上继续」 needs none)
 const RID = 'abcdef01-1111-2222-3333-444444444444', WORK = path.join(T, 'work'); fs.mkdirSync(WORK);
 fs.mkdirSync(path.join(HOME, '.claude', 'projects', '-work'), { recursive: true });
-fs.writeFileSync(path.join(HOME, '.claude', 'projects', '-work', RID + '.jsonl'), JSON.stringify({ uuid: 'u1', cwd: WORK, timestamp: new Date(Date.now() - 5000).toISOString(), type: 'user', message: { role: 'user', content: '上次说到一半' } }) + '\n');
+// (as a session copied from another really looks: it begins with a few hundred kilobytes of lines that carry no
+// folder -- file-history snapshots -- then starts in one folder and later moves to another; it is opened again where
+// it was last)
+const START = path.join(T, 'started-here'); fs.mkdirSync(START);
+const tline = (cwd, t, text) => JSON.stringify({ uuid: 'u' + t, cwd, timestamp: new Date(Date.now() - t).toISOString(), type: 'user', message: { role: 'user', content: text } }) + '\n';
+fs.writeFileSync(path.join(HOME, '.claude', 'projects', '-work', RID + '.jsonl'),
+  JSON.stringify({ type: 'ai-title', aiTitle: '一个接着做的会话' }) + '\n' +
+  [1, 2, 3, 4].map((i) => JSON.stringify({ type: 'file-history-snapshot', messageId: 'm' + i, snapshot: '快照'.repeat(18000) }) + '\n').join('') +
+  tline(START, 9000, '一开始在这里') + tline(START, 8000, '还在这里') + tline(WORK, 5000, '上次说到一半'));
 const PORT = 18792, PET = 18793;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
