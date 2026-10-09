@@ -142,6 +142,13 @@ html[data-theme="win98"] .lr-me { background: #000080; }
 .lv-p { width: 12em; min-width: 0; }
 .lv-pick summary { cursor: pointer; color: var(--muted); }
 .lr-side > .lv { margin: 4px 8px; }
+.lpq h3 small { font-weight: normal; margin-left: 8px; color: var(--muted, #666); }
+.lpq-b { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin: 4px 0; padding: 5px 10px; font-size: 13px; border: 1px dashed var(--warn); }
+.lpq-b > div { min-width: 0; } .lpq-b b { color: var(--warn); }
+.lpq-s { display: flex; align-items: center; gap: 10px; justify-content: space-between; font-size: 12.5px; padding: 2px 0; }
+.lpq-l { font-size: 12.5px; } .lpq-l summary { cursor: pointer; }
+.lpq-i { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; } .lpq-i a { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .lpq-i small { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .75; }
+.lpq-i.s-failed .tag { color: var(--warn); } .lpq-i .btn { padding: 0 6px; font-size: 12px; }
 .lf-va { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 3px 0; font-size: 13px; } .lf-va span { min-width: 0; }
 .lv-md { max-height: 40vh; overflow: auto; padding: 4px 8px; background: var(--panel); border: 1px solid var(--edge); } .lv-md[hidden] { display: none; }
 

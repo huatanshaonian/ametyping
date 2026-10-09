@@ -2,14 +2,15 @@
 // answered) go into Zotero too -- into the collection 调研工作 (settings "surveyCollection"), in folders by research
 // topic the model names in one question for all of them, tagged "Windose调研". Their open-access PDFs are fetched as
 // for 收下; no cards are made here: the daily push offers the unread ones first when there is room (feed.js), and the
-// card comes with the reading. A question's reference then opens the paper in the library.
+// card comes with the reading. A question's reference then opens the paper in the library. The ones without an
+// open-access PDF go into the queue of the library access (pdfqueue.js), which brings them one by one.
 'use strict';
 const { paper, toZotero } = require('./sources/normalize');
 const { FOLDERS_SCHEMA, foldersPrompt } = require('./prompts/feed');
 
 const TAG = 'Windose调研';
 
-function createSurvey({ cfg = () => ({}), api, mirror, profile, openalex = null, ask = null, fetchPdf = null, fulltext = null, log = () => {}, onChange = () => {} }) {
+function createSurvey({ cfg = () => ({}), api, mirror, profile, openalex = null, ask = null, fetchPdf = null, fulltext = null, pdfq = null, log = () => {}, onChange = () => {} }) {
   let job = null;
   const name = () => cfg().surveyCollection || '调研工作';
   const inLibrary = (r) => (r.doi && mirror.findDoi(r.doi)) || mirror.findTitle(r.title);
@@ -73,7 +74,7 @@ function createSurvey({ cfg = () => ({}), api, mirror, profile, openalex = null,
       // the open-access PDFs, one after the other
       if (fetchPdf) {
         job.step = '找开放获取的 PDF'; job.done = 0; onChange();
-        let got = 0;
+        let got = 0, queued = 0;
         for (let i = 0; i < papers.length; i++) {
           const p = papers[i], key = keys[i];
           job.done = i + 1;
@@ -81,11 +82,12 @@ function createSurvey({ cfg = () => ({}), api, mirror, profile, openalex = null,
           try {
             const f = await fetchPdf(p);
             if (f) { const att = await api.attachPdf(key, f.buf, { filename: ((p.doi || 'paper').replace(/[^\w.-]+/g, '_')).slice(0, 80) + '.pdf', url: f.url }); if (fulltext) fulltext.remember(att, f.buf); got++; }
+            else if (pdfq && pdfq.add(key, p)) queued++;
           } catch (e) { log('文献：调研文献的 PDF 没拿到：' + e.message); }
           onChange();
         }
         await mirror.refresh(true).catch(() => {});
-        log(`文献：调研文献里 ${got} 篇拿到了开放获取的 PDF，其余要通过所里的订阅手动下载`);
+        log(`文献：调研文献里 ${got} 篇拿到了开放获取的 PDF，` + (queued ? `${queued} 篇排队走图书馆通道` : '其余要通过所里的订阅手动下载'));
       }
     })().catch((e) => { job.error = e.message; log('文献：调研文献入库失败：' + e.message); }).finally(() => { job.running = false; job.step = ''; onChange(); });
     return { ok: true, n: list.length };
