@@ -2,7 +2,7 @@
 const fs = require('fs'), path = require('path'), os = require('os');
 const res = []; const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-ctx-'));
-process.env.HOME = process.env.USERPROFILE = T;          // no settings.json: 200k unless ANTHROPIC_MODEL says [1m]
+process.env.HOME = process.env.USERPROFILE = T;
 delete process.env.ANTHROPIC_MODEL;
 const { recordsOf } = require('../../app/transcript');
 const codex = require('../agent/codex-records');
@@ -16,19 +16,18 @@ chk('claude: sidechain (subagent) usage ignored', !recordsOf(asst('b', '2026-10-
 const rc = codex.recordsOf({ timestamp: '2026-10-01T10:00:00Z', type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 136369 }, model_context_window: 258400 } } });
 chk('codex: used/window from token_count', rc.length === 1 && rc[0].text === '136369/258400', rc);
 chk('codex: token_count without info ignored', !codex.recordsOf({ type: 'event_msg', payload: { type: 'token_count', info: null } }).length, 0);
-// the agent's reader fills the Claude window: 200k, then 1M for good once past 200k
+// the agent's reader fills the Claude window: 1M (the current models), 200k for a reply by Haiku
+const haiku = asst('d', '2026-10-01T10:03:00Z', { input_tokens: 1, cache_read_input_tokens: 30000, output_tokens: 10 }); haiku.message.model = 'claude-haiku-4-5-20251001';
+const opus = asst('e', '2026-10-01T10:04:00Z', { input_tokens: 1, cache_read_input_tokens: 40000, output_tokens: 10 }); opus.message.model = 'claude-opus-5-5';
 const f = path.join(T, 's.jsonl');
 fs.writeFileSync(f, J(asst('a', '2026-10-01T10:00:00Z', { input_tokens: 1, cache_read_input_tokens: 150000, output_tokens: 10 })) +
   J(asst('b', '2026-10-01T10:01:00Z', { input_tokens: 1, cache_read_input_tokens: 250000, output_tokens: 10 })) +
+  J(haiku) + J(opus) +
   J(asst('c', '2026-10-01T10:02:00Z', { input_tokens: 1, cache_read_input_tokens: 20000, output_tokens: 10 })));
 const rd = records.createReader(f, 0);
 const b = records.readNext(rd);
 const ctx = b.recs.filter((r) => r.role === 'ctx').map((r) => r.text);
-chk('reader: 200k window, then 1M once past it (also after a compaction)', JSON.stringify(ctx) === JSON.stringify(['150011/200000', '250011/1000000', '20011/1000000']), ctx);
-process.env.ANTHROPIC_MODEL = 'opus[1m]';
-delete require.cache[require.resolve('../agent/context-window')];
-const cw = require('../agent/context-window');
-chk('ANTHROPIC_MODEL with [1m]: 1M', cw.claudeWindow() === 1e6, cw.claudeWindow());
+chk('reader: a 1M window whatever the fill; 200k for a reply by Haiku', JSON.stringify(ctx) === JSON.stringify(['150011/1000000', '250011/1000000', '30011/200000', '40011/1000000', '20011/1000000']), ctx);
 // the store keeps only the latest in its state, never in the day logs
 const st = createStore(path.join(T, 'data'));
 const recs = b.recs.map((r) => ({ ...r }));
