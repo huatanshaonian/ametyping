@@ -179,11 +179,12 @@ function recordsOf(o, st) {
       }
     }
     // how full the context is: everything the model read for this reply plus what it wrote (the next request carries
-    // both). "used/window"; the window is not in the transcript (0: the reader decides, see remote/agent/context-window.js)
+    // both). "used/window"; the window is not in the transcript: 200k for Haiku (the reply names its model), else left
+    // open (0: the reader fills in 1M, see remote/agent/records.js)
     const u = m.usage;
     if (u && Number.isFinite(u.input_tokens)) {
       const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
-      if (used > 0) out.push({ role: 'ctx', text: used + '/0', t });
+      if (used > 0) out.push({ role: 'ctx', text: used + '/' + (/haiku/i.test(String(m.model || '')) ? 200000 : 0), t });
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
     const title = o.aiTitle || o.customTitle || o.title;
