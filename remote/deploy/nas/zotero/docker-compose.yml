@@ -15,6 +15,14 @@
 # would take the local API down with it: the last line `zotero` there is replaced by
 #   while true; do zotero; sleep 3; done
 # so it comes back by itself.
+#
+# 图书馆通道 (server/literature/browser/): the desktop's Chromium is where the user is signed in to their library access
+# (the library's extension, publishers' institutional sign-ins), and ame-remote steers it over a DevTools port on
+# 127.0.0.1 to fetch the PDFs of papers no open copy exists of. The same autostart keeps it running with that port
+# (the file as it is on the NAS: ./autostart here -> config/.config/labwc/autostart; it takes effect when the desktop
+# session starts, i.e. after restarting the container). Chromium refuses the port on its default profile path, hence
+# config/.config/chromium-windose, a link to the same profile:  ln -s chromium config/.config/chromium-windose
+# Then 控制面板 › 文献 › 图书馆通道: 浏览器调试端口 9223.
 services:
   zotero:
     image: lscr.io/linuxserver/zotero:latest

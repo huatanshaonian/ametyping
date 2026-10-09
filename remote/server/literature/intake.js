@@ -5,7 +5,8 @@
 // (`pdfWaitMs`, default 3 minutes -- whatever put it there): with one, the card is made from the full text; without,
 // from the abstract, and the card says whether the full text is worth getting by hand (paywalled papers: through the
 // institute). A PDF that turns up later (dragged into Zotero) is noticed on the next library refresh and the card is
-// made again from it.
+// made again from it. Without an open-access copy the paper is put in the queue of the library access (pdfqueue.js: the
+// browser signed in to the institution's subscriptions), which brings the PDF the same way a little later.
 'use strict';
 const { toZotero } = require('./sources/normalize');
 const { FOLDER_SCHEMA, folderPrompt } = require('./prompts/feed');
@@ -15,7 +16,7 @@ const MONTH = /^\d{4}-\d{2}$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ask / profile: for choosing the folder (without them a paper stays in 每日文献 itself)
-function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpaywall = null, ask = null, profile = null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
+function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpaywall = null, ask = null, profile = null, pdfq = null, log = () => {}, onChange = () => {}, now = () => Date.now() }) {
   const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
   const pdfWaitMs = C().pdfWaitMs != null ? +C().pdfWaitMs : 180e3, pollMs = C().pollMs != null ? +C().pollMs : 20e3;
   const working = new Set();
@@ -96,8 +97,9 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
         await mirror.refresh(true).catch(() => {});
       }
     }
-    // wait for a PDF to be there, whatever brings it
-    setStage(feed.get(id), 'waiting', '等 PDF…');
+    // wait for a PDF to be there, whatever brings it (the library access, when no open copy was found)
+    const queued = !fulltext.hasPdf(key) && pdfq && pdfq.add(key, p, { front: true });
+    setStage(feed.get(id), 'waiting', queued ? '没有开放获取的版本，走图书馆通道下载…' : '等 PDF…');
     const until = now() + pdfWaitMs;
     while (!fulltext.hasPdf(key) && now() < until) { await sleep(pollMs); await mirror.refresh(true).catch(() => {}); }
     const has = fulltext.hasPdf(key);
@@ -107,7 +109,8 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
     const st = cards.state(key) || {};
     if (st.error) return setStage(feed.get(id), 'error', st.error);
     const gp = st.result && st.result.getPdf;
-    setStage(feed.get(id), has ? 'ready' : 'needs-pdf', has ? '' : (gp && gp.worth ? '建议手动获取全文：' + (gp.why || '') : '按摘要看，不一定需要全文' + (gp && gp.why ? '：' + gp.why : '')));
+    const via = !has && pdfq ? pdfq.note(key) : '';
+    setStage(feed.get(id), has ? 'ready' : 'needs-pdf', has ? '' : (via ? via + '。' : '') + (gp && gp.worth ? '建议手动获取全文：' + (gp.why || '') : '按摘要看，不一定需要全文' + (gp && gp.why ? '：' + gp.why : '')));
   }
 
   // called after each library refresh: a kept paper still without a PDF that now has one gets its card from the full text

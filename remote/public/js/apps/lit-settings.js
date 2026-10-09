@@ -43,7 +43,11 @@ export function panel() {
     F = { mailto: h('input', { class: 'field', type: 'email', value: v.mailto || '', placeholder: '可空：例如你的学校邮箱' }),
       daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), visionMaxPages: num(v.visionMaxPages, 0, 200), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
       reviewCollection: colSel(v.reviewCollection), inboxCollection: h('input', { class: 'field', value: v.inboxCollection }), surveyCollection: h('input', { class: 'field', value: v.surveyCollection }),
-      s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }) };
+      s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }),
+      browserPort: num(v.browserPort, 0, 65535), pdfGapSec: num(v.pdfGapSec, 20, 3600), pdfPerDay: num(v.pdfPerDay, 0, 200),
+      ieeeAccount: h('input', { class: 'field', type: 'email', autocomplete: 'off', value: v.ieeeAccount || '', placeholder: '可空：机构登录用的邮箱（不是密码）' }) };
+    const pst = h('small', { class: 'lset-st' });
+    const ptest = h('button', { class: 'btn', type: 'button', text: '测试', onclick: async () => { pst.textContent = '测试中…'; if (!(await save(true))) return; const r = await net.post('/api/lit/pdfq/test', {}); pst.textContent = r.msg || (r.ok ? '可用' : '不可用'); pst.classList.toggle('bad', !r.ok); } });
     const row = (label, el, note) => h('div', { class: 'lset-row' }, h('label', { text: label }), h('div', {}, el, note ? h('small', { text: note }) : null));
     body.replaceChildren(
       h('h4', { class: 'aim-h', text: '接口 key' }), K.s2.row, K.openalex.row,
@@ -59,13 +63,20 @@ export function panel() {
       row('调研文献放进', F.surveyCollection, '梳理问题时调研到、被问题引用的新文献入库到这个分类（按主题分文件夹）；没读过的会优先排进每日阅读'),
       row('复习用的分类', F.reviewCollection, '新文献不够时，从这个分类（含子分类）里挑旧文献复习'),
       row('收下放进', F.inboxCollection, '收下的文献放进 Zotero 的这个分类，按月建子分类'),
+      h('h4', { class: 'aim-h', text: '图书馆通道' }),
+      h('p', { class: 'ghint', text: '找不到开放获取的 PDF 时，用 Zotero 网页桌面里那个浏览器去下：它登录着所里的图书馆通道（MyLOFT）和出版商的机构账号，下载用的就是你自己的订阅权限。一次一篇，慢慢来；遇到要真人点的验证会停下等你。' }),
+      row('浏览器调试端口', h('span', {}, h('span', { class: 'lset-k' }, F.browserPort, ptest), pst), '网页桌面里 Chromium 的调试端口（部署时设的是 9223）；0 = 不用图书馆通道'),
+      row('IEEE 机构登录账号', F.ieeeAccount, 'IEEE 的登录过期时，用这个账号走机构登录（中国科技云通行证）：只填账号，密码由那个浏览器自己保存的来填，这里不存也不经手'),
+      row('两篇之间隔', h('span', {}, F.pdfGapSec, ' 秒'), '下完一篇到开始下一篇至少隔这么久（另加一点随机）'),
+      row('每天最多', h('span', {}, F.pdfPerDay, ' 篇'), '走图书馆通道的总数；0 = 先不下'),
       h('div', { class: 'gbtns' }, h('button', { class: 'btn go', type: 'button', text: '保存', onclick: () => save(false) })));
   }
   async function save(quiet) {
     const keys = {};
     for (const name of ['s2', 'openalex']) { const t = K[name].box.value.trim(); if (t) keys[name] = t; else if (clear[name]) keys[name] = null; }
     const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, visionMaxPages: F.visionMaxPages.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
-      reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, surveyCollection: F.surveyCollection.value, s2Recommend: F.s2Recommend.checked });
+      reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, surveyCollection: F.surveyCollection.value, s2Recommend: F.s2Recommend.checked,
+      browserPort: F.browserPort.value, pdfGapSec: F.pdfGapSec.value, pdfPerDay: F.pdfPerDay.value, ieeeAccount: F.ieeeAccount.value });
     msg.textContent = r.ok ? '已保存，马上生效' : r.msg || '没能保存';
     if (r.ok) { clear.s2 = clear.openalex = false; if (!quiet) await load(); }
     return r.ok;

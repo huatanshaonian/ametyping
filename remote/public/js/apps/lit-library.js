@@ -62,7 +62,8 @@ export function mount(el, ctx) {
       btn(d.card && /deep|reviewed/.test(d.card.meta.status) ? '重做深读卡' : '深读卡', '按全文（需要 PDF）', async () => { await post('/api/lit/card', { key, kind: 'deep' }); show(key, true); }),
       d.card ? btn(meta.starred ? '★ 已星标' : '☆ 星标', '星标 = 进深读清单', async () => { await post('/api/lit/card/meta', { key, starred: !meta.starred }); show(key, true); loadList(); }) : null,
       d.card && d.card.meta.status !== 'none' ? btn(meta.verified ? '✓ 已核对' : '核对过了', '你对照原文检查过这张卡片', async () => { await post('/api/lit/card/meta', { key, verified: !meta.verified }); show(key, true); }) : null,
-      d.card ? btn('编辑', '直接改卡片的 Markdown（Obsidian 里改也行）', () => edit(d)) : null);
+      d.card ? btn('编辑', '直接改卡片的 Markdown（Obsidian 里改也行）', () => edit(d)) : null,
+      !d.pdf && d.pdfVia ? btn('走图书馆通道下载', '用网页桌面里登录着图书馆的浏览器下载这篇的 PDF（排队，一次一篇）', async (e) => { const r = await post('/api/lit/pdfq/add', { key }); if (r.ok) show(key, true); else e.target.textContent = r.msg || '没排上'; }) : null);
     if (vbox && (vbox.key !== key || !quiet)) { vbox.destroy(); vbox = null; }
     if (!vbox) { vbox = visionBox(key); vbox.key = key; }
     view.replaceChildren(...[h('div', { class: 'lb-head' },
@@ -72,6 +73,7 @@ export function mount(el, ctx) {
         d.collectionNames.length ? ' · ' + d.collectionNames.join('、') : '', d.pdf ? ' · 有 PDF' : ' · 没有 PDF'),
       acts, jobLine),
     vbox.el,
+    !d.pdf && d.pdfNote ? h('div', { class: 'lb-tip', text: d.pdfNote }) : null,
     d.card && d.card.meta.getpdf ? h('div', { class: 'lb-tip', text: '建议找全文：' + d.card.meta.getpdf }) : null,
     d.actions.length ? h('div', { class: 'lb-sec' }, h('h4', { text: '可以采取的行动' }), ...d.actions.map((a) => h('div', { class: 'lb-act' + (a.done ? ' done' : '') },
       h('span', { text: (a.done ? '☑ ' : '☐ ') + a.text }),
@@ -110,5 +112,5 @@ export function mount(el, ctx) {
   q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(loadList, 250); });
   let first = true;
   async function refresh() { if (first) { first = false; await loadCols(); } await loadList(); }
-  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (cur && (w === 'card:' + cur || w === 'kb')) show(cur, true); } };
+  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
 }

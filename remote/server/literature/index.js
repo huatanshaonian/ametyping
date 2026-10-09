@@ -8,6 +8,7 @@
 //   proxies          HTTP proxies for the hosts in viaProxy (default: the summary's); viaProxy default ["ntrs.nasa.gov"]
 //   mailto           a contact address for Crossref / OpenAlex / Unpaywall (Unpaywall needs one); empty = not sent
 //   openalexKey      a free OpenAlex key (a larger daily budget)
+//   browserPort      the DevTools port of the browser signed in to the library (图书馆通道; also in 控制面板 › 文献)
 //   daily 2, at "07:30", minScore 6, reviewCollection "气动隐身", inboxCollection "每日文献", writeNotes true
 // Web API (all under /api/lit, the page's login applies; POSTs are same-origin): see handle() below.
 'use strict';
@@ -34,6 +35,8 @@ const { createVision } = require('./vision');
 const { createSurvey } = require('./survey');
 const { createHistory } = require('./history');
 const { createReview } = require('./review');
+const { createLibrary } = require('./browser/library');
+const { createPdfQueue } = require('./pdfqueue');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -80,15 +83,19 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
     ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
   const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
-  intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, log, onChange: () => changed('feed') });
+  // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
+  const libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, log, ...(cfg.browser || {}) });
+  const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
+  intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, pdfq, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
-  const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, log, onChange: () => changed('survey') });
+  const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, pdfq, log, onChange: () => changed('survey') });
   const stats = createStats({ kb, feed, todos });
   // 回顾: monthly / quarterly, proposing changes to the questions and the line for the user to approve
   const review = createReview({ dir, kb, profile, history, feed, reports, ask: (p, s) => ask(p, s, 'litReview'), survey, canWrite: () => api.canWrite(), auto: cfg.review !== false, log, onChange: () => changed('review') });
   if (cfg.review !== false) review.startTimer();
 
   mirror.start();
+  pdfq.start();
   if (cfg.feed !== false) feed.start();
   let authError = '';
 
@@ -113,6 +120,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return { ...itemOut(it), abstract: it.abstract, url: it.url, tags: it.tags, number: it.number,
       annotations: mirror.annotationsOf(key).map((a) => ({ type: a.type, text: a.text, comment: a.comment, page: a.page, color: a.color })),
       card: card ? { path: card.path, text: card.text, hash: card.hash, meta: card.meta } : null, job: cards.state(key), actions: cards.actions(key), entry,
+      pdfNote: pdfq.note(key), pdfVia: pdfq.status().enabled && !!it.doi,
       collectionNames: it.collections.map((c) => (mirror.collections().find((x) => x.key === c) || {}).name).filter(Boolean) };
   }
   // the profile as the window shows it: each branch's papers with their titles (keys mean nothing to the user)
@@ -133,7 +141,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit') {
       json(res, 200, { zotero: { ...mirror.status(), canWrite: api.canWrite(), authorizing: api.authorizing(), authError }, webdav: webdav.configured(), kbDir: kb.dir,
         profile: { ...profile.state(), has: !!profile.get(), confirmed: !!(profile.get() || {}).confirmed }, feed: feed.status(), proposals: kb.proposals().length, morning: morning(),
-        vision: vision.pending().length, reviews: review.drafts() });
+        vision: vision.pending().length, reviews: review.drafts(), pdfq: (({ enabled, waiting, blocks, browser }) => ({ enabled, waiting, blocks: blocks.length, browser: !!browser }))(pdfq.status()) });
       return true;
     }
     if (G && p === '/api/lit/settings') { json(res, 200, { ...settings.view(), collections: mirror.collections().map((c) => c.name) }); return true; }
@@ -162,6 +170,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/vision/pending') { json(res, 200, { items: vision.pending() }); return true; }
     if (G && p === '/api/lit/reviews') { history.seed(profile.get()); json(res, 200, { items: review.list(), job: review.state(), graph: history.graph(), has: !!(profile.get() && (profile.get().questions || []).length) }); return true; }
     if (G && p === '/api/lit/review') { const r = review.get(qs('id')); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
+    if (G && p === '/api/lit/pdfq') { json(res, 200, pdfq.status()); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
@@ -230,6 +239,18 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     }
     else if (what === 'vision/approve') r = KEY.test(key) ? await vision.approve(key, typeof d.ranges === 'string' ? d.ranges : null) : { ok: false, msg: '找不到这篇' };
     else if (what === 'vision/decline') r = vision.decline(key);
+    // 图书馆通道: a paper of the library into the queue; every one without a PDF in 每日文献 and 调研工作; 继续 after the
+    // user did what a site waited for
+    else if (what === 'pdfq/add') { const it = KEY.test(key) ? mirror.item(key) : null; r = !it ? { ok: false, msg: '找不到这篇' } : !it.doi ? { ok: false, msg: '这篇没有 DOI' } : fulltext.hasPdf(key) ? { ok: false, msg: '已经有 PDF 了' }
+      : !pdfq.status().enabled ? { ok: false, msg: '图书馆通道没有开启（控制面板 › 文献）' } : (pdfq.drop(key), pdfq.add(key, { doi: it.doi, title: it.title }, { front: true })) ? { ok: true } : { ok: false, msg: '没能排上' }; }
+    else if (what === 'pdfq/fill') {
+      const cols = [conf().inboxCollection, conf().surveyCollection].map((n) => mirror.collectionByName(n)).filter(Boolean).map((c) => c.key);
+      r = !pdfq.status().enabled ? { ok: false, msg: '图书馆通道没有开启（控制面板 › 文献）' } : { ok: true, n: pdfq.fill(cols) };
+    }
+    else if (what === 'pdfq/continue') r = pdfq.resume(String(d.site || ''));
+    else if (what === 'pdfq/retry') r = pdfq.retry(key);
+    else if (what === 'pdfq/drop') r = pdfq.drop(key);
+    else if (what === 'pdfq/test') r = await libAccess.ping();
     else if (what === 'understand') r = reader.understand(key, d.text);
     else if (what === 'chat') r = reader.chat(key, d.q, { sel: String(d.sel || '').slice(0, 4000), page: +d.page || 0 });
     else if (what === 'distill') r = reader.distill(key);
@@ -244,7 +265,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, stop: () => { mirror.stop(); feed.stop(); review.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); feed.stop(); review.stop(); pdfq.stop(); } };
 }
 
 module.exports = { createLiterature };

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+if [ ! -f "${HOME}/Desktop/zotero.desktop" ]; then
+  cp /usr/share/applications/zotero.desktop "${HOME}/Desktop/"
+  cp /usr/share/applications/chromium.desktop "${HOME}/Desktop/"
+fi
+
+touch "${HOME}/.config/panel-reload"
+gio mime x-scheme-handler/http chromium.desktop
+gio mime x-scheme-handler/https chromium.desktop
+gio mime application/x-terminal-emulator foot.desktop
+
+# keep Chromium running with a DevTools port on 127.0.0.1, so ame-remote can ask it to download a paper through the
+# library access logged in there (MyLOFT). Chromium refuses the port on its default profile path: chromium-windose is
+# a link to the same profile (~/.config/chromium), so the logins and extensions are the ones set up by hand.
+(while true; do
+  /usr/bin/chromium --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 --user-data-dir="${HOME}/.config/chromium-windose"
+  sleep 5
+done) &
+
+# keep Zotero running: closing its window (the X) starts it again, so the local API on 127.0.0.1:23119 stays up
+while true; do
+  zotero
+  sleep 3
+done

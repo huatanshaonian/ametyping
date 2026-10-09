@@ -4,6 +4,7 @@
 // best papers of the day, for a day with time to spare.
 import { h } from '../util.js';
 import { get, post, authors } from './lit-api.js';
+import { pdfqBox } from './lit-pdfq.js';
 
 const STAGE = { pdf: '找 PDF…', waiting: '等 PDF…', card: '生成速读卡…', ready: '速读卡好了', 'needs-pdf': '没有 PDF', error: '出错了' };
 
@@ -14,7 +15,8 @@ export function mount(el, ctx) {
   const asks = h('div', { class: 'lf-sec lf-vision', hidden: true });     // 读图 requests waiting for approval
   // which way of finding brings the papers worth reading: the last week's runs added up
   const yieldEl = h('details', { class: 'lf-yield', hidden: true });
-  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, asks, list);
+  const pdfq = pdfqBox(ctx);                                              // 图书馆通道: PDFs on their way, what waits for the user
+  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, asks, pdfq.el, list);
   function showYield(runs) {
     const found = {}, good = {};
     for (const r of runs) { for (const [k, n] of Object.entries(r.sources || {})) found[k] = (found[k] || 0) + n; for (const [k, n] of Object.entries(r.good || {})) good[k] = (good[k] || 0) + n; }
@@ -28,6 +30,7 @@ export function mount(el, ctx) {
 
   async function refresh() {
     const [f, p, va] = await Promise.all([get('/api/lit/feed'), get('/api/lit/profile'), get('/api/lit/vision/pending')]);
+    pdfq.refresh();
     const reqs = (va && va.items) || [];
     asks.hidden = !reqs.length;
     asks.replaceChildren(h('h3', { text: `等你批准读图（${reqs.length}）` }), ...reqs.map((r) => h('div', { class: 'lf-va' },
@@ -88,7 +91,7 @@ export function mount(el, ctx) {
       const s = e.intake || {};
       note.append(h('b', { text: STAGE[s.stage] || '' }), s.msg ? ' ' + s.msg : '');
       if (e.folder) note.append(h('div', { class: 'lf-tip', title: e.folderWhy || '', text: `已归入 Zotero：每日文献 / ${e.folder}` }));
-      if (s.stage === 'needs-pdf') note.append(h('div', { class: 'lf-tip', text: '拿到 PDF 后拖进 Zotero 里这篇下面就行，系统发现后会按全文重新生成速读卡。' }));
+      if (s.stage === 'needs-pdf') note.append(h('div', { class: 'lf-tip', text: '图书馆通道拿到，或者你自己把 PDF 拖进 Zotero 里这篇下面，系统发现后都会按全文重新生成速读卡。' }));
       if (e.zkey) acts.append(h('button', { class: 'btn', type: 'button', text: '看卡片', onclick: () => ctx.openItem(e.zkey) }),
         h('button', { class: 'btn', type: 'button', text: '深读', onclick: () => ctx.openReader(e.zkey) }));
     } else if (past) note.textContent = { skipped: '跳过了', done: '复习过了', expired: '过期了（7 天没处理）' }[e.status] || '';
@@ -107,5 +110,5 @@ export function mount(el, ctx) {
   }
 
   runBtn.addEventListener('click', async () => { runBtn.disabled = true; st.textContent = '正在找今天的文献…（几分钟）'; await post('/api/lit/feed/run', {}); });
-  return { refresh, onLit: (w) => { if (w === 'feed' || w.startsWith('vision:')) refresh(); } };
+  return { refresh, onLit: (w) => { if (w === 'feed' || w.startsWith('vision:')) refresh(); else if (w === 'pdfq') pdfq.refresh(); } };
 }
