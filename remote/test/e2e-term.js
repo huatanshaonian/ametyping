@@ -118,6 +118,7 @@ chk('errors too', rec({ type: 'user', message: { role: 'user', content: '<local-
 chk('nothing printed, "(no content)": no record', rec({ type: 'user', message: { role: 'user', content: '<local-command-stdout></local-command-stdout>' } }) === '' && rec({ type: 'user', message: { role: 'user', content: '<local-command-stdout>(no content)</local-command-stdout>' } }) === '', 0);
 chk('still left out: the copy for the model, its caveat, reminders', rec({ type: 'user', isMeta: true, message: { role: 'user', content: '## Context Usage' } }) === '' &&
   rec({ type: 'user', message: { role: 'user', content: '<local-command-caveat>Caveat: ...</local-command-caveat>' } }) === '' && rec({ type: 'user', message: { role: 'user', content: '<system-reminder>x</system-reminder>' } }) === '', 0);
+chk('the summary written when the context is compacted: a note, not something you said', rec({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. ...' } }) === 'sys:（上下文已压缩）', 0);
 chk('a very long output is cut', (recordsOf({ type: 'user', message: { role: 'user', content: `<local-command-stdout>${'x'.repeat(30000)}</local-command-stdout>` } }, {})[0].text || '').length === 20002, 0);
 // /btw keeps its own pairing: the fork line is no command output, the question comes with the fork
 const st = {};

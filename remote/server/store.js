@@ -53,6 +53,11 @@ function cleanX(x) {
   return o;
 }
 
+// records stored before the agent told a compaction summary from what you said: Claude Code writes it as a "user"
+// message that always begins with this sentence. Read as the note the agent sends now (the files are left as they are).
+const COMPACTED = 'This session is being continued from a previous conversation that ran out of context.';
+const asRead = (r) => (r && r.role === 'user' && typeof r.text === 'string' && r.text.startsWith(COMPACTED) ? { ...r, role: 'sys', text: '（上下文已压缩）' } : r);
+
 function createStore(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stateFile = path.join(dir, 'state.json');
@@ -152,7 +157,7 @@ function createStore(dir) {
         let lines = [];
         try { lines = fs.readFileSync(fileOf(day, m, id), 'utf8').split('\n'); } catch {}
         const recs = [];
-        for (const l of lines) { if (!l) continue; try { recs.push(JSON.parse(l)); } catch {} }
+        for (const l of lines) { if (!l) continue; try { recs.push(asRead(JSON.parse(l))); } catch {} }
         chunks.unshift(recs); n += recs.length;
         if (n > TAIL * 3) break;
       }
@@ -201,7 +206,7 @@ function createStore(dir) {
       for (const l of lines) {
         if (!l) continue;
         let r; try { r = JSON.parse(l); } catch { continue; }
-        if (r.t >= from && r.t < to) out.push(r);
+        if (r.t >= from && r.t < to) out.push(asRead(r));
       }
     }
     return out.sort((a, b) => a.t - b.t);

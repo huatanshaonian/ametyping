@@ -150,6 +150,9 @@ function recordsOf(o, st) {
   }
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const m = o.message;
+  // the summary Claude Code writes when the context is compacted: recorded as a "user" message (it is what the model reads
+  // from then on), but nothing you said -- a note where it happened, as for Codex
+  if (o.isCompactSummary) { out.push({ role: 'sys', text: '（上下文已压缩）', t }); return out; }
   if (o.type === 'user' && m) {
     const parts = typeof m.content === 'string' ? [m.content]
       : (m.content || []).filter((b) => b.type === 'text').map((b) => b.text);

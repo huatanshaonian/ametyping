@@ -114,6 +114,17 @@ function login() {
     const d2 = recsOnDisk(SID2);
     ok('3001 records (3000 replies + line after the huge one)', d2.n === 3001, `got ${d2.n}`);
     ok('order preserved', d2.n === 3001 && d2.all[0].text.startsWith('msg 0 ') && d2.all[2999].text.startsWith('msg 2999 ') && d2.all[3000].text === 'after the huge line');
+    // a compaction summary stored as something you said (agents before the fix sent it so): read as a note, the file kept
+    const OLD = path.join(T, 'old'), now = Date.now(), pad = (n) => String(n).padStart(2, '0'), dd = new Date(now);
+    const dayDir = path.join(OLD, `${dd.getFullYear()}-${pad(dd.getMonth() + 1)}-${pad(dd.getDate())}`, 'pc'); fs.mkdirSync(dayDir, { recursive: true });
+    const SUM = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. ...';
+    const oldLines = [{ role: 'user', t: now - 3000, text: SUM }, { role: 'user', t: now - 2000, text: '这是什么意思：This session is being continued from a previous conversation that ran out of context.' }, { role: 'assistant', t: now - 1000, text: '对', mid: 'm1' }];
+    fs.writeFileSync(path.join(dayDir, 's1.jsonl'), oldLines.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    fs.writeFileSync(path.join(OLD, 'state.json'), JSON.stringify({ pc: { s1: { off: 1, days: [path.basename(path.dirname(dayDir))], first: now - 3000, last: now - 1000 } } }));
+    const st = require(R + '/server/store').createStore(OLD);
+    const shown = st.tail('pc', 's1').map((r) => r.role + ':' + r.text.slice(0, 9)), forSum = st.records('pc', 's1', now - 9000, now).map((r) => r.role);
+    ok('an old stored compaction summary: shown as a note, and not counted as yours in the summaries; quoting its first sentence is still yours',
+      shown.join('|') === 'sys:（上下文已压缩）|user:这是什么意思：Th|assistant:对' && forSum.join() === 'sys,user,assistant' && fs.readFileSync(path.join(dayDir, 's1.jsonl'), 'utf8').includes('"role":"user","t":' + (now - 3000)), JSON.stringify([shown, forSum]));
     ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
