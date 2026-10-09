@@ -1,6 +1,6 @@
 // AI 模型 in the control panel: which model / effort each AI job uses and the backup model (settings.js), asking the
-// models -- Codex, Claude Code or the Claude API, the backup when the first fails (ask.js) -- both tools kept up to
-// date (codex.js, claude.js), and the Claude API's key (api-key.js). The web API:
+// models -- Codex or Claude Code, Claude's over the Claude API first when there is a key, the backup when the first
+// fails (ask.js) -- both tools kept up to date (codex.js, claude.js), and the Claude API's key (api-key.js). The web API:
 //   GET  /api/ai                   the jobs, what each uses, the models the accounts have, the backup, models resting after a failure
 //   POST /api/ai/set               { default?, backup?, tasks? }   (no code asked: it changes cost and speed, not access)
 //   GET  /api/ai/<tool>[?check=1]  codex | claude: version, newest release (as last looked up; check=1: look now), login state, last update
@@ -18,7 +18,7 @@ const { checkKey } = require('./anthropic-api');
 // codex / claude: { bin, pathPrefix, timeoutMs }; apiBase: another address for the Claude API (tests)
 function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', log = () => {}, audit = () => {} }) {
   const apiKey = createApiKey({ dataDir });
-  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, hasApi: apiKey.has });
+  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome });
   const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, log });
   // the key as last tried against the API: { at, ok, error }
   let checked = null;
@@ -27,10 +27,10 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
       try { await checkKey({ key: apiKey.get(), egress, base: apiBase }); checked = { at: Date.now(), ok: true, error: '' }; }
       catch (e) { checked = { at: Date.now(), ok: false, error: String(e.message).slice(0, 300) }; }
     }
-    return { ...apiKey.view(), checked: apiKey.has() ? checked : null };
+    return { ...apiKey.view(), checked: apiKey.has() ? checked : null, down: apiKey.has() ? asker.apiState() : null };
   }
   const admins = { codex: createCodexAdmin({ dataDir, codex, egress, codexHome, log }), claude: createClaudeAdmin({ dataDir, claude, egress, log }) };
-  const view = () => ({ ...settings.view(), down: asker.state() });
+  const view = () => ({ ...settings.view(), down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null } });
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;

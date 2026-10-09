@@ -1,16 +1,16 @@
 // AI 模型 (in 控制面板): which model each AI job uses and how hard it thinks (remote/server/ai) -- one default for all,
 // any job set on its own (empty = the default), and a backup model (后备模型) that finishes the job when the chosen one
 // fails or is out of usage. The models are the ones Codex and Claude Code list for their accounts, each offering only
-// the efforts it has -- and, once a Claude API key is on the NAS (ai-api.js), Claude's models a second time, asked over
-// the API and paid from its credit. A model that failed lately is shown (it rests 15 minutes). Below, the Claude API's
-// key and the two tools (ai-cli.js).
+// the efforts it has. Once a Claude API key is on the NAS (ai-api.js) Claude's models are asked over the API first
+// (its monthly credit), through Claude Code when that fails -- nothing to choose. A model that failed lately is shown
+// (it rests 15 minutes), the API too. Below, the Claude API's key and the two tools (ai-cli.js).
 import { h } from '../util.js';
 import * as net from '../net.js';
 import { cliBox, when } from './ai-cli.js';
 import { apiBox } from './ai-api.js';
 
 const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
-const GROUP = { api: 'Claude（API，用 API 赠金）', claude: 'Claude（Claude Code，用订阅用量）', codex: 'OpenAI（Codex）' };
+const GROUP = { claude: 'Claude', codex: 'OpenAI（Codex）' };
 
 export function panel() {
   const root = h('div', { class: 'aim' });
@@ -18,7 +18,7 @@ export function panel() {
   const down = h('div', { class: 'aim-down' });
   const table = h('div', { class: 'aim-table' });
   const boxes = [cliBox('claude'), cliBox('codex'), apiBox(() => load())];
-  root.append(msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：Claude Code 和 Codex 用的是订阅的用量；填了 Claude API 的 key 后，还可以选带「（API）」的模型，走 API、用 API 赠金。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
+  root.append(msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：OpenAI 的模型走 Codex；Claude 的模型在填了 Claude API 的 key 后先走 API（用每月的 API 赠金），API 出错或赠金用完时自动改走 Claude Code（用订阅用量）。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
     down, table, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
   let view = null, dirty = false;
   const nameOf = (slug) => (view.models.find((m) => m.slug === slug) || {}).name || slug;
@@ -50,7 +50,8 @@ export function panel() {
   // the models that failed lately: the next calls go to the other one first for 15 minutes
   function showDown() {
     const list = (view.down || []).filter((d) => d.until > Date.now());
-    down.replaceChildren(...list.map((d) => h('p', { class: 'ghint bad', text: `${nameOf(d.model)} 在 ${when(d.at)} 出错（${d.error.slice(0, 120)}），${when(d.until).replace(/.* 日 /, '')} 前先用另一个模型` })));
+    const ad = view.api && view.api.down;
+    down.replaceChildren(...(ad && ad.until > Date.now() ? [h('p', { class: 'ghint bad', text: `Claude API 在 ${when(ad.at)} 出错（${ad.error.slice(0, 120)}），${when(ad.until).replace(/.* 日 /, '')} 前 Claude 的模型先走 Claude Code（订阅用量）` })] : []), ...list.map((d) => h('p', { class: 'ghint bad', text: `${nameOf(d.model)} 在 ${when(d.at)} 出错（${d.error.slice(0, 120)}），${when(d.until).replace(/.* 日 /, '')} 前先用另一个模型` })));
   }
 
   async function load() {

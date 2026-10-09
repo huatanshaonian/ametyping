@@ -1,7 +1,8 @@
-// e2e: the Claude API as a third way to ask a model (server/ai: api-key.js, anthropic-api.js), against a fake API here.
-// The key: put in behind a code, kept in a file of its own, never sent back; with it Claude's models are offered a
-// second time ("api:<model>"). A job on one of them is asked over the API -- the model's own name, its effort, the
-// answer forced into the job's schema, read from the stream -- and when the credit is used up the backup finishes it.
+// e2e: Claude's models asked over the Claude API first (server/ai: api-key.js, anthropic-api.js, ask.js), against a
+// fake API here. The key: put in behind a code, kept in a file of its own, never sent back. With it a job on a Claude
+// model is asked over the API -- the model's name, its effort, the answer forced into the job's schema, read from the
+// stream; when the API fails or the credit is used up Claude Code does the job (the subscription), the API rests,
+// and only when that fails too the backup model. The models offered stay the same; without a key nothing changes.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = path.resolve(__dirname, '..');
 const auth = require(R + '/server/auth');
@@ -51,7 +52,7 @@ fs.writeFileSync(path.join(CHOME, 'cache', 'model-catalog', 'a.json'), JSON.stri
   { id: 'claude-opus-5-5', name: 'Opus 5.5', section: 'main', thinking: eff('medium', 'low', 'medium', 'high', 'xhigh', 'max') },
   { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', section: 'main', thinking: { type: 'none' } },
   { id: 'claude-sonnet-5', name: 'Sonnet 5', section: 'overflow', thinking: eff('high', 'low', 'high') }] } } }));
-const LOG = path.join(T, 'codex.log'), CLOG = path.join(T, 'claude.log');
+const LOG = path.join(T, 'codex.log'), CLOG = path.join(T, 'claude.log'), CC_DOWN = path.join(T, 'claude-down');
 const logOf = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 const req = (method, p, body, cookie) => new Promise((resolve) => {
   const data = body ? JSON.stringify(body) : '';
@@ -72,7 +73,7 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     list: { type: 'array', items: { type: 'object', properties: { a: { type: 'string', enum: ['x', 'y'] } }, required: ['a'], additionalProperties: false } }, one: { type: 'array', minItems: 1, items: { type: 'string' } } }, required: ['title'], additionalProperties: false }), s);
 
   const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
-  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, FAKE_CODEX_LOG: LOG, FAKE_CLAUDE_LOG: CLOG, AME_SUMMARY_TICK_MS: '600000' };
+  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, FAKE_CODEX_LOG: LOG, FAKE_CLAUDE_LOG: CLOG, FAKE_CLAUDE_FAIL_FILE: CC_DOWN, AME_SUMMARY_TICK_MS: '600000' };
   cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...env, AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' } });
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME,
@@ -87,7 +88,10 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     await until(async () => (await req('GET', '/login')).status === 200);
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     let v = (await req('GET', '/api/ai', null, cookie)).j || {}, a = (await req('GET', '/api/ai/api', null, cookie)).j || {};
-    ok('no key: no API models offered, the page says there is none', !v.models.some((m) => m.provider === 'api') && a.has === false && a.tail === '' && a.checked === null, [v.models, a]);
+    ok('no key: the page says there is none', v.api.has === false && a.has === false && a.tail === '' && a.checked === null, [v.api, a]);
+    v = (await req('POST', '/api/ai/set', { default: { model: 'gpt-6-luna', effort: '' }, backup: { model: 'gpt-6-luna', effort: 'low' }, tasks: { ask: { model: 'claude-opus-5-5', effort: 'xhigh' } } }, cookie)).j || {};
+    let job = await askOnce(cookie, '网格是怎么加密的？');
+    ok('no key: a Claude model runs through Claude Code as before, the API not asked', job && job.answer && calls.length === 0 && logOf(CLOG).filter((x) => x.args.includes('-p')).length === 2, [job, calls.length, logOf(CLOG).length]);
     ok('not logged in: refused', (await req('GET', '/api/ai/api')).status === 401 && (await req('POST', '/api/ai/api/key', { key: KEY })).status === 401);
     let r = (await req('POST', '/api/ai/api/key', { key: 'hello world' }, cookie)).j || {};
     ok('something that is no key: refused, nothing kept', r.ok === false && !fs.existsSync(KEYFILE), r);
@@ -97,36 +101,44 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     ok('a key put in: found good at once; the answer has its last four characters, not the key', r.j.ok && r.j.api.has && r.j.api.tail === 'WXYZ' && r.j.api.checked.ok === true && r.j.api.setAt > 0 && !r.b.includes(KEY.slice(0, 30)), r.b);
     ok('kept in a file of its own', JSON.parse(fs.readFileSync(KEYFILE, 'utf8')).key === KEY);
     v = (await req('GET', '/api/ai', null, cookie));
-    const am = v.j.models.filter((m) => m.provider === 'api');
-    ok('Claude\'s models offered a second time, over the API: same efforts, told apart by name; the key in none of it', am.map((m) => m.slug).join() === 'api:claude-opus-5-5,api:claude-haiku-4-5-20251001,api:claude-sonnet-5' &&
-      am[0].name === 'Opus 5.5（API）' && am[0].efforts.join() === 'low,medium,high,xhigh,max' && am[1].efforts.length === 0 && v.j.models.filter((m) => m.provider === 'claude').length === 3 && !v.b.includes('sk-ant'), am);
+    ok('the models offered are the same as without a key (nothing to choose); the key in none of it', v.j.models.map((m) => m.slug).join() === 'gpt-6-luna,claude-opus-5-5,claude-haiku-4-5-20251001,claude-sonnet-5' && v.j.models.every((m) => m.provider !== 'api') && v.j.api.has === true && !v.b.includes('sk-ant'), v.j.models);
 
-    // 问一问 on Opus over the API, GPT as the backup
-    v = (await req('POST', '/api/ai/set', { default: { model: 'gpt-6-luna', effort: '' }, backup: { model: 'gpt-6-luna', effort: 'low' }, tasks: { ask: { model: 'api:claude-opus-5-5', effort: 'xhigh' } } }, cookie)).j || {};
+    // 问一问 on Opus: over the API now, Claude Code not started
+    v = v.j;
     const use = (id) => (v.tasks.find((t) => t.id === id) || {}).uses || {};
-    ok('a job set to an API model', use('ask').model === 'api:claude-opus-5-5' && use('ask').provider === 'api' && use('ask').effort === 'xhigh' && use('ask').backup.provider === 'codex' && use('daily').provider === 'codex', use('ask'));
-    let job = await askOnce(cookie, '网格是怎么加密的？');
+    const nCC = () => logOf(CLOG).filter((x) => x.args.includes('-p')).length, cc0 = nCC();
+    ok('the job is still set to the plain Claude model', use('ask').model === 'claude-opus-5-5' && use('ask').provider === 'claude' && use('ask').effort === 'xhigh' && use('ask').backup.provider === 'codex', use('ask'));
+    job = await askOnce(cookie, '网格是怎么加密的？');
     const c0 = calls[0] || {};
-    ok('问一问 answered over the API (the answer read from the stream, the thinking left out)', job && /mesh_refine/.test(job.answer || '') && !job.error && calls.length === 2 && logOf(LOG).length === 0 && logOf(CLOG).length === 0, [job, calls.length]);
+    ok('问一问 answered over the API (the answer read from the stream, the thinking left out)', job && /mesh_refine/.test(job.answer || '') && !job.error && calls.length === 2 && logOf(LOG).length === 0 && nCC() === cc0, [job, calls.length]);
     ok('asked as the API wants it: the model\'s own name, its effort, thinking, a stream, the schema, our system prompt', c0.model === 'claude-opus-5-5' && c0.stream === true && c0.max_tokens > 8000 &&
       c0.output_config.effort === 'xhigh' && c0.thinking.type === 'adaptive' && c0.output_config.format.type === 'json_schema' && c0.output_config.format.schema.additionalProperties === false &&
       /Windose/.test(c0.system) && c0.messages.length === 1 && c0.messages[0].role === 'user' && !c0.tools, c0);
 
     // a model without efforts: none sent; one the catalog gave efforts but the API refuses them for: asked again without
-    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'api:claude-haiku-4-5-20251001', effort: 'high' } } }, cookie)).j || {};
+    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'claude-haiku-4-5-20251001', effort: 'high' } } }, cookie)).j || {};
     let n = calls.length; job = await askOnce(cookie, '网格？');
     ok('Haiku over the API: no effort, no thinking asked for', job && job.answer && calls.length === n + 2 && calls[n].model === 'claude-haiku-4-5-20251001' && !calls[n].thinking && !('effort' in calls[n].output_config), calls[n]);
-    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'api:claude-sonnet-5', effort: 'high' } } }, cookie)).j || {};
+    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'claude-sonnet-5', effort: 'high' } } }, cookie)).j || {};
     n = calls.length; job = await askOnce(cookie, '网格呢？');
-    ok('the API refusing the effort for a model: asked once more without it, still answered by that model', job && job.answer && !job.error && calls.length === n + 4 && calls[n].output_config.effort === 'high' && !calls[n + 1].thinking && !calls[n + 1].output_config.effort && logOf(LOG).length === 0, [job, calls.length - n]);
+    ok('the API refusing the effort for a model: asked once more without it, still answered by that model', job && job.answer && !job.error && calls.length === n + 4 && calls[n].output_config.effort === 'high' && !calls[n + 1].thinking && !calls[n + 1].output_config.effort && logOf(LOG).length === 0 && nCC() === cc0, [job, calls.length - n]);
 
-    // the credit used up: the backup finishes the job, the page says why
-    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'api:claude-opus-5-5', effort: 'low' } } }, cookie)).j || {};
+    // the credit used up: Claude Code does the job with the same model (the subscription); the API tried once, then rests
+    v = (await req('POST', '/api/ai/set', { tasks: { ask: { model: 'claude-opus-5-5', effort: 'low' } } }, cookie)).j || {};
     mode = 'broke'; n = calls.length;
     job = await askOnce(cookie, '网格的加密方法？');
     v = (await req('GET', '/api/ai', null, cookie)).j || {};
-    ok('the credit used up: the job still answered, by the backup (Codex); the API tried once, then left to rest', job && /mesh_refine/.test(job.answer || '') && !job.error && calls.length === n + 1 && logOf(LOG).filter((x) => x.args.includes('exec')).length === 2, [job, calls.length - n, logOf(LOG).length]);
-    ok('the page says the credit is used up', v.down.length === 1 && v.down[0].model === 'api:claude-opus-5-5' && /额度用完了/.test(v.down[0].error) && /credit balance/.test(v.down[0].error), v.down);
+    const byCC = logOf(CLOG).filter((x) => x.args.includes('-p')).slice(cc0);
+    ok('the credit used up: the job still answered, by Claude Code with the same model and effort -- not the backup; the API tried once', job && /mesh_refine/.test(job.answer || '') && !job.error && calls.length === n + 1 && byCC.length === 2 &&
+      byCC[0].args[byCC[0].args.indexOf('--model') + 1] === 'claude-opus-5-5' && byCC[0].args[byCC[0].args.indexOf('--effort') + 1] === 'low' && logOf(LOG).length === 0, [job, calls.length - n, byCC.length, logOf(LOG).length]);
+    a = (await req('GET', '/api/ai/api', null, cookie)).j || {};
+    ok('the page says the credit is used up and until when Claude Code goes first; the model itself is not counted as failed', v.down.length === 0 && v.api.down && /额度用完了/.test(v.api.down.error) && /credit balance/.test(v.api.down.error) && v.api.down.until > Date.now() && a.down && a.down.at === v.api.down.at, [v.down, v.api, a]);
+    // Claude Code out of usage as well: the backup model
+    fs.writeFileSync(CC_DOWN, ''); n = calls.length;
+    job = await askOnce(cookie, '网格呢？？');
+    v = (await req('GET', '/api/ai', null, cookie)).j || {};
+    ok('Claude Code failing too: the backup (Codex) answers; then the model counts as failed', job && job.answer && !job.error && calls.length === n && logOf(LOG).filter((x) => x.args.includes('exec')).length === 2 && v.down.length === 1 && v.down[0].model === 'claude-opus-5-5', [job, v.down]);
+    fs.rmSync(CC_DOWN);
     // the stream breaking off with an error, an answer cut short: both failures, not half an answer
     const { runApi } = require(R + '/server/ai/anthropic-api');
     const direct = (m) => { mode = m; return runApi({ key: KEY, model: 'claude-opus-5-5', effort: '', prompt: '问', schema: { type: 'object', properties: { answer: { type: 'string' }, sources: { type: 'array', items: { type: 'string' } } } }, base: `http://127.0.0.1:${API}` }).then((x) => 'ok:' + x.answer.slice(0, 4), (e) => e.message); };
@@ -142,12 +154,12 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     a = (await req('GET', '/api/ai/api', null, c2)).j || {};
     ok('after a restart: the key still there, tried when the page is opened', a.has && a.tail === 'WXYZ' && a.checked && a.checked.ok === true, a);
     n = calls.length; job = await askOnce(c2, '网格是怎么加密的？');
-    ok('and used', job && job.answer && calls.length === n + 2 && calls[n].output_config.effort === 'low', [job, calls.length - n]);
+    ok('and used (what rested before the restart is forgotten)', job && job.answer && calls.length === n + 2 && calls[n].output_config.effort === 'low', [job, calls.length - n]);
     r = (await req('POST', '/api/ai/api/key', { key: '' }, c2)).j || {};
     v = (await req('GET', '/api/ai', null, c2)).j || {};
-    ok('the key taken away: its file gone, the API models no longer offered', r.ok && r.api.has === false && !fs.existsSync(KEYFILE) && !v.models.some((m) => m.provider === 'api'), [r, v.models.length]);
-    n = calls.length; const nx = logOf(LOG).length; job = await askOnce(c2, '网格？');
-    ok('a job still set to an API model: not sent anywhere without a key, the backup answers', job && job.answer && !job.error && calls.length === n && logOf(LOG).length === nx + 2, [job, calls.length - n]);
+    ok('the key taken away: its file gone', r.ok && r.api.has === false && !fs.existsSync(KEYFILE) && v.api.has === false, [r, v.api]);
+    n = calls.length; const c1 = logOf(CLOG).length; job = await askOnce(c2, '网格？');
+    ok('without the key again: Claude Code, the API not asked', job && job.answer && !job.error && calls.length === n && logOf(CLOG).length === c1 + 2, [job, calls.length - n]);
     const aud = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
     ok('the audit log has the key put in and taken away -- not the key', /ai-api-key-set/.test(aud) && /ai-api-key-removed/.test(aud) && !aud.includes('sk-ant'));
   } catch (e) { fail++; console.log('ERROR', e); }

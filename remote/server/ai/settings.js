@@ -6,9 +6,8 @@
 // The models offered are the ones Codex lists for the account (~/.codex/models_cache.json) and the ones Claude Code
 // lists (~/.claude/cache/model-catalog/*.json), both refreshed by the tools themselves, each with the efforts it
 // supports; an effort a model does not have falls back to that model's own default. A model's provider says which
-// tool runs it. With a Claude API key on the NAS (api-key.js) Claude's models are offered a second time, as
-// "api:<model>": the same model asked over the API (anthropic-api.js) and paid from the Console organization's credit
-// instead of the subscription.
+// tool runs it. (Claude's models are asked over the Claude API first when there is a key for it, Claude Code after
+// that: ask.js decides, the list is the same.)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -34,12 +33,10 @@ const CLAUDE_KNOWN = [
   { slug: 'claude-sonnet-5-5', name: 'Sonnet 5.5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium' },
   { slug: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', efforts: [], defaultEffort: '' },
 ];
-const API = 'api:';
 const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 
-// codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model;
-// hasApi(): is there a Claude API key
-function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', hasApi = () => false }) {
+// codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model
+function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna' }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -74,17 +71,15 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     } catch {}
     return CLAUDE_KNOWN.map((m) => ({ ...m, note: '', provider: 'claude' }));
   }
-  // Claude's models over the API: the same list (the API takes the same names), told apart by "api:" in front
-  const apiModels = () => (hasApi() ? claudeModels().map((m) => ({ ...m, slug: API + m.slug, name: m.name + '（API）', provider: 'api' })).filter((m) => SLUG.test(m.slug)) : []);
-  // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude' | 'api' }] -- what the accounts can use
-  const models = () => [...codexModels(), ...claudeModels(), ...apiModels()];
+  // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude' }] -- what the accounts can use
+  const models = () => [...codexModels(), ...claudeModels()];
 
   // a model + effort as it will run: the effort only when that model has it; who runs it
   function resolve(model, effort, list = models()) {
     const m = list.find((x) => x.slug === model);
     if (effort && m && m.efforts.length && !m.efforts.includes(effort)) effort = '';      // (not one this model has)
     if (m && !m.efforts.length) effort = '';                                               // (one that does not think)
-    return { model, effort, provider: m ? m.provider : model.startsWith(API) ? 'api' : isClaude(model) ? 'claude' : 'codex' };
+    return { model, effort, provider: m ? m.provider : isClaude(model) ? 'claude' : 'codex' };
   }
   // what a job runs with: { model, effort ('' = the model's default), provider, backup: { model, effort, provider } | null }
   function pick(task) {
@@ -113,4 +108,4 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
   return { pick, set, view, models, TASKS };
 }
 
-module.exports = { createAiSettings, TASKS, API };
+module.exports = { createAiSettings, TASKS };

@@ -1,6 +1,8 @@
 // The one way every AI job asks a model (日报、周报、问一问、邮件、文献): the job's model (settings.js pick) decides
-// who runs it -- Codex for OpenAI's models, Claude Code for Claude's, the Claude API for the "api:" ones (paid from
-// the Console organization's credit: anthropic-api.js) -- each through whichever proxy reaches its own host. When it fails (out of usage, an error, no proxy gets through, a timeout) the backup model (后备模型) does the
+// who runs it -- Codex for OpenAI's models, Claude Code for Claude's -- each through whichever proxy reaches its own
+// host. A Claude model is asked over the Claude API first when there is a key for it (anthropic-api.js: paid from the
+// Console organization's monthly credit), and through Claude Code -- the subscription's usage -- when the API fails or
+// the credit is used up; the API then rests 15 minutes too. When it fails (out of usage, an error, no proxy gets through, a timeout) the backup model (后备模型) does the
 // job instead, and the one that failed rests for 15 minutes: the next calls in that time go to the other first (a day
 // report asks several times; each would otherwise wait for the same failure). Both failing: the job fails.
 'use strict';
@@ -8,21 +10,28 @@ const path = require('path');
 const { runCodex } = require('../summary/codex');
 const { runClaude } = require('../summary/claude');
 const { runApi } = require('./anthropic-api');
-const { API } = require('./settings');
 
 const REST_MS = 15 * 60e3;
-const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com', api: 'api.anthropic.com' };
-const WHO = { codex: 'OpenAI', claude: 'Anthropic', api: 'Anthropic' };
+const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com' };
+const WHO = { codex: 'OpenAI', claude: 'Anthropic' };
 
 // codex / claude: { bin, pathPrefix, timeoutMs }; api: { key(), base, timeoutMs };
 // pick(task) -> { model, effort, provider, backup: { ... } | null }
 function createAsk({ codex, claude, api = null, egress = null, pick, log = () => {}, now = Date.now }) {
   const down = new Map();                     // model -> { at, error, task }
+  let apiDown = null;                         // the Claude API as last failed: { at, error, task }
 
-  async function once(use, prompt, schema, images) {
-    if (use.provider === 'api') {
-      try { return await runApi({ key: api ? api.key() : '', model: use.model.slice(API.length), effort: use.effort, prompt, schema, images, egress, base: api && api.base, timeoutMs: (api && api.timeoutMs) || codex.timeoutMs }); }
-      catch (e) { if (egress) egress.forget(HOST.api); throw e; }
+  async function once(use, prompt, schema, images, task) {
+    if (use.provider === 'claude' && api && api.key() && !(apiDown && now() - apiDown.at < REST_MS)) {
+      try {
+        const v = await runApi({ key: api.key(), model: use.model, effort: use.effort, prompt, schema, images, egress, base: api.base, timeoutMs: api.timeoutMs || codex.timeoutMs });
+        apiDown = null;
+        return v;
+      } catch (e) {
+        apiDown = { at: now(), error: String(e.message).slice(0, 300), task };
+        if (egress) egress.forget(HOST.claude);
+        log(`AI：${task} 走 Claude API 出错（${String(e.message).slice(0, 200)}），改用 Claude Code（订阅用量）`);
+      }
     }
     const cli = use.provider === 'claude' ? claude : codex;
     let env = { ...process.env };
@@ -51,7 +60,7 @@ function createAsk({ codex, claude, api = null, egress = null, pick, log = () =>
     for (let i = 0; i < order.length; i++) {
       const u = order[i];
       try {
-        const v = await once(u, prompt, schema, images);
+        const v = await once(u, prompt, schema, images, task);
         down.delete(u.model);
         return v;
       } catch (e) {
@@ -67,7 +76,10 @@ function createAsk({ codex, claude, api = null, egress = null, pick, log = () =>
   // the models that failed within the last 15 minutes (控制面板 → AI 模型 shows them)
   const state = () => [...down].filter(([, d]) => now() - d.at < REST_MS).map(([model, d]) => ({ model, ...d, until: d.at + REST_MS }));
 
-  return { ask, state };
+  // the Claude API when it failed within the last 15 minutes (Claude's models go through Claude Code meanwhile)
+  const apiState = () => (apiDown && now() - apiDown.at < REST_MS ? { ...apiDown, until: apiDown.at + REST_MS } : null);
+
+  return { ask, state, apiState };
 }
 
 module.exports = { createAsk, REST_MS };
