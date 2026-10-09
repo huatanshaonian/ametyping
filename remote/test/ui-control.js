@@ -88,9 +88,11 @@ function login() {
     await sleep(800);
     const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
     chk('AI 模型: default + backup rows and the ten jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 12 &&
-      ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude（Claude Code）|OpenAI（Codex）' &&
+      ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude（Claude Code，用订阅用量）|OpenAI（Codex）' &&
       /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
+    const api = await evalJs("(() => { const b = document.querySelector('.aim-cli[data-tool=api]'); return { text: b.textContent, field: b.querySelector('input.aim-key').type, btns: [...b.querySelectorAll('button')].map(x => x.textContent).join() }; })()");
+    chk('AI 模型: the Claude API -- no key yet: a field for one (not shown as typed), how to get the credit; no API models offered', /还没填/.test(api.text) && /API 赠金/.test(api.text) && api.field === 'password' && api.btns === '保存' && !/api:/.test(ai.models), api);
     await evalJs("(() => { const row = [...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')); const [m] = row.querySelectorAll('select'); m.value = 'gpt-6-astra'; m.dispatchEvent(new Event('change')); })()"); await sleep(300);
     const efforts = await evalJs("[...[...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')).querySelectorAll('select')[1].options].map(o => o.value).join()");
     await evalJs("(() => { const row = [...document.querySelectorAll('.aim-row')].find(r => r.textContent.includes('问一问')); const e = row.querySelectorAll('select')[1]; e.value = 'xhigh'; e.dispatchEvent(new Event('change')); })()");

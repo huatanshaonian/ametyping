@@ -51,3 +51,4 @@
 .nt .nt-dev .btn { padding: 1px 10px; }
 .nt .nt-empty, .nt .nt-foot { color: var(--muted); font-size: 12px; }
 .nt .nt-foot { margin-top: 12px; line-height: 1.6; }
+.aim-key { flex: 1 1 180px; min-width: 0; max-width: 340px; }

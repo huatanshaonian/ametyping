@@ -1,22 +1,25 @@
 // AI 模型 (in 控制面板): which model each AI job uses and how hard it thinks (remote/server/ai) -- one default for all,
 // any job set on its own (empty = the default), and a backup model (后备模型) that finishes the job when the chosen one
 // fails or is out of usage. The models are the ones Codex and Claude Code list for their accounts, each offering only
-// the efforts it has. A model that failed lately is shown (it rests 15 minutes). Below, the two tools (ai-cli.js).
+// the efforts it has -- and, once a Claude API key is on the NAS (ai-api.js), Claude's models a second time, asked over
+// the API and paid from its credit. A model that failed lately is shown (it rests 15 minutes). Below, the Claude API's
+// key and the two tools (ai-cli.js).
 import { h } from '../util.js';
 import * as net from '../net.js';
 import { cliBox, when } from './ai-cli.js';
+import { apiBox } from './ai-api.js';
 
 const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
-const GROUP = { claude: 'Claude（Claude Code）', codex: 'OpenAI（Codex）' };
+const GROUP = { api: 'Claude（API，用 API 赠金）', claude: 'Claude（Claude Code，用订阅用量）', codex: 'OpenAI（Codex）' };
 
 export function panel() {
   const root = h('div', { class: 'aim' });
   const msg = h('p', { class: 'gnote' });
   const down = h('div', { class: 'aim-down' });
   const table = h('div', { class: 'aim-table' });
-  const boxes = [cliBox('claude'), cliBox('codex')];
-  root.append(msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖上的 Claude Code 或 Codex 调用模型完成（选 Claude 模型就用 Claude Code）。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
-    down, table, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
+  const boxes = [cliBox('claude'), cliBox('codex'), apiBox(() => load())];
+  root.append(msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：Claude Code 和 Codex 用的是订阅的用量；填了 Claude API 的 key 后，还可以选带「（API）」的模型，走 API、用 API 赠金。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
+    down, table, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
   let view = null, dirty = false;
   const nameOf = (slug) => (view.models.find((m) => m.slug === slug) || {}).name || slug;
 

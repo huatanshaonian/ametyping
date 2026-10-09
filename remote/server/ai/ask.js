@@ -1,22 +1,29 @@
 // The one way every AI job asks a model (日报、周报、问一问、邮件、文献): the job's model (settings.js pick) decides
-// who runs it -- Codex for OpenAI's models, Claude Code for Claude's -- each through whichever proxy reaches its own
-// host. When it fails (out of usage, an error, no proxy gets through, a timeout) the backup model (后备模型) does the
+// who runs it -- Codex for OpenAI's models, Claude Code for Claude's, the Claude API for the "api:" ones (paid from
+// the Console organization's credit: anthropic-api.js) -- each through whichever proxy reaches its own host. When it fails (out of usage, an error, no proxy gets through, a timeout) the backup model (后备模型) does the
 // job instead, and the one that failed rests for 15 minutes: the next calls in that time go to the other first (a day
 // report asks several times; each would otherwise wait for the same failure). Both failing: the job fails.
 'use strict';
 const path = require('path');
 const { runCodex } = require('../summary/codex');
 const { runClaude } = require('../summary/claude');
+const { runApi } = require('./anthropic-api');
+const { API } = require('./settings');
 
 const REST_MS = 15 * 60e3;
-const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com' };
-const WHO = { codex: 'OpenAI', claude: 'Anthropic' };
+const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com', api: 'api.anthropic.com' };
+const WHO = { codex: 'OpenAI', claude: 'Anthropic', api: 'Anthropic' };
 
-// codex / claude: { bin, pathPrefix, timeoutMs }; pick(task) -> { model, effort, provider, backup: { ... } | null }
-function createAsk({ codex, claude, egress = null, pick, log = () => {}, now = Date.now }) {
+// codex / claude: { bin, pathPrefix, timeoutMs }; api: { key(), base, timeoutMs };
+// pick(task) -> { model, effort, provider, backup: { ... } | null }
+function createAsk({ codex, claude, api = null, egress = null, pick, log = () => {}, now = Date.now }) {
   const down = new Map();                     // model -> { at, error, task }
 
   async function once(use, prompt, schema, images) {
+    if (use.provider === 'api') {
+      try { return await runApi({ key: api ? api.key() : '', model: use.model.slice(API.length), effort: use.effort, prompt, schema, images, egress, base: api && api.base, timeoutMs: (api && api.timeoutMs) || codex.timeoutMs }); }
+      catch (e) { if (egress) egress.forget(HOST.api); throw e; }
+    }
     const cli = use.provider === 'claude' ? claude : codex;
     let env = { ...process.env };
     if (egress) {

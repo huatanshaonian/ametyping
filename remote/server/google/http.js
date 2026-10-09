@@ -57,4 +57,4 @@ async function request(url, opts = {}, egress = null) {
   });
 }
 
-module.exports = { request };
+module.exports = { request, tunnel };

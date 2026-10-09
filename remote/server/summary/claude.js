@@ -56,4 +56,4 @@ function runClaude({ bin, model, effort = '', prompt, schema, env, timeoutMs = 2
   });
 }
 
-module.exports = { runClaude };
+module.exports = { runClaude, SYSTEM };
