@@ -6,7 +6,8 @@
 // The models offered are the ones Codex lists for the account (~/.codex/models_cache.json) and the ones Claude Code
 // lists (~/.claude/cache/model-catalog/*.json), both refreshed by the tools themselves, each with the efforts it
 // supports; an effort a model does not have falls back to that model's own default. A model's provider says which
-// tool runs it.
+// tool runs it. (Claude's models are asked over the Claude API first when there is a key for it, Claude Code after
+// that: ask.js decides, the list is the same.)
 'use strict';
 const fs = require('fs');
 const path = require('path');
