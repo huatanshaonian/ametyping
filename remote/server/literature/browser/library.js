@@ -83,8 +83,10 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
           finish({ buf: Buffer.concat(parts), url: p.request.url });
         } catch (e) { finish({ err: e.message }); }
       });
+      // (the answer to Page.navigate only comes when the PDF is through -- minutes for a large one on a slow line --
+      // so it is not waited for: what happens is seen in the paused requests)
       c.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Response' }] }, sid)
-        .then(() => c.send('Page.navigate', { url, referrer }, sid)).catch((e) => finish({ err: e.message }));
+        .then(() => { c.send('Page.navigate', { url, referrer }, sid, pdfMs).catch(() => {}); }, (e) => finish({ err: e.message }));
     });
   }
 
@@ -110,7 +112,9 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const check = () => { keep = site.id; return stop(`${at.site.name} 要先做一次人机验证：到网页桌面的浏览器里点一下`, { need: 'verify', ...at, page: v.url }); };
       if (v.challenge) throw check();
 
-      // IEEE: not recognised as the institution -> through the institution's sign-in, once
+      // IEEE: not recognised as the institution -> through the institution's sign-in, once (its page writes who the
+      // access is from a little after it has loaded: looked at a few more times first)
+      for (let i = 0; site.signin && v.access === false && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
       if (site.signin && v.access === false && account() && idp()) {
         const page = v.url;
         log(`文献：${site.name} 没有登录，走机构登录（${account()}）`);
