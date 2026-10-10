@@ -90,7 +90,12 @@ function createFakeBrowser({ pdf }) {
         case 'Fetch.disable': tab.fetch = false; return reply({});
         case 'Page.navigate': {
           reply({ frameId: 'main' });
-          if (!tab.fetch) return go(tab, p.url);
+          if (!tab.fetch) {
+            go(tab, p.url);
+            // (a sign-in passes a page of the institution's, also when it comes straight back)
+            if (p.url.includes('wayf.jsp') || p.url.includes('Shibboleth.sso')) emit(d.sessionId, 'Page.frameNavigated', { frame: { id: 'main', url: 'https://passport.test/idp/sso' } });
+            return emit(d.sessionId, 'Page.frameNavigated', { frame: { id: 'main', url: tab.url } });
+          }
           B.log.push(p.url);
           const a = pdfAnswer(tab, p.url);
           const paused = (frameId, type) => emit(d.sessionId, 'Fetch.requestPaused', { requestId: 'R' + Math.random(), frameId, request: { url: p.url }, responseStatusCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }] });
@@ -114,7 +119,7 @@ function createFakeBrowser({ pdf }) {
           }
           if (tab.login && p.type === 'mouseReleased' && p.x === BUTTON_AT.x + LOGIN_OFF.x && p.y === BUTTON_AT.y + LOGIN_OFF.y) {
             B.logins++;
-            if (B.typed === B.saved) { B[tab.sp || 'signedIn'] = true; B.idpSession = true; tab.login = false; tab.url = tab.target; }
+            if (B.typed === B.saved) { B[tab.sp || 'signedIn'] = true; B.idpSession = true; tab.login = false; tab.url = tab.target; emit(d.sessionId, 'Page.frameNavigated', { frame: { id: 'main', url: tab.url } }); }
           }
           return reply({});
         case 'Runtime.evaluate': {

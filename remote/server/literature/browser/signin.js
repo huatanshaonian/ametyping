@@ -41,7 +41,15 @@ const CONSENT_WHY = '机构那边要你先同意把身份信息交给这家出�
 //   asked: the login page showed (false: the institution's session was still good)
 async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sleep }) {
   const hostNow = () => c.evaluate(sid, 'location.host').catch(() => '');
-  const back = (h) => h === home || h.endsWith('.' + home);
+  // The address that starts the sign-in is the publisher's own, and so is the page the tab was on (which may still be
+  // loading): "on the publisher's site" says nothing by itself. Back means: the tab has loaded a page of the
+  // institution's -- it always does, also when its session is still good -- and after that one of the publisher's.
+  // (Seen on AIP: taken as back after 3 s on the old page, the sign-in, which takes 11 s, was cut short by the next
+  // step.) The pages the tab loads are followed; c is closed by the caller.
+  let came = '', away = false;
+  const atHome = (url) => { try { const u = new URL(url); return u.host === home || u.host.endsWith('.' + home); } catch { return true; } };
+  c.on((d) => { if (d.sessionId === sid && d.method === 'Page.frameNavigated' && !d.params.frame.parentId) { came = d.params.frame.url; if (!atHome(came)) away = true; } });
+  const back = () => away && atHome(came);
   const consent = () => c.evaluate(sid, CONSENT).catch(() => false);
   await c.send('Page.navigate', { url }, sid);
 
@@ -69,7 +77,7 @@ async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sle
   for (const until = Date.now() + waitMs; Date.now() < until;) {
     await sleepFn(1500);
     const h = await hostNow();
-    if (back(h)) return { ok: true, asked: false };
+    if (back()) return { ok: true, asked: false };
     if (h && await consent()) return { ok: false, why: CONSENT_WHY };
     // (the form is there before it is ready: its button reads 检查中… for a moment, and only then 登录)
     if (h) { found = await findForm(); if (found && found.form.user && found.form.button) break; }
@@ -95,7 +103,7 @@ async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sle
   await click(form.button);
   for (const until = Date.now() + waitMs; Date.now() < until;) {
     await sleepFn(1500);
-    if (back(await hostNow())) return { ok: true, asked: true };
+    if (back()) return { ok: true, asked: true };
     if (await consent()) return { ok: false, why: CONSENT_WHY };
   }
   return { ok: false, why: '点了登录但没有回到出版商的网站（密码变了，或者登录页要验证）' };
