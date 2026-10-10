@@ -5,6 +5,8 @@ const fs = require('fs');
 
 // the interactive Claude Code process: the native binary ("claude", or its version-named copy) or an npm install
 const CLAUDE_COMM = /^(claude|node|bun|\d+\.\d+\.\d+)$/;
+// Codex CLI's own program (an npm install starts it from a node shim: the hook's parent is the program itself)
+const CODEX_COMM = /^codex/;
 
 function comm(pid) {
   try { return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { return null; }
@@ -25,15 +27,17 @@ function environ(pid) {
   return out;
 }
 
-// walk up from the hook's parent to the Claude process; the hook may run through a shell first
-function findClaude(pid) {
+// walk up from the hook's parent to the session's process (Claude Code, or Codex); the hook may run through a shell first
+function find(pid, re) {
   for (let p = +pid, n = 0; p > 1 && n < 8; p = ppid(p), n++) {
     const c = comm(p);
     if (c == null) return null;
-    if (CLAUDE_COMM.test(c)) return { pid: p, comm: c, parent: ppid(p) };
+    if (re.test(c)) return { pid: p, comm: c, parent: ppid(p) };
   }
   return null;
 }
+const findClaude = (pid) => find(pid, CLAUDE_COMM);
+const findCodex = (pid) => find(pid, CODEX_COMM);
 
 // tmux exports TMUX="<socket>,<server pid>,<session>" and TMUX_PANE="%N" to everything started in a pane
 function tmuxPaneOf(pid) {
@@ -48,4 +52,4 @@ function alive(pid, expectComm) {
   return c != null && (!expectComm || c === expectComm);
 }
 
-module.exports = { findClaude, tmuxPaneOf, alive, comm, environ };
+module.exports = { findClaude, findCodex, tmuxPaneOf, alive, comm, ppid, environ };

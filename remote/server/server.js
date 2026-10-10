@@ -354,10 +354,10 @@ function onBrowserAction(c, d) {
   let out;
   if (d.t === 'resume') {
     // a conversation that is over, opened again on its machine: a terminal in the folder it ran in, `claude --resume`
+    // or, a Codex thread ("codex:<id>"), `codex resume`
     // (the agent finds the folder in the conversation's own transcript there; nothing about it comes from the page)
     const id = typeof d.id === 'string' ? d.id : '';
-    if (id.startsWith('codex:')) return reply(false, 'Codex 的会话请在 Codex 里继续');
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
+    if (!/^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
     if (s && s.via === 'terminal') return reply(false, '这个会话还开着，直接在这里回复就行');
     if (!s && !(store.sessions()[m.name] || []).some((e) => e.id === id)) return reply(false, '这台电脑没有这个会话');
     out = { t: 'resume', id };

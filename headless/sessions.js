@@ -65,7 +65,6 @@ function createSessions() {
 
   // how a reply from the dashboard reaches this session (same values as the pet: the server knows them)
   function via(s) {
-    if (s.provider === 'codex') return 'codex';
     if (s.state === 'ended') return 'resume';
     if (s.headless) return 'busy';
     if (s.claudePid && s.target) return 'terminal';

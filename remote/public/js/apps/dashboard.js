@@ -164,7 +164,7 @@ function mount(current) {
         title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${s.id.startsWith('codex:') ? 'Codex' : '到自动压缩前'}）` }));
     }
     resume.hidden = !(s && s.resume);
-    reopen.hidden = !(s && s.online && s.via !== 'terminal' && !String(s.id).startsWith('codex:'));
+    reopen.hidden = !(s && s.online && s.via !== 'terminal');
     if (s && s.resume && rcmd.textContent !== s.resume) rcmd.textContent = s.resume;
   }
   async function copyResume() {

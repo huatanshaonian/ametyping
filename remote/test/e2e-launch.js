@@ -11,6 +11,16 @@ const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 // a past conversation of this machine, in a folder that is not one of the browsable roots (「在电脑上继续」 needs none)
 const RID = 'abcdef01-1111-2222-3333-444444444444', WORK = path.join(T, 'work'); fs.mkdirSync(WORK);
 fs.mkdirSync(path.join(HOME, '.claude', 'projects', '-work'), { recursive: true });
+// a Codex thread of this machine, in a folder of its own
+const CID = '01a0aaaa-0000-7000-8000-00000000c0de', CWORK = path.join(T, 'cwork'); fs.mkdirSync(CWORK);
+{
+  const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+  const day = path.join(HOME, '.codex', 'sessions', String(d.getFullYear()), p2(d.getMonth() + 1), p2(d.getDate()));
+  fs.mkdirSync(day, { recursive: true });
+  const L = (o) => JSON.stringify({ timestamp: new Date().toISOString(), ...o }) + '\n';
+  fs.writeFileSync(path.join(day, `rollout-x-${CID}.jsonl`), L({ type: 'session_meta', payload: { id: CID, cwd: CWORK } }) +
+    L({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '看看这个目录' }] } }));
+}
 // (as a session copied from another really looks: it begins with a few hundred kilobytes of lines that carry no
 // folder -- file-history snapshots -- then starts in one folder and later moves to another; it is opened again where
 // it was last)
@@ -93,7 +103,12 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     const q2 = await act2({ t: 'resume', machine: 'box', id: 'abcdef01-9999-2222-3333-444444444444' });
     ok(`a conversation this machine does not have: refused (${q2.msg})`, q2.ok === false && launches.length === n0 + 1, JSON.stringify(q2));
     const q3 = await act2({ t: 'resume', machine: 'box', id: 'codex:abc' }), q4 = await act2({ t: 'resume', machine: 'box', id: RID + ' --dangerously-skip-permissions' }), q5 = await act2({ t: 'resume', machine: 'box' });
-    ok('a Codex session, an id with anything else in it, no id: refused', !q3.ok && /Codex/.test(q3.msg) && !q4.ok && !q5.ok && launches.length === n0 + 1, JSON.stringify([q3, q4, q5]));
+    ok('an id that is none, an id with anything else in it, no id: refused', !q3.ok && !q4.ok && !q5.ok && launches.length === n0 + 1, JSON.stringify([q3, q4, q5]));
+    // a Codex thread: the same, with its id as the dashboard names it and the folder its rollout says
+    const q6 = await act2({ t: 'resume', machine: 'box', id: 'codex:' + CID }), gotC = launches[launches.length - 1] || {};
+    ok('在电脑上继续, a Codex thread: forwarded with "codex:<id>" and its folder', q6.ok === true && launches.length === n0 + 2 && gotC.resume === 'codex:' + CID && fs.realpathSync(gotC.cwd) === fs.realpathSync(CWORK), JSON.stringify([q6, gotC]));
+    const q7 = await act2({ t: 'resume', machine: 'box', id: 'codex:01a0aaaa-0000-7000-8000-00000000ffff' });
+    ok('a Codex thread this machine does not have: refused', q7.ok === false && launches.length === n0 + 2, JSON.stringify(q7));
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
     ok('written to the audit log', new RegExp('control-resume .* box ' + RID).test(audit));
     ok('launch written to the audit log', /control-launch .* box /.test(audit));

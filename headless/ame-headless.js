@@ -6,6 +6,7 @@
 //   POST /permission     a permission prompt, held open until answered from the dashboard (permission-hook.js)
 //   /control/state|send|key|decide|launch   for the agent; token in ~/.ametyping/control-token-<port>, requests with Origin refused
 // Replies are typed into the session's tmux pane; a session whose process is gone is resumed with `claude -p --resume`.
+// Codex CLI sessions (../codex-hook.js) the same way: their pane, or `codex exec resume`.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -29,12 +30,12 @@ const permissions = createPermissions(() => {});
 
 // ---- where does a session live: its Claude process and tmux pane (looked up from the hook's parent pid) ----
 function locate(s, pid) {
-  if (!s || s.provider === 'codex' || !pid || s.fromPid === pid) return;
-  const c = proc.findClaude(pid);
+  if (!s || !pid || s.fromPid === pid) return;
+  const c = s.provider === 'codex' ? proc.findCodex(pid) : proc.findClaude(pid);
   if (!c) return;
   s.fromPid = pid;
   s.claudePid = c.pid; s.claudeComm = c.comm;
-  s.headless = c.parent === process.pid;                             // a `claude -p --resume` we started ourselves
+  s.headless = c.parent === process.pid;                             // a `claude -p --resume` / `codex exec resume` we started ourselves
   s.target = s.headless ? null : proc.tmuxPaneOf(c.pid);
   // the environment the session was started with (proxy, API settings...): a background resume reuses it
   if (!s.headless) {
@@ -55,10 +56,9 @@ function asking(s) {
 async function chatSend(id, text) {
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
-  if (s.provider === 'codex') return { ok: false, msg: '请在 Codex 中继续对话；这里可以查看进度和处理权限' };
   if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
   if (s.claudePid && proc.alive(s.claudePid, s.claudeComm)) {
-    if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 claude 就可以）' };
+    if (!s.target) return { ok: false, msg: `这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 ${s.provider === 'codex' ? 'codex' : 'claude'} 就可以）` };
     if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
     const r = await tmux.send(s.target, text);
     return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
@@ -66,10 +66,11 @@ async function chatSend(id, text) {
   if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
   const r = resume(s.rawSession || s.id, s.cwd, s.env, text, () => {
     Object.assign(s, { headless: false, claudePid: null, claudeComm: null, fromPid: null, target: null, state: 'ended', last: Date.now() });
-  });
+  }, s.provider === 'codex');
   if (!r.ok) return r;
   Object.assign(s, { headless: true, state: 'message', last: Date.now() });
-  return { ok: true, msg: '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
+  return { ok: true, msg: s.provider === 'codex' ? '这个会话已经关了，在后台用 codex exec resume 续上（不会再问你确认：按 Codex 自己的沙箱设置来）'
+    : '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
 }
 
 // one navigation key into the session's tmux pane (menus and prompts are what it is for)
