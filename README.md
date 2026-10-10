@@ -14,7 +14,7 @@ A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん
 - **跟着你打字**：全局键盘钩子，按键映射到 GravaStar 75% 配列上的对应键；双手按指法分区，组合键会一只手按住修饰键。
 - **表情与小动作**：打字速度、退格、回车、空闲都会改变表情；空闲时眼睛跟着鼠标，偶尔打哈欠、喝茶，久了会睡着。点她一下会脸红，**双击打开 Windose 网页**。
 - **v0.2 新增（来自上游）**：完整跪坐身体（键盘放在腿上）、前发单独摆动、摸头（鼠标在头顶来回划）、深夜犯困 / 久别招手 / 连续工作 90 分钟劝休息（托盘可关）、敲 `kangel` 变身超天酱（托盘可常驻）、面板可折叠成 P 酱（点 P 酱展开）。托盘「调试信息」会显示当前表情和触发原因。
-- **窗口**：透明区域逐像素鼠标穿透；拖动本体移动，拖右下角缩放；托盘菜单：大小、朝向、键帽主题、面板模式、提示音、允许远程控制、休息提醒、天使模式、鼠标穿透、触屏模式、开机自启。触屏设备请勾「触屏模式」：逐像素穿透靠鼠标悬停来判断，手指没有悬停，第一下会点穿；勾上后整块窗口都接收点按（她周围的透明处不再穿透），手指可以直接拖动、缩放、点 P 酱。
+- **窗口**：透明区域逐像素鼠标穿透；拖动本体移动，拖右下角缩放；托盘菜单：大小、朝向、键帽主题、面板模式、提示音、允许远程控制、休息提醒、天使模式、鼠标穿透、触屏模式、开机自启。触屏设备请勾「触屏模式」：逐像素穿透靠鼠标悬停来判断，手指没有悬停，第一下会点穿；勾上后窗口按她的轮廓接收点按（轮廓外照样穿透），手指可以直接拖动、缩放、点 P 酱。
 - **隐私**：键盘钩子只读取键码（哪个物理键），不记录、不上传输入的文字；面板只监听本机 `127.0.0.1:3940`。
 
 ### Claude Code / Codex 面板
@@ -96,7 +96,7 @@ Linux 无头服务（[`headless/`](headless)）提供和糖糖相同的本机接
 cd app && npm install && npm start            # 糖糖开发运行
 npm run dist                                  # 打包到 ../dist/AmeTyping-win32-x64
 cd remote && npm ci && npm run agent          # agent（需要 agent.json）
-node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js   # 单元测试
+node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
 ```
 
 国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。

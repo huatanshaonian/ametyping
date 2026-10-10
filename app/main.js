@@ -76,15 +76,23 @@ function createWindow() {
 // The window ignores the mouse by default (clicks fall through transparent areas); the renderer
 // switches it on only while the cursor is over an opaque pixel. "鼠标穿透" keeps it off entirely.
 // That needs a cursor that arrives before the click: a finger does not hover, so its first tap falls through (and
-// the next one on an empty spot is swallowed). "触屏模式": the whole window takes input all the time, and the
-// renderer looks at the pixel under each press itself -- nothing falls through its transparent parts any more.
+// the next one on an empty spot is swallowed). "触屏模式": the window takes input all the time, and is given her
+// outline as its shape (the renderer reads it off what it draws: outline.js) -- outside it Windows itself lets a
+// press through to what is underneath, whatever it comes from.
 const touchOn = () => !!settings.touchMode && !settings.clickThrough;
 function applyClickThrough() {
   if (!win) return;
-  if (touchOn()) win.setIgnoreMouseEvents(false); else win.setIgnoreMouseEvents(true, { forward: true });
+  if (touchOn()) win.setIgnoreMouseEvents(false);
+  else { win.setShape([]); win.setIgnoreMouseEvents(true, { forward: true }); }
 }
 ipcMain.on('hit', (_e, v) => {
   if (win && !settings.clickThrough && !touchOn()) win.setIgnoreMouseEvents(!v, { forward: true });
+});
+// rects: [[x, y, w, h], ...] in the window's own coordinates; none = the whole window
+ipcMain.on('shape', (e, rects) => {
+  if (!win || e.sender !== win.webContents) return;
+  const ok = touchOn() && Array.isArray(rects) && rects.length <= 800 && rects.every((r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite));
+  win.setShape(ok ? rects.map(([x, y, width, height]) => ({ x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) })) : []);
 });
 
 // keep the whole window inside the work area of the display it is on
@@ -125,7 +133,7 @@ function buildMenu() {
       click: (m) => { settings.mailBubble = m.checked; save(); if (!m.checked) mailNotice.hide(); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
-    { label: '触屏模式（手指能直接拖她、点她；她周围的透明处不再穿透）', type: 'checkbox', checked: !!settings.touchMode,
+    { label: '触屏模式（手指能直接拖她、点她）', type: 'checkbox', checked: !!settings.touchMode,
       click: (m) => { settings.touchMode = m.checked; save(); applyClickThrough(); win.webContents.send('config', cfg()); } },
     { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
       click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
