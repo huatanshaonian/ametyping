@@ -11,6 +11,7 @@
 import { h } from '../util.js';
 import { get, post } from './lit-api.js';
 import { confirmBox } from '../dialog.js';
+import { yieldBox } from './lit-yield.js';
 
 const lines = (ta) => ta.value.split('\n').map((s) => s.trim()).filter(Boolean);
 const COVER = { 充足: 'ok', 一般: '', 较少: 'thin' };
@@ -22,10 +23,12 @@ export function mount(el, ctx) {
   const saveBtn = h('button', { class: 'btn go', type: 'button', text: '保存并确认' });
   const body = h('div', { class: 'lp' });
   const sv = h('div', { class: 'lf-tip lp-sv', hidden: true });        // 调研工作: the questions' new papers into Zotero
-  el.append(h('div', { class: 'lit-sub' }, saveBtn, st), sv, body);
+  const yields = yieldBox();                                           // 各来源的收获: which way of finding is worth keeping
+  el.append(h('div', { class: 'lit-sub' }, saveBtn, st), sv, yields.el, body);
   let p = null, qs = [], sugs = [], topics = [], running = false, what = '', F = {};
 
   async function refresh() {
+    yields.refresh();
     const r = await get('/api/lit/profile');
     p = r && r.profile; const s = (r && r.state) || {};
     running = !!s.running;

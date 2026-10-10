@@ -1,4 +1,4 @@
-// 文献 › 今日: the queue of the library access (server/literature/pdfqueue.js) -- the PDFs no open-access copy was
+// 文献 › 文献库: the queue of the library access (server/literature/pdfqueue.js) -- the PDFs no open-access copy was
 // found for, fetched through the browser signed in to the user's institution. Shown only when there is something to
 // say: what a site waits for from the user (a check that asks for a person, a sign-in) with 继续 once they did it,
 // how many wait, the ones it could not get (重试). 补齐 puts every paper of 每日文献 and 调研工作 without a PDF in.
@@ -9,7 +9,7 @@ const NEED = { verify: '要你点一下人机验证', signin: '要你登录一�
 const hm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 export function pdfqBox(ctx) {
-  const el = h('div', { class: 'lf-sec lpq', hidden: true });
+  const el = h('div', { class: 'lpq', hidden: true });
   let open = false;
 
   async function refresh() {

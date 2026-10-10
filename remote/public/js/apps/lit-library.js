@@ -6,6 +6,7 @@ import { openUrl } from './viewer.js';
 import { get, post, authors, STATUS } from './lit-api.js';
 import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
+import { pdfqBox } from './lit-pdfq.js';
 import * as backnav from '../backnav.js';
 
 export function mount(el, ctx) {
@@ -19,7 +20,8 @@ export function mount(el, ctx) {
   const listEl = h('div', { class: 'lb-list' });
   const view = h('div', { class: 'lb-view' }, h('p', { class: 'lit-empty', text: '点左边的一篇看详情。' }));
   el.classList.add('lb');
-  el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), h('div', { class: 'lb-main' }, listEl, view));
+  const pdfq = pdfqBox(ctx);                                                    // 图书馆通道: PDFs on their way, what waits for the user
+  el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), pdfq.el, h('div', { class: 'lb-main' }, listEl, view));
   let items = [], cur = null, cols = [], qT = null, vbox = null;
 
   async function loadCols() {
@@ -111,6 +113,6 @@ export function mount(el, ctx) {
   colSel.addEventListener('change', loadList); filt.addEventListener('change', loadList);
   q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(loadList, 250); });
   let first = true;
-  async function refresh() { if (first) { first = false; await loadCols(); } await loadList(); }
-  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
+  async function refresh() { pdfq.refresh(); if (first) { first = false; await loadCols(); } await loadList(); }
+  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (w === 'pdfq') pdfq.refresh(); if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
 }

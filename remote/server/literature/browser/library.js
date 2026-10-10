@@ -62,7 +62,7 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
     return null;
   }
   // signed out: its website is opened, which signs the extension in again while the site itself still is. -> true | false
-  async function revive(c, sid) {
+  async function revive(c, sid, own) {
     if (!access.home) return false;
     c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
     for (const until = Date.now() + reviveMs; Date.now() < until;) {
@@ -70,7 +70,14 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const at = await c.evaluate(sid, 'location.href').catch(() => '');
       if (access.login && at.includes(access.login)) return false;         // the site wants a login too: the user's
       if (at.startsWith(access.home) && (await sleep(settleMs), true)) {
-        if (await extensionOn(c, sid)) return true;
+        if (await extensionOn(c, sid)) {
+          // a tab left on its website renews the same login beside the extension, and the next renewal of the
+          // extension is then refused (seen: signed out every 12 minutes with such a tab open, not without): closed
+          const tabs = ((await c.send('Target.getTargets').catch(() => ({}))).targetInfos || []).filter((t) => t.type === 'page' && t.targetId !== own && String(t.url).startsWith(access.home));
+          for (const t of tabs) await c.send('Target.closeTarget', { targetId: t.targetId }).catch(() => {});
+          if (tabs.length) log(`文献：关掉了 ${tabs.length} 个开着的 ${access.name} 网站标签（它们会让扩展续不上登录）`);
+          return true;
+        }
         c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
       }
     }
@@ -135,7 +142,7 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const mainFrame = (await c.send('Page.getFrameTree', {}, sid)).frameTree.frame.id;
       if (byDoi(p.doi).ext && (await extensionOn(c, sid)) === false) {
         log(`文献：${access.name} 掉线了，打开它的网站让它重新连上`);
-        if (await revive(c, sid)) log(`文献：${access.name} 重新连上了`);
+        if (await revive(c, sid, targetId)) log(`文献：${access.name} 重新连上了`);
         else throw stop(`${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: byDoi(p.doi).id, name: byDoi(p.doi).name } });
       }
       await c.send('Page.navigate', { url: start }, sid);
