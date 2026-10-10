@@ -1,6 +1,7 @@
 // 文献: the literature window (server/literature). Tabs:
 //   今日    the day's picks (new papers to 收下 / 跳过, reviews of the user's own papers as recall questions)
-//   文献库  the Zotero library by collection, a paper's card, annotations, and the way into 深读
+//   文献库  the Zotero library by collection, a paper's card, annotations, and the way into 深读; the PDFs on their
+//           way through the library access (图书馆通道)
 //   知识库  the model's suggested changes waiting for 接受, topic pages, search over cards and topics
 //   画像    research summary, the questions being worked on, what to follow
 //   产出    what reading turned into lately
@@ -71,6 +72,9 @@ function mount(first) {
     authBtn.hidden = !!z.canWrite || !!z.authorizing;
     if (z.authorizing) { clearTimeout(authT); authT = setTimeout(refreshStatus, 3000); }
     for (const b of tabBtns) if (b.dataset.tab === 'kb') b.textContent = s.proposals ? `知识库（${s.proposals}）` : '知识库';
+    // 图书馆通道 waits for the user (a check to answer, a sign-in, the library's extension signed out)
+    const pq = s.pdfq || {}, pqN = (pq.blocks || 0) + (pq.browser ? 1 : 0);
+    for (const b of tabBtns) if (b.dataset.tab === 'library') b.textContent = pqN ? `文献库（${pqN}）` : '文献库';
     for (const b of tabBtns) if (b.dataset.tab === 'review') b.textContent = s.reviews ? `回顾（${s.reviews}）` : '回顾';
   }
   let authT = null;
@@ -80,7 +84,7 @@ function mount(first) {
   });
 
   const off = onLit((what) => {
-    if (/^(zotero|library|proposals|kb|review)$/.test(what)) refreshStatus();
+    if (/^(zotero|library|proposals|kb|review|pdfq)$/.test(what)) refreshStatus();
     for (const v of mounted.values()) if (v.onLit) v.onLit(what);
   });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 700));

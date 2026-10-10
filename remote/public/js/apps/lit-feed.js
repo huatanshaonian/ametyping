@@ -4,7 +4,6 @@
 // best papers of the day, for a day with time to spare.
 import { h } from '../util.js';
 import { get, post, authors } from './lit-api.js';
-import { pdfqBox } from './lit-pdfq.js';
 
 const STAGE = { pdf: '找 PDF…', waiting: '等 PDF…', card: '生成速读卡…', ready: '速读卡好了', 'needs-pdf': '没有 PDF', error: '出错了' };
 
@@ -13,24 +12,11 @@ export function mount(el, ctx) {
   const st = h('span', { class: 'lit-st' });
   const list = h('div', { class: 'lf-list' });
   const asks = h('div', { class: 'lf-sec lf-vision', hidden: true });     // 读图 requests waiting for approval
-  // which way of finding brings the papers worth reading: the last week's runs added up
-  const yieldEl = h('details', { class: 'lf-yield', hidden: true });
-  const pdfq = pdfqBox(ctx);                                              // 图书馆通道: PDFs on their way, what waits for the user
-  el.append(h('div', { class: 'lit-sub' }, runBtn, st), yieldEl, asks, pdfq.el, list);
-  function showYield(runs) {
-    const found = {}, good = {};
-    for (const r of runs) { for (const [k, n] of Object.entries(r.sources || {})) found[k] = (found[k] || 0) + n; for (const [k, n] of Object.entries(r.good || {})) good[k] = (good[k] || 0) + n; }
-    const keys = Object.keys(found).sort((a, b) => (good[b] || 0) - (good[a] || 0) || found[b] - found[a]);
-    yieldEl.hidden = !keys.length;
-    yieldEl.replaceChildren(h('summary', { text: `各来源的收获（最近 ${runs.length} 次推送）` }),
-      h('div', { class: 'lf-tip', text: '抓到多少篇 / 其中够格（6 分以上）的有几篇。长期没有够格的来源，可以在「画像」里调整。' }),
-      ...keys.map((k) => h('div', { class: 'lf-y' }, h('b', { text: k }), h('span', { text: `抓到 ${found[k]} 篇` }), h('span', { class: good[k] ? 'ok' : '', text: `够格 ${good[k] || 0}` }))));
-  }
+  el.append(h('div', { class: 'lit-sub' }, runBtn, st), asks, list);
   let questions = [], items = [], canWrite = true, showSpare = false;
 
   async function refresh() {
     const [f, p, va] = await Promise.all([get('/api/lit/feed'), get('/api/lit/profile'), get('/api/lit/vision/pending')]);
-    pdfq.refresh();
     const reqs = (va && va.items) || [];
     asks.hidden = !reqs.length;
     asks.replaceChildren(h('h3', { text: `等你批准读图（${reqs.length}）` }), ...reqs.map((r) => h('div', { class: 'lf-va' },
@@ -42,7 +28,6 @@ export function mount(el, ctx) {
     st.classList.toggle('bad', !!(last && last.error));
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
-    showYield((s.runs || []).filter((r) => !r.error && r.sources));
     if (s.archive && s.archive.queue) st.textContent += ` · 老报告还有 ${s.archive.queue} 篇在排队`;
     if (s.dtic && s.dtic.up) st.textContent += ' · DTIC 的公共检索恢复了（告诉 Claude 接上）';
     render();
@@ -110,5 +95,5 @@ export function mount(el, ctx) {
   }
 
   runBtn.addEventListener('click', async () => { runBtn.disabled = true; st.textContent = '正在找今天的文献…（几分钟）'; await post('/api/lit/feed/run', {}); });
-  return { refresh, onLit: (w) => { if (w === 'feed' || w.startsWith('vision:')) refresh(); else if (w === 'pdfq') pdfq.refresh(); } };
+  return { refresh, onLit: (w) => { if (w === 'feed' || w.startsWith('vision:')) refresh(); } };
 }

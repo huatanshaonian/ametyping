@@ -16,7 +16,10 @@ const SITES = [
 // them through the library's proxy. Signed out it leaves the proxy alone, and every one of them answers "no access"
 // or with a check; so it is asked first (library.js). The page it is asked from is a plain file of the extension,
 // where no script of its own runs (its popup page acts when opened: it opens the login page, saves the current tab).
-const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/manifest.json' };
+// Its login is a token of 15 minutes that it renews itself; when a renewal is refused it signs itself out, while the
+// MyLOFT website ("home") usually stays signed in -- and opening that hands the extension a fresh token (it listens
+// for the site's cookie). Only when the site is signed out too (it shows "login") does the user have to sign in.
+const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/manifest.json', home: 'https://app.myloft.xyz/', login: '/user/login' };
 // Runs in that page. -> { on } (it steers the proxy: signed in) | null (not the extension's page: cannot tell)
 const ACCESS_ON = `(async () => {
   if (location.protocol !== 'chrome-extension:' || !self.chrome || !chrome.proxy) return null;

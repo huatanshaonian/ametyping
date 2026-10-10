@@ -107,8 +107,6 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
       /Q1：鞘套电子密度剖面/.test(await evalJs("document.querySelector('.lf-list').textContent")) &&
       await evalJs("(() => { const r = [...document.querySelectorAll('.lf-i')].find(e => e.textContent.startsWith('复习')); return !!r && r.querySelectorAll('.lf-ans').length === 2 && [...document.querySelectorAll('.lf-i')].some(e => e.textContent.startsWith('新文献')); })()"),
       await evalJs("({ items: document.querySelectorAll('.lf-i').length, answers: document.querySelectorAll('.lf-ans').length, kinds: [...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12)) })"));
-    chk('the yield of each way of finding is shown', await evalJs("!document.querySelector('.lf-yield').hidden && /期刊/.test(document.querySelector('.lf-yield').textContent) && /够格 1/.test(document.querySelector('.lf-yield').textContent)"),
-      await evalJs("(document.querySelector('.lf-yield')||{}).textContent"));
     chk('no stray "null" text in the list', !(await evalJs("/null/.test(document.querySelector('.lf-list').textContent)")), 0);
     await shot('80-lit-feed.png');
     await evalJs("[...document.querySelectorAll('.lf-i')].find(i => i.textContent.includes('RAM C-II')).querySelector('.btn.go').click()");
@@ -159,6 +157,8 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
 
     // 画像 and 产出
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '画像').click()");
+    chk('画像: the yield of each way of finding is shown (not on 今日 any more)', await waitFor("!!document.querySelector('.lp .lf-yield, .lf-yield') && !document.querySelector('.lf-yield').hidden && /期刊/.test(document.querySelector('.lf-yield').textContent) && /够格 1/.test(document.querySelector('.lf-yield').textContent)"),
+      await evalJs("(document.querySelector('.lf-yield')||{}).textContent"));
     chk('画像: the main line, the branches with coverage and their papers by title, a suggestion to take or drop', await waitFor("!!document.querySelector('.lp-t')") &&
       /再入飞行器气动隐身/.test(await evalJs("document.querySelector('.lp textarea').value")) && /总目标/.test(await evalJs("document.querySelectorAll('.lp textarea')[1].value")) && await evalJs("!!document.querySelector('.lp-unclear li')") && await evalJs("[...document.querySelectorAll('.lp-papers a')].some(a => a.textContent.startsWith('Backward scattering'))") &&
       await evalJs("!!document.querySelector('.tag.cov.thin')") && await evalJs("document.querySelectorAll('.lp-sug').length === 1") && !(await evalJs("/[A-Z0-9]{8}/.test(document.querySelector('.lp-ts').textContent)")),
