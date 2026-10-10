@@ -39,7 +39,8 @@ const zot = createFakeZotero({ webdavDir: WD,
   items: [art('PAPEROK1', 'Stealth design by adjoint method', '10.1016/ok', 'SURVEY01'), art('PAPERCHK', 'Checked by a robot test', '10.1016/check', 'SURVEY02'),
     art('PAPERNON', 'Not subscribed at all', '10.1016/none', 'JDF645IP'), art('PAPERIE1', 'Polarization scattering of a plasma sheath', '10.1109/55', 'SURVEY01'),
     art('PAPERDEN', 'Waverider trajectories', '10.2514/denied', 'JDF645IP'), art('PAPERNOD', 'No DOI here', '', 'SURVEY01'),
-    art('PAPERIE2', 'A second IEEE paper', '10.1109/77', 'OTHER001'), art('PAPERIE3', 'A third IEEE paper', '10.1109/88', 'OTHER001'), art('PAPEROTH', 'Elsewhere', '10.1016/ok2', 'OTHER001')] });
+    art('PAPERIE2', 'A second IEEE paper', '10.1109/77', 'OTHER001'), art('PAPERIE3', 'A third IEEE paper', '10.1109/88', 'OTHER001'), art('PAPEROTH', 'Elsewhere', '10.1016/ok2', 'OTHER001'),
+    art('PAPERDL1', 'Open access, sent as a download', '10.3390/dl', 'OTHER001'), art('PAPERCN1', 'A Chinese DOI', '10.16356/cn', 'OTHER001')] });
 const br = createFakeBrowser({ pdf: PDF });
 
 (async () => {
@@ -136,6 +137,10 @@ const br = createFakeBrowser({ pdf: PDF });
     // ---- 重试 / 不下了 / the day's cap / the browser gone ----
     const lg = br.log.length;
     ok('重试 a failed one: asked once more, failed again', (await P('/api/lit/pdfq/retry', { key: 'PAPERNON' })).ok && !!(await until(async () => br.log.length > lg && (await row('PAPERNON')).state === 'failed')));
+    await P('/api/lit/pdfq/add', { key: 'PAPERDL1' }); await P('/api/lit/pdfq/add', { key: 'PAPERCN1' });
+    await until(async () => (await row('PAPERDL1')).state === 'done' && (await row('PAPERCN1')).state === 'done');
+    ok('a PDF sent as a download with no type on it: taken all the same', (await item('PAPERDL1')).pdf && /mdpi/.test((await row('PAPERDL1')).why), await row('PAPERDL1'));
+    ok('a DOI of the Chinese registry: the address its page lists is followed to the paper', (await item('PAPERCN1')).pdf && br.log.some((u) => /mdpi\.com\/resolved-cn$/.test(u)), await row('PAPERCN1'));
     ok('不下了: out of the queue', (await P('/api/lit/pdfq/drop', { key: 'PAPERNON' })).ok && !(await row('PAPERNON')).key && !(await item('PAPERNON')).pdfNote);
     s = await Q();
     await P('/api/lit/settings', { pdfPerDay: s.today });

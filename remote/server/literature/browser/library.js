@@ -11,7 +11,7 @@
 // do, or when the page offers no PDF (not subscribed). One paper at a time (pdfqueue.js paces them).
 'use strict';
 const { connect } = require('./cdp');
-const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON } = require('./sites');
+const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON, RESOLVERS, RESOLVED } = require('./sites');
 const { signIn } = require('./signin');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -21,7 +21,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
 function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/', ieeeBase = 'https://ieeexplore.ieee.org', ieeeHome = 'ieeexplore.ieee.org',
-  access = ACCESS, reviveMs = 40e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
+  access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
   const enabled = () => +port() > 0;
@@ -33,12 +33,16 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
   }
 
   // the tab has arrived somewhere (not the DOI resolver any more) and finished loading
+  // (some pages never finish loading -- an advertisement or a counter that hangs behind the proxy -- while all of the
+  // page is there: "interactive" for a while is taken as arrived)
   async function landed(c, sid) {
-    let last = null;
+    let last = null, since = 0;
     for (const until = Date.now() + loadMs; Date.now() < until;) {
       await sleep(stepMs);
       try { last = await c.evaluate(sid, '({ host: location.host, ready: document.readyState, url: location.href })'); } catch { continue; }
-      if (last.ready === 'complete' && last.host && !/(^|\.)doi\.org$/.test(last.host) && !/^(about|chrome)/.test(last.url)) { await sleep(settleMs); return true; }
+      if (!last.host || /(^|\.)doi\.org$/.test(last.host) || /^(about|chrome)/.test(last.url)) { since = 0; continue; }
+      if (last.ready === 'complete') { await sleep(settleMs); return true; }
+      if (last.ready === 'interactive') { since = since || Date.now(); if (Date.now() - since >= slowMs) return true; }
     }
     return !!(last && last.host && !/(^|\.)doi\.org$/.test(last.host));
   }
@@ -95,8 +99,9 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const watch = setInterval(() => { if (!seen && Date.now() - lastHtml > quietMs) finish({ html: true }); }, Math.min(2000, quietMs));
       const off = c.on(async (d) => {
         if (d.method !== 'Fetch.requestPaused' || d.sessionId !== sid) return;
-        const p = d.params, type = ((p.responseHeaders || []).find((h) => h.name.toLowerCase() === 'content-type') || {}).value || '';
-        const isPdf = p.responseStatusCode === 200 && /pdf|octet-stream/i.test(type);
+        const p = d.params, head = (n) => ((p.responseHeaders || []).find((h) => h.name.toLowerCase() === n) || {}).value || '';
+        // (a PDF sent as a download may come with no type at all, only the file's name)
+        const isPdf = p.responseStatusCode === 200 && (/pdf|octet-stream/i.test(head('content-type')) || /filename[^;]*\.pdf/i.test(head('content-disposition')));
         if (!isPdf) { lastHtml = Date.now(); c.send('Fetch.continueRequest', { requestId: p.requestId }, sid).catch(() => {}); return; }
         if (p.frameId !== mainFrame && !hopped) {
           // a PDF shown in a frame of a viewer page: asked for again as the page itself, where its body can be taken
@@ -148,6 +153,10 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       await c.send('Page.navigate', { url: start }, sid);
       if (!(await landed(c, sid))) throw stop('论文的页面打不开（DOI 没有跳转，或网站没有回应）');
       let v = await look(c, sid);
+      if (RESOLVERS.includes(v.host)) {
+        const next = await c.evaluate(sid, RESOLVED).catch(() => '');
+        if (next) { await c.send('Page.navigate', { url: next }, sid); await landed(c, sid); v = await look(c, sid); }
+      }
       const site = byHost(v.host), at = { site: { id: site.id, name: site.name === '其他网站' ? v.host : site.name } };
       if (left.has(site.id)) { await c.send('Target.closeTarget', { targetId: left.get(site.id) }).catch(() => {}); left.delete(site.id); }
       const check = () => { keep = site.id; return stop(`${at.site.name} 要先做一次人机验证：到网页桌面的浏览器里点一下`, { need: 'verify', ...at, page: v.url }); };
@@ -166,6 +175,8 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
         v = await look(c, sid);
         if (v.challenge) throw check();
       }
+      // (the link to the PDF is written into some pages a little after they have loaded: looked at a few more times)
+      for (let i = 0; !v.pdf && !v.challenge && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
       if (!v.pdf) throw stop(`${at.site.name} 的页面上没有 PDF 入口（多半是没有订购这篇）`, { final: true, ...at });
 
       const r = await capture(c, sid, mainFrame, v.pdf, v.url);
