@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// deps: claudeFiles() -> [{ id, file, mtime }], codex (codex-records.js), projectOf(file), live(id) -> bool,
+// deps: claudeFiles() -> [{ id, file, mtime }], codex (app/codex-records.js), projectOf(file), live(id) -> bool,
 //       stored(id) -> the server's byte offset (undefined: nothing stored)
 function createArchive({ days = 30, claudeFiles, codex, projectOf, live, stored, everyMs = 60e3 }) {
   const map = new Map();                              // id -> { file, project, cwd?, title? }

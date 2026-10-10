@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const transcript = require('../../app/transcript');
-const codex = require('./codex-records');
+const codex = require('../../app/codex-records');
 const { denied } = require('./files');
 
 const CHUNK = 256 * 1024;

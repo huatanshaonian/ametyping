@@ -1,5 +1,6 @@
 // e2e: Codex CLI sessions are stored like Claude Code's (slim records, title from session_index, codex resume),
-// sub-threads are skipped
+// sub-threads are skipped. The first line of a rollout carries Codex's own instructions (over 20 KB since 0.16x):
+// read whole, or the session is not listed at all.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = require('path').resolve(__dirname, '..');
 const WebSocket = require(R + '/node_modules/ws');
@@ -13,7 +14,7 @@ const MAIN = '01a0aaaa-0000-7000-8000-000000000001', SUB = '01a0bbbb-0000-7000-8
 const CWD = process.platform === 'win32' ? 'D:\\work\\proj' : '/home/u/work/proj';
 const L = (o) => JSON.stringify({ timestamp: new Date().toISOString(), ...o }) + '\n';
 fs.writeFileSync(path.join(DAY, `rollout-x-${MAIN}.jsonl`),
-  L({ type: 'session_meta', payload: { id: MAIN, session_id: MAIN, cwd: CWD } }) +
+  L({ type: 'session_meta', payload: { id: MAIN, session_id: MAIN, cwd: CWD, base_instructions: { text: 'You are Codex. '.repeat(2000) } } }) +
   L({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n<cwd>x</cwd>' }] } }) +
   L({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '把 gui.py 的字体改一下' }] } }) +
   L({ type: 'response_item', payload: { type: 'reasoning', encrypted_content: 'SECRET-REASONING' } }) +
@@ -59,7 +60,7 @@ async function until(fn, ms = 15000) { const t0 = Date.now(); while (Date.now() 
     ws.on('message', (m) => { const o = JSON.parse(m); if (o.t === 'sessions') snap = o.data; if (o.t === 'conv') convs.push(o); });
     await new Promise((r) => ws.on('open', r));
     const find = (id) => { const m = snap.find((x) => x.machine === 'box'); return m && m.sessions.find((s) => s.id === id); };
-    ok('Codex session stored and listed', await until(() => find('codex:' + MAIN)), JSON.stringify(snap));
+    ok('Codex session stored and listed (its first line 30 KB long)', await until(() => find('codex:' + MAIN)), JSON.stringify(snap));
     const s = find('codex:' + MAIN) || {};
     ok('title from session_index', s.label === '改 GUI 字体', s.label);
     ok('resume with codex resume in its folder', typeof s.resume === 'string' && s.resume.includes('codex resume ' + MAIN) && s.resume.includes('proj'), s.resume);

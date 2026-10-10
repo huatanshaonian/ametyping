@@ -312,9 +312,8 @@ function showNote(msg, ms = 5000) {
   if (msg) noteTimer = setTimeout(() => note.classList.remove('show'), ms);
 }
 const PLACEHOLDER = {
-  codex: '请在 Codex 中继续对话；这里查看进度和处理权限',
   terminal: '回复（Enter 发送，Shift+Enter 换行）',
-  resume: '会话已关闭：发送会在后台用 claude -p --resume 续上',
+  resume: '会话已关闭：发送会在后台续上',
   busy: '后台续聊进行中…',
   none: '这个会话不在终端里（IDE / 桌面 App），只能看不能回',
   unknown: '等它下一次有动静，就知道它在哪个终端了',
@@ -322,7 +321,7 @@ const PLACEHOLDER = {
 function composeState() {
   const s = data.find((x) => x.id === selected);
   const via = s ? s.via : 'unknown';
-  input.disabled = !s || via === 'codex' || via === 'none' || via === 'busy' || via === 'unknown';
+  input.disabled = !s || via === 'none' || via === 'busy' || via === 'unknown';
   input.placeholder = s ? PLACEHOLDER[via] : '还没有会话';
 }
 

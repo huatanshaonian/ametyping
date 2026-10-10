@@ -1,7 +1,8 @@
 // Codex CLI sessions (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) as the same slim records as Claude Code's
-// (../../app/transcript.js recordsOf): what you and Codex said in full, each tool call as one line, tool output and
+// (transcript.js recordsOf): what you and Codex said in full, each tool call as one line, tool output and
 // reasoning left out. Sub-threads (auto review and the like: session_meta.parent_thread_id) are not sessions of
 // their own and are skipped. Titles come from ~/.codex/session_index.jsonl (thread_name).
+// Read by the pet (the panel's conversation) and by the remote agent (the dashboard's).
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -77,9 +78,18 @@ function recordsOf(o) {
 // { id, cwd, sub } from the first line (session_meta)
 function metaOf(file) {
   try {
-    const fd = fs.openSync(file, 'r'), buf = Buffer.alloc(16384);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd);
-    const o = JSON.parse(buf.toString('utf8', 0, n).split('\n')[0]);
+    // the whole first line: it carries Codex's instructions too (over 20 KB since 0.16x), so read on to its end
+    const fd = fs.openSync(file, 'r'), parts = [];
+    try {
+      for (let at = 0; at < 1 << 20;) {
+        const buf = Buffer.alloc(65536), n = fs.readSync(fd, buf, 0, buf.length, at);
+        const nl = buf.subarray(0, n).indexOf(10);
+        parts.push(buf.subarray(0, nl >= 0 ? nl : n));
+        if (nl >= 0 || n < buf.length) break;
+        at += n;
+      }
+    } finally { fs.closeSync(fd); }
+    const o = JSON.parse(Buffer.concat(parts).toString('utf8'));
     if (o.type !== 'session_meta' || !o.payload || !o.payload.id) return null;
     return { id: o.payload.id, cwd: o.payload.cwd || '', sub: !!o.payload.parent_thread_id };
   } catch { return null; }
@@ -115,6 +125,13 @@ function allFiles() {
   return out;
 }
 
+// the rollout file of a thread id (its name ends with the id); the newest folders first
+function fileOf(id) {
+  if (!/^[0-9a-f-]{36}$/.test(String(id))) return null;
+  const hit = (list) => list.find((f) => f.endsWith(`-${id}.jsonl`));
+  return hit(recentFiles(2 * 86400e3).map((f) => f.file)) || hit(allFiles()) || null;
+}
+
 // thread titles (id -> name); re-read only when the index file changes
 let titles = new Map(), titlesAt = 0;
 function titleOf(id) {
@@ -129,4 +146,4 @@ function titleOf(id) {
   return titles.get(id) || '';
 }
 
-module.exports = { recordsOf, metaOf, recentFiles, allFiles, titleOf };
+module.exports = { recordsOf, metaOf, recentFiles, allFiles, fileOf, titleOf };
