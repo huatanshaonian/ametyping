@@ -45,6 +45,7 @@ export function panel() {
       reviewCollection: colSel(v.reviewCollection), inboxCollection: h('input', { class: 'field', value: v.inboxCollection }), surveyCollection: h('input', { class: 'field', value: v.surveyCollection }),
       s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }),
       browserPort: num(v.browserPort, 0, 65535), pdfGapSec: num(v.pdfGapSec, 20, 3600), pdfPerDay: num(v.pdfPerDay, 0, 200),
+      myloftAccount: h('input', { class: 'field', type: 'email', autocomplete: 'off', value: v.myloftAccount || '', placeholder: '可空：登录 MyLOFT 用的邮箱（不是密码）' }),
       ieeeAccount: h('input', { class: 'field', type: 'email', autocomplete: 'off', value: v.ieeeAccount || '', placeholder: '可空：机构登录用的邮箱（不是密码）' }) };
     const pst = h('small', { class: 'lset-st' });
     const ptest = h('button', { class: 'btn', type: 'button', text: '测试', onclick: async () => { pst.textContent = '测试中…'; if (!(await save(true))) return; const r = await net.post('/api/lit/pdfq/test', {}); pst.textContent = r.msg || (r.ok ? '可用' : '不可用'); pst.classList.toggle('bad', !r.ok); } });
@@ -66,6 +67,7 @@ export function panel() {
       h('h4', { class: 'aim-h', text: '图书馆通道' }),
       h('p', { class: 'ghint', text: '找不到开放获取的 PDF 时，用 Zotero 网页桌面里那个浏览器去下：它登录着所里的图书馆通道（MyLOFT）和出版商的机构账号，下载用的就是你自己的订阅权限。一次一篇，慢慢来；遇到要真人点的验证会停下等你。' }),
       row('浏览器调试端口', h('span', {}, h('span', { class: 'lset-k' }, F.browserPort, ptest), pst), '网页桌面里 Chromium 的调试端口（部署时设的是 9223）；0 = 不用图书馆通道'),
+      row('MyLOFT 账号', F.myloftAccount, 'MyLOFT 掉线、连它的网站也要重新登录时，用这个账号自动登录一次：只填账号，密码由那个浏览器自己保存的来填，这里不存也不经手'),
       row('机构登录账号（IEEE、AIP）', F.ieeeAccount, 'IEEE 的登录过期、或 AIP 不给 PDF 时，用这个账号走机构登录（中国科技云通行证）：只填账号，密码由那个浏览器自己保存的来填，这里不存也不经手'),
       row('两篇之间隔', h('span', {}, F.pdfGapSec, ' 秒'), '下完一篇到开始下一篇至少隔这么久（另加一点随机）'),
       row('每天最多', h('span', {}, F.pdfPerDay, ' 篇'), '走图书馆通道的总数；0 = 先不下'),
@@ -76,7 +78,7 @@ export function panel() {
     for (const name of ['s2', 'openalex']) { const t = K[name].box.value.trim(); if (t) keys[name] = t; else if (clear[name]) keys[name] = null; }
     const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, visionMaxPages: F.visionMaxPages.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
       reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, surveyCollection: F.surveyCollection.value, s2Recommend: F.s2Recommend.checked,
-      browserPort: F.browserPort.value, pdfGapSec: F.pdfGapSec.value, pdfPerDay: F.pdfPerDay.value, ieeeAccount: F.ieeeAccount.value });
+      browserPort: F.browserPort.value, pdfGapSec: F.pdfGapSec.value, pdfPerDay: F.pdfPerDay.value, ieeeAccount: F.ieeeAccount.value, myloftAccount: F.myloftAccount.value });
     msg.textContent = r.ok ? '已保存，马上生效' : r.msg || '没能保存';
     if (r.ok) { clear.s2 = clear.openalex = false; if (!quiet) await load(); }
     return r.ok;
