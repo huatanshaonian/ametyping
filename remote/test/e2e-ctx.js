@@ -5,7 +5,7 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-ctx-'));
 process.env.HOME = process.env.USERPROFILE = T;
 delete process.env.ANTHROPIC_MODEL;
 const { recordsOf } = require('../../app/transcript');
-const codex = require('../agent/codex-records');
+const codex = require('../../app/codex-records');
 const records = require('../agent/records');
 const { createStore } = require('../server/store');
 const J = (o) => JSON.stringify(o) + '\n';

@@ -1,6 +1,7 @@
 // Replying to a session from the panel or the dashboard: type text into its terminal, press a navigation key
 // there (the terminal's own menus -- /model, /resume, prompts), or, when its process is gone, continue it in the
 // background with `claude -p --resume`. Also starts Claude Code in a folder, in a new console window.
+// A Codex CLI session the same way; what differs for it is in codex-cli.js.
 // Windows only (console input via bridge.js).
 'use strict';
 const fs = require('fs');
@@ -9,6 +10,7 @@ const { spawn } = require('child_process');
 
 const { modeFromScreen } = require('./permission-mode');
 const { tidyScreen, plainScreen } = require('./screen-text');
+const codexCli = require('./codex-cli');
 
 // (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
 // ctrl<letter>: the Ctrl combinations its menus name, e.g. Ctrl+A in /resume -- never C, D or Z, which interrupt or
@@ -29,17 +31,25 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // the session's process is gone: continue it in the background; its hooks report back like any other
   // session, and the transcript it appends to is the same file the panel shows
   function resumeHeadless(s, text) {
-    const exe = claudeExe();
-    if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
-    const p = spawn(exe, ['-p', '--resume', s.id], { cwd: s.cwd && fs.existsSync(s.cwd) ? s.cwd : home(),
-      windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
-    p.on('error', () => {});
-    p.stdin.on('error', () => {});
-    p.stdin.end(text);                                             // prompt on stdin: never parsed as an option
+    const codex = s.provider === 'codex';
+    const cwd = s.cwd && fs.existsSync(s.cwd) ? s.cwd : home();
+    let p;
+    if (codex) {
+      p = codexCli.resume(s.rawSession, cwd, text);
+      if (!p) return { ok: false, msg: '找不到 codex，没法在后台续聊' };
+    } else {
+      const exe = claudeExe();
+      if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
+      p = spawn(exe, ['-p', '--resume', s.id], { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+      p.on('error', () => {});
+      p.stdin.on('error', () => {});
+      p.stdin.end(text);                                           // prompt on stdin: never parsed as an option
+    }
     p.on('exit', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
     s.headless = true; s.state = 'message'; s.last = Date.now();
     pushBubble(null);
-    return { ok: true, msg: '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
+    return { ok: true, msg: codex ? '这个会话已经关了，在后台用 codex exec resume 续上（不会再问你确认：按 Codex 自己的沙箱设置来）'
+      : '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
   }
 
   // a permission prompt is open in the terminal: typed text would land in it and pick options.
@@ -53,7 +63,6 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // the live terminal of a session, or why there is none
   async function terminalOf(s) {
     if (!s) return { msg: '这个会话已经不在列表里了' };
-    if (s.provider === 'codex') return { msg: '请在 Codex 中继续对话；这里可以查看进度和处理权限' };
     if (s.headless) return { msg: '后台续聊还在跑，等它这一轮完成再发' };
     if (!s.claudePid || !(await procAlive(s.claudePid))) return { gone: true };
     if (!s.terminal) return { msg: '这个会话不在终端里（IDE 插件 / 桌面 App），没法从这里操作' };
@@ -70,7 +79,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       // reply goes as it is and not glued to half a sentence
       await bridge.key(t.pid, 'clear');
       await new Promise((res) => setTimeout(res, 150));
-      const r = await bridge.send(t.pid, text);
+      const r = s.provider === 'codex' ? await codexCli.send(bridge, t.pid, text) : await bridge.send(t.pid, text);
       return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
     }
     if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };

@@ -19,6 +19,7 @@ test('Codex lifecycle, patches, command failures and permission output', () => {
   assert.match(patch.body.text, /app\/a.js、app\/b.js/);
   assert.equal(mapHook({ ...common, hook_event_name: 'PostToolUse', tool_response: { exit_code: 1 } }).route, '/event/error');
   assert.equal(mapHook(null), null);
+  assert.equal(patch.body.pid, process.ppid);                       // the pet finds the session's terminal from it
   assert.deepEqual(decision({ choice: 'always' }), {});
   assert.deepEqual(decision({ choice: 'defer' }), {});
   assert.equal(decision({ choice: 'deny' }).hookSpecificOutput.decision.behavior, 'deny');

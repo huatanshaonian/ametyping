@@ -12,6 +12,8 @@ const { adoptRunning } = require('./session-adopt');
 const { inTerminal } = require('./session-terminal');
 const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
+const codexRecords = require('./codex-records');
+const codexCli = require('./codex-cli');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
 
@@ -595,7 +597,6 @@ function sessionLineage() {
 }
 const listed = () => { const { parked } = sessionLineage(); return [...sessions.values()].filter((s) => !parked.has(s.id)); };
 function replyVia(s) {
-  if (s.provider === 'codex') return 'codex';
   if (s.state === 'ended') return 'resume';
   if (s.headless) return 'busy';
   if (s.claudePid && s.terminal) return 'terminal';
@@ -631,12 +632,21 @@ const anyWorking = (exceptId) => [...sessions.values()].some((s) => s.id !== exc
 // the Claude Code process (claude.exe, or node/bun for an npm install) and look at what started it: a shell
 // or terminal = an interactive session we can type into; an IDE / the desktop app = no console to use; Claude Code
 // itself = a background session in its own pseudo-terminal, usable all the same (session-terminal.js).
+// A Codex session the same way, by its own process (codex-cli.js): Codex CLI in a terminal can be typed into, the
+// desktop app cannot.
 const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
 const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|WindowsTerminal|OpenConsole|conhost|explorer|wezterm-gui|alacritty|mintty|Tabby|Hyper|ConEmu64|ConEmuC64|ConEmu|ConEmuC|wsl|wslhost|tmux)\.exe$/i;
 async function locateSession(s, pid) {
-  if (!s || s.provider === 'codex') return;
-  if (!pid || s.fromPid === pid) return;
+  if (!s || !pid || s.fromPid === pid) return;
   const chain = await bridge.ancestors(pid);
+  if (s.provider === 'codex') {
+    const c = codexCli.findCodex(chain, process.pid);
+    if (!c) return;
+    s.fromPid = pid; s.claudePid = c.pid;
+    s.headless = c.own;                                            // a `codex exec resume` we started ourselves
+    s.terminal = !c.own && !!c.parent && TERM_HOSTS.test(c.parent.name);
+    return pushBubble(null);
+  }
   const i = chain.findIndex((p) => CLAUDE_EXE.test(p.name));
   if (i < 0) return;                                               // not found: try again on the next event
   s.fromPid = pid;
@@ -649,7 +659,7 @@ async function locateSession(s, pid) {
 async function procAlive(pid) {
   if (!pid) return false;
   const c = await bridge.ancestors(pid);
-  return !!c.length && CLAUDE_EXE.test(c[0].name);                // same pid, still a Claude process (not a reused pid)
+  return !!c.length && (CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name));   // same pid, still that process (not a reused pid)
 }
 
 function onClaudeEvent(type, d) {
@@ -823,22 +833,29 @@ function findTranscript(id) {
 function pushChat(force) {
   const s = chatSel && sessions.get(chatSel);
   if (!s || !chatMode() || !bubbleWin || !bubbleWin.isVisible()) return;
-  if (s.provider === 'codex') {
+  // a Codex session: its rollout file read like a Claude Code transcript; until that file is found, the live progress
+  if (s.provider === 'codex' && !s.transcript && Date.now() - (s.lookedAt || 0) > 5000) {
+    s.lookedAt = Date.now();
+    s.transcript = codexRecords.fileOf(s.rawSession);
+    const title = codexRecords.titleOf(s.rawSession);
+    if (title && !s.title) { s.title = title.slice(0, 60); pushBubble(null); }
+  }
+  if (s.provider === 'codex' && !s.transcript) {
     if (force || s.chatPushed !== s.last) {
       s.chatPushed = s.last;
       bubbleWin.webContents.send('chat-log', { id: s.id, msgs: [
-        { role: 'sys', text: 'Codex 实时进度 · 继续对话请回到 Codex', t: s.born },
+        { role: 'sys', text: 'Codex 实时进度', t: s.born },
         ...s.lines.filter((l) => !l.sep).map((l) => ({ role: 'sys', text: l.text, t: l.t })),
       ] });
     }
     return;
   }
-  if (!s.transcript) s.transcript = findTranscript(s.id);
+  if (!s.transcript && s.provider !== 'codex') s.transcript = findTranscript(s.id);
   if (!s.transcript) return;
   let c = chats.get(s.id);
   if (!c || c.file !== s.transcript) { c = { file: s.transcript }; chats.set(s.id, c); }
   let changed = false;
-  try { changed = transcript.poll(c); } catch (e) { console.error('transcript: ' + e.message); }
+  try { changed = transcript.poll(c, s.provider === 'codex' ? codexRecords.recordsOf : undefined); } catch (e) { console.error('transcript: ' + e.message); }
   if (c.title && !s.title) { s.title = String(c.title).slice(0, 60); pushBubble(null); }
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
 }

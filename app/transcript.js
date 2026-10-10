@@ -211,16 +211,15 @@ function mergeRecords(out, recs) {
   }
 }
 
-function parseLine(o, out) { mergeRecords(out, recordsOf(o, out)); }        // (the message list carries the /btw pairing)
-
 // cache: { file, offset, msgs, title } -- returns true when something new was read
-function poll(cache) {
+// records: what one line contributes (Claude Code's by default; codex-records.js recordsOf for a Codex rollout)
+function poll(cache, records = recordsOf) {
   let st;
   try { st = fs.statSync(cache.file); } catch { return false; }
   if (cache.offset != null && st.size === cache.offset) return false;
   if (cache.offset == null || st.size < cache.offset) {          // first read (or the file was rewritten)
     cache.msgs = []; cache.offset = Math.max(0, st.size - FIRST_READ); cache.partial = '';
-    cache.msgs.forkLookup = forkLookup(cache.file);              // (a /btw asked before the part read now)
+    if (records === recordsOf) cache.msgs.forkLookup = forkLookup(cache.file);   // (a /btw asked before the part read now)
     cache.skipFirst = cache.offset > 0;
   }
   const n = st.size - cache.offset;
@@ -234,7 +233,7 @@ function poll(cache) {
   for (const l of lines) {
     if (!l.trim()) continue;
     let o; try { o = JSON.parse(l); } catch { continue; }
-    parseLine(o, out);
+    mergeRecords(out, records(o, out));                           // (the message list carries the /btw pairing)
   }
   if (out.title) cache.title = out.title;
   if (out.length > KEEP) out.splice(0, out.length - KEEP);

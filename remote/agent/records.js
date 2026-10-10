@@ -43,7 +43,7 @@ function lastCwd(file) {
   return firstCwd(file);
 }
 
-// parse: one parsed line -> records (Claude Code's recordsOf by default; codex-records.js for Codex sessions)
+// parse: one parsed line -> records (Claude Code's recordsOf by default; app/codex-records.js for Codex sessions)
 function createReader(file, offset, parse = recordsOf) {
   // (forkLookup: a /btw answer whose question was before the offset this reader started at -- see app/transcript.js)
   return { file, offset, skipping: false, parse, cwd: parse === recordsOf ? firstCwd(file) : null, forkLookup: parse === recordsOf ? forkLookup(file) : null };

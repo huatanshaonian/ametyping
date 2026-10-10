@@ -9,6 +9,8 @@ function mapHook(p, eventAt = Date.now()) {
   if (!p || typeof p.session_id !== 'string' || !p.session_id) return null;
   const body = { provider: 'codex', session: p.session_id, project: path.basename(p.cwd || ''),
     cwd: p.cwd || '', hookEvent: p.hook_event_name, eventAt,
+    // pid: what started us (Codex, or the shell it runs hooks through): the pet walks up from it to the terminal
+    pid: process.ppid,
     agentId: p.agent_id || '', subagent: p.agent_type || '' };
   const input = p.tool_input || {};
   if (p.hook_event_name === 'PermissionRequest') {
