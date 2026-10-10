@@ -108,8 +108,8 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
-    // (a Codex session: a tag before its name -- the rest of the card is the same as a Claude Code session's)
-    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + (String(s.id).startsWith('codex:') ? '<span class="cdx" title="Codex CLI 的会话">Codex</span>' : '') + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') +
+    // (whose session it is: the mark of Codex or of Claude Code before its name -- the rest of the card is the same)
+    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + (String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>') + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
     if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
     // while searching, the passage found in its conversation
