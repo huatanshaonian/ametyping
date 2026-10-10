@@ -903,8 +903,12 @@ ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatS
 // (Relying on renderer mousemove fails: while the window follows the cursor the pointer barely moves
 // relative to the window, Chromium stops sending moves, and the window lags / slides behind.)
 // A finger is another matter: the cursor does not go where it goes, and no mouse button is seen coming up. A gesture
-// made by touch is told where the finger is by the renderer (screen coordinates, so the window moving under it
-// changes nothing) and ends when the renderer says the finger lifted.
+// made by touch is told where the finger is by the renderer and ends when the renderer says the finger lifted.
+// What the renderer tells is the finger's place in the window (clientX/Y), put on the screen here with where the
+// window is at that moment. Not the page's screenX/Y: those are worked out with a window position that lags behind
+// the moves made here, so the window chases its own echo -- it shakes and covers half the distance (measured with
+// an injected touch: 42 steps backwards in a straight drag, against none this way).
+const fingerOnScreen = (x, y) => { const b = win.getBounds(); return { x: b.x + x, y: b.y + y }; };
 let gest = null, gestTimer = null;
 function stepGesture() {
   if (!win || !gest) return;
@@ -944,13 +948,13 @@ ipcMain.on('gesture', (_e, kind, x, y) => {
   if (kind === 'drag-start' || kind === 'resize-start') {
     endGesture();
     const touch = Number.isFinite(x) && Number.isFinite(y);
-    const p = touch ? { x, y } : screen.getCursorScreenPoint(), b = win.getBounds();
+    const p = touch ? fingerOnScreen(x, y) : screen.getCursorScreenPoint(), b = win.getBounds();
     const sz = winSize();                    // canonical size from the scale, never the (DPI-rounded) current one
     gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y, touch, at: p };
     gestTimer = setInterval(stepGesture, 8);
   } else if (kind === 'drag-end' || kind === 'resize-end') endGesture();
 });
-ipcMain.on('gesture-at', (_e, x, y) => { if (gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) gest.at = { x, y }; });
+ipcMain.on('gesture-at', (_e, x, y) => { if (win && gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) { gest.at = fingerOnScreen(x, y); stepGesture(); } });
 
 // cursor position for her gaze, in art-space units relative to the window (polled, no mouse hook)
 setInterval(() => {
