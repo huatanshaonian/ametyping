@@ -1047,13 +1047,17 @@ canvas.addEventListener('pointerdown', (e) => {
   downAt = { x: e.screenX, y: e.screenY, ox: e.offsetX, oy: e.offsetY };
   canvas.setPointerCapture(e.pointerId);
   if (inGrip(e)) { sizing = true; window.pet.gesture('resize-start'); }
+  // a finger put on her head strokes it (it cannot hover over her the way the cursor does): she stays where she is
+  else if (e.pointerType === 'touch' && e.offsetY / scale < NECK.y - 120) stroking = true;
   else { drag = true; window.pet.gesture('drag-start'); }
 });
+let stroking = false;
+canvas.addEventListener('pointermove', (e) => { if (stroking) detectPat({ x: e.offsetX / scale + VX, y: e.offsetY / scale }); });
 // the main process reads the real cursor and places the window absolutely (no delta drift)
 // the main process moves / resizes the window itself (cursor polling); make sure it always stops
 const endGesture = () => { if (drag || sizing) window.pet.gesture(sizing ? 'resize-end' : 'drag-end'); drag = null; sizing = null; };
 // (the main process also ends drags on the global mouse-up; moving windows can fire lostpointercapture / blur mid-drag)
-canvas.addEventListener('pointercancel', () => { endGesture(); downAt = null; });
+canvas.addEventListener('pointercancel', () => { endGesture(); downAt = null; stroking = false; });
 canvas.addEventListener('pointerup', (e) => {
   const moved = downAt ? Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) : 99;
   const wasSizing = !!sizing;
@@ -1069,7 +1073,7 @@ canvas.addEventListener('pointerup', (e) => {
       if (t - lastClickAt < 400) { lastClickAt = 0; window.pet.openDashboard(); } else lastClickAt = t;
     }
   }
-  downAt = null; drag = null; sizing = null;
+  downAt = null; drag = null; sizing = null; stroking = false;
 });
 
 // ---------- P-chan (ピーちゃん): stands in for the Claude panel while it is collapsed ----------

@@ -1,6 +1,6 @@
 // Ame typing pet — main process.
 // Global keyboard hook -> renderer. Only keycodes are forwarded; nothing is logged or stored.
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
@@ -14,6 +14,7 @@ const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
 const codexRecords = require('./codex-records');
 const codexCli = require('./codex-cli');
+const { update } = require('./update');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
 
@@ -111,6 +112,18 @@ function setScale(s, commit = true) {
   if (commit) { save(); buildMenu(); }
 }
 
+// 检查更新: the newest code pulled into the folder this pet runs from (update.js), then the pet started again
+let updating = false;
+async function runUpdate() {
+  if (updating) return;
+  updating = true; buildMenu(); tray.setToolTip('糖糖敲键盘 · 正在更新…');
+  let r; try { r = await update(path.resolve(__dirname, '..')); } catch (e) { r = { ok: false, msg: '更新出错', detail: String(e && e.message || e) }; }
+  updating = false; buildMenu(); tray.setToolTip('糖糖敲键盘');
+  if (!r.ok || !r.changed) return void dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: '糖糖 · 检查更新', message: r.msg, detail: r.detail || '', buttons: ['好'] });
+  await dialog.showMessageBox({ type: 'info', title: '糖糖 · 检查更新', message: r.msg + '，现在重启糖糖', detail: (r.detail ? r.detail + '\n\n' : '') + '（正在等你确认的权限卡片会回到终端里问）', buttons: ['重启'] });
+  app.relaunch(); app.exit(0);
+}
+
 function buildMenu() {
   const menu = Menu.buildFromTemplate([
     { label: '大小', submenu: Object.entries(SCALES).map(([k, v]) => ({
@@ -152,6 +165,7 @@ function buildMenu() {
       const wa = screen.getPrimaryDisplay().workArea, { width, height } = winSize();
       win.setPosition(wa.x + wa.width - width - 24, wa.y + wa.height - height); } },
     { type: 'separator' },
+    { label: updating ? '正在更新…' : '检查更新（拉取最新代码并重启）', enabled: !app.isPackaged && !updating, click: runUpdate },   // (a git copy only)
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
