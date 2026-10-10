@@ -176,6 +176,18 @@ const br = createFakeBrowser({ pdf: PDF });
     ok('the browser is not there: everything pauses and says so; the paper keeps waiting', !!s && /连不上/.test(s.browser) && (await row('PAPERDEN')).state === 'waiting' && /暂停/.test((await item('PAPERDEN')).pdfNote) && !(await P('/api/lit/pdfq/test')).ok, s);
     const saved = JSON.parse(fs.readFileSync(path.join(T, 'srv', 'data', 'literature', 'pdf-queue.json'), 'utf8')), sets = fs.readFileSync(path.join(T, 'srv', 'data', 'literature', 'settings.json'), 'utf8');
     ok('kept on disk: the queue and what waits; the settings hold the account, never a password', saved.items.PAPERDEN.state === 'waiting' && saved.blocks.ieee && /me@mails\.test/.test(sets) && !/password/i.test(sets + JSON.stringify(saved)));
+    // ---- a PDF of the user's own ----
+    const up = (key, body, name = 'found by hand.pdf') => new Promise((resolve) => {
+      const r = http.request({ host: '127.0.0.1', port: PORT, path: `/api/lit/pdf/upload?key=${key}&name=${encodeURIComponent(name)}`, method: 'POST', headers: { 'Content-Type': 'application/pdf', Origin: `http://127.0.0.1:${PORT}`, 'Content-Length': body.length, Cookie: cookie } }, (res) => {
+        const cs = []; res.on('data', (c) => cs.push(c)); res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(cs).toString('utf8'))); } catch { resolve({ status: res.statusCode }); } }); });
+      r.on('error', () => resolve({})); r.end(body);
+    });
+    const u1 = await up('PAPERNOD', Buffer.from('<html>not a pdf at all, however long this text may be, it does not start as one should; padding padding padding</html>')), u2 = await up('PAPEROK1', PDF), u3 = await up('NOSUCH00', PDF);
+    ok('上传: a file that is no PDF, a paper that has one, a paper that is not there -- refused, said why', !u1.ok && /不是 PDF/.test(u1.msg) && !u2.ok && /已经有/.test(u2.msg) && !u3.ok && /找不到/.test(u3.msg), { u1, u2, u3 });
+    const u4 = await up('PAPERNOD', PDF), f4 = await req('GET', '/api/lit/pdf?key=PAPERNOD', null, cookie);
+    ok('a PDF for a paper without one (and without a DOI): handed to Zotero, there to read', u4.ok && u4.bytes === PDF.length && (await item('PAPERNOD')).pdf && f4.status === 200 && f4.body.equals(PDF), { u4, st: f4.status });
+    const u5 = await up('PAPERDEN', PDF);
+    ok('for a paper the queue was waiting on: taken, and the queue lets it go', u5.ok && (await item('PAPERDEN')).pdf && (await row('PAPERDEN')).state === 'done' && /手动上传/.test((await row('PAPERDEN')).why) && !(await item('PAPERDEN')).pdfNote, await row('PAPERDEN'));
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
     srv.kill(); zot.close(); try { br.close(); } catch {} await sleep(300);

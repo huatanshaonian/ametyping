@@ -53,6 +53,8 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
     return { ok: true };
   }
   function drop(key) { if (!st.items[key] || running === key) return { ok: false }; delete st.items[key]; changed(); return { ok: true }; }
+  // the paper got its PDF another way (the user uploaded one): nothing left to fetch
+  function got(key, why) { const it = st.items[key]; if (!it || running === key) return; Object.assign(it, { state: 'done', why, at: now() }); changed(); }
   // the user did what a site waited for (answered its check, signed in)
   function resume(site) {
     if (site) delete st.blocks[site]; else st.blocks = {};
@@ -126,7 +128,7 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
     const b = st.blocks[it.site];
     return b ? '图书馆通道：' + b.msg : key === running ? '正在通过图书馆通道下载…' : browser ? '图书馆通道暂停：' + browser : '排队通过图书馆通道下载';
   }
-  return { add, fill, retry, drop, resume, status, note, tick, start, stop, has: (key) => !!st.items[key] };
+  return { add, fill, retry, drop, got, resume, status, note, tick, start, stop, has: (key) => !!st.items[key] };
 }
 
 module.exports = { createPdfQueue };

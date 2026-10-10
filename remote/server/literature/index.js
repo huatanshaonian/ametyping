@@ -36,6 +36,7 @@ const { createSurvey } = require('./survey');
 const { createHistory } = require('./history');
 const { createReview } = require('./review');
 const { createLibrary } = require('./browser/library');
+const { createUpload } = require('./upload');
 const { createPdfQueue } = require('./pdfqueue');
 
 const KEY = /^[A-Z0-9]{8}$/;
@@ -86,6 +87,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
   const libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
   const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
+  const upload = createUpload({ api, mirror, fulltext, pdfq, log });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, pdfq, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, pdfq, log, onChange: () => changed('survey') });
@@ -174,6 +176,12 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
+    // a PDF the user found themselves: the file is the body (upload.js)
+    if (p === '/api/lit/pdf/upload') {
+      const r = await upload.take(req, qs('key'), qs('name').slice(0, 200));
+      if (r.ok) { audit('lit-upload', ip, qs('key')); changed('library'); changed('pdfq'); }
+      json(res, 200, r); return true;
+    }
     let d = {}; try { d = JSON.parse(await readBody(req, 400000)); } catch {}
     const what = p.slice('/api/lit/'.length);
     const key = String(d.key || '');

@@ -57,6 +57,18 @@ export function mount(el, ctx) {
       job ? `正在生成${job.kind === 'deep' ? '深读' : '速读'}卡…（一般一两分钟）` : d.job && d.job.error ? '上次生成失败：' + d.job.error : d.job && d.job.result && d.job.result.proposed ? '新卡片放进了「知识库」里等你确认（你改过这张卡片，没直接覆盖）。' : '');
     const btn = (text, title, onclick, cls = 'btn') => h('button', { class: cls, type: 'button', text, title, onclick });
     const meta = d.card ? d.card.meta : {};
+    // a PDF of the user's own, for a paper that has none: picked from this machine, sent as it is
+    const pick = h('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true });
+    const upBtn = btn('上传 PDF', '你自己找到了这篇的 PDF：从这台电脑选一个文件，交给 Zotero 挂到这篇上', () => pick.click());
+    pick.addEventListener('change', async () => {
+      const f = pick.files && pick.files[0];
+      if (!f) return;
+      upBtn.disabled = true; upBtn.textContent = '上传中…';
+      let r;
+      try { const res = await fetch(`/api/lit/pdf/upload?key=${encodeURIComponent(key)}&name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: f }); r = await res.json(); }
+      catch { r = { ok: false, msg: '上传失败（网络断了？）' }; }
+      if (r.ok) { loadList(); show(key, true); } else { upBtn.disabled = false; upBtn.textContent = r.msg || '没传上'; pick.value = ''; }
+    });
     const acts = h('div', { class: 'gbtns lb-acts' },
       btn('深读', d.pdf ? '左边 PDF、右边卡片和对话' : '没有 PDF 时只能看卡片和摘要', () => ctx.openReader(key), 'btn go'),
       d.pdf ? btn('PDF', '在 Windose 里看 PDF', () => openUrl({ id: 'lit-pdf:' + key, title: d.title, name: d.citekey + '.pdf', where: d.citekey, url: '/api/lit/pdf?key=' + key })) : null,
@@ -65,7 +77,8 @@ export function mount(el, ctx) {
       d.card ? btn(meta.starred ? '★ 已星标' : '☆ 星标', '星标 = 进深读清单', async () => { await post('/api/lit/card/meta', { key, starred: !meta.starred }); show(key, true); loadList(); }) : null,
       d.card && d.card.meta.status !== 'none' ? btn(meta.verified ? '✓ 已核对' : '核对过了', '你对照原文检查过这张卡片', async () => { await post('/api/lit/card/meta', { key, verified: !meta.verified }); show(key, true); }) : null,
       d.card ? btn('编辑', '直接改卡片的 Markdown（Obsidian 里改也行）', () => edit(d)) : null,
-      !d.pdf && d.pdfVia ? btn('走图书馆通道下载', '用网页桌面里登录着图书馆的浏览器下载这篇的 PDF（排队，一次一篇）', async (e) => { const r = await post('/api/lit/pdfq/add', { key }); if (r.ok) show(key, true); else e.target.textContent = r.msg || '没排上'; }) : null);
+      !d.pdf && d.pdfVia ? btn('走图书馆通道下载', '用网页桌面里登录着图书馆的浏览器下载这篇的 PDF（排队，一次一篇）', async (e) => { const r = await post('/api/lit/pdfq/add', { key }); if (r.ok) show(key, true); else e.target.textContent = r.msg || '没排上'; }) : null,
+      !d.pdf ? upBtn : null, !d.pdf ? pick : null);
     if (vbox && (vbox.key !== key || !quiet)) { vbox.destroy(); vbox = null; }
     if (!vbox) { vbox = visionBox(key); vbox.key = key; }
     view.replaceChildren(...[h('div', { class: 'lb-head' },
