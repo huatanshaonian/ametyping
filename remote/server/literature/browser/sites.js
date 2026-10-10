@@ -14,8 +14,9 @@ const SITES = [
 ];
 // The library's access extension (MyLOFT): the sites marked "ext" are only open while it is signed in -- it then sends
 // them through the library's proxy. Signed out it leaves the proxy alone, and every one of them answers "no access"
-// or with a check; so it is asked first (library.js), from a page of its own.
-const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/src/browser_action/browser_action.html' };
+// or with a check; so it is asked first (library.js). The page it is asked from is a plain file of the extension,
+// where no script of its own runs (its popup page acts when opened: it opens the login page, saves the current tab).
+const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/manifest.json' };
 // Runs in that page. -> { on } (it steers the proxy: signed in) | null (not the extension's page: cannot tell)
 const ACCESS_ON = `(async () => {
   if (location.protocol !== 'chrome-extension:' || !self.chrome || !chrome.proxy) return null;
