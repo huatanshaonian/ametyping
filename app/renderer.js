@@ -1001,6 +1001,8 @@ function drawFrame() {
 // Transparent pixels let clicks fall through to whatever is underneath; only her / the keyboard catch the mouse.
 const GRIP_R = 16;                                 // grip radius in CSS px, sits on the keyboard's bottom-right corner
 let drag = null, sizing = null, hover = false, overGrip = false, downAt = null, hit = false, lastProbe = 0;
+let touchMode = false;                             // tray "触屏模式": the window takes every press, each one is hit-tested here
+canvas.style.touchAction = 'none';                 // a finger dragging her is ours, not the page's pan gesture
 function gripCss() {
   return { x: (KB.x + KB.w - 30 - VX) * scale, y: (KB.y + KB.h + KB_FRONT - 20) * scale };
 }
@@ -1028,7 +1030,7 @@ document.addEventListener('mouseleave', () => { pch.target = 0; if (!drag && !si
 
 let lastClickAt = 0;
 canvas.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || !hit) return;
+  if (e.button !== 0 || !(touchMode ? inGrip(e) || opaqueAt(e) : hit)) return;
   downAt = { x: e.screenX, y: e.screenY, ox: e.offsetX, oy: e.offsetY };
   canvas.setPointerCapture(e.pointerId);
   if (inGrip(e)) { sizing = true; window.pet.gesture('resize-start'); }
@@ -1038,12 +1040,13 @@ canvas.addEventListener('pointerdown', (e) => {
 // the main process moves / resizes the window itself (cursor polling); make sure it always stops
 const endGesture = () => { if (drag || sizing) window.pet.gesture(sizing ? 'resize-end' : 'drag-end'); drag = null; sizing = null; };
 // (the main process also ends drags on the global mouse-up; moving windows can fire lostpointercapture / blur mid-drag)
+canvas.addEventListener('pointercancel', () => { endGesture(); downAt = null; });
 canvas.addEventListener('pointerup', (e) => {
   const moved = downAt ? Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) : 99;
   const wasSizing = !!sizing;
   if (sizing) window.pet.gesture('resize-end');     // commit (saves + updates the tray menu)
   else if (drag) window.pet.gesture('drag-end');
-  if (!wasSizing && moved < 4 && downAt.oy / scale < NECK.y + 20) {
+  if (!wasSizing && moved < 4 && downAt && downAt.oy / scale < NECK.y + 20) {
     tryTemp('blush', 2000, 'happy', '被点了一下头'); head.nodUntil = now() + 200;                 // a click (no drag) on her head: pat
   }
   if (!wasSizing && moved < 4) {
@@ -1166,7 +1169,7 @@ function detectPat(m) {
 }
 
 window.pet.onConfig((c) => {
-  scale = c.scale; debug = c.debug; nagOn = c.breakNag !== false;
+  scale = c.scale; debug = c.debug; nagOn = c.breakNag !== false; touchMode = !!c.touchMode;
   if (c.facing && c.facing !== facing) { facing = c.facing; buildKeys(); }
   if (c.kbTheme && c.kbTheme !== KB_PAINT.theme) loadKbTheme(c.kbTheme);
   const kl = !!c.kangel;                       // tray lock "天使模式（常驻）"

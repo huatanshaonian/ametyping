@@ -35,7 +35,7 @@ let settings = { scale: 0.36, x: null, y: null, clickThrough: false, debug: fals
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^﻿/, ''))); } catch {}
 const save = () => { if (process.env.AME_DEMO_PANEL || process.env.AME_DEMO_PCHAN) return; try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} };
 
-const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo', breakNag: settings.breakNag !== false, kangel: !!settings.kangel, legs: settings.legs !== false });
+const cfg = () => ({ scale: settings.scale, debug: settings.debug, facing: settings.facing, kbTheme: settings.kbTheme || 'ngo', breakNag: settings.breakNag !== false, kangel: !!settings.kangel, legs: settings.legs !== false, touchMode: !!settings.touchMode });
 
 function winSize() {
   return { width: Math.round(ART_W * settings.scale), height: Math.round(artH() * settings.scale) };
@@ -75,11 +75,16 @@ function createWindow() {
 
 // The window ignores the mouse by default (clicks fall through transparent areas); the renderer
 // switches it on only while the cursor is over an opaque pixel. "鼠标穿透" keeps it off entirely.
+// That needs a cursor that arrives before the click: a finger does not hover, so its first tap falls through (and
+// the next one on an empty spot is swallowed). "触屏模式": the whole window takes input all the time, and the
+// renderer looks at the pixel under each press itself -- nothing falls through its transparent parts any more.
+const touchOn = () => !!settings.touchMode && !settings.clickThrough;
 function applyClickThrough() {
-  if (win) win.setIgnoreMouseEvents(true, { forward: true });
+  if (!win) return;
+  if (touchOn()) win.setIgnoreMouseEvents(false); else win.setIgnoreMouseEvents(true, { forward: true });
 }
 ipcMain.on('hit', (_e, v) => {
-  if (win && !settings.clickThrough) win.setIgnoreMouseEvents(!v, { forward: true });
+  if (win && !settings.clickThrough && !touchOn()) win.setIgnoreMouseEvents(!v, { forward: true });
 });
 
 // keep the whole window inside the work area of the display it is on
@@ -120,6 +125,8 @@ function buildMenu() {
       click: (m) => { settings.mailBubble = m.checked; save(); if (!m.checked) mailNotice.hide(); } },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
+    { label: '触屏模式（手指能直接拖她、点她；她周围的透明处不再穿透）', type: 'checkbox', checked: !!settings.touchMode,
+      click: (m) => { settings.touchMode = m.checked; save(); applyClickThrough(); win.webContents.send('config', cfg()); } },
     { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
       click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
     { label: '显示腿部（跪坐全身）', type: 'checkbox', checked: settings.legs !== false,
