@@ -7,14 +7,16 @@
 // A folder Claude Code has not seen before first asks whether to trust it -- before any hook runs, so the dashboard
 // could not even see the session. Starting it from the dashboard is the choice to trust that folder: the prompt is
 // answered here (the pane is watched for a little while after the start).
+// A Codex thread ("codex:<id>") is opened again the same way, with `codex resume <id>`.
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { codexBin, threadOf } = require('./codex');
 
-const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|LANG|LC_ALL)$/;
+const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|LANG|LC_ALL)$/;
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 function claudeBin(env) {
@@ -27,24 +29,26 @@ function claudeBin(env) {
 }
 
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
-// resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session
+// resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's
+// ("codex:<id>") -- `codex resume <id>`
 function launch({ cwd, prompt, env, resume = '' }) {
   return new Promise((resolve) => {
-    if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
+    const thread = threadOf(resume);
+    if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
     let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
-    const bin = claudeBin(env);
-    if (!bin) return resolve({ ok: false, msg: '找不到 claude' });
+    const bin = thread ? codexBin(env) : claudeBin(env);
+    if (!bin) return resolve({ ok: false, msg: thread ? '找不到 codex' : '找不到 claude' });
     const tag = crypto.randomBytes(3).toString('hex');
-    const name = `claude-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
+    const name = `${thread ? 'codex' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
     const envFile = path.join(os.tmpdir(), `ame-launch-${crypto.randomBytes(8).toString('hex')}.env`);
     const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k)).map(([k, v]) => `export ${k}=${q(v)}`);
     try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { return resolve({ ok: false, msg: '写临时文件失败' }); }
     const pre = path.join(os.homedir(), '.ametyping', 'launch.sh');
-    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
+    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
     execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, cmd], { timeout: 8000 }, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
-      answerTrust(name);
+      if (!thread) answerTrust(name);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
   });

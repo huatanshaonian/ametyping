@@ -156,7 +156,7 @@ function mount(current) {
   function header(s) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
-    hmeta.textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
+    hmeta.textContent = s ? `${String(s.id).startsWith('codex:') ? 'Codex · ' : ''}${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
     // context left (from the last reply's token count); warned about when it runs low
     const left = s ? ctxLeft(s) : null;
     if (left != null) {
@@ -164,7 +164,7 @@ function mount(current) {
         title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${s.id.startsWith('codex:') ? 'Codex' : '到自动压缩前'}）` }));
     }
     resume.hidden = !(s && s.resume);
-    reopen.hidden = !(s && s.online && s.via !== 'terminal' && !String(s.id).startsWith('codex:'));
+    reopen.hidden = !(s && s.online && s.via !== 'terminal');
     if (s && s.resume && rcmd.textContent !== s.resume) rcmd.textContent = s.resume;
   }
   async function copyResume() {

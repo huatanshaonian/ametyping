@@ -15,9 +15,9 @@ const now = Date.now();
 const J = (o) => JSON.stringify(o) + '\n';
 fs.writeFileSync(path.join(PROJ, SID + '.jsonl'), J({ type: 'permission-mode', permissionMode: 'plan', sessionId: SID }) +
   J({ type: 'user', uuid: 'u1', cwd: '/demo', timestamp: new Date(now - 60e3).toISOString(), message: { role: 'user', content: '先想想怎么改' } }) +
-  J({ type: 'assistant', uuid: 'a1', cwd: '/demo', timestamp: new Date(now - 50e3).toISOString(), message: { id: 'm1', role: 'assistant', usage: { input_tokens: 2, cache_read_input_tokens: 152000, output_tokens: 100 }, content: [{ type: 'text', text: '计划如下……' }] } }));
+  J({ type: 'assistant', uuid: 'a1', cwd: '/demo', timestamp: new Date(now - 50e3).toISOString(), message: { id: 'm1', role: 'assistant', usage: { input_tokens: 2, cache_read_input_tokens: 880000, output_tokens: 100 }, content: [{ type: 'text', text: '计划如下……' }] } }));
 fs.writeFileSync(path.join(PROJ, SID2 + '.jsonl'), J({ type: 'user', uuid: 'v1', cwd: '/demo', timestamp: new Date(now - 40e3).toISOString(), message: { role: 'user', content: '另一个会话的问题' } }) +
-  J({ type: 'assistant', uuid: 'v2', cwd: '/demo', timestamp: new Date(now - 30e3).toISOString(), message: { id: 'm2', role: 'assistant', usage: { input_tokens: 2, cache_read_input_tokens: 50000, output_tokens: 100 }, content: [{ type: 'text', text: '另一个会话的回答' }] } }));
+  J({ type: 'assistant', uuid: 'v2', cwd: '/demo', timestamp: new Date(now - 30e3).toISOString(), message: { id: 'm2', role: 'assistant', usage: { input_tokens: 2, cache_read_input_tokens: 290000, output_tokens: 100 }, content: [{ type: 'text', text: '另一个会话的回答' }] } }));
 const SID3 = '99999999-1111-2222-3333-444444444444';
 fs.writeFileSync(path.join(PROJ, SID3 + '.jsonl'), J({ type: 'user', uuid: 'w1', cwd: '/demo', timestamp: new Date(now - 3 * 86400e3).toISOString(), message: { role: 'user', content: '三天前讨论网格收敛 zebra42' } }) +
   J({ type: 'assistant', uuid: 'w2', cwd: '/demo', timestamp: new Date(now - 3 * 86400e3 + 5000).toISOString(), message: { id: 'm3', role: 'assistant', content: [{ type: 'text', text: '好的，先看收敛曲线' }] } }));
