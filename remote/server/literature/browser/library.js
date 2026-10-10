@@ -2,6 +2,7 @@
 // they are signed in to it (the Chromium of the Zotero container's web desktop: the library's access extension, the
 // publishers' own sign-ins). The browser does the asking -- with its cookies, through the proxy the extension set --
 // and this module only steers it over the DevTools port (settings "browserPort"; 0 = off):
+//   0. a publisher that is only open through the library's extension: the extension is asked whether it is signed in;
 //   1. a new tab goes to the paper (https://doi.org/<doi>) and is read where it lands (sites.js);
 //   2. IEEE Xplore without access: signed in through the institution once (signin.js), when an account is set;
 //   3. the tab goes to the PDF, and the answer's body is taken as it arrives.
@@ -10,7 +11,7 @@
 // do, or when the page offers no PDF (not subscribed). One paper at a time (pdfqueue.js paces them).
 'use strict';
 const { connect } = require('./cdp');
-const { byHost, LOOK } = require('./sites');
+const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON } = require('./sites');
 const { signIn } = require('./signin');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -20,7 +21,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
 function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/', ieeeBase = 'https://ieeexplore.ieee.org', ieeeHome = 'ieeexplore.ieee.org',
-  loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
+  access = ACCESS, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
   const enabled = () => +port() > 0;
@@ -46,6 +47,19 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
     let v = await c.evaluate(sid, LOOK);
     for (let i = 0; v.challenge && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
     return v;
+  }
+
+  // is the library's extension signed in? Asked on a page of its own, in the paper's tab before it goes anywhere.
+  // -> true | false | null (no such page: the extension is not there or another one is used -- not judged)
+  async function extensionOn(c, sid) {
+    if (!access || !access.page) return null;
+    c.send('Page.navigate', { url: access.page }, sid).catch(() => {});
+    for (let i = 0; i < 4; i++) {
+      await sleep(Math.min(stepMs, 1000));
+      const r = await c.evaluate(sid, ACCESS_ON).catch(() => null);
+      if (r) return !!r.on;
+    }
+    return null;
   }
 
   // the tab goes to the PDF; its body is taken off the answer. -> { buf } | { html: true } (it ended on a page)
@@ -104,6 +118,8 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const sid = await c.attach(targetId);
       await c.send('Page.enable', {}, sid);
       const mainFrame = (await c.send('Page.getFrameTree', {}, sid)).frameTree.frame.id;
+      if (byDoi(p.doi).ext && (await extensionOn(c, sid)) === false)
+        throw stop(`${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: byDoi(p.doi).id, name: byDoi(p.doi).name } });
       await c.send('Page.navigate', { url: start }, sid);
       if (!(await landed(c, sid))) throw stop('论文的页面打不开（DOI 没有跳转，或网站没有回应）');
       let v = await look(c, sid);

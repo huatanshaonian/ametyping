@@ -4,14 +4,24 @@
 'use strict';
 
 const SITES = [
-  { id: 'sciencedirect', name: 'ScienceDirect', hosts: ['sciencedirect.com'], prefixes: ['10.1016'] },
+  { id: 'sciencedirect', name: 'ScienceDirect', hosts: ['sciencedirect.com'], prefixes: ['10.1016'], ext: true },
   { id: 'ieee', name: 'IEEE Xplore', hosts: ['ieeexplore.ieee.org'], prefixes: ['10.1109'], signin: true },
-  { id: 'aiaa', name: 'AIAA', hosts: ['arc.aiaa.org'], prefixes: ['10.2514'] },
-  { id: 'aip', name: 'AIP', hosts: ['pubs.aip.org'], prefixes: ['10.1063'] },
-  { id: 'springer', name: 'Springer', hosts: ['link.springer.com'], prefixes: ['10.1007'] },
-  { id: 'wiley', name: 'Wiley', hosts: ['onlinelibrary.wiley.com'], prefixes: ['10.1002', '10.1029'] },
-  { id: 'iop', name: 'IOP', hosts: ['iopscience.iop.org'], prefixes: ['10.1088'] },
+  { id: 'aiaa', name: 'AIAA', hosts: ['arc.aiaa.org'], prefixes: ['10.2514'], ext: true },
+  { id: 'aip', name: 'AIP', hosts: ['pubs.aip.org'], prefixes: ['10.1063'], ext: true },
+  { id: 'springer', name: 'Springer', hosts: ['link.springer.com'], prefixes: ['10.1007'], ext: true },
+  { id: 'wiley', name: 'Wiley', hosts: ['onlinelibrary.wiley.com'], prefixes: ['10.1002', '10.1029'], ext: true },
+  { id: 'iop', name: 'IOP', hosts: ['iopscience.iop.org'], prefixes: ['10.1088'], ext: true },
 ];
+// The library's access extension (MyLOFT): the sites marked "ext" are only open while it is signed in -- it then sends
+// them through the library's proxy. Signed out it leaves the proxy alone, and every one of them answers "no access"
+// or with a check; so it is asked first (library.js), from a page of its own.
+const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/src/browser_action/browser_action.html' };
+// Runs in that page. -> { on } (it steers the proxy: signed in) | null (not the extension's page: cannot tell)
+const ACCESS_ON = `(async () => {
+  if (location.protocol !== 'chrome-extension:' || !self.chrome || !chrome.proxy) return null;
+  const s = await chrome.proxy.settings.get({});
+  return { on: s.levelOfControl === 'controlled_by_this_extension' && (s.value || {}).mode === 'pac_script' };
+})()`;
 const OTHER = { id: 'other', name: '其他网站', hosts: [], prefixes: [] };
 
 const byHost = (host) => SITES.find((s) => s.hosts.some((h) => host === h || host.endsWith('.' + h))) || OTHER;
@@ -46,4 +56,4 @@ const LOOK = `(() => {
   return { host, url: location.href, title: document.title, challenge, pdf, access };
 })()`;
 
-module.exports = { SITES, OTHER, byHost, byDoi, byId, LOOK };
+module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, byHost, byDoi, byId, LOOK };

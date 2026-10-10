@@ -5,6 +5,7 @@
 //   10.1016/none     ScienceDirect without a PDF link (not subscribed)
 //   10.2514/denied   AIAA: a PDF link that answers with a page (no access)
 //   10.1109/<n>      IEEE Xplore: access only when signed in; its PDF comes inside a frame first
+// The library's extension answers from its own page whether it steers the proxy (.extOn).
 // IEEE's institutional sign-in (wayf.jsp) comes straight back while .idpSession is set; otherwise a login page with its
 // form in a frame, where the browser "fills in" the saved password only for the account .saved. What was typed, pressed,
 // opened and closed is kept for the test (.typed, .logins, .opened, .closed, .log).
@@ -15,7 +16,7 @@ const { WebSocketServer } = require('ws');
 const LOGIN_OFF = { x: 100, y: 50 }, USER_AT = { x: 30, y: 10 }, BUTTON_AT = { x: 40, y: 60 };
 
 function createFakeBrowser({ pdf }) {
-  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
+  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, extOn: true, extAsked: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
   const server = http.createServer((req, res) => {
     if (req.url === '/json/version') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ Browser: 'FakeChrome/1.0', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/devtools/browser/x` })); }
     res.writeHead(404); res.end();
@@ -24,6 +25,7 @@ function createFakeBrowser({ pdf }) {
 
   // where a tab is after going to `url`
   function go(tab, url) {
+    if (/^chrome-extension:/.test(url)) { tab.url = url; B.extAsked++; return; }
     B.log.push(url);
     tab.url = url; tab.login = false;
     let m;
@@ -95,7 +97,8 @@ function createFakeBrowser({ pdf }) {
         case 'Runtime.evaluate': {
           const x = p.expression;
           let v;
-          if (x === 'location.host') v = host(tab);
+          if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;
+          else if (x === 'location.host') v = host(tab);
           else if (/document\.readyState/.test(x)) v = { host: host(tab), ready: 'complete', url: tab.url };
           else if (/citation_pdf_url/.test(x)) v = look(tab);
           else if (/:autofill/.test(x)) v = { user: B.typed, filled: B.typed === B.saved };
