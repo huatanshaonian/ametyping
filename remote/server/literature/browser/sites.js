@@ -27,6 +27,10 @@ const ACCESS_ON = `(async () => {
   return { on: s.levelOfControl === 'controlled_by_this_extension' && (s.value || {}).mode === 'pac_script' };
 })()`;
 const OTHER = { id: 'other', name: '其他网站', hosts: [], prefixes: [] };
+// A DOI of the Chinese registry does not go to the paper but to a page listing where it is ("多重解析地址选择页面"):
+// the first address listed there is followed. Runs in that page. -> the address | ''
+const RESOLVERS = ['www.chndoi.org'];
+const RESOLVED = `(() => { const a = [...document.querySelectorAll('ul li a[href]')].map((e) => e.href).find((h) => h.startsWith('http') && !h.includes(location.host)); return a || ''; })()`;
 
 const byHost = (host) => SITES.find((s) => s.hosts.some((h) => host === h || host.endsWith('.' + h))) || OTHER;
 // before the DOI is followed: a guess from its prefix (a queue skips the sites that wait for the user)
@@ -60,4 +64,4 @@ const LOOK = `(() => {
   return { host, url: location.href, title: document.title, challenge, pdf, access };
 })()`;
 
-module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, byHost, byDoi, byId, LOOK };
+module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK };

@@ -4,6 +4,8 @@
 //   10.1016/check    ScienceDirect asking "are you a robot" until .passed is set
 //   10.1016/none     ScienceDirect without a PDF link (not subscribed)
 //   10.2514/denied   AIAA: a PDF link that answers with a page (no access)
+//   10.3390/<x>      an open-access publisher whose PDF comes as a download, with no type written on the answer
+//   10.16356/<x>     the Chinese DOI registry: a page listing where the paper is (that open-access publisher)
 //   10.1109/<n>      IEEE Xplore: access only when signed in; its PDF comes inside a frame first
 // The library's extension answers from its own page whether it steers the proxy (.extOn); opening its website signs it
 // in again while the website itself is signed in (.webSession), and shows the login page otherwise.
@@ -34,6 +36,8 @@ function createFakeBrowser({ pdf }) {
     if ((m = url.match(/^https:\/\/doi\.org\/(10\.1016)\/(\w+)/))) tab.url = 'https://www.sciencedirect.com/science/article/pii/' + m[2].toUpperCase();
     else if (url.match(/^https:\/\/doi\.org\/10\.2514\//)) tab.url = 'https://arc.aiaa.org/doi/' + url.split('doi.org/')[1];
     else if ((m = url.match(/^https:\/\/doi\.org\/10\.1109\/(\d+)/))) tab.url = 'https://ieeexplore.ieee.org/document/' + m[1];
+    else if (url.startsWith('https://doi.org/10.3390/')) tab.url = 'https://www.mdpi.com/' + url.split('10.3390/')[1];
+    else if (url.startsWith('https://doi.org/10.16356/')) tab.url = 'https://www.chndoi.org/Resolution/Handler?doi=10.16356/' + url.split('10.16356/')[1];
     else if (/\/servlet\/wayf\.jsp/.test(url)) {
       const target = new URL(url).searchParams.get('url');
       tab.idp = new URL(url).searchParams.get('entityId');
@@ -47,6 +51,7 @@ function createFakeBrowser({ pdf }) {
       if (/CHECK$/.test(tab.url) && !B.passed) return { ...base, title: 'Just a moment', challenge: true };
       return { ...base, pdf: /NONE$/.test(tab.url) ? '' : tab.url + '/pdfft?pid=main.pdf' };
     }
+    if (h === 'www.mdpi.com') return { ...base, pdf: tab.url + '/pdf' };
     if (h === 'arc.aiaa.org') return { ...base, pdf: tab.url.replace('/doi/', '/doi/pdf/') };
     if (h === 'ieeexplore.ieee.org') { const n = (tab.url.match(/document\/(\d+)/) || [])[1]; return { ...base, access: B.signedIn, pdf: n ? `https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=${n}&ref=` : '' }; }
     return base;
@@ -54,6 +59,7 @@ function createFakeBrowser({ pdf }) {
   // what going to a PDF address answers with: 'pdf' | 'frame' (a viewer page, the PDF in a frame of it) | 'html'
   function pdfAnswer(tab, url) {
     if (/\/pdfft/.test(url)) return 'pdf';
+    if (url.startsWith('https://www.mdpi.com/') && url.endsWith('/pdf')) return 'download';
     if (/getPDF\.jsp/.test(url)) return !B.signedIn ? 'html' : tab.framed ? 'pdf' : (tab.framed = true, 'frame');
     return 'html';
   }
@@ -81,6 +87,7 @@ function createFakeBrowser({ pdf }) {
           const a = pdfAnswer(tab, p.url);
           const paused = (frameId, type) => emit(d.sessionId, 'Fetch.requestPaused', { requestId: 'R' + Math.random(), frameId, request: { url: p.url }, responseStatusCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }] });
           if (a === 'pdf') return paused('main', 'application/pdf');
+          if (a === 'download') return emit(d.sessionId, 'Fetch.requestPaused', { requestId: 'R' + Math.random(), frameId: 'main', request: { url: p.url }, responseStatusCode: 200, responseHeaders: [{ name: 'Content-Disposition', value: 'attachment; filename="paper-v2.pdf"' }] });
           if (a === 'frame') { paused('main', 'text/html'); return setTimeout(() => paused('viewerframe', 'application/pdf'), 20); }
           tab.url = p.url; return paused('main', 'text/html');
         }
@@ -102,6 +109,7 @@ function createFakeBrowser({ pdf }) {
           if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;
           else if (x === 'location.host') v = host(tab);
           else if (x === 'location.href') v = tab.url;
+          else if (x.includes('ul li a[href]')) v = host(tab) === 'www.chndoi.org' ? 'https://www.mdpi.com/resolved-' + tab.url.split('10.16356/')[1] : '';
           else if (/document\.readyState/.test(x)) v = { host: host(tab), ready: 'complete', url: tab.url };
           else if (/citation_pdf_url/.test(x)) v = look(tab);
           else if (/:autofill/.test(x)) v = { user: B.typed, filled: B.typed === B.saved };
