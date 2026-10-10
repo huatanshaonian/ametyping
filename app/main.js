@@ -191,7 +191,7 @@ app.whenReady().then(() => {
   uIOhook.on('keydown', (e) => { if (win) win.webContents.send('key', { code: e.keycode, down: true }); morning.onKey(); mailNotice.onKey(); });
   uIOhook.on('keyup', (e) => win && win.webContents.send('key', { code: e.keycode, down: false }));
   // any mouse release ends a drag / resize, even if the page never saw the pointerup
-  uIOhook.on('mouseup', () => { endGesture(); endPanelResize(); });
+  uIOhook.on('mouseup', () => { if (!(gest && gest.touch)) endGesture(); endPanelResize(); });   // (a touch gesture: ended by the renderer)
   uIOhook.start();
 });
 
@@ -902,10 +902,13 @@ ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatS
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.
 // (Relying on renderer mousemove fails: while the window follows the cursor the pointer barely moves
 // relative to the window, Chromium stops sending moves, and the window lags / slides behind.)
+// A finger is another matter: the cursor does not go where it goes, and no mouse button is seen coming up. A gesture
+// made by touch is told where the finger is by the renderer (screen coordinates, so the window moving under it
+// changes nothing) and ends when the renderer says the finger lifted.
 let gest = null, gestTimer = null;
 function stepGesture() {
   if (!win || !gest) return;
-  const p = screen.getCursorScreenPoint();
+  const p = gest.touch ? gest.at : screen.getCursorScreenPoint();
   if (gest.kind === 'drag') {
     const c = clampToScreen(p.x - gest.dx, p.y - gest.dy, gest.w, gest.h);
     if (c.x !== gest.lx || c.y !== gest.ly) {
@@ -936,16 +939,18 @@ function endGesture() {
   if (kind === 'drag') { const [x, y] = win.getPosition(); settings.x = x; settings.y = y; save(); }
   else setScale(settings.scale, true);
 }
-ipcMain.on('gesture', (_e, kind) => {
+ipcMain.on('gesture', (_e, kind, x, y) => {
   if (!win) return;
   if (kind === 'drag-start' || kind === 'resize-start') {
     endGesture();
-    const p = screen.getCursorScreenPoint(), b = win.getBounds();
+    const touch = Number.isFinite(x) && Number.isFinite(y);
+    const p = touch ? { x, y } : screen.getCursorScreenPoint(), b = win.getBounds();
     const sz = winSize();                    // canonical size from the scale, never the (DPI-rounded) current one
-    gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y };
+    gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y, touch, at: p };
     gestTimer = setInterval(stepGesture, 8);
   } else if (kind === 'drag-end' || kind === 'resize-end') endGesture();
 });
+ipcMain.on('gesture-at', (_e, x, y) => { if (gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) gest.at = { x, y }; });
 
 // cursor position for her gaze, in art-space units relative to the window (polled, no mouse hook)
 setInterval(() => {
