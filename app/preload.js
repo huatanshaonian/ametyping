@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('pet', {
   setScale: (s, commit) => ipcRenderer.send('set-scale', s, commit),
   onMouse: (fn) => ipcRenderer.on('mouse', (_e, m) => fn(m)),
   setHit: (v) => ipcRenderer.send('hit', v),
+  setShape: (rects) => ipcRenderer.send('shape', rects),
   gesture: (kind) => ipcRenderer.send('gesture', kind),
   openDashboard: () => ipcRenderer.send('open-dashboard'),
   onClaude: (fn) => ipcRenderer.on('claude', (_e, t) => fn(t)),

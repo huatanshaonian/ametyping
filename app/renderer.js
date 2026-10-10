@@ -1001,7 +1001,20 @@ function drawFrame() {
 // Transparent pixels let clicks fall through to whatever is underneath; only her / the keyboard catch the mouse.
 const GRIP_R = 16;                                 // grip radius in CSS px, sits on the keyboard's bottom-right corner
 let drag = null, sizing = null, hover = false, overGrip = false, downAt = null, hit = false, lastProbe = 0;
-let touchMode = false;                             // tray "触屏模式": the window takes every press, each one is hit-tested here
+let touchMode = false;                             // tray "触屏模式": the window takes every press within its shape, each one is hit-tested here
+// ... and the shape is her outline, read off the canvas a few times a second (outline.js). While she is being resized
+// the whole window again: the canvas grows faster than the shape would follow.
+const readOutline = createOutline(canvas);
+let shapeSent = '[]';
+setInterval(() => {
+  let rects = [];
+  if (touchMode && !sizing) {
+    try { rects = readOutline(canvas.clientWidth, canvas.clientHeight); } catch { rects = []; }
+    if (rects.length) { const g = gripCss(); rects.push([Math.round(g.x - GRIP_R), Math.round(g.y - GRIP_R), GRIP_R * 2, GRIP_R * 2]); }   // the grip: always reachable
+  }
+  const key = JSON.stringify(rects);
+  if (key !== shapeSent) { shapeSent = key; window.pet.setShape(rects); }
+}, 150);
 canvas.style.touchAction = 'none';                 // a finger dragging her is ours, not the page's pan gesture
 function gripCss() {
   return { x: (KB.x + KB.w - 30 - VX) * scale, y: (KB.y + KB.h + KB_FRONT - 20) * scale };
@@ -1129,7 +1142,7 @@ function drawPchan() {
 }
 
 function drawGrip() {                              // three diagonal ticks on the keyboard corner, while hovering her
-  if (!hover && !sizing) return;
+  if (!hover && !sizing && !touchMode) return;       // (no hovering with a finger: always there in touch mode)
   const dpr = window.devicePixelRatio || 1, g = gripCss();
   ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = overGrip || sizing ? 'rgba(210,80,140,.95)' : 'rgba(110,90,105,.6)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
