@@ -63,7 +63,8 @@ async function signIn(c, sid, { account, idp, target, home = 'ieeexplore.ieee.or
     await sleepFn(1500);
     const h = await hostNow();
     if (back(h)) return { ok: true, asked: false };
-    if (h) { found = await findForm(); if (found) break; }
+    // (the form is there before it is ready: its button reads 检查中… for a moment, and only then 登录)
+    if (h) { found = await findForm(); if (found && found.form.user && found.form.button) break; }
   }
   if (!found) return { ok: false, why: '机构登录的页面没有出现登录表单' };
   const { form, off, ctx } = found;
