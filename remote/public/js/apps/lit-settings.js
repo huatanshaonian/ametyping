@@ -66,7 +66,7 @@ export function panel() {
       h('h4', { class: 'aim-h', text: '图书馆通道' }),
       h('p', { class: 'ghint', text: '找不到开放获取的 PDF 时，用 Zotero 网页桌面里那个浏览器去下：它登录着所里的图书馆通道（MyLOFT）和出版商的机构账号，下载用的就是你自己的订阅权限。一次一篇，慢慢来；遇到要真人点的验证会停下等你。' }),
       row('浏览器调试端口', h('span', {}, h('span', { class: 'lset-k' }, F.browserPort, ptest), pst), '网页桌面里 Chromium 的调试端口（部署时设的是 9223）；0 = 不用图书馆通道'),
-      row('IEEE 机构登录账号', F.ieeeAccount, 'IEEE 的登录过期时，用这个账号走机构登录（中国科技云通行证）：只填账号，密码由那个浏览器自己保存的来填，这里不存也不经手'),
+      row('机构登录账号（IEEE、AIP）', F.ieeeAccount, 'IEEE 的登录过期、或 AIP 不给 PDF 时，用这个账号走机构登录（中国科技云通行证）：只填账号，密码由那个浏览器自己保存的来填，这里不存也不经手'),
       row('两篇之间隔', h('span', {}, F.pdfGapSec, ' 秒'), '下完一篇到开始下一篇至少隔这么久（另加一点随机）'),
       row('每天最多', h('span', {}, F.pdfPerDay, ' 篇'), '走图书馆通道的总数；0 = 先不下'),
       h('div', { class: 'gbtns' }, h('button', { class: 'btn go', type: 'button', text: '保存', onclick: () => save(false) })));

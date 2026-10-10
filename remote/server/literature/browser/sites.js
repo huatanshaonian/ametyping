@@ -3,11 +3,16 @@
 // by the usual marks (the citation_pdf_url of the page, a link that looks like the PDF) and may simply find nothing.
 'use strict';
 
+// "signin": the site takes the user's institution's sign-in (federated login); -> the address that starts it for the
+// institution `idp` and comes back to `target` (IEEE has its own way in, AIP the plain Shibboleth one)
+const enc = encodeURIComponent;
 const SITES = [
   { id: 'sciencedirect', name: 'ScienceDirect', hosts: ['sciencedirect.com'], prefixes: ['10.1016'], ext: true },
-  { id: 'ieee', name: 'IEEE Xplore', hosts: ['ieeexplore.ieee.org'], prefixes: ['10.1109'], signin: true },
+  { id: 'ieee', name: 'IEEE Xplore', hosts: ['ieeexplore.ieee.org'], prefixes: ['10.1109'],
+    signin: (idp, target) => `https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=${enc(idp)}&url=${enc(target)}` },
   { id: 'aiaa', name: 'AIAA', hosts: ['arc.aiaa.org'], prefixes: ['10.2514'], ext: true },
-  { id: 'aip', name: 'AIP', hosts: ['pubs.aip.org'], prefixes: ['10.1063'], ext: true },
+  { id: 'aip', name: 'AIP', hosts: ['pubs.aip.org'], prefixes: ['10.1063'], ext: true,
+    signin: (idp, target) => `https://pubs.aip.org/Shibboleth.sso/Login?entityID=${enc(idp)}&target=${enc(target)}` },
   { id: 'springer', name: 'Springer', hosts: ['link.springer.com'], prefixes: ['10.1007'], ext: true },
   { id: 'wiley', name: 'Wiley', hosts: ['onlinelibrary.wiley.com'], prefixes: ['10.1002', '10.1029'], ext: true },
   { id: 'iop', name: 'IOP', hosts: ['iopscience.iop.org'], prefixes: ['10.1088'], ext: true },

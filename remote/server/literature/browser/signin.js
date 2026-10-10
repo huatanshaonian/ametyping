@@ -1,12 +1,13 @@
-// Signing in to IEEE Xplore through the user's institution (federated login), in the browser's own profile: the tab
-// is sent to IEEE's "sign in through <institution>" address; when the institution's session is still good that comes
-// straight back signed in. Otherwise its login page shows, and:
+// Signing in to a publisher (IEEE Xplore, AIP) through the user's institution (federated login), in the browser's own
+// profile: the tab is sent to the publisher's "sign in through <institution>" address (sites.js); when the
+// institution's session is still good that comes straight back signed in. Otherwise its login page shows, and:
 //   - the account's name (settings "ieeeAccount", an e-mail address -- never a password) is typed into the form;
 //   - the browser's password manager puts the password it has saved for that name beside it (which of several saved
 //     logins the browser filled by itself cannot be read: the page is not told until someone acts on the form);
 //   - 登录 is pressed, once.
-// Anything else on the form (a captcha box, a code by SMS), a password the browser does not fill, or a page that does
-// not come back signed in: it stops there and says so. The password is never read, typed or stored by this module.
+// Anything else on the form (a captcha box, a code by SMS), a password the browser does not fill, the institution asking
+// whether the user's details may be handed to this publisher (asked once per publisher: theirs to answer), or a page
+// that does not come back signed in: it stops there and says so. The password is never read, typed or stored by this module.
 'use strict';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,12 +32,18 @@ const FILLED = `(() => {
   return { user: u ? u.value : '', filled: filled && p.value.length > 0 };
 })()`;
 
-// signIn(c, sid, { account, idp, target }) -> { ok: true, asked } | { ok: false, why }
+// the institution's "Information Release" page (Shibboleth's consent to hand the user's attributes to the publisher)
+const CONSENT = `!!document.querySelector('[name="_eventId_proceed"]')`;
+const CONSENT_WHY = '机构那边要你先同意把身份信息交给这家出版商（Information Release）：到网页桌面的浏览器里走一次机构登录，点同意并选「以后不再询问」';
+
+// signIn(c, sid, { account, url, home }) -> { ok: true, asked } | { ok: false, why }
+//   url: the publisher's address that starts the sign-in; home: the publisher's host it comes back to
 //   asked: the login page showed (false: the institution's session was still good)
-async function signIn(c, sid, { account, idp, target, home = 'ieeexplore.ieee.org', base = 'https://ieeexplore.ieee.org', waitMs = 45e3, sleepFn = sleep }) {
+async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sleep }) {
   const hostNow = () => c.evaluate(sid, 'location.host').catch(() => '');
   const back = (h) => h === home || h.endsWith('.' + home);
-  await c.send('Page.navigate', { url: `${base}/servlet/wayf.jsp?entityId=${encodeURIComponent(idp)}&url=${encodeURIComponent(target)}` }, sid);
+  const consent = () => c.evaluate(sid, CONSENT).catch(() => false);
+  await c.send('Page.navigate', { url }, sid);
 
   // the frame holding the login form (the page itself, or a frame in it) and where that frame sits in the tab
   async function findForm() {
@@ -63,6 +70,7 @@ async function signIn(c, sid, { account, idp, target, home = 'ieeexplore.ieee.or
     await sleepFn(1500);
     const h = await hostNow();
     if (back(h)) return { ok: true, asked: false };
+    if (h && await consent()) return { ok: false, why: CONSENT_WHY };
     // (the form is there before it is ready: its button reads 检查中… for a moment, and only then 登录)
     if (h) { found = await findForm(); if (found && found.form.user && found.form.button) break; }
   }
@@ -88,8 +96,9 @@ async function signIn(c, sid, { account, idp, target, home = 'ieeexplore.ieee.or
   for (const until = Date.now() + waitMs; Date.now() < until;) {
     await sleepFn(1500);
     if (back(await hostNow())) return { ok: true, asked: true };
+    if (await consent()) return { ok: false, why: CONSENT_WHY };
   }
-  return { ok: false, why: '点了登录但没有回到 IEEE（密码变了，或者登录页要验证）' };
+  return { ok: false, why: '点了登录但没有回到出版商的网站（密码变了，或者登录页要验证）' };
 }
 
 module.exports = { signIn };
