@@ -6,6 +6,8 @@
 //   10.2514/denied   AIAA: a PDF link that answers with a page (no access)
 //   10.3390/<x>      an open-access publisher whose PDF comes as a download, with no type written on the answer
 //   10.16356/<x>     the Chinese DOI registry: a page listing where the paper is (that open-access publisher)
+//   10.1063/<x>      AIP: the PDF only once signed in through the institution (.aipIn); the institution asks first
+//                    whether the user's details may go to AIP while .consent is set
 //   10.1109/<n>      IEEE Xplore: access only when signed in; its PDF comes inside a frame first
 // The library's extension answers from its own page whether it steers the proxy (.extOn); opening its website signs it
 // in again while the website itself is signed in (.webSession), and shows the login page otherwise.
@@ -19,7 +21,7 @@ const { WebSocketServer } = require('ws');
 const LOGIN_OFF = { x: 100, y: 50 }, USER_AT = { x: 30, y: 10 }, BUTTON_AT = { x: 40, y: 60 };
 
 function createFakeBrowser({ pdf }) {
-  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, extOn: true, extAsked: 0, webSession: false, homeOpened: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
+  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, consent: false, extOn: true, extAsked: 0, webSession: false, homeOpened: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
   const server = http.createServer((req, res) => {
     if (req.url === '/json/version') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ Browser: 'FakeChrome/1.0', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/devtools/browser/x` })); }
     res.writeHead(404); res.end();
@@ -31,17 +33,20 @@ function createFakeBrowser({ pdf }) {
     if (/^chrome-extension:/.test(url)) { tab.url = url; B.extAsked++; return; }
     if (url.startsWith('https://app.myloft.xyz/')) { B.homeOpened++; if (B.webSession) B.extOn = true; tab.url = B.webSession ? 'https://app.myloft.xyz/browse/home' : 'https://app.myloft.xyz/user/login'; return; }
     B.log.push(url);
-    tab.url = url; tab.login = false;
+    tab.url = url; tab.login = false; tab.consent = false;
     let m;
     if ((m = url.match(/^https:\/\/doi\.org\/(10\.1016)\/(\w+)/))) tab.url = 'https://www.sciencedirect.com/science/article/pii/' + m[2].toUpperCase();
     else if (url.match(/^https:\/\/doi\.org\/10\.2514\//)) tab.url = 'https://arc.aiaa.org/doi/' + url.split('doi.org/')[1];
     else if ((m = url.match(/^https:\/\/doi\.org\/10\.1109\/(\d+)/))) tab.url = 'https://ieeexplore.ieee.org/document/' + m[1];
     else if (url.startsWith('https://doi.org/10.3390/')) tab.url = 'https://www.mdpi.com/' + url.split('10.3390/')[1];
     else if (url.startsWith('https://doi.org/10.16356/')) tab.url = 'https://www.chndoi.org/Resolution/Handler?doi=10.16356/' + url.split('10.16356/')[1];
-    else if (/\/servlet\/wayf\.jsp/.test(url)) {
-      const target = new URL(url).searchParams.get('url');
-      tab.idp = new URL(url).searchParams.get('entityId');
-      if (B.idpSession) { B.signedIn = true; tab.url = target; } else { tab.url = 'https://passport.test/idp/login'; tab.login = true; tab.target = target; B.typed = ''; }
+    else if (url.startsWith('https://doi.org/10.1063/')) tab.url = 'https://pubs.aip.org/aip/' + url.split('10.1063/')[1];
+    else if (/\/servlet\/wayf\.jsp/.test(url) || url.includes('/Shibboleth.sso/Login')) {
+      const q = new URL(url).searchParams, target = q.get('url') || q.get('target'), sp = url.includes('Shibboleth.sso') ? 'aipIn' : 'signedIn';
+      tab.idp = q.get('entityId') || q.get('entityID');
+      if (B.idpSession && sp === 'aipIn' && B.consent) { tab.url = 'https://passport.test/idp/consent'; tab.consent = true; }
+      else if (B.idpSession) { B[sp] = true; tab.url = target; }
+      else { tab.url = 'https://passport.test/idp/login'; tab.login = true; tab.target = target; tab.sp = sp; B.typed = ''; }
     }
   }
   const host = (tab) => { try { return new URL(tab.url).host; } catch { return ''; } };
@@ -52,6 +57,7 @@ function createFakeBrowser({ pdf }) {
       return { ...base, pdf: /NONE$/.test(tab.url) ? '' : tab.url + '/pdfft?pid=main.pdf' };
     }
     if (h === 'www.mdpi.com') return { ...base, pdf: tab.url + '/pdf' };
+    if (h === 'pubs.aip.org') return { ...base, pdf: tab.url.replace('/aip/', '/aip/article-pdf/') + '.pdf' };
     if (h === 'arc.aiaa.org') return { ...base, pdf: tab.url.replace('/doi/', '/doi/pdf/') };
     if (h === 'ieeexplore.ieee.org') { const n = (tab.url.match(/document\/(\d+)/) || [])[1]; return { ...base, access: B.signedIn, pdf: n ? `https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=${n}&ref=` : '' }; }
     return base;
@@ -59,6 +65,7 @@ function createFakeBrowser({ pdf }) {
   // what going to a PDF address answers with: 'pdf' | 'frame' (a viewer page, the PDF in a frame of it) | 'html'
   function pdfAnswer(tab, url) {
     if (/\/pdfft/.test(url)) return 'pdf';
+    if (url.includes('/article-pdf/')) return B.aipIn ? 'pdf' : 'html';
     if (url.startsWith('https://www.mdpi.com/') && url.endsWith('/pdf')) return 'download';
     if (/getPDF\.jsp/.test(url)) return !B.signedIn ? 'html' : tab.framed ? 'pdf' : (tab.framed = true, 'frame');
     return 'html';
@@ -100,13 +107,14 @@ function createFakeBrowser({ pdf }) {
         case 'Input.dispatchMouseEvent':
           if (tab.login && p.type === 'mouseReleased' && p.x === BUTTON_AT.x + LOGIN_OFF.x && p.y === BUTTON_AT.y + LOGIN_OFF.y) {
             B.logins++;
-            if (B.typed === B.saved) { B.signedIn = true; B.idpSession = true; tab.login = false; tab.url = tab.target; }
+            if (B.typed === B.saved) { B[tab.sp || 'signedIn'] = true; B.idpSession = true; tab.login = false; tab.url = tab.target; }
           }
           return reply({});
         case 'Runtime.evaluate': {
           const x = p.expression;
           let v;
-          if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;
+          if (x.includes('_eventId_proceed')) v = !!tab.consent;
+          else if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;
           else if (x === 'location.host') v = host(tab);
           else if (x === 'location.href') v = tab.url;
           else if (x.includes('ul li a[href]')) v = host(tab) === 'www.chndoi.org' ? 'https://www.mdpi.com/resolved-' + tab.url.split('10.16356/')[1] : '';

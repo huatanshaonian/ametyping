@@ -40,7 +40,7 @@ const zot = createFakeZotero({ webdavDir: WD,
     art('PAPERNON', 'Not subscribed at all', '10.1016/none', 'JDF645IP'), art('PAPERIE1', 'Polarization scattering of a plasma sheath', '10.1109/55', 'SURVEY01'),
     art('PAPERDEN', 'Waverider trajectories', '10.2514/denied', 'JDF645IP'), art('PAPERNOD', 'No DOI here', '', 'SURVEY01'),
     art('PAPERIE2', 'A second IEEE paper', '10.1109/77', 'OTHER001'), art('PAPERIE3', 'A third IEEE paper', '10.1109/88', 'OTHER001'), art('PAPEROTH', 'Elsewhere', '10.1016/ok2', 'OTHER001'),
-    art('PAPERDL1', 'Open access, sent as a download', '10.3390/dl', 'OTHER001'), art('PAPERCN1', 'A Chinese DOI', '10.16356/cn', 'OTHER001')] });
+    art('PAPERDL1', 'Open access, sent as a download', '10.3390/dl', 'OTHER001'), art('PAPERAIP', 'Scattering from a coated vehicle', '10.1063/a1', 'OTHER001'), art('PAPERCN1', 'A Chinese DOI', '10.16356/cn', 'OTHER001')] });
 const br = createFakeBrowser({ pdf: PDF });
 
 (async () => {
@@ -129,6 +129,15 @@ const br = createFakeBrowser({ pdf: PDF });
     await P('/api/lit/pdfq/add', { key: 'PAPERIE2' });
     await until(async () => (await item('PAPERIE2')).pdf);
     ok('IEEE signed out, the institution still signed in: through without a form', (await item('PAPERIE2')).pdf && br.logins === 1 && br.signedIn);
+    // AIP: what the library's extension does not cover, through the institution
+    br.consent = true;
+    await P('/api/lit/pdfq/add', { key: 'PAPERAIP' });
+    s = await until(async () => { const q = await Q(); return !q.running && q.blocks.find((b) => b.site === 'aip') && q; });
+    ok('AIP refuses the PDF, the institution asks whether the user\'s details may go to AIP: stop -- theirs to answer', !!s && /同意/.test(s.blocks.find((b) => b.site === 'aip').msg) && !br.aipIn && (await row('PAPERAIP')).state === 'waiting' && br.log.some((u) => /Shibboleth\.sso\/Login\?entityID=https%3A%2F%2Fpassport\.escience\.cn.*target=https%3A%2F%2Fpubs\.aip\.org%2Faip%2Fa1/.test(u)), { s, log: br.log.slice(-4) });
+    br.consent = false;
+    await P('/api/lit/pdfq/continue', { site: 'aip' });
+    await until(async () => (await item('PAPERAIP')).pdf);
+    ok('answered: refused, signed in through the institution (no form: its session is still good), asked again -- the PDF', (await item('PAPERAIP')).pdf && br.aipIn && br.logins === 1 && br.log.filter((u) => /article-pdf\/a1/.test(u)).length === 3, br.log.slice(-6));
     br.signedIn = false; br.idpSession = false; br.captchaBox = true;
     await P('/api/lit/pdfq/add', { key: 'PAPERIE3' });
     s = await until(async () => { const q = await Q(); return !q.running && q.blocks.find((b) => b.site === 'ieee') && q; });

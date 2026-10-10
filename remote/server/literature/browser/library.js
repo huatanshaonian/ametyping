@@ -4,7 +4,8 @@
 // and this module only steers it over the DevTools port (settings "browserPort"; 0 = off):
 //   0. a publisher that is only open through the library's extension: the extension is asked whether it is signed in;
 //   1. a new tab goes to the paper (https://doi.org/<doi>) and is read where it lands (sites.js);
-//   2. IEEE Xplore without access: signed in through the institution once (signin.js), when an account is set;
+//   2. IEEE Xplore without access, or AIP refusing the PDF: signed in through the institution once (signin.js), when
+//      an account is set -- what the library's extension does not cover may be covered by the user's other institution;
 //   3. the tab goes to the PDF, and the answer's body is taken as it arrives.
 // It stops, and says what it needs, when the page asks for a person ("are you a robot": the user answers it in the
 // web desktop -- it is never answered here; the tab is left open for that), when a sign-in is needed that it cannot
@@ -20,7 +21,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 // an error the queue understands: need 'browser' | 'verify' | 'signin' (waits for the user), final (no use trying again)
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
-function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/', ieeeBase = 'https://ieeexplore.ieee.org', ieeeHome = 'ieeexplore.ieee.org',
+function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/',
   access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
@@ -161,26 +162,37 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       if (left.has(site.id)) { await c.send('Target.closeTarget', { targetId: left.get(site.id) }).catch(() => {}); left.delete(site.id); }
       const check = () => { keep = site.id; return stop(`${at.site.name} 要先做一次人机验证：到网页桌面的浏览器里点一下`, { need: 'verify', ...at, page: v.url }); };
       if (v.challenge) throw check();
-
-      // IEEE: not recognised as the institution -> through the institution's sign-in, once (its page writes who the
-      // access is from a little after it has loaded: looked at a few more times first)
-      for (let i = 0; site.signin && v.access === false && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
-      if (site.signin && v.access === false && account() && idp()) {
-        const page = v.url;
-        log(`文献：${site.name} 没有登录，走机构登录（${account()}）`);
-        const r = await signIn(c, sid, { account: account(), idp: idp(), target: page, home: ieeeHome, base: ieeeBase, waitMs: loadMs, sleepFn: (ms) => sleep(Math.min(ms, stepMs)) });
+      // through the institution's sign-in, once a paper; back on the paper's page `page` afterwards
+      let signed = false;
+      const institution = async (page) => {
+        signed = true;
+        log(`文献：${site.name} 没有权限，走机构登录（${account()}）`);
+        const r = await signIn(c, sid, { account: account(), url: site.signin(idp(), page), home: site.hosts[0], waitMs: loadMs, sleepFn: (ms) => sleep(Math.min(ms, stepMs)) });
         if (!r.ok) throw stop(`${site.name} 的机构登录没有成功：${r.why}`, { need: 'signin', ...at });
         log(`文献：${site.name} 机构登录成功${r.asked ? '' : '（机构那边的登录还有效）'}`);
         await landed(c, sid);
         v = await look(c, sid);
         if (v.challenge) throw check();
-      }
+      };
+
+      // IEEE: not recognised as the institution -> through the institution's sign-in, once (its page writes who the
+      // access is from a little after it has loaded: looked at a few more times first)
+      for (let i = 0; site.signin && v.access === false && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
+      if (site.signin && v.access === false && account() && idp()) await institution(v.url);
       // (the link to the PDF is written into some pages a little after they have loaded: looked at a few more times)
       for (let i = 0; !v.pdf && !v.challenge && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
       if (!v.pdf) throw stop(`${at.site.name} 的页面上没有 PDF 入口（多半是没有订购这篇）`, { final: true, ...at });
 
-      const r = await capture(c, sid, mainFrame, v.pdf, v.url);
+      const paper = v.url;
+      let r = await capture(c, sid, mainFrame, v.pdf, v.url);
       await c.send('Fetch.disable', {}, sid).catch(() => {});
+      // the PDF refused (AIP sends the tab back to the abstract): the user's institution may have what the library's
+      // extension has not -- signed in through it, and asked once more
+      if (r.html && site.signin && !signed && account() && idp()) {
+        await institution(paper);
+        for (let i = 0; !v.pdf && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
+        if (v.pdf) { r = await capture(c, sid, mainFrame, v.pdf, v.url); await c.send('Fetch.disable', {}, sid).catch(() => {}); }
+      }
       if (r.err) throw stop(r.err, at);
       if (r.html) {
         v = await look(c, sid).catch(() => v);
