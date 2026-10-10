@@ -1,9 +1,9 @@
 // 我的电脑 / 资源管理器 for one remote computer: its roots (drives or allowed folders), then folder listings.
-// Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code can be
-// started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows).
+// Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code or Codex
+// can be started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows).
 // Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
 // 网上邻居 does: main.js's setSwitch).
-import { h, icon, $ as $q } from '../util.js';
+import { h, icon, prefs, $ as $q } from '../util.js';
 import * as wm from '../wm.js';
 import * as fsc from '../fs.js';
 import * as net from '../net.js';
@@ -47,11 +47,14 @@ function create(machine, startPath) {
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
-  const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 会话' },
-    h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动 Claude');
+  const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
+    h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
+  const tool = h('select', { class: 'field xtool', title: '启动哪一个' }, h('option', { value: 'claude', text: 'Claude Code' }), h('option', { value: 'codex', text: 'Codex' }));
+  tool.value = prefs.get('files.tool', 'claude') === 'codex' ? 'codex' : 'claude';
+  tool.addEventListener('change', () => prefs.set('files.tool', tool.value));
   const first = h('input', { class: 'field', type: 'text', placeholder: '第一句话（可不填）' });
   const go = h('button', { class: 'btn go', type: 'submit', text: '启动' });
-  const launchBar = h('form', { class: 'xlaunch', hidden: true, autocomplete: 'off' }, h('span', { class: 'xlh' }), first, go,
+  const launchBar = h('form', { class: 'xlaunch', hidden: true, autocomplete: 'off' }, h('span', { class: 'xlh' }), tool, first, go,
     h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
@@ -101,12 +104,12 @@ function create(machine, startPath) {
 
   launchBtn.addEventListener('click', () => {
     if (cur == null) return;
-    launchBar.hidden = false; $q('.xlh', launchBar).textContent = `在 ${cur} 启动 Claude：`; first.focus();
+    launchBar.hidden = false; $q('.xlh', launchBar).textContent = `在 ${cur} 启动：`; first.focus();
   });
   launchBar.addEventListener('submit', async (e) => {
     e.preventDefault();
     go.disabled = true; status.textContent = '启动中…';
-    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value });
+    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value, tool: tool.value });
     go.disabled = false;
     status.textContent = r.ok ? (r.msg || '已启动') + ' —— 会话出现后可在糖糖看板里查看和回复' : r.msg || '启动失败';
     if (r.ok) { launchBar.hidden = true; first.value = ''; }

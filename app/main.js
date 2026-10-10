@@ -810,7 +810,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : ''));
+    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude'));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

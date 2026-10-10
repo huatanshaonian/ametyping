@@ -181,7 +181,7 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
-    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt });
+    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: d.tool === 'codex' ? 'codex' : 'claude' });
   } else if (d.t === 'resume' && typeof d.id === 'string' && /^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id)) {
     // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);

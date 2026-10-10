@@ -72,7 +72,7 @@ function mount() {
     let r = {}; try { r = await (await fetch('/api/mail/alerts')).json(); } catch { return; }
     const kids = [];
     if (r.enabled === false) kids.push(h('p', { class: 'gnote bad', text: '工作日报没有开启，没有模型可以读邮件，所以不会有提醒。' }));
-    if (!(r.open || []).length) kids.push(h('p', { class: 'ml-empty', text: '没有要处理的。新邮件到了会先让 GPT 读一遍：要你去做的事、和你有关的通知、值得看的文献，会出现在这里。' }));
+    if (!(r.open || []).length) kids.push(h('p', { class: 'ml-empty', text: '没有要处理的。新邮件到了会先让 AI 读一遍：要你去做的事、和你有关的通知、值得看的文献，会出现在这里。' }));
     kids.push(...(r.open || []).map(card));
     if ((r.done || []).length) kids.push(h('details', { class: 'mal-done' }, h('summary', { text: `最近处理过的（${r.done.length}）` }), ...r.done.map(card)));
     root.replaceChildren(...kids.filter(Boolean));

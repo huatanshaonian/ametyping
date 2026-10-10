@@ -7,7 +7,8 @@
 // A folder Claude Code has not seen before first asks whether to trust it -- before any hook runs, so the dashboard
 // could not even see the session. Starting it from the dashboard is the choice to trust that folder: the prompt is
 // answered here (the pane is watched for a little while after the start).
-// A Codex thread ("codex:<id>") is opened again the same way, with `codex resume <id>`.
+// A Codex thread ("codex:<id>") is opened again the same way, with `codex resume <id>`; tool 'codex' starts a new
+// Codex session instead (its questions before it is ready -- trust this folder, update now -- answered likewise).
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -31,16 +32,17 @@ function claudeBin(env) {
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
 // resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's
 // ("codex:<id>") -- `codex resume <id>`
-function launch({ cwd, prompt, env, resume = '' }) {
+function launch({ cwd, prompt, env, resume = '', tool = 'claude' }) {
   return new Promise((resolve) => {
     const thread = threadOf(resume);
     if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
     let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
-    const bin = thread ? codexBin(env) : claudeBin(env);
-    if (!bin) return resolve({ ok: false, msg: thread ? '找不到 codex' : '找不到 claude' });
+    const codex = !!thread || (!resume && tool === 'codex');
+    const bin = codex ? codexBin(env) : claudeBin(env);
+    if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : '找不到 claude' });
     const tag = crypto.randomBytes(3).toString('hex');
-    const name = `${thread ? 'codex' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
+    const name = `${codex ? 'codex' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
     const envFile = path.join(os.tmpdir(), `ame-launch-${crypto.randomBytes(8).toString('hex')}.env`);
     const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k)).map(([k, v]) => `export ${k}=${q(v)}`);
     try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { return resolve({ ok: false, msg: '写临时文件失败' }); }
@@ -48,14 +50,15 @@ function launch({ cwd, prompt, env, resume = '' }) {
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
     execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, cmd], { timeout: 8000 }, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
-      if (!thread) answerTrust(name);
+      answerTrust(name, codex);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
   });
 }
 
 // answer the folder-trust prompt of a freshly started session (only that prompt; gives up after ~25 s)
-function answerTrust(name) {
+// codex: Codex's own wording of it, and its "update now?" (not now)
+function answerTrust(name, codex = false) {
   const pane = () => new Promise((r) => execFile('tmux', ['capture-pane', '-p', '-t', name + ':'], { timeout: 3000 }, (e, out) => r(e ? null : String(out))));
   const keys = (...k) => new Promise((r) => execFile('tmux', ['send-keys', '-t', name + ':', ...k], { timeout: 3000 }, () => r()));
   let n = 0;
@@ -63,6 +66,12 @@ function answerTrust(name) {
     if (++n > 35) return;
     const text = await pane();
     if (text == null) return;                                        // the session is gone
+    if (codex) {
+      if (/Do you trust the contents of this directory/.test(text)) { if (/›\s*2\.\s*No/.test(text)) await keys('Up'); await keys('Enter'); }
+      else if (/Update available/.test(text) && /\d\.\s*Skip/.test(text)) { if (/›\s*1\./.test(text)) await keys('Down'); await keys('Enter'); }
+      else if (/enter confirm|Press enter to continue/i.test(text) || /›\s+Ask Codex to do anything|esc to interrupt/.test(text)) return;
+      return void setTimeout(tick, 700);
+    }
     if (/Yes, I trust this folder/.test(text)) {
       const onNo = /❯\s*(\d\.\s*)?No, exit/.test(text);
       if (onNo) await keys('Down');
