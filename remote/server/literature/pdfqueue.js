@@ -53,8 +53,17 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
     return { ok: true };
   }
   function drop(key) { if (!st.items[key] || running === key) return { ok: false }; delete st.items[key]; changed(); return { ok: true }; }
-  // the paper got its PDF another way (the user uploaded one): nothing left to fetch
+  // the paper got its PDF another way (the user uploaded one): nothing left to fetch. While it is being fetched this
+  // very moment the fetch is left to end, and what it ends with is put right by settle().
   function got(key, why) { const it = st.items[key]; if (!it || running === key) return; Object.assign(it, { state: 'done', why, at: now() }); changed(); }
+  // whatever the queue says of a paper, one that has a PDF is done (uploaded while it was being fetched, or added in
+  // Zotero itself). -> whether anything changed
+  function settle() {
+    let n = 0;
+    for (const it of Object.values(st.items)) if (it.state !== 'done' && it.key !== running && fulltext.hasPdf(it.key)) { Object.assign(it, { state: 'done', why: '已经有 PDF 了', at: now() }); n++; }
+    if (n) save();
+    return n > 0;
+  }
   // the user did what a site waited for (answered its check, signed in)
   function resume(site) {
     if (site) delete st.blocks[site]; else st.blocks = {};
@@ -93,6 +102,7 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
       else { it.why = e.message + '（稍后再试一次）'; it.added = now(); }
     } finally {
       running = ''; it.at = now();
+      settle();
       for (const [k, x] of Object.entries(st.items)) if (x.state === 'done' && now() - x.at > KEEP_DONE_MS) delete st.items[k];
       changed();
     }
@@ -111,6 +121,7 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
 
   // what the page shows
   function status() {
+    settle();
     const items = Object.values(st.items).sort((a, b) => (a.state === 'waiting' ? 0 : 1) - (b.state === 'waiting' ? 0 : 1) || b.at - a.at);
     const n = (s) => items.filter((x) => x.state === s).length;
     const lim = perDay() >= 0 && today() >= perDay() && n('waiting') > 0;
@@ -122,7 +133,7 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
   // one line for a paper's own page: where its PDF stands
   function note(key) {
     const it = st.items[key];
-    if (!it) return '';
+    if (!it || fulltext.hasPdf(key)) return '';
     if (it.state === 'done') return '';
     if (it.state === 'failed') return '图书馆通道没拿到：' + it.why;
     const b = st.blocks[it.site];
