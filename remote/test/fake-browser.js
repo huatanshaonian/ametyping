@@ -10,7 +10,8 @@
 //                    whether the user's details may go to AIP while .consent is set
 //   10.1109/<n>      IEEE Xplore: access only when signed in; its PDF comes inside a frame first
 // The library's extension answers from its own page whether it steers the proxy (.extOn); opening its website signs it
-// in again while the website itself is signed in (.webSession), and shows the login page otherwise.
+// in again while the website itself is signed in (.webSession), and shows the login page otherwise: an account box,
+// 继续, then a password box the browser fills only for the account .mlSaved, and 登录 (.mlTyped, .mlLogins).
 // IEEE's institutional sign-in (wayf.jsp) comes straight back while .idpSession is set; otherwise a login page with its
 // form in a frame, where the browser "fills in" the saved password only for the account .saved. What was typed, pressed,
 // opened and closed is kept for the test (.typed, .logins, .opened, .closed, .log).
@@ -21,7 +22,7 @@ const { WebSocketServer } = require('ws');
 const LOGIN_OFF = { x: 100, y: 50 }, USER_AT = { x: 30, y: 10 }, BUTTON_AT = { x: 40, y: 60 };
 
 function createFakeBrowser({ pdf }) {
-  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, consent: false, extOn: true, extAsked: 0, webSession: false, homeOpened: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
+  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, consent: false, extOn: true, extAsked: 0, webSession: false, homeOpened: 0, mlSaved: 'lib@inst.test', mlTyped: '', mlLogins: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
   const server = http.createServer((req, res) => {
     if (req.url === '/json/version') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ Browser: 'FakeChrome/1.0', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/devtools/browser/x` })); }
     res.writeHead(404); res.end();
@@ -31,7 +32,7 @@ function createFakeBrowser({ pdf }) {
   // where a tab is after going to `url`
   function go(tab, url) {
     if (/^chrome-extension:/.test(url)) { tab.url = url; B.extAsked++; return; }
-    if (url.startsWith('https://app.myloft.xyz/')) { B.homeOpened++; if (B.webSession) B.extOn = true; tab.url = B.webSession ? 'https://app.myloft.xyz/browse/home' : 'https://app.myloft.xyz/user/login'; return; }
+    if (url.startsWith('https://app.myloft.xyz/')) { B.homeOpened++; if (B.webSession) B.extOn = true; tab.url = B.webSession ? 'https://app.myloft.xyz/browse/home' : 'https://app.myloft.xyz/user/login'; tab.mlStep = 1; B.mlTyped = ''; return; }
     B.log.push(url);
     tab.url = url; tab.login = false; tab.consent = false;
     let m;
@@ -101,10 +102,16 @@ function createFakeBrowser({ pdf }) {
         case 'Fetch.takeResponseBodyAsStream': tab.sent = 0; return reply({ stream: 'st1' });
         case 'IO.read': { const part = pdf.subarray(tab.sent, tab.sent + 700); tab.sent += part.length; return reply({ data: part.toString('base64'), base64Encoded: true, eof: tab.sent >= pdf.length }); }
         case 'Input.dispatchKeyEvent':
+          if (tab.url.endsWith('/user/login') && p.type === 'keyDown' && p.text) B.mlTyped += p.text;
+          if (tab.url.endsWith('/user/login') && p.type === 'rawKeyDown' && p.key === 'Backspace') B.mlTyped = '';
           if (tab.login && p.type === 'keyDown' && p.text) B.typed += p.text;
           if (tab.login && p.type === 'rawKeyDown' && p.key === 'Backspace') B.typed = '';
           return reply({});
         case 'Input.dispatchMouseEvent':
+          if (tab.url.endsWith('/user/login') && p.type === 'mouseReleased') {
+            if (p.x === 10 && p.y === 30 && tab.mlStep === 1 && B.mlTyped) tab.mlStep = 2;
+            else if (p.x === 10 && p.y === 50 && tab.mlStep === 2) { B.mlLogins++; if (B.mlTyped === B.mlSaved) { B.webSession = true; B.extOn = true; tab.url = 'https://app.myloft.xyz/browse/home'; } }
+          }
           if (tab.login && p.type === 'mouseReleased' && p.x === BUTTON_AT.x + LOGIN_OFF.x && p.y === BUTTON_AT.y + LOGIN_OFF.y) {
             B.logins++;
             if (B.typed === B.saved) { B[tab.sp || 'signedIn'] = true; B.idpSession = true; tab.login = false; tab.url = tab.target; }
@@ -114,6 +121,8 @@ function createFakeBrowser({ pdf }) {
           const x = p.expression;
           let v;
           if (x.includes('_eventId_proceed')) v = !!tab.consent;
+          else if (x.includes("['继续', 'Continue', 'Next']")) v = !tab.url.endsWith('/user/login') ? {} : { mail: { at: { x: 10, y: 10 }, value: B.mlTyped }, pass: tab.mlStep === 2 ? { filled: B.mlTyped === B.mlSaved } : null,
+            next: tab.mlStep === 1 && B.mlTyped ? { x: 10, y: 30 } : null, login: tab.mlStep === 2 ? { x: 10, y: 50 } : null, extra: [] };
           else if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;
           else if (x === 'location.host') v = host(tab);
           else if (x === 'location.href') v = tab.url;

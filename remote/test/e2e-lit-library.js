@@ -165,6 +165,11 @@ const br = createFakeBrowser({ pdf: PDF });
     ok('the library’s extension signed out, its website too: asked first, the publisher is not -- everything pauses and says so', !!s && /MyLOFT 掉线/.test(s.browser) && br.log.length === lg3 && br.extAsked > 0 && br.homeOpened === 1 && (await row('PAPERDEN')).state === 'waiting' && br.opened === br.closed, s);
     br.webSession = true;
     ok('its website still signed in: opening it brings the extension back, and on it goes (继续 only ends the pause early)', (await P('/api/lit/pdfq/continue', { site: 'aiaa' })).ok && !!(await until(async () => br.log.length > lg3 && (await row('PAPERDEN')).state === 'failed')) && br.extOn && br.homeOpened === 2);
+    // the website signed out as well, an account set: signed in there once, the extension follows
+    br.extOn = false; br.webSession = false; const lg4 = br.log.length;
+    ok('the MyLOFT account set', (await P('/api/lit/settings', { myloftAccount: 'lib@inst.test' })).myloftAccount === 'lib@inst.test');
+    await P('/api/lit/pdfq/retry', { key: 'PAPERDEN' });
+    ok('the extension and its website signed out, an account set: the account typed, 继续, the browser\'s saved password, 登录 once -- back, and on it goes', !!(await until(async () => br.log.length > lg4 && (await row('PAPERDEN')).state === 'failed')) && br.mlLogins === 1 && br.mlTyped === 'lib@inst.test' && br.extOn && br.webSession, { n: br.mlLogins, typed: br.mlTyped, row: await row('PAPERDEN'), q: (await Q()).browser });
     br.close(); await sleep(100);
     await P('/api/lit/pdfq/retry', { key: 'PAPERDEN' });
     s = await until(async () => { const q = await Q(); return q.browser && q; });

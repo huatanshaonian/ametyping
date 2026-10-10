@@ -3,6 +3,8 @@
 // publishers' own sign-ins). The browser does the asking -- with its cookies, through the proxy the extension set --
 // and this module only steers it over the DevTools port (settings "browserPort"; 0 = off):
 //   0. a publisher that is only open through the library's extension: the extension is asked whether it is signed in;
+//      signed out, its website is opened (which signs it in again), and signed in to first when that is out too and
+//      an account is set (extlogin.js);
 //   1. a new tab goes to the paper (https://doi.org/<doi>) and is read where it lands (sites.js);
 //   2. IEEE Xplore without access, or AIP refusing the PDF: signed in through the institution once (signin.js), when
 //      an account is set -- what the library's extension does not cover may be covered by the user's other institution;
@@ -14,6 +16,7 @@
 const { connect } = require('./cdp');
 const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON, RESOLVERS, RESOLVED } = require('./sites');
 const { signIn } = require('./signin');
+const { siteLogin } = require('./extlogin');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MAX_BYTES = 80 * 1024 * 1024;
@@ -21,7 +24,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 // an error the queue understands: need 'browser' | 'verify' | 'signin' (waits for the user), final (no use trying again)
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
-function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/',
+function createLibrary({ port = () => 0, account = () => '', idp = () => '', accessAccount = () => '', doiBase = 'https://doi.org/',
   access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
@@ -66,14 +69,25 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
     }
     return null;
   }
-  // signed out: its website is opened, which signs the extension in again while the site itself still is. -> true | false
+  // signed out: its website is opened, which signs the extension in again while the site itself still is; when the
+  // site wants a login too, that is done once (the account of the settings, the browser's saved password).
+  // -> { ok: true } | { ok: false, why }
   async function revive(c, sid, own) {
-    if (!access.home) return false;
+    if (!access.home) return { ok: false };
+    let tried = false;
     c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
     for (const until = Date.now() + reviveMs; Date.now() < until;) {
       await sleep(stepMs);
       const at = await c.evaluate(sid, 'location.href').catch(() => '');
-      if (access.login && at.includes(access.login)) return false;         // the site wants a login too: the user's
+      if (access.login && at.includes(access.login)) {
+        if (tried || !accessAccount()) return { ok: false };                // the site wants a login too: the user's
+        tried = true;
+        await sleep(settleMs);
+        log(`文献：${access.name} 的网站也要登录，用 ${accessAccount()} 登录一次`);
+        const r = await siteLogin(c, sid, { account: accessAccount(), loginPath: access.login, waitMs: loadMs, sleepFn: (ms) => sleep(Math.min(ms, stepMs)) });
+        if (!r.ok) return { ok: false, why: r.why };
+        continue;
+      }
       if (at.startsWith(access.home) && (await sleep(settleMs), true)) {
         if (await extensionOn(c, sid)) {
           // a tab left on its website renews the same login beside the extension, and the next renewal of the
@@ -81,12 +95,12 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
           const tabs = ((await c.send('Target.getTargets').catch(() => ({}))).targetInfos || []).filter((t) => t.type === 'page' && t.targetId !== own && String(t.url).startsWith(access.home));
           for (const t of tabs) await c.send('Target.closeTarget', { targetId: t.targetId }).catch(() => {});
           if (tabs.length) log(`文献：关掉了 ${tabs.length} 个开着的 ${access.name} 网站标签（它们会让扩展续不上登录）`);
-          return true;
+          return { ok: true };
         }
         c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
       }
     }
-    return false;
+    return { ok: false };
   }
 
   // the tab goes to the PDF; its body is taken off the answer. -> { buf } | { html: true } (it ended on a page)
@@ -148,8 +162,11 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const mainFrame = (await c.send('Page.getFrameTree', {}, sid)).frameTree.frame.id;
       if (byDoi(p.doi).ext && (await extensionOn(c, sid)) === false) {
         log(`文献：${access.name} 掉线了，打开它的网站让它重新连上`);
-        if (await revive(c, sid, targetId)) log(`文献：${access.name} 重新连上了`);
-        else throw stop(`${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: byDoi(p.doi).id, name: byDoi(p.doi).name } });
+        const rv = await revive(c, sid, targetId), guess = byDoi(p.doi);
+        if (rv.ok) log(`文献：${access.name} 重新连上了`);
+        // (a publisher that also takes the institution's sign-in is tried without the extension)
+        else if (guess.signin && account() && idp()) log(`文献：${access.name} 没连上${rv.why ? '（' + rv.why + '）' : ''}，${guess.name} 改走机构登录试试`);
+        else throw stop(rv.why ? `${access.name} 掉线了，自动登录没有成功：${rv.why}` : `${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: guess.id, name: guess.name } });
       }
       await c.send('Page.navigate', { url: start }, sid);
       if (!(await landed(c, sid))) throw stop('论文的页面打不开（DOI 没有跳转，或网站没有回应）');
