@@ -6,8 +6,10 @@
 //   10.2514/denied   AIAA: a PDF link that answers with a page (no access)
 //   10.3390/<x>      an open-access publisher whose PDF comes as a download, with no type written on the answer
 //   10.16356/<x>     the Chinese DOI registry: a page listing where the paper is (that open-access publisher)
-//   10.1063/<x>      AIP: the PDF only once signed in through the institution (.aipIn); the institution asks first
-//                    whether the user's details may go to AIP while .consent is set
+//   10.1063/<x>      AIP: the PDF only once signed in through the institution (.aipIn) while the library's extension
+//                    was signed out (.aipOwn: with it on, AIP counts the library only); the institution asks first
+//                    whether the user's details may go to AIP while .consent is set -- a page with one button to
+//                    confirm (.consents counts the presses; .consentBtn = false: the button is not there)
 //   10.1109/<n>      IEEE Xplore: access only when signed in; its PDF comes inside a frame first
 // The library's extension answers from its own page whether it steers the proxy (.extOn); opening its website signs it
 // in again while the website itself is signed in (.webSession), and shows the login page otherwise: an account box,
@@ -22,7 +24,7 @@ const { WebSocketServer } = require('ws');
 const LOGIN_OFF = { x: 100, y: 50 }, USER_AT = { x: 30, y: 10 }, BUTTON_AT = { x: 40, y: 60 };
 
 function createFakeBrowser({ pdf }) {
-  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, consent: false, extOn: true, extAsked: 0, webSession: false, homeOpened: 0, mlSaved: 'lib@inst.test', mlTyped: '', mlLogins: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
+  const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, aipOwn: false, consent: false, consents: 0, consentBtn: true, extOn: true, extAsked: 0, webSession: true, homeOpened: 0, mlSaved: 'lib@inst.test', mlTyped: '', mlLogins: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
   const server = http.createServer((req, res) => {
     if (req.url === '/json/version') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ Browser: 'FakeChrome/1.0', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/devtools/browser/x` })); }
     res.writeHead(404); res.end();
@@ -45,8 +47,8 @@ function createFakeBrowser({ pdf }) {
     else if (/\/servlet\/wayf\.jsp/.test(url) || url.includes('/Shibboleth.sso/Login')) {
       const q = new URL(url).searchParams, target = q.get('url') || q.get('target'), sp = url.includes('Shibboleth.sso') ? 'aipIn' : 'signedIn';
       tab.idp = q.get('entityId') || q.get('entityID');
-      if (B.idpSession && sp === 'aipIn' && B.consent) { tab.url = 'https://passport.test/idp/consent'; tab.consent = true; }
-      else if (B.idpSession) { B[sp] = true; tab.url = target; }
+      if (B.idpSession && sp === 'aipIn' && B.consent) { tab.url = 'https://passport.test/idp/consent'; tab.consent = true; tab.target = target; }
+      else if (B.idpSession) { B[sp] = true; if (sp === 'aipIn') B.aipOwn = !B.extOn; tab.url = target; }
       else { tab.url = 'https://passport.test/idp/login'; tab.login = true; tab.target = target; tab.sp = sp; B.typed = ''; }
     }
   }
@@ -66,7 +68,7 @@ function createFakeBrowser({ pdf }) {
   // what going to a PDF address answers with: 'pdf' | 'frame' (a viewer page, the PDF in a frame of it) | 'html'
   function pdfAnswer(tab, url) {
     if (/\/pdfft/.test(url)) return 'pdf';
-    if (url.includes('/article-pdf/')) return B.aipIn ? 'pdf' : 'html';
+    if (url.includes('/article-pdf/')) return B.aipIn && B.aipOwn ? 'pdf' : 'html';
     if (url.startsWith('https://www.mdpi.com/') && url.endsWith('/pdf')) return 'download';
     if (/getPDF\.jsp/.test(url)) return !B.signedIn ? 'html' : tab.framed ? 'pdf' : (tab.framed = true, 'frame');
     return 'html';
@@ -113,6 +115,7 @@ function createFakeBrowser({ pdf }) {
           if (tab.login && p.type === 'rawKeyDown' && p.key === 'Backspace') B.typed = '';
           return reply({});
         case 'Input.dispatchMouseEvent':
+          if (tab.consent && p.type === 'mouseReleased' && p.x === 70 && p.y === 90) { B.consents++; B.consent = false; B.aipIn = true; B.aipOwn = !B.extOn; tab.consent = false; tab.url = tab.target; emit(d.sessionId, 'Page.frameNavigated', { frame: { id: 'main', url: tab.url } }); }
           if (tab.url.endsWith('/user/login') && p.type === 'mouseReleased') {
             if (p.x === 10 && p.y === 30 && tab.mlStep === 1 && B.mlTyped) tab.mlStep = 2;
             else if (p.x === 10 && p.y === 50 && tab.mlStep === 2) { B.mlLogins++; if (B.mlTyped === B.mlSaved) { B.webSession = true; B.extOn = true; tab.url = 'https://app.myloft.xyz/browse/home'; } }
@@ -125,7 +128,8 @@ function createFakeBrowser({ pdf }) {
         case 'Runtime.evaluate': {
           const x = p.expression;
           let v;
-          if (x.includes('_eventId_proceed')) v = !!tab.consent;
+          if (x.includes('logoutFromOptions')) { if (/^chrome-extension:/.test(tab.url)) { B.extOn = false; B.extOffs = (B.extOffs || 0) + 1; } v = true; }
+          else if (x.includes('_shib_idp_consentOptions')) v = tab.consent ? (B.consentBtn ? { x: 70, y: 90 } : { x: 0, y: 0, none: true }) : null;
           else if (x.includes("['继续', 'Continue', 'Next']")) v = !tab.url.endsWith('/user/login') ? {} : { mail: { at: { x: 10, y: 10 }, value: B.mlTyped }, pass: tab.mlStep === 2 ? { filled: B.mlTyped === B.mlSaved } : null,
             next: tab.mlStep === 1 && B.mlTyped ? { x: 10, y: 30 } : null, login: tab.mlStep === 2 ? { x: 10, y: 50 } : null, extra: [] };
           else if (/chrome.proxy/.test(x)) v = /^chrome-extension:/.test(tab.url) ? { on: B.extOn } : null;

@@ -14,7 +14,7 @@
 // do, or when the page offers no PDF (not subscribed). One paper at a time (pdfqueue.js paces them).
 'use strict';
 const { connect } = require('./cdp');
-const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON, RESOLVERS, RESOLVED } = require('./sites');
+const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED } = require('./sites');
 const { signIn } = require('./signin');
 const { siteLogin } = require('./extlogin');
 
@@ -69,6 +69,23 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
     }
     return null;
   }
+  // For a publisher that counts only one institution (sites.js "fresh"): the library's extension is signed out and
+  // the publisher's own session forgotten, so that the sign-in through the user's other institution is the one that
+  // counts. Done in a tab of its own; the extension comes back when a paper next needs it (revive).
+  async function standAside(c, site) {
+    const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
+    try {
+      const sid = await c.attach(targetId);
+      if (await extensionOn(c, sid)) {
+        await c.evaluate(sid, ACCESS_OFF).catch(() => {});
+        for (let i = 0; i < 8 && (await c.evaluate(sid, ACCESS_ON).catch(() => null) || {}).on; i++) await sleep(Math.min(stepMs, 1000));
+        log(`文献：为了让 ${site.name} 认机构登录的身份，先让 ${access.name} 下线（下一篇要用时会自己连回来）`);
+      }
+      const old = ((await c.send('Storage.getCookies').catch(() => ({}))).cookies || []).filter((k) => site.hosts.some((h) => k.domain === h || k.domain.endsWith('.' + h)) && site.fresh.some((n) => k.name.startsWith(n)));
+      for (const k of old) await c.send('Network.deleteCookies', { name: k.name, domain: k.domain, path: k.path }, sid).catch(() => {});
+    } finally { await c.send('Target.closeTarget', { targetId }).catch(() => {}); }
+  }
+
   // signed out: its website is opened, which signs the extension in again while the site itself still is; when the
   // site wants a login too, that is done once (the account of the settings, the browser's saved password).
   // -> { ok: true } | { ok: false, why }
@@ -206,6 +223,7 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
       // the PDF refused (AIP sends the tab back to the abstract): the user's institution may have what the library's
       // extension has not -- signed in through it, and asked once more
       if (r.html && site.signin && !signed && account() && idp()) {
+        if (site.fresh) await standAside(c, site);
         await institution(paper);
         for (let i = 0; !v.pdf && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
         if (v.pdf) { r = await capture(c, sid, mainFrame, v.pdf, v.url); await c.send('Fetch.disable', {}, sid).catch(() => {}); }
