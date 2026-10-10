@@ -590,6 +590,7 @@ const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, AUTOHIDE_MS = 25e3;
 const KEEP_MS = +process.env.AME_KEEP_MS || 20 * 60e3;            // (tests shorten it)
 const ALIVE_CHECK_MS = +process.env.AME_ALIVE_CHECK_MS || 30 * 60e3;   // a long-quiet session's process: looked at this often
+const GONE_CHECK_MS = 2 * 60e3;                                   // ... and any quiet session's, for one that ended without saying so
 const CHAT_KEEP_MS = 12 * 3600e3;                                 // chat mode keeps ended sessions around (to resume them)
 let hideTimer = null;
 
@@ -728,6 +729,12 @@ setInterval(() => {
   const t = Date.now(); let changed = false;
   for (const [id, s] of sessions) {
     if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) { s.state = 'idle'; changed = true; }
+    // its process gone without a word -- killed, crashed, or Codex closed (which sends no SessionEnd when its window
+    // goes): the same as if it had quit. Looked at every two minutes once it has been quiet for one.
+    if (s.claudePid && !s.headless && !s.checking && s.state !== 'ended' && t - s.last > 60e3 && t - (s.aliveAt || 0) > GONE_CHECK_MS) {
+      s.checking = true; s.aliveAt = t;
+      procAlive(s.claudePid).then((alive) => { s.checking = false; if (!alive && sessions.get(id) === s) { permissions.advance({ session: id, hookEvent: 'SessionEnd' }); onClaudeEvent('quit', { session: id }); } });
+    }
     if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) { s.state = 'idle'; changed = true; }
     if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS) && !s.dormant && !s.checking) {
       // long quiet: gone from the list only when its Claude process is gone too. One still open in its terminal stays
@@ -903,8 +910,12 @@ ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatS
 // (Relying on renderer mousemove fails: while the window follows the cursor the pointer barely moves
 // relative to the window, Chromium stops sending moves, and the window lags / slides behind.)
 // A finger is another matter: the cursor does not go where it goes, and no mouse button is seen coming up. A gesture
-// made by touch is told where the finger is by the renderer (screen coordinates, so the window moving under it
-// changes nothing) and ends when the renderer says the finger lifted.
+// made by touch is told where the finger is by the renderer and ends when the renderer says the finger lifted.
+// What the renderer tells is the finger's place in the window (clientX/Y), put on the screen here with where the
+// window is at that moment. Not the page's screenX/Y: those are worked out with a window position that lags behind
+// the moves made here, so the window chases its own echo -- it shakes and covers half the distance (measured with
+// an injected touch: 42 steps backwards in a straight drag, against none this way).
+const fingerOnScreen = (x, y) => { const b = win.getBounds(); return { x: b.x + x, y: b.y + y }; };
 let gest = null, gestTimer = null;
 function stepGesture() {
   if (!win || !gest) return;
@@ -944,13 +955,13 @@ ipcMain.on('gesture', (_e, kind, x, y) => {
   if (kind === 'drag-start' || kind === 'resize-start') {
     endGesture();
     const touch = Number.isFinite(x) && Number.isFinite(y);
-    const p = touch ? { x, y } : screen.getCursorScreenPoint(), b = win.getBounds();
+    const p = touch ? fingerOnScreen(x, y) : screen.getCursorScreenPoint(), b = win.getBounds();
     const sz = winSize();                    // canonical size from the scale, never the (DPI-rounded) current one
     gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y, touch, at: p };
     gestTimer = setInterval(stepGesture, 8);
   } else if (kind === 'drag-end' || kind === 'resize-end') endGesture();
 });
-ipcMain.on('gesture-at', (_e, x, y) => { if (gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) gest.at = { x, y }; });
+ipcMain.on('gesture-at', (_e, x, y) => { if (win && gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) { gest.at = fingerOnScreen(x, y); stepGesture(); } });
 
 // cursor position for her gaze, in art-space units relative to the window (polled, no mouse hook)
 setInterval(() => {

@@ -1047,9 +1047,9 @@ canvas.addEventListener('pointerdown', (e) => {
   downAt = { x: e.screenX, y: e.screenY, ox: e.offsetX, oy: e.offsetY };
   canvas.setPointerCapture(e.pointerId);
   const finger = e.pointerType === 'touch';
-  if (finger) fingerAt = { x: e.screenX, y: e.screenY };
-  if (inGrip(e)) { sizing = true; if (finger) window.pet.gesture('resize-start', e.screenX, e.screenY); else window.pet.gesture('resize-start'); }
-  // a finger on her strokes her (it cannot hover the way the cursor does); held still for a second it picks her up
+  if (finger) fingerAt = { x: e.clientX, y: e.clientY };
+  if (inGrip(e)) { sizing = true; if (finger) window.pet.gesture('resize-start', e.clientX, e.clientY); else window.pet.gesture('resize-start'); }
+  // a finger on her strokes her (it cannot hover the way the cursor does); held still for half a second it picks her up
   // instead, and from then on she follows it -- she nods when that happens
   else if (finger) {
     stroking = true; picked = false;
@@ -1057,11 +1057,11 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   else { drag = true; window.pet.gesture('drag-start'); }
 });
-const HOLD_MS = 1000, HOLD_SLOP = 10;              // how long a finger rests before she is picked up; how far it may wander meanwhile (css px)
+const HOLD_MS = 500, HOLD_SLOP = 10;               // how long a finger rests before she is picked up; how far it may wander meanwhile (css px)
 let stroking = false, holdTimer = null, picked = false;   // picked: this touch became a move (letting go is then no tap)
-let fingerAt = { x: 0, y: 0 };                     // where the finger is on the screen: the main process cannot see it (no cursor follows it)
+let fingerAt = { x: 0, y: 0 };                     // where the finger is in the window: the main process cannot see it (no cursor follows it)
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch') { fingerAt = { x: e.screenX, y: e.screenY }; if (drag || sizing) window.pet.gestureAt(e.screenX, e.screenY); }
+  if (e.pointerType === 'touch') { fingerAt = { x: e.clientX, y: e.clientY }; if (drag || sizing) window.pet.gestureAt(e.clientX, e.clientY); }
   if (!stroking) return;
   if (downAt && Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) > HOLD_SLOP) clearTimeout(holdTimer);   // moving: a stroke, not a hold
   detectPat({ x: e.offsetX / scale + VX, y: e.offsetY / scale }, true);
