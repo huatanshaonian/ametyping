@@ -8,7 +8,7 @@ const { once } = require('events');
 const { mapHook, decision } = require('./codex-hook');
 const { normalizeSession } = require('./app/session-source');
 const { createPermissions } = require('./app/permissions');
-const { mergeHooks, EVENTS } = require('./install-codex-hooks');
+const { mergeHooks, commandFor, EVENTS } =require('./install-codex-hooks');
 
 test('Codex lifecycle, patches, command failures and permission output', () => {
   const common = { session_id: 's', cwd: 'D:/project' };
@@ -39,6 +39,16 @@ test('installer merges without replacing unrelated hooks and is idempotent', () 
     assert.equal(next.hooks[event].at(-1).hooks[0].timeout, event === 'PermissionRequest' ? 120 : 3);
   }
   assert.equal(old.hooks.Stop.length, 1);
+});
+test('the command runs in PowerShell too: never begins with a quoted path; an earlier install is replaced', () => {
+  const node = 'C:\\Program Files\\nodejs\\node.exe';
+  assert.equal(commandFor(node, 'D:\\ametyping\\codex-hook.js', () => true), 'node D:/ametyping/codex-hook.js');
+  assert.equal(commandFor(node, 'D:\\my pet\\codex-hook.js', () => true), 'node "D:/my pet/codex-hook.js"');
+  assert.equal(commandFor('/usr/bin/node', '/opt/ame/codex-hook.js', () => true), '/usr/bin/node /opt/ame/codex-hook.js');
+  assert.equal(commandFor(node, 'D:\\a\\codex-hook.js', () => false), '"C:/Program Files/nodejs/node.exe" D:/a/codex-hook.js');
+  const before = mergeHooks({}, '"C:/Program Files/nodejs/node.exe" "D:/ametyping/codex-hook.js"');
+  const after = mergeHooks(before, 'node D:/ametyping/codex-hook.js', 'D:/ametyping/codex-hook.js');
+  for (const event of EVENTS) assert.deepEqual(after.hooks[event].map((g) => g.hooks[0].command), ['node D:/ametyping/codex-hook.js']);
 });
 
 function child(port, input) {
