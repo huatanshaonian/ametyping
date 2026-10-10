@@ -121,6 +121,11 @@ WriteUtf8 $petFile ($pet | ConvertTo-Json -Depth 5 -Compress)
 
 Step '安装 Claude Code hooks（原设置会先备份）'
 & $node (Join-Path $Dir 'headless\install-hooks.js')
+if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.codex'))) {
+  Step '安装 Codex hooks（原设置会先备份）'
+  & $node (Join-Path $Dir 'install-codex-hooks.js')
+  $codexHooks = $true
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 Step '开机自启（登录后在后台运行）'
@@ -147,3 +152,4 @@ Info ('糖糖：' + $(if (Get-Process electron -ErrorAction SilentlyContinue | W
 Info ('agent：' + $(if ($agentUp) { '已启动（后台）' } else { '没有启动，请看任务计划程序里的 AmeTyping Agent' }))
 Info '以后每次登录 Windows 都会自动启动；打开 https://win98.huatan.org 应能在「网上邻居」里看到这台电脑。'
 Info '已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
+if ($codexHooks) { Info 'Codex：下次打开 Codex 时会问是否信任这几条 hooks，选信任后才生效。' }

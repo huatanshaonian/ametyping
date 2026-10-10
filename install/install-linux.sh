@@ -78,6 +78,12 @@ fi
 
 step '安装 Claude Code hooks（原设置会先备份）'
 "$NODE" "$DIR/headless/install-hooks.js"
+CODEX_HOOKS=
+if command -v codex >/dev/null 2>&1 || [ -x "$HOME/.local/bin/codex" ] || [ -d "$HOME/.codex" ]; then
+  step '安装 Codex hooks（原设置会先备份）'
+  "$NODE" "$DIR/install-codex-hooks.js"
+  CODEX_HOOKS=1
+fi
 
 step '启动 Claude 前的准备（从看板在文件夹启动 Claude 时用）'
 mkdir -p "$HOME/.ametyping"
@@ -107,3 +113,4 @@ info "无头服务：$(systemctl --user is-active ame-headless)"
 info "agent：$(systemctl --user is-active ame-agent)（日志：journalctl --user -u ame-agent -n 20）"
 info '打开 https://win98.huatan.org 应能在「网上邻居」里看到这台机器。'
 info '要从看板回复，claude 需要在 tmux 里运行；已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
+if [ -n "$CODEX_HOOKS" ]; then info 'Codex：下次打开 codex 时会问是否信任这几条 hooks，选信任后才生效；要从看板回复，它同样要在 tmux 里运行。'; fi
