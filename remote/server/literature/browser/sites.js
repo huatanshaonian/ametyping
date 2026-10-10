@@ -12,6 +12,12 @@ const SITES = [
     signin: (idp, target) => `https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=${enc(idp)}&url=${enc(target)}` },
   { id: 'aiaa', name: 'AIAA', hosts: ['arc.aiaa.org'], prefixes: ['10.2514'], ext: true },
   { id: 'aip', name: 'AIP', hosts: ['pubs.aip.org'], prefixes: ['10.1063'], ext: true,
+    // AIP counts one institution: reached through the library's proxy it is the library's, and a sign-in through
+    // another institution adds nothing (seen: signed in as member@ucas.ac.cn, the page still says "Institute of
+    // Mechanics CAS" and refuses the PDF; the same sign-in without the proxy: "Univ of Chinese Academy of Sci", the
+    // PDF). So for that sign-in the extension is signed out first and AIP's own session forgotten ("fresh": its
+    // cookies by the start of their names); the session then made is good with the proxy back on.
+    fresh: ['_shibsession', 'AIPP_SessionId'],
     signin: (idp, target) => `https://pubs.aip.org/Shibboleth.sso/Login?entityID=${enc(idp)}&target=${enc(target)}` },
   { id: 'springer', name: 'Springer', hosts: ['link.springer.com'], prefixes: ['10.1007'], ext: true },
   { id: 'wiley', name: 'Wiley', hosts: ['onlinelibrary.wiley.com'], prefixes: ['10.1002', '10.1029'], ext: true },
@@ -25,6 +31,9 @@ const SITES = [
 // MyLOFT website ("home") usually stays signed in -- and opening that hands the extension a fresh token (it listens
 // for the site's cookie). Only when the site is signed out too (it shows "login") does the user have to sign in.
 const ACCESS = { name: 'MyLOFT', page: 'chrome-extension://hljakogpibfgelmoegmajaeefcnefngd/manifest.json', home: 'https://app.myloft.xyz/', login: '/user/login' };
+// Runs in that page: the extension signs itself out (its own "log out" message: token gone, proxy off; its website
+// stays signed in, so opening that brings it back -- library.js: revive)
+const ACCESS_OFF = `(chrome.runtime.sendMessage({ logoutFromOptions: true }).catch(() => {}), true)`;
 // Runs in that page. -> { on } (it steers the proxy: signed in) | null (not the extension's page: cannot tell)
 const ACCESS_ON = `(async () => {
   if (location.protocol !== 'chrome-extension:' || !self.chrome || !chrome.proxy) return null;
@@ -69,4 +78,4 @@ const LOOK = `(() => {
   return { host, url: location.href, title: document.title, challenge, pdf, access };
 })()`;
 
-module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK };
+module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK };

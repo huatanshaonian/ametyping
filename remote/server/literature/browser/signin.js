@@ -5,9 +5,11 @@
 //   - the browser's password manager puts the password it has saved for that name beside it (which of several saved
 //     logins the browser filled by itself cannot be read: the page is not told until someone acts on the form);
 //   - 登录 is pressed, once.
-// Anything else on the form (a captcha box, a code by SMS), a password the browser does not fill, the institution asking
-// whether the user's details may be handed to this publisher (asked once per publisher: theirs to answer), or a page
-// that does not come back signed in: it stops there and says so. The password is never read, typed or stored by this module.
+//   - when the institution then asks whether the user's details (name, mail, affiliation) may go to this publisher --
+//     its "Information Release" page, one 确认登录 -- that is pressed, once: signing in to this publisher with this
+//     account is what the user set up, and the page is part of it.
+// Anything else on the form (a captcha box, a code by SMS), a password the browser does not fill, or a page that does
+// not come back signed in: it stops there and says so. The password is never read, typed or stored by this module.
 'use strict';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -33,8 +35,16 @@ const FILLED = `(() => {
 })()`;
 
 // the institution's "Information Release" page (Shibboleth's consent to hand the user's attributes to the publisher)
-const CONSENT = `!!document.querySelector('[name="_eventId_proceed"]')`;
-const CONSENT_WHY = '机构那边要你先同意把身份信息交给这家出版商（Information Release）：到网页桌面的浏览器里走一次机构登录，点同意并选「以后不再询问」';
+// (told by its choices -- "ask me again" / "do not ask again"; its button has the same name as the login page's)
+// -> where its confirming button is ({x,y}), null when this is not that page or the button is not found
+const CONSENT = `(() => {
+  if (!document.querySelector('input[name="_shib_idp_consentOptions"]')) return null;
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const b = [...document.querySelectorAll('button, a, input[type=submit], input[type=button], div, span')].filter(vis).find((e) => ['确认登录', '同意', 'Accept'].includes((e.innerText || e.value || '').trim()));
+  if (!b) return { x: 0, y: 0, none: true };
+  const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+})()`;
+const CONSENT_WHY = '机构那边的「信息发布」确认页没能点过去：到网页桌面的浏览器里走一次机构登录，点「确认登录」';
 
 // signIn(c, sid, { account, url, home }) -> { ok: true, asked } | { ok: false, why }
 //   url: the publisher's address that starts the sign-in; home: the publisher's host it comes back to
@@ -50,7 +60,16 @@ async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sle
   const atHome = (url) => { try { const u = new URL(url); return u.host === home || u.host.endsWith('.' + home); } catch { return true; } };
   c.on((d) => { if (d.sessionId === sid && d.method === 'Page.frameNavigated' && !d.params.frame.parentId) { came = d.params.frame.url; if (!atHome(came)) away = true; } });
   const back = () => away && atHome(came);
-  const consent = () => c.evaluate(sid, CONSENT).catch(() => false);
+  // the institution's confirming page: its button pressed, once. -> false (not that page) | true (pressed) | 'stuck'
+  let agreed = false;
+  const press = async (q) => { for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: q.x, y: q.y, button: 'left', clickCount: 1 }, sid); };
+  const consent = async () => {
+    const at = await c.evaluate(sid, CONSENT).catch(() => null);
+    if (!at) return false;
+    if (agreed || at.none) return agreed && !at.none ? true : 'stuck';
+    agreed = true; await press(at);
+    return true;
+  };
   await c.send('Page.navigate', { url }, sid);
 
   // the frame holding the login form (the page itself, or a frame in it) and where that frame sits in the tab
@@ -78,7 +97,7 @@ async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sle
     await sleepFn(1500);
     const h = await hostNow();
     if (back()) return { ok: true, asked: false };
-    if (h && await consent()) return { ok: false, why: CONSENT_WHY };
+    if (h) { const k = await consent(); if (k === 'stuck') return { ok: false, why: CONSENT_WHY }; if (k) continue; }
     // (the form is there before it is ready: its button reads 检查中… for a moment, and only then 登录)
     if (h) { found = await findForm(); if (found && found.form.user && found.form.button) break; }
   }
@@ -104,7 +123,7 @@ async function signIn(c, sid, { account, url, home, waitMs = 45e3, sleepFn = sle
   for (const until = Date.now() + waitMs; Date.now() < until;) {
     await sleepFn(1500);
     if (back()) return { ok: true, asked: true };
-    if (await consent()) return { ok: false, why: CONSENT_WHY };
+    if ((await consent()) === 'stuck') return { ok: false, why: CONSENT_WHY };
   }
   return { ok: false, why: '点了登录但没有回到出版商的网站（密码变了，或者登录页要验证）' };
 }
