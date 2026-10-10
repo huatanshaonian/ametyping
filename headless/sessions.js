@@ -51,6 +51,11 @@ function createSessions() {
     for (const [id, s] of map) {
       if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) s.state = 'idle';
       if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) s.state = 'idle';
+      // its process gone without a word -- killed, crashed, or Codex closed (which sends no SessionEnd when its terminal
+      // goes): ended, as if it had said so. Left as it was it would stay "idle, in a terminal" for hours.
+      if (s.claudePid && !s.headless && s.state !== 'ended' && !proc.alive(s.claudePid, s.claudeComm)) {
+        Object.assign(s, { state: 'ended', claudePid: null, claudeComm: null, fromPid: null, target: null });
+      }
       // long quiet, but its Claude is still open in the terminal: still an active session
       if (t - s.last > KEEP_MS && !(s.claudePid && proc.alive(s.claudePid, s.claudeComm))) map.delete(id);
     }

@@ -590,6 +590,7 @@ const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, AUTOHIDE_MS = 25e3;
 const KEEP_MS = +process.env.AME_KEEP_MS || 20 * 60e3;            // (tests shorten it)
 const ALIVE_CHECK_MS = +process.env.AME_ALIVE_CHECK_MS || 30 * 60e3;   // a long-quiet session's process: looked at this often
+const GONE_CHECK_MS = 2 * 60e3;                                   // ... and any quiet session's, for one that ended without saying so
 const CHAT_KEEP_MS = 12 * 3600e3;                                 // chat mode keeps ended sessions around (to resume them)
 let hideTimer = null;
 
@@ -728,6 +729,12 @@ setInterval(() => {
   const t = Date.now(); let changed = false;
   for (const [id, s] of sessions) {
     if (WORKING.has(s.state) && t - s.last > STALE_WORK_MS) { s.state = 'idle'; changed = true; }
+    // its process gone without a word -- killed, crashed, or Codex closed (which sends no SessionEnd when its window
+    // goes): the same as if it had quit. Looked at every two minutes once it has been quiet for one.
+    if (s.claudePid && !s.headless && !s.checking && s.state !== 'ended' && t - s.last > 60e3 && t - (s.aliveAt || 0) > GONE_CHECK_MS) {
+      s.checking = true; s.aliveAt = t;
+      procAlive(s.claudePid).then((alive) => { s.checking = false; if (!alive && sessions.get(id) === s) { permissions.advance({ session: id, hookEvent: 'SessionEnd' }); onClaudeEvent('quit', { session: id }); } });
+    }
     if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) { s.state = 'idle'; changed = true; }
     if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS) && !s.dormant && !s.checking) {
       // long quiet: gone from the list only when its Claude process is gone too. One still open in its terminal stays

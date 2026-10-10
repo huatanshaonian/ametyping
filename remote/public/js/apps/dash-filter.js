@@ -1,5 +1,5 @@
 // The top of 糖糖看板's session list: 活动 / 全部, and a search box.
-//   活动: sessions still running (any state but history), active in the last 24 hours, or pinned -- not the terminal
+//   活动: sessions still running (any state but history / ended), active in the last 24 hours, or pinned -- not the terminal
 //         a background session was moved from (its old history is under 全部)
 //   全部: everything stored
 //   search: over everything -- names, projects, machines and the last line at once, then the conversations' full text
@@ -58,7 +58,8 @@ export function createFilter({ onChange }) {
         return terms().every((t) => all.includes(t)) || hits.has(key);
       }
       // (parked: the window of a background session -- its history is under 全部, it is not something going on)
-      return view === 'all' || !!mk.pinned || s.state !== 'history' || (!s.parked && Date.now() - (s.last || 0) < RECENT);
+      // (ended: closed, but its machine still lists it for a while so that it can be replied to)
+      return view === 'all' || !!mk.pinned || (s.state !== 'history' && s.state !== 'ended') || (!s.parked && Date.now() - (s.last || 0) < RECENT);
     },
     hit: (key) => (q ? hits.get(key) : undefined),     // the passage the server found, while searching
     searching: () => !!q,
