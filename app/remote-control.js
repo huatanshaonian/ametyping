@@ -137,17 +137,21 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   }
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
-  async function launch(cwd, prompt, resume = '') {
+  // tool: 'codex' -- a new Codex session instead of Claude Code's
+  async function launch(cwd, prompt, resume = '', tool = 'claude') {
     const thread = /^codex:/.test(resume) ? resume.slice(6) : '';
     if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(thread || resume)) return { ok: false, msg: '无效请求' };
     if (resume) { const s = sessions.get(resume); if (s && s.claudePid && await procAlive(s.claudePid)) return { ok: false, msg: '这个会话还开着' }; }
     let st; try { st = fs.statSync(cwd); } catch { return { ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }; }
     if (!st.isDirectory()) return { ok: false, msg: '这不是文件夹' };
-    const cx = thread ? codexCli.command() : null;
-    const exe = thread ? cx && cx.exe : claudeExe();
-    if (!exe) return { ok: false, msg: thread ? '找不到 codex' : '找不到 claude.exe' };
+    const codex = !!thread || (!resume && tool === 'codex');
+    const cx = codex ? codexCli.command() : null;
+    const exe = codex ? cx && cx.exe : claudeExe();
+    if (!exe) return { ok: false, msg: codex ? '找不到 codex' : '找不到 claude.exe' };
     const first = String(prompt || '').trim();
-    const args = thread ? [...cx.args, 'resume', thread] : resume ? ['--resume', resume] : first ? [first] : [];
+    // (Codex's first message is typed into it once it is up, not passed along: it may be started through cmd.exe,
+    // where a sentence with quotes or an & in it does not survive as an argument)
+    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args] : resume ? ['--resume', resume] : first ? [first] : [];
     // ~/.ametyping/launch.ps1, when it is there, runs first in the new window (e.g. `proxy`, a function of your PowerShell
     // profile: the pet's own environment has no proxy set) -- Claude Code is then started from that PowerShell, as you
     // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.
@@ -159,7 +163,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       pid = await bridge.launch('powershell.exe', ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
     } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
-    if (!thread) answerTrust(pid);
+    if (codex) codexCli.greet(bridge, pid, thread ? '' : first).catch(() => {}); else answerTrust(pid);
     return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 

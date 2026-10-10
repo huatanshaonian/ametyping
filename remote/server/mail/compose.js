@@ -1,6 +1,6 @@
 // Writing mail: 写信 / 回复 / 回复全部 / 转发 start a draft (drafts.js) filled in from the mail answered -- who to, Re: /
 // Fwd:, the original quoted under it, In-Reply-To / References so it stays one thread; a forward takes the original's
-// attachments along (fetched from the mailbox when it is sent). 「让 GPT 起草」 writes the text from your points
+// attachments along (fetched from the mailbox when it is sent). 「让 AI 起草」 writes the text from your points
 // (compose-prompt.js) into the editor; nothing is sent by the model. 发送 (a code entered within the hour, like remote
 // control) checks the addresses, at most 50 recipients and 20 mails an hour, then sends (send.js): the copy in the
 // sent folder, the original marked answered; the draft and its files are gone afterwards. The audit log keeps who to

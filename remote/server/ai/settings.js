@@ -19,7 +19,7 @@ const TASKS = [
   { id: 'weekly', name: '周报', note: '周日根据七天的日报写周报' },
   { id: 'ask', name: '问一问', note: '找资料、回答你在日报窗口里问的问题' },
   { id: 'mailTriage', name: '邮件把关', note: '每封新邮件：要不要提醒你、有没有值得看的文献' },
-  { id: 'mailDraft', name: '邮件起草', note: '写信时「让 GPT 起草」' },
+  { id: 'mailDraft', name: '邮件起草', note: '写信时「让 AI 起草」' },
   { id: 'litFeed', name: '文献推送', note: '起草画像、每天挑文献并写推荐理由、复习题、速读卡' },
   { id: 'litRead', name: '文献深读', note: '深读卡、读前理解的对照、深读对话、沉淀、专题和相关工作段落' },
   { id: 'litReview', name: '研究回顾', note: '月度 / 季度回顾：各问题的进展、问题和主线该怎么调整的建议（都要你审批）' },

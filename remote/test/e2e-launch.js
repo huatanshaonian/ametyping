@@ -88,7 +88,10 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     const act2 = (o) => new Promise((resolve) => { const rid = 'b' + (++n); waiting.set(rid, resolve); ws2.send(JSON.stringify({ ...o, rid })); });
     const r1 = await act2({ t: 'launch', machine: 'box', cwd: path.join(ROOT, 'proj', '.', 'x', '..'), prompt: '第一句话' });
     ok('allowed folder: forwarded to the pet', r1.ok === true && launches.length === 1, JSON.stringify(r1));
-    ok('pet gets the real path and the prompt', launches[0] && fs.realpathSync(launches[0].cwd) === fs.realpathSync(path.join(ROOT, 'proj')) && launches[0].prompt === '第一句话', JSON.stringify(launches[0]));
+    ok('pet gets the real path and the prompt; Claude Code unless told otherwise', launches[0] && fs.realpathSync(launches[0].cwd) === fs.realpathSync(path.join(ROOT, 'proj')) && launches[0].prompt === '第一句话' && launches[0].tool === 'claude', JSON.stringify(launches[0]));
+    const rc = await act2({ t: 'launch', machine: 'box', cwd: path.join(ROOT, 'proj'), prompt: '用 Codex', tool: 'codex' }), rx = await act2({ t: 'launch', machine: 'box', cwd: path.join(ROOT, 'proj'), prompt: '', tool: 'rm -rf' });
+    ok('a Codex session asked for: the pet is told so; any other word is Claude Code', rc.ok && launches[1].tool === 'codex' && launches[1].prompt === '用 Codex' && rx.ok && launches[2].tool === 'claude', JSON.stringify(launches.slice(1)));
+    launches.splice(1);
     const r2 = await act2({ t: 'launch', machine: 'box', cwd: T, prompt: '' });
     ok(`outside the roots refused (${r2.msg})`, r2.ok === false && launches.length === 1, JSON.stringify(r2));
     const r3 = await act2({ t: 'launch', machine: 'box', cwd: path.join(ROOT, 'proj', 'a.txt'), prompt: '' });

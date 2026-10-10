@@ -1,7 +1,7 @@
 // 写邮件: one window per draft (remote/server/mail/compose.js keeps it on the NAS; saved a second after you stop
 // typing). From (which mailbox), to / cc (/ bcc), subject, the text; the signature and -- for a reply / forward -- the
 // original go under it (the original can be left out). 附件 uploads files; a forward has the original's along.
-// 「让 GPT 起草」 writes subject and text from a few points (it only fills the editor). 发送 shows what will go where and
+// 「让 AI 起草」 writes subject and text from a few points (it only fills the editor). 发送 shows what will go where and
 // asks for a code if none was entered within the hour; nothing is sent without that.
 //   compose({ mode: 'new' | 'reply' | 'all' | 'forward', key?, acc? }), openDraft(id)
 import { h } from '../util.js';
@@ -45,11 +45,11 @@ function show(d) {
   const aiPoints = h('textarea', { class: 'field mc-points', rows: 3, placeholder: d.mode === 'new' ? '要点：写给谁、想说什么，例如「请李老师帮忙看一下论文第三章，下周三前给意见」' : '要点（可不写，让它看原邮件写一封合适的回复），例如「同意参加，但周四下午有课，问能不能改到周五」' });
   const aiTone = h('select', { class: 'field' }, h('option', { value: 'formal', text: '正式礼貌' }), h('option', { value: 'brief', text: '简洁直接' }), h('option', { value: 'casual', text: '轻松随和' }));
   const aiBtn = h('button', { class: 'btn go', type: 'button', text: '起草' });
-  const ai = h('div', { class: 'mc-ai', hidden: true }, h('b', { text: '让 GPT 起草（只是写进编辑框，不会替你发出）' }), aiPoints, h('div', { class: 'mc-row' }, h('span', { text: '语气' }), aiTone, aiBtn));
+  const ai = h('div', { class: 'mc-ai', hidden: true }, h('b', { text: '让 AI 起草（只是写进编辑框，不会替你发出）' }), aiPoints, h('div', { class: 'mc-row' }, h('span', { text: '语气' }), aiTone, aiBtn));
   const sendBtn = h('button', { class: 'btn go', type: 'button', text: '发送' });
   const root = h('div', { class: 'mcomp' },
     h('div', { class: 'mc-bar' }, sendBtn,
-      h('button', { class: 'btn', type: 'button', text: '让 GPT 起草', onclick: () => { ai.hidden = !ai.hidden; if (!ai.hidden) aiPoints.focus(); } }),
+      h('button', { class: 'btn', type: 'button', text: '让 AI 起草', onclick: () => { ai.hidden = !ai.hidden; if (!ai.hidden) aiPoints.focus(); } }),
       h('button', { class: 'btn', type: 'button', text: '附件…', onclick: () => fileIn.click() }),
       h('button', { class: 'btn', type: 'button', text: '密送', onclick: () => { bccRow.hidden = false; bcc.focus(); } }),
       h('button', { class: 'btn', type: 'button', text: '删除草稿', onclick: drop }), status, fileIn),
@@ -112,10 +112,10 @@ function show(d) {
     const r = await net.post('/api/mail/compose/ai', { id: d.id, points: aiPoints.value, tone: aiTone.value });
     aiBtn.disabled = false;
     if (!r.ok) return say(r.msg || '没能起草', true);
-    if (text.value.trim() && !(await confirmBox('用 GPT 写的替换现在的正文？', { title: '让 GPT 起草', ok: '替换' }))) return say('');
+    if (text.value.trim() && !(await confirmBox('用 AI 写的替换现在的正文？', { title: '让 AI 起草', ok: '替换' }))) return say('');
     text.value = r.text;
     if (!subject.value.trim() || d.mode === 'new') subject.value = r.subject;
-    ai.hidden = true; edited(); say('GPT 起草好了，看一下、改一改再发');
+    ai.hidden = true; edited(); say('AI 起草好了，看一下、改一改再发');
   });
 
   async function drop() {

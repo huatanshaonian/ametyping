@@ -4,7 +4,7 @@
 function answerFor(schema, prompt) {
   let answer;
   if (schema.properties.subject && schema.properties.text && !schema.properties.headline) {
-    // 「让 GPT 起草」: a reply keeps the original subject; the points go into the text
+    // 「让 AI 起草」: a reply keeps the original subject; the points go into the text
     const orig = (/^主题：(.*)$/m.exec(prompt) || [])[1] || '';
     const points = (/^- 他想说的要点：(.*)$/m.exec(prompt) || [])[1] || '';
     answer = { subject: orig ? 'Re: ' + orig : '关于论文的事', text: `老师您好：\n\n${points}\n\n此致\n敬礼` };

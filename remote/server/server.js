@@ -363,11 +363,12 @@ function onBrowserAction(c, d) {
     out = { t: 'resume', id };
     audit('control-resume', c.ip, m.name, id);
   } else if (d.t === 'launch') {
-    // a new Claude Code session in a folder of that machine (the agent checks it is a folder it lets you browse)
+    // a new Claude Code (or Codex: tool) session in a folder of that machine (the agent checks it is a folder it lets you browse)
     const cwd = typeof d.cwd === 'string' ? d.cwd : '', prompt = typeof d.prompt === 'string' ? d.prompt : '';
     if (!cwd || cwd.length > 1000 || prompt.length > 8000) return reply(false, '无效请求');
-    out = { t: 'launch', cwd, prompt };
-    audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`);
+    const tool = d.tool === 'codex' ? 'codex' : 'claude';
+    out = { t: 'launch', cwd, prompt, tool };
+    audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`, tool);
   } else if (d.t === 'send') {
     const text = typeof d.text === 'string' ? d.text : '';
     if (!text.trim() || text.length > 8000) return reply(false, '内容为空或太长（最多 8000 字）');

@@ -142,7 +142,7 @@ function login() {
     chk('the tray opens 邮箱设置: both mailboxes, the refused one says so, the form, the help', /所里/.test(setTxt) && /登录被拒/.test(setTxt) && /添加邮箱/.test(setTxt) && /客户端专用密码/.test(setTxt), setTxt.slice(0, 300));
     await shot('71-mail-settings.png');
     await evalJs("[...document.querySelectorAll('.win')].forEach(w => { const t = w.querySelector('.title'); if (t && t.textContent === '邮箱设置') w.querySelector('.tbtn.close').click(); })"); await sleep(300);
-    // 回复: the compose window filled in; 让 GPT 起草; 发送 (confirmed in Windose's own message box, never the
+    // 回复: the compose window filled in; 让 AI 起草; 发送 (confirmed in Windose's own message box, never the
     // browser's) -> out by SMTP
     await evalJs("window.confirm = () => { window.__native = 'confirm'; return false; }; window.alert = () => { window.__native = 'alert'; };");
     await evalJs("[...document.querySelectorAll('.ml-i')].find(i => i.textContent.includes('组会改到')).click()"); await sleep(800);
@@ -150,11 +150,11 @@ function login() {
     const comp = await evalJs("(() => { const c = document.querySelector('.mcomp'); if (!c) return null; const f = [...c.querySelectorAll('.mc-row .field')].map(x => x.value); return { fields: f, quote: (c.querySelector('.mc-quote pre') || {}).textContent || '', sig: c.querySelector('.mc-sig').textContent }; })()");
     chk('回复: a compose window -- from the mailbox, to the sender, Re:, the original to quote, the signature', comp && comp.fields.includes('a1') && comp.fields.includes('"李老师" <li@test.ac.cn>'.replace(/"/g, '')) &&
       comp.fields.includes('Re: 组会改到周四下午三点') && /写道：/.test(comp.quote) && /张三/.test(comp.sig), comp);
-    await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '让 GPT 起草').click()"); await sleep(300);
+    await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '让 AI 起草').click()"); await sleep(300);
     await evalJs("(() => { const t = document.querySelector('.mc-points'); t.value = '收到，会准时参加'; })()");
     await evalJs("document.querySelector('.mc-ai .btn.go').click()");
     for (let i = 0; i < 30 && !(await evalJs("document.querySelector('.mc-text').value.includes('会准时参加')")); i++) await sleep(500);
-    chk('让 GPT 起草: the text written into the editor (nothing sent)', (await evalJs("document.querySelector('.mc-text').value")).includes('收到，会准时参加') && smtp.got.length === 0, await evalJs("document.querySelector('.mc-text').value"));
+    chk('让 AI 起草: the text written into the editor (nothing sent)', (await evalJs("document.querySelector('.mc-text').value")).includes('收到，会准时参加') && smtp.got.length === 0, await evalJs("document.querySelector('.mc-text').value"));
     await sleep(1500);
     await shot('78-mail-compose.png');
     await evalJs("[...document.querySelectorAll('.mc-bar .btn')].find(b => b.textContent === '发送').click()");

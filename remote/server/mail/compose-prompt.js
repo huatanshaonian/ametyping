@@ -1,4 +1,4 @@
-// 「让 GPT 起草」: what the model is asked to write a mail from your points (and, for a reply / forward, the mail it is
+// 「让 AI 起草」: what the model is asked to write a mail from your points (and, for a reply / forward, the mail it is
 // about), and the JSON it answers with. It drafts only -- the text goes into the editor for you to change and send.
 'use strict';
 

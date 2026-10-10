@@ -1,6 +1,6 @@
 // e2e: 写信 / 回复 / 转发 / 发送 -- the real server with a fake mailbox (fake-imap.js) and a fake SMTP server
 // (fake-smtp.js): a reply filled in from the mail answered (who, Re:, the quote, In-Reply-To / References), reply-all
-// without yourself, a forward with the original's attachment (from the mailbox), a file you attach, 「让 GPT 起草」
+// without yourself, a forward with the original's attachment (from the mailbox), a file you attach, 「让 AI 起草」
 // (fake-codex.js), the code asked before sending, the checks (addresses, recipients, subject), what goes out by SMTP
 // (from the mailbox itself, the signature, the quote), the copy in the sent folder, the original marked answered,
 // the draft gone afterwards, the audit log without the text.
@@ -70,9 +70,9 @@ const req = (method, p, body, cookie, raw) => new Promise((resolve) => {
     const drafts = ((await req('GET', '/api/mail/drafts', null, cookie)).j || {}).items || [];
     ok('the drafts are kept (on the NAS)', drafts.length === 3);
 
-    // 让 GPT 起草 (only the editor's text; nothing sent)
+    // 让 AI 起草 (only the editor's text; nothing sent)
     const ai = (await req('POST', '/api/mail/compose/ai', { id: rep.id, points: '图已经改好，附上新版本', tone: 'formal' }, cookie)).j || {};
-    ok('让 GPT 起草: subject and text from the points and the original; nothing sent', ai.ok && ai.subject === 'Re: 论文第三章的意见' && /图已经改好，附上新版本/.test(ai.text) && smtp.got.length === 0, ai);
+    ok('让 AI 起草: subject and text from the points and the original; nothing sent', ai.ok && ai.subject === 'Re: 论文第三章的意见' && /图已经改好，附上新版本/.test(ai.text) && smtp.got.length === 0, ai);
     await req('POST', '/api/mail/drafts/save', { id: rep.id, text: ai.text }, cookie);
     // a file of your own
     const up = (await req('POST', `/api/mail/upload?draft=${rep.id}&name=${encodeURIComponent('图3-4（改）.png')}&type=image%2Fpng`, null, cookie, Buffer.from('PNGDATA'))).j || {};
