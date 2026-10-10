@@ -1047,20 +1047,32 @@ canvas.addEventListener('pointerdown', (e) => {
   downAt = { x: e.screenX, y: e.screenY, ox: e.offsetX, oy: e.offsetY };
   canvas.setPointerCapture(e.pointerId);
   if (inGrip(e)) { sizing = true; window.pet.gesture('resize-start'); }
-  // a finger put on her head strokes it (it cannot hover over her the way the cursor does): she stays where she is
-  else if (e.pointerType === 'touch' && e.offsetY / scale < NECK.y - 120) stroking = true;
+  // a finger on her strokes her (it cannot hover the way the cursor does); held still for a second it picks her up
+  // instead, and from then on she follows it -- she nods when that happens
+  else if (e.pointerType === 'touch') {
+    stroking = true; picked = false;
+    holdTimer = setTimeout(() => { if (!stroking) return; stroking = false; picked = true; pat.px = null; drag = true; head.nodUntil = now() + 200; window.pet.gesture('drag-start'); }, HOLD_MS);
+  }
   else { drag = true; window.pet.gesture('drag-start'); }
 });
-let stroking = false;
-canvas.addEventListener('pointermove', (e) => { if (stroking) detectPat({ x: e.offsetX / scale + VX, y: e.offsetY / scale }); });
+const HOLD_MS = 1000, HOLD_SLOP = 10;              // how long a finger rests before she is picked up; how far it may wander meanwhile (css px)
+let stroking = false, holdTimer = null, picked = false;   // picked: this touch became a move (letting go is then no tap)
+canvas.addEventListener('pointermove', (e) => {
+  if (!stroking) return;
+  if (downAt && Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) > HOLD_SLOP) clearTimeout(holdTimer);   // moving: a stroke, not a hold
+  detectPat({ x: e.offsetX / scale + VX, y: e.offsetY / scale }, true);
+});
 // the main process reads the real cursor and places the window absolutely (no delta drift)
 // the main process moves / resizes the window itself (cursor polling); make sure it always stops
 const endGesture = () => { if (drag || sizing) window.pet.gesture(sizing ? 'resize-end' : 'drag-end'); drag = null; sizing = null; };
 // (the main process also ends drags on the global mouse-up; moving windows can fire lostpointercapture / blur mid-drag)
-canvas.addEventListener('pointercancel', () => { endGesture(); downAt = null; stroking = false; });
+canvas.addEventListener('pointercancel', () => { endGesture(); downAt = null; stroking = false; clearTimeout(holdTimer); });
 canvas.addEventListener('pointerup', (e) => {
-  const moved = downAt ? Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) : 99;
+  // (a finger never rests as still as a mouse button: a little more counts as a tap)
+  const far = downAt ? Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) : 99;
+  const moved = picked ? 99 : e.pointerType === 'touch' && far < HOLD_SLOP ? 0 : far;
   const wasSizing = !!sizing;
+  clearTimeout(holdTimer);
   if (sizing) window.pet.gesture('resize-end');     // commit (saves + updates the tray menu)
   else if (drag) window.pet.gesture('drag-end');
   if (!wasSizing && moved < 4 && downAt && downAt.oy / scale < NECK.y + 20) {
@@ -1073,7 +1085,7 @@ canvas.addEventListener('pointerup', (e) => {
       if (t - lastClickAt < 400) { lastClickAt = 0; window.pet.openDashboard(); } else lastClickAt = t;
     }
   }
-  downAt = null; drag = null; sizing = null; stroking = false;
+  downAt = null; drag = null; sizing = null; stroking = false; picked = false;
 });
 
 // ---------- P-chan (ピーちゃん): stands in for the Claude panel while it is collapsed ----------
@@ -1159,12 +1171,13 @@ window.pet.onMouse((m) => {
   if (mouseFrozen) return;
   if (Math.hypot(m.x - mouse.x, m.y - mouse.y) > 3) mouse.movedAt = now();
   mouse.x = m.x; mouse.y = m.y; mouse.seen = true;
-  detectPat(m);
+  if (!stroking) detectPat(m);                          // (a finger stroking her reports itself: pointermove above)
 });
-// stroking her head: the cursor (no button) goes back and forth over the top of her head a few times
-function detectPat(m) {
+// stroking her head: the cursor (no button) goes back and forth over the top of her head a few times;
+// touch: a finger doing the same anywhere on her
+function detectPat(m, touch = false) {
   const t = now(), hx = NECK.x + body.x;
-  const onHead = !drag && Math.abs(m.x - hx) < 240 && m.y > 60 && m.y < NECK.y - 230;
+  const onHead = !drag && (touch || (Math.abs(m.x - hx) < 240 && m.y > 60 && m.y < NECK.y - 230));
   if (!onHead) { pat.px = null; if (pat.on && t - pat.last > 700) pat.on = false; return; }
   if (pat.px !== null) {
     const dx = m.x - pat.px;
