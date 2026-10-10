@@ -156,7 +156,7 @@ function mount(current) {
   function header(s) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
-    hmeta.textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
+    hmeta.textContent = s ? `${String(s.id).startsWith('codex:') ? 'Codex · ' : ''}${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
     // context left (from the last reply's token count); warned about when it runs low
     const left = s ? ctxLeft(s) : null;
     if (left != null) {
