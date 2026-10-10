@@ -8,7 +8,9 @@ contextBridge.exposeInMainWorld('pet', {
   onMouse: (fn) => ipcRenderer.on('mouse', (_e, m) => fn(m)),
   setHit: (v) => ipcRenderer.send('hit', v),
   setShape: (rects) => ipcRenderer.send('shape', rects),
-  gesture: (kind) => ipcRenderer.send('gesture', kind),
+  // x, y: where the finger is on the screen, for a gesture made by touch (none: the mouse, read by the main process)
+  gesture: (kind, x, y) => ipcRenderer.send('gesture', kind, x, y),
+  gestureAt: (x, y) => ipcRenderer.send('gesture-at', x, y),
   openDashboard: () => ipcRenderer.send('open-dashboard'),
   onClaude: (fn) => ipcRenderer.on('claude', (_e, t) => fn(t)),
   onPanel: (fn) => ipcRenderer.on('panel', (_e, s) => fn(s)),

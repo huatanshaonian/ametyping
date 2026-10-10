@@ -36,7 +36,10 @@
   .card { position: relative; padding: 5px 8px 6px 9px; border-bottom: 1px dotted rgba(77, 35, 207, .35); cursor: pointer; }
   .card:hover { background: rgba(255, 255, 255, .7); }
   .card.sel { background: #fff; box-shadow: inset 3px 0 0 var(--blue); }
-  .card .nm .cdx { display: inline-block; margin-right: 5px; padding: 0 4px; font-size: 10px; color: #fff; background: var(--blue); }   /* a Codex session */
+  /* whose session: the mark of Codex (OpenAI's) or of Claude Code, drawn through a mask in the colour given here */
+  .card .nm .prov { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; background: currentColor;
+    -webkit-mask: url(assets/provider/openai.svg) center / contain no-repeat; mask: url(assets/provider/openai.svg) center / contain no-repeat; }
+  .card .nm .prov.cla { background: #d97757; -webkit-mask-image: url(assets/provider/claude.svg); mask-image: url(assets/provider/claude.svg); }
   .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
   .card .sm { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .st { font-size: 10px; line-height: 13px; }

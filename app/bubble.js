@@ -49,7 +49,7 @@ function renderList() {
     c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
     const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
-    if (s.provider === 'codex') { const tag = document.createElement('span'); tag.className = 'cdx'; tag.textContent = 'Codex'; nm.prepend(tag); }
+    const mark = document.createElement('span'); mark.className = 'prov ' + (s.provider === 'codex' ? 'cdx' : 'cla'); nm.prepend(mark);   // whose session
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
     st.textContent = `${s.provider === 'codex' ? 'Codex' : 'Claude'} · ${name}`;

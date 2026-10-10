@@ -1,6 +1,6 @@
 // Ame typing pet — main process.
 // Global keyboard hook -> renderer. Only keycodes are forwarded; nothing is logged or stored.
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { uIOhook } = require('uiohook-napi');
@@ -14,6 +14,7 @@ const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
 const codexRecords = require('./codex-records');
 const codexCli = require('./codex-cli');
+const { update } = require('./update');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
 
@@ -111,6 +112,18 @@ function setScale(s, commit = true) {
   if (commit) { save(); buildMenu(); }
 }
 
+// 检查更新: the newest code pulled into the folder this pet runs from (update.js), then the pet started again
+let updating = false;
+async function runUpdate() {
+  if (updating) return;
+  updating = true; buildMenu(); tray.setToolTip('糖糖敲键盘 · 正在更新…');
+  let r; try { r = await update(path.resolve(__dirname, '..')); } catch (e) { r = { ok: false, msg: '更新出错', detail: String(e && e.message || e) }; }
+  updating = false; buildMenu(); tray.setToolTip('糖糖敲键盘');
+  if (!r.ok || !r.changed) return void dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: '糖糖 · 检查更新', message: r.msg, detail: r.detail || '', buttons: ['好'] });
+  await dialog.showMessageBox({ type: 'info', title: '糖糖 · 检查更新', message: r.msg + '，现在重启糖糖', detail: (r.detail ? r.detail + '\n\n' : '') + '（正在等你确认的权限卡片会回到终端里问）', buttons: ['重启'] });
+  app.relaunch(); app.exit(0);
+}
+
 function buildMenu() {
   const menu = Menu.buildFromTemplate([
     { label: '大小', submenu: Object.entries(SCALES).map(([k, v]) => ({
@@ -152,6 +165,7 @@ function buildMenu() {
       const wa = screen.getPrimaryDisplay().workArea, { width, height } = winSize();
       win.setPosition(wa.x + wa.width - width - 24, wa.y + wa.height - height); } },
     { type: 'separator' },
+    { label: updating ? '正在更新…' : '检查更新（拉取最新代码并重启）', enabled: !app.isPackaged && !updating, click: runUpdate },   // (a git copy only)
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
@@ -177,7 +191,7 @@ app.whenReady().then(() => {
   uIOhook.on('keydown', (e) => { if (win) win.webContents.send('key', { code: e.keycode, down: true }); morning.onKey(); mailNotice.onKey(); });
   uIOhook.on('keyup', (e) => win && win.webContents.send('key', { code: e.keycode, down: false }));
   // any mouse release ends a drag / resize, even if the page never saw the pointerup
-  uIOhook.on('mouseup', () => { endGesture(); endPanelResize(); });
+  uIOhook.on('mouseup', () => { if (!(gest && gest.touch)) endGesture(); endPanelResize(); });   // (a touch gesture: ended by the renderer)
   uIOhook.start();
 });
 
@@ -888,10 +902,13 @@ ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatS
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.
 // (Relying on renderer mousemove fails: while the window follows the cursor the pointer barely moves
 // relative to the window, Chromium stops sending moves, and the window lags / slides behind.)
+// A finger is another matter: the cursor does not go where it goes, and no mouse button is seen coming up. A gesture
+// made by touch is told where the finger is by the renderer (screen coordinates, so the window moving under it
+// changes nothing) and ends when the renderer says the finger lifted.
 let gest = null, gestTimer = null;
 function stepGesture() {
   if (!win || !gest) return;
-  const p = screen.getCursorScreenPoint();
+  const p = gest.touch ? gest.at : screen.getCursorScreenPoint();
   if (gest.kind === 'drag') {
     const c = clampToScreen(p.x - gest.dx, p.y - gest.dy, gest.w, gest.h);
     if (c.x !== gest.lx || c.y !== gest.ly) {
@@ -922,16 +939,18 @@ function endGesture() {
   if (kind === 'drag') { const [x, y] = win.getPosition(); settings.x = x; settings.y = y; save(); }
   else setScale(settings.scale, true);
 }
-ipcMain.on('gesture', (_e, kind) => {
+ipcMain.on('gesture', (_e, kind, x, y) => {
   if (!win) return;
   if (kind === 'drag-start' || kind === 'resize-start') {
     endGesture();
-    const p = screen.getCursorScreenPoint(), b = win.getBounds();
+    const touch = Number.isFinite(x) && Number.isFinite(y);
+    const p = touch ? { x, y } : screen.getCursorScreenPoint(), b = win.getBounds();
     const sz = winSize();                    // canonical size from the scale, never the (DPI-rounded) current one
-    gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y };
+    gest = { kind: kind === 'drag-start' ? 'drag' : 'resize', dx: p.x - b.x, dy: p.y - b.y, x0: p.x, w: sz.width, h: sz.height, lx: b.x, ly: b.y, touch, at: p };
     gestTimer = setInterval(stepGesture, 8);
   } else if (kind === 'drag-end' || kind === 'resize-end') endGesture();
 });
+ipcMain.on('gesture-at', (_e, x, y) => { if (gest && gest.touch && Number.isFinite(x) && Number.isFinite(y)) gest.at = { x, y }; });
 
 // cursor position for her gaze, in art-space units relative to the window (polled, no mouse hook)
 setInterval(() => {
