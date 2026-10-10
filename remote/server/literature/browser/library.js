@@ -21,7 +21,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
 function createLibrary({ port = () => 0, account = () => '', idp = () => '', doiBase = 'https://doi.org/', ieeeBase = 'https://ieeexplore.ieee.org', ieeeHome = 'ieeexplore.ieee.org',
-  access = ACCESS, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
+  access = ACCESS, reviveMs = 40e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
   const enabled = () => +port() > 0;
@@ -60,6 +60,21 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       if (r) return !!r.on;
     }
     return null;
+  }
+  // signed out: its website is opened, which signs the extension in again while the site itself still is. -> true | false
+  async function revive(c, sid) {
+    if (!access.home) return false;
+    c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
+    for (const until = Date.now() + reviveMs; Date.now() < until;) {
+      await sleep(stepMs);
+      const at = await c.evaluate(sid, 'location.href').catch(() => '');
+      if (access.login && at.includes(access.login)) return false;         // the site wants a login too: the user's
+      if (at.startsWith(access.home) && (await sleep(settleMs), true)) {
+        if (await extensionOn(c, sid)) return true;
+        c.send('Page.navigate', { url: access.home }, sid).catch(() => {});
+      }
+    }
+    return false;
   }
 
   // the tab goes to the PDF; its body is taken off the answer. -> { buf } | { html: true } (it ended on a page)
@@ -118,8 +133,11 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', doi
       const sid = await c.attach(targetId);
       await c.send('Page.enable', {}, sid);
       const mainFrame = (await c.send('Page.getFrameTree', {}, sid)).frameTree.frame.id;
-      if (byDoi(p.doi).ext && (await extensionOn(c, sid)) === false)
-        throw stop(`${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: byDoi(p.doi).id, name: byDoi(p.doi).name } });
+      if (byDoi(p.doi).ext && (await extensionOn(c, sid)) === false) {
+        log(`文献：${access.name} 掉线了，打开它的网站让它重新连上`);
+        if (await revive(c, sid)) log(`文献：${access.name} 重新连上了`);
+        else throw stop(`${access.name} 掉线了：到网页桌面的浏览器里点 ${access.name} 的图标重新登录（登录好了会自己接着下）`, { need: 'browser', site: { id: byDoi(p.doi).id, name: byDoi(p.doi).name } });
+      }
       await c.send('Page.navigate', { url: start }, sid);
       if (!(await landed(c, sid))) throw stop('论文的页面打不开（DOI 没有跳转，或网站没有回应）');
       let v = await look(c, sid);
