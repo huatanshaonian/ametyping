@@ -41,7 +41,7 @@ export function panel() {
     const num = (val, min, max) => h('input', { class: 'field lset-n', type: 'number', min, max, value: val });
     const colSel = (val) => { const s = h('select', { class: 'field' }, ...[...new Set([val, ...(v.collections || [])])].filter(Boolean).map((n) => h('option', { value: n, text: n }))); s.value = val; return s; };
     F = { mailto: h('input', { class: 'field', type: 'email', value: v.mailto || '', placeholder: '可空：例如你的学校邮箱' }),
-      daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), visionMaxPages: num(v.visionMaxPages, 0, 200), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10),
+      daily: num(v.daily, 0, 5), oldDaily: num(v.oldDaily, 0, 3), visionMaxPages: num(v.visionMaxPages, 0, 200), at: h('input', { class: 'field lset-n', type: 'time', value: v.at }), minScore: num(v.minScore, 1, 10), searchesPerDay: num(v.searchesPerDay, 1, 10), rankPerDay: num(v.rankPerDay, 10, 120),
       reviewCollection: colSel(v.reviewCollection), inboxCollection: h('input', { class: 'field', value: v.inboxCollection }), surveyCollection: h('input', { class: 'field', value: v.surveyCollection }),
       s2Recommend: h('input', { type: 'checkbox', checked: v.s2Recommend }),
       browserPort: num(v.browserPort, 0, 65535), pdfGapSec: num(v.pdfGapSec, 20, 3600), pdfPerDay: num(v.pdfPerDay, 0, 200),
@@ -59,7 +59,8 @@ export function panel() {
       row('读图', h('span', {}, '不超过 ', F.visionMaxPages, ' 页的整篇读'), '深读时把论文页面当图片给模型逐页转写（公式、表格比文字层准得多，也更费额度）；更长的只在 AI 建议、你批准后读其中几页；0 = 都要批准'),
       row('推送时间', F.at, '工作日这个时间之后推（周六只推老报告，周日不推）'),
       row('分数门槛', h('span', {}, F.minScore, ' 分以上才推（满分 10）'), '推得太杂就调高，常常没有新文献就调低'),
-      row('每天检索', h('span', {}, F.searchesPerDay, ' 条检索式（轮流用）')),
+      row('每天检索', h('span', {}, F.searchesPerDay, ' 条检索式（轮流用）'), '每条查两次：上次推送以来新发表的，和不限年份、按相关度往后翻一页的'),
+      row('每天打分', h('span', {}, F.rankPerDay, ' 篇'), '找到的候选先按画像关键词排，每天让模型读摘要打分的篇数；没轮到的留着等后面几天，不会丢'),
       row('相似推荐', h('label', { class: 'lset-cb' }, F.s2Recommend, ' 用 Semantic Scholar 按你收下 / 星标 / 核对过的文献推荐相似的新论文')),
       row('调研文献放进', F.surveyCollection, '梳理问题时调研到、被问题引用的新文献入库到这个分类（按主题分文件夹）；没读过的会优先排进每日阅读'),
       row('复习用的分类', F.reviewCollection, '新文献不够时，从这个分类（含子分类）里挑旧文献复习'),
@@ -76,7 +77,7 @@ export function panel() {
   async function save(quiet) {
     const keys = {};
     for (const name of ['s2', 'openalex']) { const t = K[name].box.value.trim(); if (t) keys[name] = t; else if (clear[name]) keys[name] = null; }
-    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, visionMaxPages: F.visionMaxPages.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value,
+    const r = await net.post('/api/lit/settings', { keys, mailto: F.mailto.value, daily: F.daily.value, oldDaily: F.oldDaily.value, visionMaxPages: F.visionMaxPages.value, at: F.at.value, minScore: F.minScore.value, searchesPerDay: F.searchesPerDay.value, rankPerDay: F.rankPerDay.value,
       reviewCollection: F.reviewCollection.value, inboxCollection: F.inboxCollection.value, surveyCollection: F.surveyCollection.value, s2Recommend: F.s2Recommend.checked,
       browserPort: F.browserPort.value, pdfGapSec: F.pdfGapSec.value, pdfPerDay: F.pdfPerDay.value, ieeeAccount: F.ieeeAccount.value, myloftAccount: F.myloftAccount.value });
     msg.textContent = r.ok ? '已保存，马上生效' : r.msg || '没能保存';

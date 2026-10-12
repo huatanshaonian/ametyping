@@ -2,7 +2,8 @@
 //   translate.js -- pairs only when the sentences given back are the abstract's own; Chinese abstracts left alone; a
 //                   failure is not asked again at once
 //   feed.js      -- the good papers a day has no room for wait for good, and compete with the next day's finds by
-//                   score; one place a day is for the ones found lately; a pick left alone goes back among them
+//                   score; one place a day is for the ones published lately; a pick left alone goes back among them;
+//                   what is found and not scored waits its turn; searches without a date go a page further each time
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -44,16 +45,18 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
   // ---- the push's waiting list ----
   const day = (n) => Date.parse('2026-10-12T08:00:00') + n * 86400e3;       // (a Monday)
   let found = [];
-  const mk = (title) => paper({ source: 'openalex', sid: title, title, abstract: 'About ' + title, date: new Date(clock).toISOString().slice(0, 10) });
+  const mk = (title) => paper({ source: 'openalex', sid: title, title, abstract: 'About ' + title, date: /old/.test(title) ? '2011-05-01' : new Date(clock).toISOString().slice(0, 10) });
+  const asked = [];                                            // the searches: [words, from, page]
+  let deepHits = () => [];
   const feed = createFeed({ dir: T, cfg: { daily: 2, oldDaily: 0 }, now: () => clock,
     mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
-    profile: { get: () => ({ follow: { venues: [{ issns: ['1'] }] } }), words: () => [], openQuestions: () => [] },
-    sources: { openalex: { byIssn: async () => found, byAuthors: async () => [], citing: async () => [], search: async () => [], byDoi: async () => null } },
+    profile: { get: () => ({ follow: { venues: [{ issns: ['1'] }], keywords: ['plasma sheath'] } }), words: () => [], openQuestions: () => [] },
+    sources: { openalex: { byIssn: async () => found, byAuthors: async () => [], citing: async () => [], search: async (w, from, page) => { asked.push([w, from, page || 1]); return from ? [] : deepHits(page || 1); }, byDoi: async () => null } },
     ask: async (prompt) => ({ items: [...prompt.matchAll(/^### (C\d+)\n题目：(.*)$/gm)].map((m) => ({ ref: m[1], score: +(/score (\d+)/.exec(m[2]) || [0, 0])[1], question: 0, why: 'w', fun: false })) }),
     cards: { find: () => null, annotationLines: () => [] } });
   const titles = (s) => feed.entries().filter((e) => e.status === s).map((e) => e.paper.title).sort();
   const skipAll = () => { for (const e of feed.entries().filter((x) => x.status === 'new')) feed.decide(e.id, 'skipped'); };
-  clock = day(0); found = ['alpha score 9', 'bravo score 8', 'charlie score 8', 'delta score 7', 'echo score 7', 'foxtrot score 7', 'golf score 7', 'hotel score 3'].map(mk);
+  clock = day(0); found = ['alpha score 9', 'bravo score 8', 'charlie score 8', 'delta score 7', 'echo score 7', 'foxtrot old score 7', 'golf old score 7', 'hotel score 3'].map(mk);
   const r1 = await feed.run();
   ok('a day with seven good papers: the two best shown, the other five wait (none thrown away), the poor one gone', titles('new').join() === 'alpha score 9,bravo score 8' && titles('spare').length === 5 && r1.picked === 2 && r1.waiting === 5 && !r1.held, [titles('new'), titles('spare'), r1]);
   skipAll();
@@ -68,17 +71,39 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
   skipAll();
   clock = day(14); found = ['kilo score 6'].map(mk);
   await feed.run();
-  ok('one place is for what was found lately: the new 6 is shown beside the best of the old 7s, the other 7 still waits', titles('new').join() === 'foxtrot score 7,kilo score 6' && titles('spare').join() === 'golf score 7' &&
-    feed.entries().find((e) => e.paper.title === 'kilo score 6').fresh && !feed.entries().find((e) => e.paper.title === 'foxtrot score 7').fresh, [titles('new'), titles('spare')]);
+  ok('one place is for what was published lately: the new 6 is shown beside the best of the 7s of 2011, the other 7 still waits', titles('new').join() === 'foxtrot old score 7,kilo score 6' && titles('spare').join() === 'golf old score 7' &&
+    feed.entries().find((e) => e.paper.title === 'kilo score 6').fresh && !feed.entries().find((e) => e.paper.title === 'foxtrot old score 7').fresh, [titles('new'), titles('spare')]);
   clock = day(70); found = [];
   await feed.run();
   const back = feed.pool().filter((e) => e.lapsed).map((e) => e.paper.title).sort();
-  ok('months later nothing has lapsed: the one waiting is shown; the two shown and left alone are back among the candidates, not to be pushed again', titles('new').join() === 'golf score 7' && back.join() === 'foxtrot score 7,kilo score 6', [titles('new'), back]);
+  ok('months later nothing has lapsed: the one waiting is shown; the two shown and left alone are back among the candidates, not to be pushed again', titles('new').join() === 'golf old score 7' && back.join() === 'foxtrot old score 7,kilo score 6', [titles('new'), back]);
   clock = day(71);
   const r6 = await feed.run();
   ok('the day after: nothing pushed a second time', r6.picked === 0 && feed.pool().length === 2, r6);
   const pr = feed.promote(feed.pool()[0].id);
   ok('taken into today by hand: shown again as of today, no longer marked', pr && pr.status === 'new' && pr.date === '2026-12-22' && !pr.lapsed && feed.pool().length === 1, pr);
+
+  // ---- searches without a date; what is found and not scored ----
+  const deep = asked.filter((a) => !a[1]), dated = asked.filter((a) => a[1]);
+  ok('each search is asked twice a run: what came out since the last run, and of any year', dated.length === deep.length && deep.length >= 6 && deep.every((a) => a[0] === 'plasma sheath'), [dated.length, deep.length]);
+  ok('the one without a date: back to page 1 as long as a page comes back short', deep.every((a) => a[2] === 1), deep.map((a) => a[2]));
+  skipAll();
+  const page = (p) => Array.from({ length: 25 }, (_, i) => mk('old paper p' + p + ' n' + String(i).padStart(2, '0') + ' score 2'));
+  deepHits = (p) => page(p);
+  clock = day(72); asked.length = 0;
+  const r7 = await feed.run();
+  clock = day(73);
+  const r8 = await feed.run();
+  ok('full pages: a page further the next day', asked.filter((a) => !a[1]).map((a) => a[2]).join() === '1,2', asked);
+  ok('papers of any year are candidates now (2011 here), counted under their own way of finding', r7.sources['检索式（不限年份）'] === 25 && r7.ranked === 25 && r8.ranked === 25, [r7, r8]);
+  deepHits = (p) => [...page(p), ...Array.from({ length: 20 }, (_, i) => mk('old extra p' + p + ' n' + i + ' score 2'))];
+  clock = day(74);
+  const r9 = await feed.run();
+  ok('more found than a day scores (30): the rest waits, not lost', r9.found === 45 && r9.ranked === 30 && r9.unscored === 15 && feed.status().unscored === 15, r9);
+  deepHits = () => [];
+  clock = day(77);                                             // (the Monday: Saturdays are for old reports)
+  const r10 = await feed.run();
+  ok('the next day finds nothing new: the ones waiting are scored then', r10.found === 0 && r10.ranked === 15 && r10.unscored === 0, r10);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   fs.rmSync(T, { recursive: true, force: true });

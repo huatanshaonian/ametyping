@@ -13,7 +13,7 @@ const path = require('path');
 
 const MAIL = /^[^\s@<>()"',;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
 const KEY = /^[\x21-\x7e]{8,200}$/;
-const NUM = { daily: [0, 5], minScore: [1, 10], searchesPerDay: [1, 10], oldDaily: [0, 3], visionMaxPages: [0, 200], browserPort: [0, 65535], pdfGapSec: [20, 3600], pdfPerDay: [0, 200] };
+const NUM = { daily: [0, 5], minScore: [1, 10], searchesPerDay: [1, 10], rankPerDay: [10, 120], oldDaily: [0, 3], visionMaxPages: [0, 200], browserPort: [0, 65535], pdfGapSec: [20, 3600], pdfPerDay: [0, 200] };
 // IEEE's institutional sign-in for members of CAS institutes / UCAS (中国科技云通行证)
 const IDP = 'https://passport.escience.cn/idp/shibboleth';
 
@@ -29,7 +29,7 @@ function createSettings({ dir, cfg = {} }) {
   const mailto = () => st.mailto != null ? st.mailto : cfg.mailto || '';
   function feed() {
     const pick = (k, d) => (st[k] != null && st[k] !== '' ? st[k] : cfg[k] != null ? cfg[k] : d);
-    return { daily: +pick('daily', 2), oldDaily: +pick('oldDaily', 1), at: String(pick('at', '07:30')), minScore: +pick('minScore', 6), searchesPerDay: +pick('searchesPerDay', 4),
+    return { daily: +pick('daily', 2), oldDaily: +pick('oldDaily', 1), at: String(pick('at', '07:30')), minScore: +pick('minScore', 6), searchesPerDay: +pick('searchesPerDay', 4), rankPerDay: +pick('rankPerDay', 30),
       reviewCollection: String(pick('reviewCollection', '气动隐身')), inboxCollection: String(pick('inboxCollection', '每日文献')), surveyCollection: String(pick('surveyCollection', '调研工作')), s2Recommend: pick('s2Recommend', true) !== false,
       visionMaxPages: +pick('visionMaxPages', 30),
       // 图书馆通道 (browser/library.js): the DevTools port of the browser signed in to the library (0 = off)

@@ -64,7 +64,8 @@ process.stdin.on('end', () => {
       keywords: ['"plasma sheath" RCS', 'communication blackout', 'electron density profile', 'hypersonic wake', 'plasma FDTD'], arxiv: ['physics.plasm-ph'], ntrs: ['reentry plasma attenuation'], seeds: key ? [key] : [] };
   } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.score) {
     const refs = [...prompt.matchAll(/^### (C\d+)\n题目：(.*)$/gm)];
-    a = { items: refs.map((m) => /plasma|sheath/i.test(m[2]) ? { ref: m[1], score: /blackout/i.test(m[2]) ? 9 : 8, question: 1, why: '给出了鞘套电子密度的实测剖面，可作为 RCS 计算输入', fun: false }
+    // (the paper Semantic Scholar's search gives -- of an earlier year, a candidate all the same -- is scored low)
+    a = { items: refs.map((m) => /plasma|sheath/i.test(m[2]) && !/from S2/.test(m[2]) ? { ref: m[1], score: /blackout/i.test(m[2]) ? 9 : 8, question: 1, why: '给出了鞘套电子密度的实测剖面，可作为 RCS 计算输入', fun: false }
       : { ref: m[1], score: 2, question: 0, why: '无关', fun: false }) };
   } else if (P.recall) a = { why: '和你的问题 Q1 有关，很久没回顾了', recall: ['它用的电子密度模型是什么？', '主要结论里的衰减量是多少？'] };
   else if (P.getPdf) {

@@ -30,6 +30,7 @@ export function mount(el, ctx) {
     st.classList.toggle('bad', !!(last && last.error));
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献${last.held ? `（${last.held} 篇是前几天留下的）` : ''}、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
+    if (s.unscored) st.textContent += ` · 还有 ${s.unscored} 篇找到了没打分`;
     if (s.archive && s.archive.queue) st.textContent += ` · 老报告还有 ${s.archive.queue} 篇在排队`;
     if (s.dtic && s.dtic.up) st.textContent += ' · DTIC 的公共检索恢复了（告诉 Claude 接上）';
     render();
@@ -51,7 +52,7 @@ export function mount(el, ctx) {
   function card(e, { past } = {}) {
     const p = e.paper || {};
     const q = e.qText ? { text: e.qText } : e.question > 0 ? questions[e.question - 1] : null;
-    const kind = e.kind === 'review' ? (e.mode === 'recall' ? ['复习', 'rv'] : ['补读', 'cu']) : e.old ? ['老报告', 'old'] : e.fun ? ['有趣', 'fun'] : e.fresh ? ['新到', 'new'] : e.found ? ['候选', 'new'] : ['新文献', 'new'];
+    const kind = e.kind === 'review' ? (e.mode === 'recall' ? ['复习', 'rv'] : ['补读', 'cu']) : e.old ? ['老报告', 'old'] : e.fun ? ['有趣', 'fun'] : e.fresh ? ['近期发表', 'new'] : e.found ? ['候选', 'new'] : ['新文献', 'new'];
     const head = h('div', { class: 'lf-h' }, h('i', { class: 'tag ' + kind[1], text: kind[0] }),
       q ? h('i', { class: 'tag q', text: 'Q' + e.question, title: q.text }) : null,
       e.score ? h('small', { class: 'lf-score', text: `${e.score}/10`, title: '和你当前问题的相关度（模型打分）' }) : null,
