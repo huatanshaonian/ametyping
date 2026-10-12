@@ -48,10 +48,11 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
   const mk = (title) => paper({ source: 'openalex', sid: title, title, abstract: 'About ' + title, date: /old/.test(title) ? '2011-05-01' : new Date(clock).toISOString().slice(0, 10) });
   const asked = [];                                            // the searches: [words, from, page]
   let deepHits = () => [];
+  const read = [];                                             // the journal read: from which day
   const feed = createFeed({ dir: T, cfg: { daily: 2, oldDaily: 0 }, now: () => clock,
     mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
     profile: { get: () => ({ follow: { venues: [{ issns: ['1'] }], keywords: ['plasma sheath'] } }), words: () => [], openQuestions: () => [] },
-    sources: { openalex: { byIssn: async () => found, byAuthors: async () => [], citing: async () => [], search: async (w, from, page) => { asked.push([w, from, page || 1]); return from ? [] : deepHits(page || 1); }, byDoi: async () => null } },
+    gapMs: 0, sources: { crossref: { created: async (issns, from) => { read.push(from); return found; } }, openalex: { byAuthors: async () => [], citing: async () => [], search: async (w, from, page) => { asked.push([w, from, page || 1]); return from ? [] : deepHits(page || 1); }, byDoi: async () => null } },
     ask: async (prompt) => ({ items: [...prompt.matchAll(/^### (C\d+)\n题目：(.*)$/gm)].map((m) => ({ ref: m[1], score: +(/score (\d+)/.exec(m[2]) || [0, 0])[1], question: 0, why: 'w', fun: false })) }),
     cards: { find: () => null, annotationLines: () => [] } });
   const titles = (s) => feed.entries().filter((e) => e.status === s).map((e) => e.paper.title).sort();
@@ -104,6 +105,76 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
   clock = day(77);                                             // (the Monday: Saturdays are for old reports)
   const r10 = await feed.run();
   ok('the next day finds nothing new: the ones waiting are scored then', r10.found === 0 && r10.ranked === 15 && r10.unscored === 0, r10);
+
+  // ---- a table of contents once; a phrase's own "since"; the order of scoring ----
+  skipAll();
+  const toc = ['toc one score 2', 'toc two score 2', 'toc three score 2'].map(mk);
+  clock = day(78); found = toc; asked.length = 0;
+  const r11 = await feed.run();
+  clock = day(79); found = [...toc, mk('toc four score 2')];
+  const r12 = await feed.run();
+  ok('a journal\'s table of contents: each article taken the day it first shows, not again', r11.sources['期刊目录'] === 3 && r11.found === 3 && r11.toc === 3 && r12.sources['期刊目录'] === 1 && r12.found === 1 && r12.ranked === 1, [r11.sources, r12.sources]);
+  ok('the journal is read from where it was last read (two days of overlap); the first time: two weeks back', read[0] === '2026-09-28' && read[read.length - 1] === '2026-12-27', [read[0], read[read.length - 1]]);
+  clock = day(84); asked.length = 0;
+  await feed.run();
+  ok('a phrase\'s "since" goes back to the day it was last asked (two days before), not only to the last run', asked.filter((a) => a[1]).map((a) => a[1]).join() === '2026-12-28', asked);
+  const many = [...Array.from({ length: 34 }, (_, i) => mk('A study of something else no ' + i + ' score 2')), mk('Reentry sheath attenuation score 2'), mk('Plasma instabilities score 2')];
+  let order = [];
+  const f2 = createFeed({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit2-')), cfg: { daily: 2, oldDaily: 0 }, now: () => clock,
+    mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
+    profile: { get: () => ({ follow: { keywords: ['sheath'] } }), words: () => ['reentry plasma sheath', 'study of scattering'], openQuestions: () => [] },
+    gapMs: 0, sources: { openalex: { byAuthors: async () => [], citing: async () => [], search: async (w, from) => (from ? many : []), byDoi: async () => null } },
+    ask: async (prompt) => { order = [...prompt.matchAll(/^题目：(.*)$/gm)].map((m) => m[1]); return { items: [] }; },
+    cards: { find: () => null, annotationLines: () => [] } });
+  await f2.run();
+  ok('which are scored first: a word of a phrase in the title counts (no phrase is there whole), a word nearly every title has counts little', order.length === 30 && order.slice(0, 2).sort().join() === 'Plasma instabilities score 2,Reentry sheath attenuation score 2' && order[0] === 'Reentry sheath attenuation score 2', order.slice(0, 4));
+
+  // ---- a journal's contents are all read, beside the searches' share ----
+  const issue = Array.from({ length: 100 }, (_, i) => mk('issue article ' + String(i).padStart(3, '0') + ' score 2'));
+  deepHits = () => Array.from({ length: 25 }, (_, i) => mk('search hit ' + i + ' score 2'));
+  clock = day(85); found = issue;
+  const r16 = await feed.run();
+  ok('a whole issue at once (100 articles): 90 of them scored that day beside the searches\' finds, the other 10 wait', r16.sources['期刊目录'] === 100 && r16.toc === 90 && r16.ranked === 90 + 25 && r16.unscored === 10, r16);
+  deepHits = () => []; found = [];
+  clock = day(86);
+  const r17 = await feed.run();
+  ok('the next day: the 10 left of the issue', r17.toc === 10 && r17.ranked === 10 && r17.unscored === 0, r17);
+
+  // ---- the model fails: what was found is kept ----
+  let down = true;
+  const f3 = createFeed({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit3-')), cfg: { daily: 2, oldDaily: 0 }, now: () => clock,
+    mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
+    profile: { get: () => ({ follow: { venues: [{ issns: ['1'] }] } }), words: () => [], openQuestions: () => [] },
+    gapMs: 0, sources: { crossref: { created: async () => toc } },
+    ask: async (prompt) => { if (down) throw new Error('model down'); return { items: [...prompt.matchAll(/^### (C\d+)$/gm)].map((m) => ({ ref: m[1], score: 7, question: 0, why: 'w', fun: false })) }; },
+    cards: { find: () => null, annotationLines: () => [] } });
+  const e1 = await f3.run().catch((e) => e.message);
+  down = false;
+  const r13 = await f3.run();
+  ok('the scoring fails: the table of contents taken that day is not lost -- scored at the next run', e1 === 'model down' && r13.found === 0 && r13.ranked === 3 && r13.picked === 2, [e1, r13]);
+
+  // ---- Semantic Scholar on its own clock ----
+  let s2busy = true; const s2asked = [];
+  const s2 = { enabled: () => true, search: async (k, y, n, off) => { s2asked.push([k, off]); if (s2busy) throw Object.assign(new Error('busy'), { status: 429 }); return [mk('s2 paper for ' + k + ' off ' + off + ' score 7')]; }, recommend: async () => [] };
+  clock = Date.parse('2026-10-12T08:00:00');
+  const f4 = createFeed({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit4-')), cfg: { daily: 2, oldDaily: 0 }, now: () => clock,
+    mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
+    profile: { get: () => ({ follow: { keywords: ['alpha waves', 'beta waves', 'gamma waves'] } }), words: () => [], openQuestions: () => [] },
+    sources: { s2 }, ask: async (prompt) => ({ items: [...prompt.matchAll(/^### (C\d+)$/gm)].map((m) => ({ ref: m[1], score: 7, question: 0, why: 'w', fun: false })) }),
+    cards: { find: () => null, annotationLines: () => [] } });
+  const r14 = await f4.run();
+  ok('Semantic Scholar busy at the push: the push goes on without it and says so; asked once, not the second query too', r14.found === 0 && /Semantic Scholar/.test(r14.errors.join()) && s2asked.length === 1, [r14, s2asked]);
+  clock += 3600e3; await f4.tick();
+  ok('an hour later: not yet tried again', s2asked.length === 1, s2asked);
+  clock += 2.1 * 3600e3; await f4.tick();
+  ok('three hours later: tried again, still busy', s2asked.length === 2 && f4.status().unscored === 0, s2asked);
+  s2busy = false; clock += 3.1 * 3600e3; await f4.tick();
+  ok('later it answers: both of the day\'s queries asked, what they brought waits to be scored', s2asked.length === 4 && f4.status().unscored === 2, [s2asked, f4.status().unscored]);
+  clock += 3.1 * 3600e3; await f4.tick();
+  ok('answered once: not asked again that day', s2asked.length === 4, s2asked);
+  clock = Date.parse('2026-10-13T08:00:00');
+  const r15 = await f4.run();
+  ok('the next push scores them, counted under their way of finding; that day\'s own queries are asked too', r15.ranked === 3 && r15.picked === 2 && r15.sources['S2 检索'] === 4 && s2asked.length === 6, [r15, s2asked.length]);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   fs.rmSync(T, { recursive: true, force: true });

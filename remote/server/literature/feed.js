@@ -1,12 +1,16 @@
 // 每日文献: each workday morning (literature config "at", default 07:30) at most `daily` papers (default 2) -- a cap, not
-// a quota. New papers come from the follow lists of the profile (journals through OpenAlex / Crossref / AIAA's feeds,
+// a quota. New papers come from the follow lists of the profile (the followed journals' tables of contents,
 // authors, papers citing the key papers, search words, arXiv categories) and from the papers the mail triage picked out
 // of journal and ResearchGate mails; anything already in the library or shown before is dropped, the rest is prefiltered
 // by the profile's words and scored by the model against the user's questions (prompts/feed.js) -- `rankPerDay` (30)
 // of them a day; the others wait their turn (feed-inbox.json), so nothing found is lost and nothing is fetched twice
 // for nothing. The search is not only for what is new: besides what came out since the last run (journals, feeds,
 // arXiv, and each search / author / citing query), the searches, the followed authors and the papers citing the key
-// ones are also asked without a date, a page further each time ("cursors"), while the waiting list has room. Fewer than `daily`
+// ones are also asked without a date, a page further each time ("cursors"), while the waiting list has room. A search
+// phrase is used every few days: its "since" is the day it was last asked ("asked"), not the day of the last run.
+// The followed journals are read like their tables of contents: every article newly registered at Crossref (and in
+// AIAA's own feed of the current issue) is taken once, the day it first shows ("toc"), and scored by the model whatever
+// its words -- TOC_PER_DAY a day, beside the `rankPerDay` of the searches. Fewer than `daily`
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
 // annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
 // day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
@@ -16,7 +20,9 @@
 // Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; one left alone for 7 days
 // goes back among the candidates ("lapsed": there to be found, not pushed a second time).
 //   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...],
-//                                     cursors: { query: next page } }
+//                                     cursors: { query: next page }, asked: { phrase: 'YYYY-MM-DD' }, toc: { fingerprint: t },
+//                                     tocAt: { issn: 'YYYY-MM-DD' (the journal last read) },
+//                                     s2: (s2job.js) }
 //   <dataDir>/literature/feed-inbox.json  { fingerprint: candidate }   found, not scored yet
 'use strict';
 const fs = require('fs');
@@ -25,12 +31,17 @@ const crypto = require('crypto');
 const { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt } = require('./prompts/feed');
 const { fingerprint, paper } = require('./sources/normalize');
 const { createArchive } = require('./archive');
+const { createS2Job } = require('./s2job');
 
 const DAY_MS = 86400e3;
 const FRESH_DAYS = 90;                                         // "published lately": one place a day is for these
 const INBOX_MAX = 400;                                         // candidates waiting to be scored (the most promising)
 const PER_CALL = 30;                                           // papers scored in one call of the model
-const LAST_PAGE = 40;                                          // how deep a query without a date is followed
+const LAST_PAGE = 40;
+const TOC_PER_DAY = 90;                                        // articles of the journals' contents scored a day
+const TOC_FIRST_DAYS = 14;                                     // how far back a journal is read the first time
+// (words of a search phrase that say nothing about its subject)
+const STOP = new Set('with from that this based using method methods model models modeling analysis study approach design high order problem problems'.split(' '));                                          // how deep a query without a date is followed
 // n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
 function rotate(list, n, day) {
   if (list.length <= n) return list.slice();
@@ -41,9 +52,9 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
-function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now() }) {
+function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500 }) {
   const file = path.join(dir, 'feed.json');
-  let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {} };
+  let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {}, asked: {}, toc: {}, tocAt: {}, s2: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
   const inboxFile = path.join(dir, 'feed-inbox.json');
   let inbox = {};
@@ -62,6 +73,9 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   const entries = () => Object.values(st.items);
   const pushedOn = (date) => entries().filter((e) => e.date === date && e.status !== 'spare');
 
+  // a query without a date, a page further than the last time it was asked (back to the first after the last)
+  const turn = async (id, per, fn) => { const p = st.cursors[id] || 1; const r = (await fn(p)) || []; st.cursors[id] = r.length < per || p >= LAST_PAGE ? 1 : p + 1; return r; };
+
   // ---- gathering ----
   // Each source's count goes into the run's log (which way brings the papers worth reading shows after a few days).
   // The search phrases are used a few a day in turn (all of them come round), without quotes -- a quoted phrase is an
@@ -75,33 +89,40 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       try { const r = (await fn()) || []; for (const c of r) c.via = name; out.push(...r); counts[name] = (counts[name] || 0) + r.length; }
       catch (e) { errors.push(`${name}：${e.message}`); counts[name] = counts[name] || 0; }
     };
+    // a table of contents: gathered apart (the same article from Crossref and from AIAA's feed is one), then only the
+    // articles not taken before go on -- marked "toc": all of them are scored
+    const tocs = [];
+    const tryToc = async (name, fn) => {
+      try { const r = (await fn()) || []; for (const c of r) c.via = name; tocs.push(...r.filter((c) => c.title)); counts[name] = counts[name] || 0; return true; }
+      catch (e) { errors.push(`${name}：${e.message}`); counts[name] = counts[name] || 0; return false; }
+    };
     const day = Math.floor(now() / DAY_MS);
-    const turn = async (id, per, fn) => { const p = st.cursors[id] || 1; const r = (await fn(p)) || []; st.cursors[id] = r.length < per || p >= LAST_PAGE ? 1 : p + 1; return r; };
     const words = (f.keywords || []).map(unquote).filter(Boolean);
-    const issns = [...new Set((f.venues || []).flatMap((v) => v.issns || []))];
+    // a phrase's own "since": two days before it was last asked (the first time: a month back)
+    const sinceOf = (k) => { const d = st.asked[k] ? ymd(Math.min(now() - 3 * DAY_MS, Date.parse(st.asked[k]) - 2 * DAY_MS)) : ymd(now() - 30 * DAY_MS); return d < since ? d : since; };
     const S = sources;
     if (S.openalex) {
-      await tryIt('期刊', () => S.openalex.byIssn(issns, since));
       const authors = (f.authors || []).map((a) => a.openalex).filter(Boolean), seeds = (f.seeds || []).map((s) => s.openalex).filter(Boolean);
       await tryIt('作者', () => S.openalex.byAuthors(authors, since));
       await tryIt('引用核心文献', () => S.openalex.citing(seeds, since));
-      for (const k of rotate(words, C().searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
+      for (const k of rotate(words, C().searchesPerDay || 4, day)) await tryIt('检索式', async () => { const r = await S.openalex.search(k, sinceOf(k)); st.asked[k] = ymd(now()); return r; });
       if (deep) {
         if (authors.length) await tryIt('作者（往年）', () => turn('oa:authors:' + authors.join(), 40, (p) => S.openalex.byAuthors(authors, null, p)));
         if (seeds.length) await tryIt('引用核心文献（往年）', () => turn('oa:citing:' + seeds.join(), 40, (p) => S.openalex.citing(seeds, null, p)));
         for (const k of rotate(words, C().searchesPerDay || 4, day)) await tryIt('检索式（不限年份）', () => turn('oa:search:' + k, 25, (p) => S.openalex.search(k, null, p)));
       }
     }
-    // Semantic Scholar (with a key): two of the phrases a day, and papers like the ones kept / starred, unlike the skipped
-    if (S.s2 && S.s2.enabled()) {
-      for (const k of rotate(words, 2, day + 1)) await tryIt('S2 检索', () => (deep ? turn('s2:search:' + k, 10, (p) => S.s2.search(k, 0, 10, (p - 1) * 10)) : S.s2.search(k, +since.slice(0, 4), 10)));
-      if (C().s2Recommend !== false) {
-        const L = taste();
-        if (L.pos.length) await tryIt('相似推荐', () => S.s2.recommend(L.pos, L.neg, 30));
-      }
+    // (Semantic Scholar: on its own clock -- s2Tasks below)
+    // the followed journals, each read from where it was last read (two days of overlap; the first time: two weeks)
+    if (S.crossref) for (const v of (f.venues || []).filter((x) => (x.issns || []).length)) {
+      const id = v.issns[0], from = ymd(st.tocAt[id] ? Date.parse(st.tocAt[id]) - 2 * DAY_MS : now() - TOC_FIRST_DAYS * DAY_MS);
+      if (await tryToc('期刊目录', () => S.crossref.created(v.issns, from))) st.tocAt[id] = ymd(now());
+      if (gapMs) await new Promise((r) => setTimeout(r, gapMs));           // (Crossref answers nothing when asked in a burst)
     }
-    if (S.crossref) for (const i of rotate(issns, 8, day)) await tryIt('Crossref', () => S.crossref.byIssn(i, since, 20));
-    if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryIt('AIAA 目录', () => S.aiaa.toc(c));
+    if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryToc('AIAA 目录', () => S.aiaa.toc(c));
+    const fresh = new Map();
+    for (const c of tocs) { const fp = fingerprint(c); if (st.toc[fp]) continue; fresh.set(fp, [...(fresh.get(fp) || []), c]); }
+    for (const [fp, same] of fresh) { st.toc[fp] = now(); for (const c of same) { c.toc = true; out.push(c); counts[c.via]++; } }
     if (S.arxiv && (f.arxiv || []).length) {
       const phrases = [...new Set([...(prof.topics || []).flatMap((t) => t.keywords || []), ...(f.keywords || [])].map(unquote).filter((w) => w.length > 2))];
       if (phrases.length) await tryIt('arXiv', () => S.arxiv.recent(f.arxiv, rotate(phrases, 15, day), 60));
@@ -115,6 +136,17 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     }
     return { cands: out, errors, counts };
   }
+  // Semantic Scholar's day: two of the phrases (of any year, a page further each time), and papers like the ones kept /
+  // starred, unlike the skipped. Tried at the push and every few hours until each answered (s2job.js); what they bring
+  // waits in the inbox for the next scoring.
+  function s2Tasks() {
+    const f = (profile.get() || {}).follow || {}, day = Math.floor(now() / DAY_MS);
+    const t = rotate((f.keywords || []).map(unquote).filter(Boolean), 2, day + 1).map((k) => ({ id: 's:' + k, name: 'S2 检索', run: () => turn('s2:search:' + k, 10, (p) => sources.s2.search(k, 0, 10, (p - 1) * 10)) }));
+    if (C().s2Recommend !== false) { const L = taste(); if (L.pos.length) t.push({ id: 'rec', name: '相似推荐', run: () => sources.s2.recommend(L.pos, L.neg, 30) }); }
+    return t;
+  }
+  const s2job = createS2Job({ s2: sources.s2, state: () => st.s2, save: () => save(), tasks: s2Tasks, log, now, gapMs: (C().s2RetryHours || 3) * 3600e3,
+    add: (name, list) => { for (const c of list) c.via = name; inbox = Object.fromEntries(dedupe([...Object.values(inbox), ...list]).map((c) => [fingerprint(c), c])); saveInbox(); } });
   // what the user liked and did not: kept / skipped picks (the last 4 months) and likes() (starred cards, key papers)
   function taste() {
     const recent = entries().filter((e) => e.kind === 'new' && e.paper && e.paper.doi && now() - (e.decidedAt || 0) < 120 * DAY_MS);
@@ -132,7 +164,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       const fp = fingerprint(c);
       if (st.seen[fp] || (c.doi && mirror.findDoi(c.doi)) || mirror.findTitle(c.title)) continue;
       const prev = byId.get(c.id) || byFp.get(fp);
-      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), ...(c.sources || [c.source])])];
+      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date', 'toc']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), ...(c.sources || [c.source])])];
         prev.vias = [...new Set([...(prev.vias || []), ...(c.vias || []), c.via].filter(Boolean))]; continue; }
       const { via, ...rest } = c;
       const x = { ...rest, sources: c.sources || [c.source], vias: c.vias || (via ? [via] : []) };
@@ -153,10 +185,16 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       } catch {}
     }
   }
-  // the profile's words in the title / abstract: the most promising first (the first `rankPerDay` go to the model)
+  // The most promising first (the first `rankPerDay` go to the model): by the profile's phrases in the title and
+  // abstract -- a whole phrase counts most, and each of its words counts too, the more the fewer candidates have it
+  // ("waverider" tells more than "model"). Whole phrases alone hardly ever match a title word for word.
   function prefilter(list, n = list.length) {
-    const words = profile.words().map((w) => w.toLowerCase());
-    const score = (c) => { const t = (c.title + ' ' + c.abstract).toLowerCase(); return words.reduce((s, w) => s + (t.includes(w) ? 1 : 0), 0) + (c.abstract ? 0.5 : 0) + ((c.sources || []).length - 1); };
+    const phrases = profile.words().map((w) => w.toLowerCase()).filter(Boolean);
+    const terms = [...new Set(phrases.flatMap((p) => p.split(/[^a-z0-9\u4e00-\u9fff]+/)).filter((w) => (/[\u4e00-\u9fff]/.test(w) ? w.length >= 2 : w.length >= 4) && !STOP.has(w)))];
+    const texts = new Map(list.map((c) => [c, (c.title + ' ' + (c.abstract || '')).toLowerCase()]));
+    const has = (t, w) => (/[\u4e00-\u9fff]/.test(w) ? t.includes(w) : new RegExp('\\b' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(t));
+    const weight = new Map(terms.map((w) => { let df = 0; for (const t of texts.values()) if (has(t, w)) df++; return [w, df ? Math.log(1 + list.length / df) : 0]; }));
+    const score = (c) => { const t = texts.get(c); return phrases.reduce((s, p) => s + (t.includes(p) ? 3 : 0), 0) + terms.reduce((s, w) => s + (weight.get(w) && has(t, w) ? weight.get(w) : 0), 0) + (c.abstract ? 0.5 : 0) + ((c.sources || []).length - 1); };
     return list.map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.c);
   }
   function feedback() {
@@ -236,16 +274,30 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const last = st.runs.filter((r) => !r.error).map((r) => r.date).sort().pop();
         const since = ymd(Math.min(now() - 3 * DAY_MS, last ? Date.parse(last) - 2 * DAY_MS : now() - 14 * DAY_MS));
         // (the ones found before and not scored yet come first into the count: a full waiting list is not dug deeper)
-        const { cands, errors, counts } = await gather(since, Object.keys(inbox).length < 2 * rankN());
-        log1.errors = errors; log1.found = cands.length; log1.sources = counts;
-        let list = dedupe([...Object.values(inbox), ...cands]);
-        await enrich(list);
-        list = prefilter(list);
-        const ranked = await rank(list.slice(0, rankN()));
-        log1.ranked = ranked.length;
+        const deep = Object.values(inbox).filter((c) => !c.toc).length < 2 * rankN();
+        await s2job.tick(date, true);                          // (into the inbox; busy: tried again in a few hours)
+        const { cands, errors, counts } = await gather(since, deep);
+        const viaS2 = s2job.take();
+        for (const [k, n] of Object.entries(viaS2)) counts[k] = (counts[k] || 0) + n;
+        if (s2job.pending()) errors.push(`Semantic Scholar：${s2job.pending()}（过几个小时自动再试，查到的留给下次打分）`);
+        log1.errors = errors; log1.found = cands.length + Object.values(viaS2).reduce((a, b) => a + b, 0); log1.sources = counts;
+        const all = dedupe([...Object.values(inbox), ...cands]);
+        // the journals' contents: every article is scored (the oldest waiting first), whatever its words; the searches'
+        // finds: the most promising `rankPerDay`
+        const toc = all.filter((c) => c.toc), tocNow = toc.slice(0, TOC_PER_DAY);
+        await enrich(tocNow, TOC_PER_DAY);
+        const rest = all.filter((c) => !c.toc);
+        await enrich(rest);
+        const list = prefilter(rest), wait = [...toc.slice(TOC_PER_DAY), ...list.slice(rankN(), rankN() + INBOX_MAX)];
+        const keep = (cs) => { inbox = Object.fromEntries(cs.map((c) => [fingerprint(c), c])); saveInbox(); };
+        // (all of them wait first: when the scoring fails, what was found -- a table of contents is not taken twice --
+        // is still there the next time)
+        keep([...tocNow, ...list.slice(0, rankN()), ...wait]);
+        const ranked = await rank([...tocNow, ...list.slice(0, rankN())]);
+        log1.ranked = ranked.length; log1.toc = tocNow.length;
         for (const r of ranked) st.seen[fingerprint(r.c)] = now();
-        inbox = Object.fromEntries(list.slice(rankN(), rankN() + INBOX_MAX).map((c) => [fingerprint(c), c]));
-        log1.unscored = Object.keys(inbox).length; saveInbox();
+        keep(wait);
+        log1.unscored = wait.length;
         const good = ranked.filter((r) => r.score >= minScore());
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
@@ -278,6 +330,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   function prune() {
     const t = now();
     for (const [fp, at] of Object.entries(st.seen)) if (t - at > 180 * DAY_MS) delete st.seen[fp];
+    for (const [fp, at] of Object.entries(st.toc)) if (t - at > 400 * DAY_MS) delete st.toc[fp];
     for (const e of entries()) {
       const paper = e.kind === 'new' && !e.zkey;
       if (e.status === 'new' && t - e.created > 7 * DAY_MS) Object.assign(e, paper ? { status: 'spare', lapsed: true } : { status: 'expired' });
@@ -323,6 +376,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   async function tick() {
     if (sources.dtic && now() - (st.dtic && st.dtic.at || 0) > 7 * DAY_MS) { st.dtic = { at: now(), up: await sources.dtic.publicSearchUp() }; save(); if (st.dtic.up) log('文献：DTIC 的公共检索恢复了'); }
     const d = due(); if (d && !running) await run({ date: d }).catch(() => {});
+    // Semantic Scholar's queries of the day that have not answered yet: again when the gap has passed
+    if (!running && C().enabled !== false && profile.get()) await s2job.tick(ymd(now()));
   }
   let timer = null;
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }

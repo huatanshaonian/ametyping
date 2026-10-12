@@ -15,8 +15,13 @@ const decode = (s) => String(s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>'
 function createCrossref({ http, base = 'https://api.crossref.org', mailto = '' }) {
   const M = () => (typeof mailto === 'function' ? mailto() : mailto) || '';
   return {
-    async byIssn(issn, from, rows = 40) {
-      const s = new URLSearchParams({ filter: `issn:${issn},from-pub-date:${from}`, sort: 'published', order: 'desc', rows: String(rows), ...(M() ? { mailto: M() } : {}) });
+    // A journal's new articles as its table of contents: the ones registered since a date (by the day Crossref got
+    // them, not the date printed on them -- an article of a coming issue is there the day it goes online; OpenAlex has
+    // it weeks later). issns: the journal's (print and online). Abstracts: where the publisher deposits them (AIAA,
+    // AIP: yes; IEEE, Elsevier: no).
+    async created(issns, from, rows = 300) {
+      const list = [].concat(issns).filter(Boolean), issn = list[0] || '';
+      const s = new URLSearchParams({ filter: [...list.map((i) => `issn:${i}`), `from-created-date:${from}`, 'type:journal-article'].join(','), sort: 'created', order: 'desc', rows: String(rows), ...(M() ? { mailto: M() } : {}) });
       const j = await http.json(`${base}/works?${s}`);
       return ((j.message && j.message.items) || []).map((w) => {
         const dp = ((w.published || w['published-online'] || w['published-print'] || w.issued || {})['date-parts'] || [[]])[0];

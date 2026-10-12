@@ -51,7 +51,6 @@ function createFakeSources() {
     }
     if (p === '/oa/works') {
       const f = u.searchParams.get('filter') || '';
-      if (f.includes('primary_location.source.issn')) return json({ results: [w.open, w.dup, w.other] });
       if (f.includes('cites:')) return json({ results: [w.closed] });
       // (梳理: the last years' literature, most relevant first; the paper already in the library is in it too)
       if (u.searchParams.get('sort') === 'relevance_score:desc' && f.includes('from_publication_date')) return json({ results: [w.closed, w.dup, w.open, w.survey] });
@@ -65,7 +64,12 @@ function createFakeSources() {
     }
     if (p === '/oa/sources') return json({ results: [{ display_name: 'Radio Science', issn_l: '0048-6604', issn: ['0048-6604', '1944-799X'] }] });
     if (p === '/oa/authors') return json({ results: [{ id: 'https://openalex.org/A123', display_name: 'Wei Sun', cited_by_count: 9, works_count: 3, last_known_institutions: [{ display_name: 'CAS' }] }] });
-    if (p === '/cr/works') return json({ message: { items: [] } });
+    // Crossref: the followed journal's newly registered articles (no abstracts, as IEEE deposits them; no PDF links)
+    if (p === '/cr/works') {
+      const f = u.searchParams.get('filter') || '', d = today.split('-').map(Number);
+      const item = (x) => ({ DOI: x.doi.replace('https://doi.org/', ''), title: [x.title], author: [{ family: 'Sun', given: 'Wei' }, { family: 'Lee', given: 'Anna' }], 'container-title': ['IEEE Transactions on Antennas and Propagation'], published: { 'date-parts': [d] }, type: 'journal-article' });
+      return json({ message: { items: f.includes('issn:0018-926X') && f.includes('from-created-date:') ? [w.open, w.dup, w.other].map(item) : [] } });
+    }
     if (p === '/arxiv/api/query') return xml(`<feed><entry><id>http://arxiv.org/abs/2610.00001v1</id><title>Graph neural networks for traffic</title><summary>Traffic</summary><published>${today}T00:00:00Z</published><author><name>Ann Other</name></author></entry></feed>`);
     if (p === '/aiaa/action/showFeed') return xml(`<rdf:RDF><channel><title>AIAA Journal: Table of Contents</title></channel><item rdf:about="x"><title>Electron density profiles of the RAM C-II plasma sheath</title><link>https://arc.aiaa.org/doi/10.2514/1.new1</link><dc:creator>Sun, Wei</dc:creator><dc:date>${today}</dc:date><prism:doi>10.2514/1.new1</prism:doi></item></rdf:RDF>`);
     if (p === '/dtic/advancedsearch.php') {
