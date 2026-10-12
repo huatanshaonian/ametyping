@@ -61,7 +61,7 @@ const src = createFakeSources();
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
   cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: KB, refreshMs: 400, pdfWaitMs: 2500, pollMs: 250, at: '23:59', daily: 3, visionMaxPages: 0,
-    endpoints: { openalex: base + '/oa', s2: base + '/s2', dtic: base + '/dtic', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
+    endpoints: { openalex: base + '/oa', s2: base + '/s2', dtic: base + '/dtic', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs', cn: false } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = ''; srv.stdout.on('data', (d) => { out += d; }); srv.stderr.on('data', (d) => { out += d; });

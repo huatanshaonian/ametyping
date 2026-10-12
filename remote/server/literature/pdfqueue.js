@@ -108,7 +108,7 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
     }
   }
   async function tick() {
-    if (running || !library.enabled() || now() < nextAt) return;
+    if (running || !library.enabled() || library.busy() || now() < nextAt) return;       // (busy: reading an abstract -- absjob.js)
     const it = next();
     if (!it) return;
     if (perDay() >= 0 && today() >= perDay()) return;

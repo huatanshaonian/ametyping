@@ -38,6 +38,8 @@ const { createReview } = require('./review');
 const { createLibrary } = require('./browser/library');
 const { createUpload } = require('./upload');
 const { createTranslate } = require('./translate');
+const { createAbsJob } = require('./absjob');
+const { createCnJournals } = require('./sources/cnjournals');
 const { createPdfQueue } = require('./pdfqueue');
 
 const KEY = /^[A-Z0-9]{8}$/;
@@ -72,6 +74,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     s2: createS2({ http, base: E.s2, key: () => settings.keyOf('s2') }),
     arxiv: createArxiv({ http, base: E.arxiv }), aiaa: createAiaa({ http, base: E.aiaa }), ntrs: createNtrs({ http, base: E.ntrs }),
     dtic: createDtic({ http, base: E.dtic, dticBase: E.dticApps }),
+    cn: E.cn === undefined ? createCnJournals({ http }) : E.cn && createCnJournals({ http, journals: E.cn }),
   };
   for (const k of Object.keys(sources)) if (E[k] === false) delete sources[k];
   const unpaywall = createUnpaywall({ http, base: E.unpaywall, mailto });
@@ -87,11 +90,14 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 摘要对照: the abstracts of the picks waiting (today's and the ones kept aside) in Chinese, as soon as they are there
   const translate = createTranslate({ dir, ask: askFeed, field: () => (profile.get() || {}).line || '', log, onChange: () => changed('feed') });
   const wantFeed = () => { translate.want([...feed.list().filter((e) => e.kind === 'new' && e.status === 'new'), ...feed.pool()].map((e) => e.paper.abstract)); };
-  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => { changed('feed'); wantFeed(); } });
+  let libAccess = null;
+  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, holdAbstracts: () => !!(libAccess && libAccess.enabled()), ...(cfg.feedOpts || {}), onChange: () => { changed('feed'); wantFeed(); } });
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
-  const libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
+  libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
   const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
   const upload = createUpload({ api, mirror, fulltext, pdfq, log });
+  // abstracts the indexes lack, read off the articles' pages in that browser while the PDF queue has nothing to do
+  const absjob = createAbsJob({ feed, library: libAccess, idle: () => !pdfq.status().running, log, ...(cfg.absJob || {}) });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, pdfq, log, onChange: () => changed('feed') });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, pdfq, log, onChange: () => changed('survey') });
@@ -102,6 +108,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
 
   mirror.start();
   pdfq.start();
+  absjob.start();
   if (cfg.feed !== false) feed.start();
   let authError = '';
 
@@ -283,7 +290,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); feed.stop(); review.stop(); pdfq.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
 }
 
 module.exports = { createLiterature };

@@ -11,6 +11,10 @@ const path = require('path');
 const { createTranslate } = require('../server/literature/translate');
 const { createFeed } = require('../server/literature/feed');
 const { paper } = require('../server/literature/sources/normalize');
+const { createCnJournals, articles } = require('../server/literature/sources/cnjournals');
+const { createAbsJob } = require('../server/literature/absjob');
+const { createLibrary } = require('../server/literature/browser/library');
+const { createFakeBrowser } = require('./fake-browser');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => { if (cond) { pass++; console.log('PASS', name); } else { fail++; console.log('FAIL', name, extra === undefined ? '' : JSON.stringify(extra)); } };
@@ -175,6 +179,52 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
   clock = Date.parse('2026-10-13T08:00:00');
   const r15 = await f4.run();
   ok('the next push scores them, counted under their way of finding; that day\'s own queries are asked too', r15.ranked === 3 && r15.picked === 2 && r15.sources['S2 检索'] === 4 && s2asked.length === 6, [r15, s2asked.length]);
+
+  // ---- the Chinese journals' own contents pages ----
+  const HK = '<p class="index_txt1 fl"><a target="_blank" href="https://hkxb.test/CN/10.7527/S1000-6893.2026.33429">金属燃料及其在冲压发动机中的应用综述</a></p><a href="https://hkxb.test/CN/10.7527/S1000-6893.2026.33429" class="index_btn1 fl">摘要</a>'
+    + '<p>doi: <a href="https://doi.org/10.7527/S1000-6893.2026.33429" target="_blank">10.7527/S1000-6893.2026.33429</a></p><a href="/CN/10.7527/S1000-6893.2025.32709#x">铝粉燃料水冲压发动机<i>火焰</i>吹熄特性</a><a href="/CN/abstract/abstract21605.shtml">2026年第47卷第17期电子期刊</a>';
+  const hk = articles(HK, 'https://hkxb.test/CN/1000-6893/current.shtml');
+  ok('a contents page: one article per DOI, by the link that carries its title (not "摘要", not the DOI itself, not other links); addresses made whole', hk.length === 2 && hk[0].title === '金属燃料及其在冲压发动机中的应用综述' && hk[0].doi === '10.7527/S1000-6893.2026.33429' &&
+    hk[1].title === '铝粉燃料水冲压发动机火焰吹熄特性' && hk[1].url === 'https://hkxb.test/CN/10.7527/S1000-6893.2025.32709', hk);
+  const cn = createCnJournals({ http: { get: async (u) => (/empty/.test(u) ? { status: 200, body: Buffer.from('<html>改版了</html>') } : { status: 200, body: Buffer.from(HK) }) }, journals: [{ name: '航空学报', issn: '1000-6893', url: 'https://hkxb.test/CN/1000-6893/current.shtml' }, { name: '空', issn: '0258-1825', url: 'https://x.test/empty' }] });
+  const cnp = await cn.toc(cn.of({ name: '航空学报', issns: [] }));
+  ok('a followed journal is found by its ISSN or its name; its articles come as papers with the journal, the DOI and the page\'s address', cn.of({ name: 'x', issns: ['0258-1825'] }).name === '空' && !cn.of({ name: 'AIAA Journal', issns: ['0001-1452'] }) &&
+    cnp.length === 2 && cnp[0].venue === '航空学报' && cnp[0].doi === '10.7527/s1000-6893.2026.33429' && /hkxb\.test\/CN\/10\.7527/.test(cnp[0].url), cnp);
+  ok('a page with no article on it is an error that says so (the site changed), not an empty issue', await cn.toc(cn.of({ issns: ['0258-1825'] })).then(() => false, (e) => /没有读到文章/.test(e.message)));
+
+  // ---- abstracts read off the articles' pages ----
+  const br = createFakeBrowser({ pdf: Buffer.from('%PDF-1.4') }), brPort = await br.listen();
+  const lib = createLibrary({ port: () => brPort, absMs: 3000, lookMs: 20 });
+  const a1 = await lib.abstract({ doi: '10.1016/ok' }), a2 = await lib.abstract({ doi: '10.1016/none' });
+  const a3 = await lib.abstract({ doi: '10.1016/check' }).then(() => null, (e) => e);
+  ok('an abstract off the article\'s page: taken; a page without one: none; its tab closed either way, nothing clicked', /^The abstract of https:\/\/www\.sciencedirect\.com/.test(a1.abs) && a1.site.id === 'sciencedirect' && a2.abs === '' && br.tabs.size === 0 && br.opened === 3 && br.closed === 3, [a1, a2, br.tabs.size]);
+  ok('a page that asks for a person: stopped (verify), its tab closed, nothing answered', a3 && a3.need === 'verify' && a3.site.id === 'sciencedirect' && br.tabs.size === 0, a3 && [a3.message, a3.need]);
+  let held = true; const tocIeee = [mk('toc ieee one score 7'), mk('toc ieee two score 7'), mk('toc with abstract score 7')].map((c, i) => ({ ...c, doi: '10.1109/' + (i + 1), abstract: i === 2 ? c.abstract : '' }));
+  clock = Date.parse('2026-10-12T08:00:00');
+  const f5 = createFeed({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit5-')), cfg: { daily: 2, oldDaily: 0 }, now: () => clock, gapMs: 0, holdAbstracts: () => held,
+    mirror: { findDoi: () => null, findTitle: () => null, collectionByName: () => null },
+    profile: { get: () => ({ follow: { venues: [{ issns: ['1'] }] } }), words: () => [], openQuestions: () => [] },
+    sources: { crossref: { created: async () => tocIeee } }, ask: async (prompt) => ({ items: [...prompt.matchAll(/^### (C\d+)\n题目：.*\n.*\n摘要：(.*)$/gm)].map((m) => ({ ref: m[1], score: 7, question: 0, why: m[2].slice(0, 30), fun: false })) }),
+    cards: { find: () => null, annotationLines: () => [] } });
+  const r18 = await f5.run();
+  ok('articles of the contents without an abstract wait for it; the one that has one is scored at once', r18.sources['期刊目录'] === 3 && r18.ranked === 1 && r18.unscored === 2 && f5.wantAbstract().title === 'toc ieee one score 7', r18);
+  const seen5 = [];
+  const fakeLib = { enabled: () => true, busy: () => false, abstract: async (p) => { seen5.push(p.doi); if (p.doi === '10.1109/2') throw Object.assign(new Error('check'), { need: 'verify', site: { id: 'ieee', name: 'IEEE Xplore' } }); return { abs: 'Read off the page of ' + p.doi + ': <i>an</i> abstract long enough to be one, about scattering by plasma.', site: { id: 'ieee', name: 'IEEE Xplore' } }; } };
+  let pdfBusy = true;
+  const job = createAbsJob({ feed: f5, library: fakeLib, idle: () => !pdfBusy, now: () => clock, gapMs: 1000 });
+  await job.tick();
+  ok('while the PDF queue is at work: not started', seen5.length === 0);
+  pdfBusy = false;
+  await job.tick(); await job.tick(); clock += 2000; await job.tick(); clock += 2000; await job.tick();
+  ok('one page at a time with a pause between; the publisher that asks for a person is left alone for the day (not asked a third time)', seen5.join() === '10.1109/1,10.1109/2' && job.status().off.join() === 'ieee' && job.status().got === 1, [seen5, job.status()]);
+  clock = Date.parse('2026-10-13T08:00:00');
+  const r19 = await f5.run();
+  const one5 = f5.entries().find((e) => /ieee one/.test(e.paper.title));
+  ok('the next push: the article whose abstract was read is scored with it (tags dropped); the other one still waits (a day is not yet a day and a half)', r19.ranked === 1 && r19.unscored === 1 && one5 && /^Read off the page of 10\.1109\/1: an abstract/.test(one5.paper.abstract) && /^Read off the page/.test(one5.why), [r19, one5 && one5.paper.abstract]);
+  clock = Date.parse('2026-10-14T08:00:00');
+  const r20 = await f5.run();
+  ok('after a day and a half without one: scored by its title', r20.ranked === 1 && r20.unscored === 0, r20);
+  br.close();
 
   console.log(`\n${pass} passed, ${fail} failed`);
   fs.rmSync(T, { recursive: true, force: true });

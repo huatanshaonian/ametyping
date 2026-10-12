@@ -47,7 +47,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   const base = `http://127.0.0.1:${sp}`;
   cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: path.join(T, 'kb'), refreshMs: 400, pdfWaitMs: 1500, pollMs: 250, at: '23:59', daily: 5,
-    endpoints: { openalex: base + '/oa', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs' } };
+    endpoints: { openalex: base + '/oa', crossref: base + '/cr', arxiv: base + '/arxiv', aiaa: base + '/aiaa', ntrs: base + '/ntrs', cn: false } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const errors = [], res = [];
   const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x).slice(0, 600)));

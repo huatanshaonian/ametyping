@@ -12,9 +12,11 @@
 // It stops, and says what it needs, when the page asks for a person ("are you a robot": the user answers it in the
 // web desktop -- it is never answered here; the tab is left open for that), when a sign-in is needed that it cannot
 // do, or when the page offers no PDF (not subscribed). One paper at a time (pdfqueue.js paces them).
+// The same browser reads an article's abstract off its page for the candidates of the push whose index has none
+// (abstract(): nothing is signed in to, nothing downloaded; absjob.js paces that).
 'use strict';
 const { connect } = require('./cdp');
-const { byHost, byDoi, LOOK, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED } = require('./sites');
+const { byHost, byDoi, LOOK, ABSTRACT, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED } = require('./sites');
 const { signIn } = require('./signin');
 const { siteLogin } = require('./extlogin');
 
@@ -25,7 +27,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
 function createLibrary({ port = () => 0, account = () => '', idp = () => '', accessAccount = () => '', doiBase = 'https://doi.org/',
-  access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
+  access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, absMs = 25e3, lookMs = 1000, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
   const enabled = () => +port() > 0;
@@ -247,7 +249,40 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
     }
   }
 
-  return { enabled, ping, fetch, busy: () => busy };
+  // abstract({ doi, url }) -> { abs ('' when the page shows none), site: { id, name } }; throws stop(...) -- need
+  // 'verify' when the page asks for a person (the tab is closed; nothing is answered)
+  async function abstract(p) {
+    if (!enabled()) throw stop('图书馆通道没有开启', { need: 'browser' });
+    if (busy) throw stop('浏览器正忙');
+    const start = p.url && /^https?:\/\//.test(p.url) ? p.url : p.doi ? doiBase + String(p.doi).replace(/^https?:\/\/(dx\.)?doi\.org\//i, '') : '';
+    if (!start) throw stop('这篇没有 DOI 也没有网址', { final: true });
+    busy = true;
+    let c = null, targetId = '';
+    try {
+      try { c = await connect(+port()); } catch (e) { throw stop('连不上网页桌面里的浏览器：' + e.message, { need: 'browser' }); }
+      ({ targetId } = await c.send('Target.createTarget', { url: 'about:blank' }));
+      const sid = await c.attach(targetId);
+      c.send('Page.navigate', { url: start }, sid).catch(() => {});
+      let v = null, checks = 0, done = 0;
+      for (const until = Date.now() + absMs; Date.now() < until;) {
+        await sleep(lookMs);
+        try { v = await c.evaluate(sid, ABSTRACT); } catch { continue; }
+        if (!v.host || /(^|\.)doi\.org$/.test(v.host) || /^(about|chrome)/.test(v.url)) continue;
+        if (v.challenge) { if (++checks >= 5) break; continue; }       // (a check the browser passes by itself: a few looks)
+        checks = 0;
+        if (v.abs.length >= 80) break;
+        if (v.ready === 'complete' && ++done >= 3) break;                // (loaded, looked at a few more times: none)
+      }
+      const site = byHost((v && v.host) || ''), at = { site: { id: site.id === 'other' && v ? v.host : site.id, name: site.name === '其他网站' && v ? v.host : site.name } };
+      if (v && v.challenge) throw stop(`${at.site.name} 要先做一次人机验证`, { need: 'verify', ...at });
+      return { abs: v && v.abs.length >= 80 ? v.abs.slice(0, 6000) : '', ...at };
+    } finally {
+      if (c) { if (targetId) await c.send('Target.closeTarget', { targetId }).catch(() => {}); c.close(); }
+      busy = false;
+    }
+  }
+
+  return { enabled, ping, fetch, abstract, busy: () => busy };
 }
 
 module.exports = { createLibrary };
