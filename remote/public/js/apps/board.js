@@ -1,7 +1,7 @@
 // 画板: boards you write and draw on by hand (a pen with pressure, a mouse, fingers), kept on the NAS
-// (remote/server/board). The toolbar: which board, the tools (铅笔 / 荧光笔 / 橡皮 / 移动 / 框选), colour and width,
-// undo, the view; 「交给 AI」 sends the board -- or the part framed with 框选 -- as a picture to be 誊清 (board-out.js
-// shows what comes back). Saved about a second after the last stroke and when the window closes; a board changed on
+// (remote/server/board). The toolbar (icons, each saying what it is when pointed at): which board, the tools (铅笔 /
+// 荧光笔 / 橡皮 / 选中 / 移动画布), colour and width, undo, the view; 「AI」 sends the board -- or only what is picked --
+// as a picture to be 誊清 (board-out.js shows what comes back). Saved about a second after the last stroke and when the window closes; a board changed on
 // another device meanwhile is kept as a separate 「冲突副本」.
 import { h, icon, prefs } from '../util.js';
 import * as wm from '../wm.js';
@@ -11,10 +11,12 @@ import { createSurface } from './board-surface.js';
 import { TOOLS } from './board-ink.js';
 import { download } from './board-page.js';
 import * as out from './board-out.js';
+import { icon as ico } from './board-icons.js';
 
 const COLORS = ['#222222', '#d93025', '#1a73e8', '#188038', '#f29900', '#8e24aa', '#ffd400'];
-const TOOL_LIST = [['pencil', '铅笔', '压感决定深浅'], ['marker', '荧光笔', '盖在字上，字还看得见'], ['eraser', '橡皮', '碰到的一整笔擦掉'],
-  ['hand', '移动', '拖动画布（也可以用两根手指、鼠标中键 / 右键、滚轮）'], ['frame', '框选', '框出要交给 AI 的部分（不框就是整块画板）']];
+const TOOL_LIST = [['pencil', '铅笔：压感决定深浅'], ['marker', '荧光笔：盖在字上，字还看得见'], ['eraser', '橡皮：碰到的一整笔擦掉（笔的橡皮端随时可以擦）'],
+  ['lasso', '选中：圈住几笔（或点一笔）把它们选中，再拖动、删除或单独交给 AI。任何工具下用鼠标右键 / 笔的侧键也是它'],
+  ['hand', '移动画布（触摸屏上用手指拖，两根手指缩放；鼠标用中键或滚轮）']];
 const RANGE = { pencil: [1, 8, 0.2], marker: [8, 40, 1] };
 const pad = (n) => String(n).padStart(2, '0');
 const stamp = () => { const d = new Date(); return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -36,34 +38,38 @@ function mount() {
   surface.setColor(ink.pencil.c);
 
   const pick = h('select', { class: 'bd-pick', title: '换一块画板' });
-  const btn = (text, title, fn, cls = '') => h('button', { class: 'btn ' + cls, type: 'button', text, title, onclick: fn });
-  const tools = TOOL_LIST.map(([id, text, title]) => h('button', { class: 'btn bd-tool', type: 'button', text, title, dataset: { tool: id }, onclick: () => setTool(id) }));
+  // a button showing an icon (and, for a few, a word after it); what it does is its title
+  const btn = (name, title, fn, cls = '', text = '') => h('button', { class: 'btn bd-ib ' + cls, type: 'button', title, 'aria-label': title, dataset: { act: name }, onclick: fn }, ico(name), text ? h('span', { text }) : null);
+  const tools = TOOL_LIST.map(([id, title]) => h('button', { class: 'btn bd-ib bd-tool', type: 'button', title, 'aria-label': title, dataset: { tool: id }, onclick: () => setTool(id) }, ico(id)));
   const swatches = COLORS.map((c) => h('button', { class: 'bd-sw', type: 'button', title: c, dataset: { c }, style: `background:${c}`, onclick: () => setColor(c) }));
   const width = h('input', { class: 'bd-width', type: 'range', title: '粗细' });
-  const undoB = btn('撤销', 'Ctrl + Z', () => surface.undo()), redoB = btn('重做', 'Ctrl + Y', () => surface.redo());
-  const clearB = btn('清空', '擦掉整块画板（可以撤销）', () => surface.clear());
-  const zoomB = btn('100%', '点一下：把画的内容放回窗口中间', () => surface.fit(), 'bd-zoom');
-  const fingerB = btn('手指画', '', () => { surface.setFinger(!surface.fingerDraws()); buttons(); });
-  const pngB = btn('导出图片', '把画板（或框选的部分）存成 PNG', exportPng);
-  const aiB = btn('交给 AI', '', toAi, 'go'), outB = btn('看结果', 'AI 誊清的页面、文字档和设计稿', () => { if (cur.id) out.show(cur.id, cur.title); });
+  const undoB = btn('undo', '撤销（Ctrl + Z）', () => surface.undo()), redoB = btn('redo', '重做（Ctrl + Y）', () => surface.redo());
+  const clearB = btn('clear', '', () => surface.clear());
+  const zoomB = h('button', { class: 'btn bd-zoom', type: 'button', text: '100%', title: '点一下：把画的内容放回窗口中间', onclick: () => surface.fit() });
+  const fingerB = btn('finger', '', () => { surface.setFinger(!surface.fingerDraws()); buttons(); });
+  const pngB = btn('image', '', exportPng);
+  const aiB = btn('ai', '', toAi, 'go', 'AI'), outB = btn('result', '看结果：AI 誊清的页面、文字档和设计稿', () => { if (cur.id) out.show(cur.id, cur.title); });
   const status = h('span', { class: 'bd-st' });
-  const root = h('div', { class: 'board' },
-    h('div', { class: 'bd-bar' }, pick, btn('新建', '一块新的画板', newBoard), btn('改名', '', rename), btn('删除', '', remove), h('span', { class: 'bd-gap' }),
+  const root = h('div', { class: 'board', tabindex: '-1' },
+    h('div', { class: 'bd-bar' }, pick, btn('add', '新建一块画板', newBoard), btn('rename', '给这块画板改名', rename), btn('trash', '删除这块画板', remove), h('span', { class: 'bd-gap' }),
       aiB, outB, pngB, status),
     h('div', { class: 'bd-bar' }, ...tools, h('span', { class: 'bd-gap' }), ...swatches, width, h('span', { class: 'bd-gap' }),
-      undoB, redoB, clearB, h('span', { class: 'bd-gap' }), btn('－', '缩小', () => surface.zoomBy(1 / 1.25)), zoomB, btn('＋', '放大', () => surface.zoomBy(1.25)), fingerB),
+      undoB, redoB, clearB, h('span', { class: 'bd-gap' }), btn('zoomOut', '缩小', () => surface.zoomBy(1 / 1.25)), zoomB, btn('zoomIn', '放大', () => surface.zoomBy(1.25)), fingerB),
     surface.el);
 
   const say = (s, bad) => { status.textContent = s || ''; status.classList.toggle('bad', !!bad); };
   function buttons() {
+    const n = surface.picked();
     undoB.disabled = !surface.canUndo(); redoB.disabled = !surface.canRedo(); clearB.disabled = !surface.count();
+    clearB.title = n ? `删掉选中的 ${n} 笔（Delete 键也可以；能撤销）` : '清空整块画板（能撤销）';
+    pngB.title = n ? '把选中的部分存成图片（PNG）' : '把整块画板存成图片（PNG）';
     zoomB.textContent = Math.round(surface.scale() * 100) + '%';
     const f = surface.fingerDraws();
     fingerB.classList.toggle('sel', f);
     fingerB.title = f ? '现在一根手指也能画。点一下：手指只用来拖动画布（用笔写字时手掌不会误画）' : '现在手指只拖动画布、不会画（两根手指缩放）。点一下：一根手指也能画';
     aiB.disabled = !hasAi || !surface.count();
-    aiB.title = !hasAi ? '服务器上没有开启工作日报，没有模型可以用' : surface.framed() ? '把框选的部分交给 AI 誊清' : '把整块画板交给 AI 誊清：认出文字和公式，整理成整齐的页面和文字档';
-    aiB.textContent = surface.framed() ? '把框选的交给 AI' : '交给 AI';
+    aiB.title = !hasAi ? '服务器上没有开启工作日报，没有模型可以用' : n ? `只把选中的 ${n} 笔交给 AI 誊清` : '把整块画板交给 AI 誊清：认出文字和公式，整理成整齐的页面和文字档（先选中一部分，就只交那一部分）';
+    aiB.lastChild.textContent = n ? 'AI（选中的）' : 'AI';
     outB.disabled = !cur.id;
   }
   function setTool(t) {
@@ -147,7 +153,7 @@ function mount() {
   // ---------- out of the board ----------
   async function toAi() {
     const p = surface.picture(2000);
-    if (!p) return say(surface.framed() ? '框选的地方没有笔迹' : '画板还是空的', true);
+    if (!p) return say('画板还是空的', true);
     aiB.disabled = true; say('正在把画板交给 AI…');
     await flush();
     if (!cur.id) { buttons(); return say('画板还没保存上，稍后再试', true); }
@@ -164,7 +170,10 @@ function mount() {
   }
 
   root.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && surface.picked()) { surface.removePicked(); e.preventDefault(); return; }
+    if (e.key === 'Escape' && surface.picked()) { surface.unpick(); e.stopPropagation(); return; }
+    if (!(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (k === 'z' && !e.shiftKey) surface.undo(); else if (k === 'y' || (k === 'z' && e.shiftKey)) surface.redo(); else return;
     e.preventDefault();
