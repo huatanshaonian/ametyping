@@ -25,6 +25,21 @@
 .bd-lasso polygon { fill: rgba(77, 35, 207, .07); stroke: #4d23cf; stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; }
 .bd-sel[hidden], .bo-state[hidden], .bo-design[hidden] { display: none; }
 
+/* the gallery of all the boards: it takes the sheet's place (and the tools' row goes) */
+.bd-gal { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 14px; background: var(--body);
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; align-content: start; }
+.board.gal .bd-gal { display: grid; }
+.board.gal .bd-surface, .board.gal .bd-bar + .bd-bar { display: none; }
+.bg-card { display: flex; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--edge); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; font: inherit; min-width: 0; }
+.bg-card:hover { border-color: var(--border); }
+.bg-card.sel { outline: 2px solid var(--border); outline-offset: 1px; }
+.bg-pic { aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--edge); overflow: hidden; }
+.bg-pic canvas { max-width: 100%; max-height: 100%; }
+.bg-none { font-size: 12px; color: #aaa; }
+.bg-new .bg-pic { background: none; border-style: dashed; } .bg-plus { font-size: 34px; color: var(--muted); }
+.bg-name { font-size: 13px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bg-info { font-size: 11.5px; color: var(--muted); white-space: pre; }
+
 .bo { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .bo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
 .bo-bar .bd-gap { flex: 1; }

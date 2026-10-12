@@ -208,6 +208,20 @@ function login() {
     await evalJs("document.querySelector('.bd-zoom').click()"); await sleep(300);
     ok('a click on the percentage puts the drawing back in view', parseInt(await evalJs("document.querySelector('.bd-zoom').textContent")) <= 100);
     await shot('board-2-fit.png');
+    // ---- the gallery: every board as a card with its picture; a click opens that board
+    await sleep(1500);
+    const made = await evalJs(`fetch('/api/boards/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '第二块', doc: { strokes: [{ t: 'pencil', c: '#1a73e8', w: 3, p: [10, 10, 0.8, 200, 120, 0.8] }] } }) }).then((r) => r.json())`);
+    await evalJs("document.querySelector('.bd-bar [data-act=gallery]').click()"); await sleep(1500);
+    const gal = await evalJs("(() => { const c = [...document.querySelectorAll('.bg-card:not(.bg-new)')]; return { n: c.length, names: c.map((x) => x.querySelector('.bg-name').textContent), pics: c.filter((x) => { const k = x.querySelector('canvas'); return k && k.getBoundingClientRect().width > 60; }).length, sel: c.filter((x) => x.classList.contains('sel')).length, sheet: getComputedStyle(document.querySelector('.bd-surface')).display, isNew: !!document.querySelector('.bg-new') }; })()");
+    ok('画廊: a card for every board with a picture of it, the one open marked, a card for a new one', made.ok && gal.n === 2 && gal.names[0] === '第二块' && gal.pics === 2 && gal.sel === 1 && gal.sheet === 'none' && gal.isNew, gal);
+    await shot('board-2b-gallery.png');
+    await evalJs("document.querySelector('.bg-card[data-id=\"" + made.id + "\"]').click()"); await sleep(900);
+    const opened = await evalJs("({ gal: document.querySelector('.board').classList.contains('gal'), title: document.querySelector('.bd-pick').selectedOptions[0].textContent })");
+    ok('a click on a card opens that board on the sheet', !opened.gal && opened.title === '第二块' && (await pixel(400, 300)).join() !== '', opened);
+    await evalJs("document.querySelector('.bd-bar [data-act=gallery]').click()"); await sleep(900);
+    await evalJs("document.querySelector('.bg-card.sel') && [...document.querySelectorAll('.bg-card:not(.bg-new)')].find((x) => x.dataset.id !== '" + made.id + "').click()"); await sleep(900);
+    await evalJs(`fetch('/api/boards/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: '${made.id}' }) })`); await sleep(600);
+    ok('back on the first board', (await strokesOf()).length === 5 && !(await evalJs("document.querySelector('.board').classList.contains('gal')")));
 
     // ---- closed and opened again: the board is as it was
     await evalJs("[...document.querySelectorAll('.win')].find((w) => w.querySelector('.title').textContent === '画板').querySelector('.tbtn.close').click()"); await sleep(600);
