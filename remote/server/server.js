@@ -27,6 +27,7 @@ const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
+const { createBoards } = require('./board');
 const { createMarks } = require('./session-marks');
 const { createExport } = require('./session-export');
 const searchIdx = require('./search-index');
@@ -225,6 +226,9 @@ if (searchIndex && summary) {
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
   ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
   audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
+// 画板 (board/index.js): boards drawn by hand, read by a model into a clean page; open pages hear of every change
+const boards = createBoards({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null,
+  onChange: () => broadcast({ t: 'boards' }), audit: (...a) => audit(...a), log: console.log });
 // a mail alert: open pages (sound, the phone buzzes), Google Calendar (to the phone), every machine's pet (its bubble)
 function mailAlert(alert) {
   broadcast({ t: 'mail-alert', alert });
@@ -486,6 +490,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, x.body, x.type, { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(x.name)}`, 'Cache-Control': 'no-store' });
   }
   if (/^\/api\/notes?(\/|$)/.test(p) && await notes.handle(req, res, url, ip, json, readBody)) return;
+  if (/^\/api\/boards?(\/|$)/.test(p) && await boards.handle(req, res, url, ip, json, readBody, (r, buf) => send(r, 200, buf, 'image/png', { 'Cache-Control': 'no-store' }))) return;
   if (/^\/api\/google(\/|$)/.test(p) && await google.handle(req, res, p, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (await calendarView.handle(req, res, url, json)) return;
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
