@@ -128,7 +128,11 @@ function createFakeBrowser({ pdf }) {
         case 'Runtime.evaluate': {
           const x = p.expression;
           let v;
-          if (x.includes('logoutFromOptions')) { if (/^chrome-extension:/.test(tab.url)) { B.extOn = false; B.extOffs = (B.extOffs || 0) + 1; } v = true; }
+          // an article's abstract (sites.js ABSTRACT): there on every page but the one without a PDF link; the page that
+          // asks for a person shows its check instead
+          if (x.includes('citation_abstract')) { const ch = /CHECK$/.test(tab.url) && !B.passed; B.absAsked = (B.absAsked || 0) + 1;
+            v = { host: host(tab), url: tab.url, ready: 'complete', challenge: ch, abs: ch || /NONE$/.test(tab.url) ? '' : 'The abstract of ' + tab.url + ', read off its page: long enough to be one, with a formula x squared in it.' }; }
+          else if (x.includes('logoutFromOptions')) { if (/^chrome-extension:/.test(tab.url)) { B.extOn = false; B.extOffs = (B.extOffs || 0) + 1; } v = true; }
           else if (x.includes('_shib_idp_consentOptions')) v = tab.consent ? (B.consentBtn ? { x: 70, y: 90 } : { x: 0, y: 0, none: true }) : null;
           else if (x.includes("['继续', 'Continue', 'Next']")) v = !tab.url.endsWith('/user/login') ? {} : { mail: { at: { x: 10, y: 10 }, value: B.mlTyped }, pass: tab.mlStep === 2 ? { filled: B.mlTyped === B.mlSaved } : null,
             next: tab.mlStep === 1 && B.mlTyped ? { x: 10, y: 30 } : null, login: tab.mlStep === 2 ? { x: 10, y: 50 } : null, extra: [] };

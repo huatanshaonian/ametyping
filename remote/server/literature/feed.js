@@ -10,7 +10,10 @@
 // phrase is used every few days: its "since" is the day it was last asked ("asked"), not the day of the last run.
 // The followed journals are read like their tables of contents: every article newly registered at Crossref (and in
 // AIAA's own feed of the current issue) is taken once, the day it first shows ("toc"), and scored by the model whatever
-// its words -- TOC_PER_DAY a day, beside the `rankPerDay` of the searches. Fewer than `daily`
+// its words -- TOC_PER_DAY a day, beside the `rankPerDay` of the searches. The three Chinese journals no index lists
+// are read from their own websites (sources/cnjournals.js). An article of the contents that has no abstract (IEEE,
+// Elsevier, the Chinese ones) waits up to HOLD_MS for it to be read off its page (absjob.js), while that is on
+// (`holdAbstracts`); after that it is scored by its title. Fewer than `daily`
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
 // annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
 // day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
@@ -29,7 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { RANK_SCHEMA, REVIEW_SCHEMA, rankPrompt, reviewPrompt } = require('./prompts/feed');
-const { fingerprint, paper } = require('./sources/normalize');
+const { fingerprint, paper, clean } = require('./sources/normalize');
 const { createArchive } = require('./archive');
 const { createS2Job } = require('./s2job');
 
@@ -39,6 +42,7 @@ const INBOX_MAX = 400;                                         // candidates wai
 const PER_CALL = 30;                                           // papers scored in one call of the model
 const LAST_PAGE = 40;
 const TOC_PER_DAY = 90;                                        // articles of the journals' contents scored a day
+const HOLD_MS = 36 * 3600e3;                                   // how long an article waits for its abstract
 const TOC_FIRST_DAYS = 14;                                     // how far back a journal is read the first time
 // (words of a search phrase that say nothing about its subject)
 const STOP = new Set('with from that this based using method methods model models modeling analysis study approach design high order problem problems'.split(' '));                                          // how deep a query without a date is followed
@@ -52,7 +56,7 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
-function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500 }) {
+function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false }) {
   const file = path.join(dir, 'feed.json');
   let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {}, asked: {}, toc: {}, tocAt: {}, s2: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -120,9 +124,10 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       if (gapMs) await new Promise((r) => setTimeout(r, gapMs));           // (Crossref answers nothing when asked in a burst)
     }
     if (S.aiaa) for (const c of [...new Set((f.venues || []).map((v) => v.aiaa).filter(Boolean))]) await tryToc('AIAA 目录', () => S.aiaa.toc(c));
+    if (S.cn) for (const j of [...new Set((f.venues || []).map((v) => S.cn.of(v)).filter(Boolean))]) await tryToc('中文期刊目录', () => S.cn.toc(j));
     const fresh = new Map();
     for (const c of tocs) { const fp = fingerprint(c); if (st.toc[fp]) continue; fresh.set(fp, [...(fresh.get(fp) || []), c]); }
-    for (const [fp, same] of fresh) { st.toc[fp] = now(); for (const c of same) { c.toc = true; out.push(c); counts[c.via]++; } }
+    for (const [fp, same] of fresh) { st.toc[fp] = now(); for (const c of same) { c.toc = true; c.found = now(); out.push(c); counts[c.via]++; } }
     if (S.arxiv && (f.arxiv || []).length) {
       const phrases = [...new Set([...(prof.topics || []).flatMap((t) => t.keywords || []), ...(f.keywords || [])].map(unquote).filter((w) => w.length > 2))];
       if (phrases.length) await tryIt('arXiv', () => S.arxiv.recent(f.arxiv, rotate(phrases, 15, day), 60));
@@ -164,7 +169,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       const fp = fingerprint(c);
       if (st.seen[fp] || (c.doi && mirror.findDoi(c.doi)) || mirror.findTitle(c.title)) continue;
       const prev = byId.get(c.id) || byFp.get(fp);
-      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date', 'toc']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), ...(c.sources || [c.source])])];
+      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date', 'toc', 'found', 'absTried']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), ...(c.sources || [c.source])])];
         prev.vias = [...new Set([...(prev.vias || []), ...(c.vias || []), c.via].filter(Boolean))]; continue; }
       const { via, ...rest } = c;
       const x = { ...rest, sources: c.sources || [c.source], vias: c.vias || (via ? [via] : []) };
@@ -284,11 +289,15 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const all = dedupe([...Object.values(inbox), ...cands]);
         // the journals' contents: every article is scored (the oldest waiting first), whatever its words; the searches'
         // finds: the most promising `rankPerDay`
-        const toc = all.filter((c) => c.toc), tocNow = toc.slice(0, TOC_PER_DAY);
-        await enrich(tocNow, TOC_PER_DAY);
+        const toc = all.filter((c) => c.toc);
+        await enrich(toc.filter((c) => !c.asked), TOC_PER_DAY);
+        for (const c of toc) c.asked = true;                     // (OpenAlex is asked for an abstract once)
+        // (an article without an abstract waits for it to be read off its page, a day and a half at most)
+        const ready = (c) => !!c.abstract || !!c.absTried || !holdAbstracts() || now() - (c.found || 0) > HOLD_MS;
+        const tocNow = toc.filter(ready).slice(0, TOC_PER_DAY), tocWait = toc.filter((c) => !tocNow.includes(c));
         const rest = all.filter((c) => !c.toc);
         await enrich(rest);
-        const list = prefilter(rest), wait = [...toc.slice(TOC_PER_DAY), ...list.slice(rankN(), rankN() + INBOX_MAX)];
+        const list = prefilter(rest), wait = [...tocWait, ...list.slice(rankN(), rankN() + INBOX_MAX)];
         const keep = (cs) => { inbox = Object.fromEntries(cs.map((c) => [fingerprint(c), c])); saveInbox(); };
         // (all of them wait first: when the scoring fails, what was found -- a table of contents is not taken twice --
         // is still there the next time)
@@ -339,6 +348,19 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     }
   }
 
+  // ---- abstracts read off the articles' pages (absjob.js) ----
+  // a candidate waiting without an abstract that was not tried yet: the journals' contents first; skip(c): not this one
+  function wantAbstract(skip = () => false) {
+    const xs = Object.values(inbox).filter((c) => !c.abstract && !c.absTried && (c.doi || c.url) && !skip(c));
+    return xs.find((c) => c.toc) || xs[0] || null;
+  }
+  // what its page gave ('' = none): either way it is not asked again
+  function gotAbstract(c0, abs) {
+    const c = inbox[fingerprint(c0)]; if (!c) return;
+    if (abs) c.abstract = clean(abs);
+    c.absTried = now(); saveInbox();
+  }
+
   // ---- the user's choices ----
   function get(id) { return st.items[id] || null; }
   function decide(id, status, patch = {}) {
@@ -383,7 +405,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }
   const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null, unscored: Object.keys(inbox).length, pool: entries().filter((e) => e.status === 'spare').length });
 
-  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, promote, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
+  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, promote, get, decide, wantAbstract, gotAbstract, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }
 
 module.exports = { createFeed, ymd, rotate, unquote };

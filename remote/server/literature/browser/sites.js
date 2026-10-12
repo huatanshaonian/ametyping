@@ -78,4 +78,26 @@ const LOOK = `(() => {
   return { host, url: location.href, title: document.title, challenge, pdf, access };
 })()`;
 
-module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK };
+// Runs in an article's page: its abstract as the page has it -- IEEE Xplore keeps it in the page's own data; the others
+// in the block of the abstract -- the first of the usual places that holds one (ScienceDirect's "Highlights" block is
+// not it; the Chinese journals' sites (Magtech) keep it in a folding panel); a description in the page's head only once
+// the page has loaded (ScienceDirect's is cut short, and its abstract block comes a little later). Tags are dropped.
+// -> { host, url, ready, challenge, abs }
+const ABSTRACT = `(() => {
+  const plain = (h) => { const d = document.createElement('div'); d.innerHTML = String(h || ''); return (d.textContent || '').replace(/\\s+/g, ' ').trim(); };
+  const text = document.body ? document.body.innerText.slice(0, 3000) : '';
+  const challenge = /Are you a robot|Verify you are human|请验证您是真人|Checking your browser|unusual traffic/i.test(text) || /^(Just a moment|请稍候)/.test(document.title)
+    || !!document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-form, .g-recaptcha, .geetest_holder');
+  let abs = '';
+  try { abs = plain(window.xplGlobal && xplGlobal.document && xplGlobal.document.metadata && xplGlobal.document.metadata.abstract); } catch (e) {}
+  const strip = (s) => s.replace(/^(Abstract|摘\\s*要)\\s*[:：]?\\s*/i, '');
+  if (!abs) for (const q of ['#abstracts div.abstract.author', 'div.abstract.author', 'section#abstract', 'div.abstractSection', 'div#abstract', '.article-section__abstract', '.article-abstract', '#collapseOne .panel-body', 'div.abstract']) {
+    // (ScienceDirect: the highlights and the graphical abstract are blocks of the same kind, with their text in one more inside)
+    const e = [...document.querySelectorAll(q)].find((x) => !x.closest('.author-highlights, .graphical')), t = e ? strip(plain(e.innerHTML)) : '';
+    if (t.length >= 80) { abs = t; break; }
+  }
+  if (abs.length < 80 && document.readyState === 'complete') { const m = document.querySelector('meta[name="citation_abstract"], meta[name="dc.description"], meta[name="DC.Description"], meta[name="description"], meta[property="og:description"]'); const t = m ? plain(m.content) : ''; if (t.length > abs.length) abs = t; }
+  return { host: location.host, url: location.href, ready: document.readyState, challenge, abs: strip(abs) };
+})()`;
+
+module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK, ABSTRACT };
