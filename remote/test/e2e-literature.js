@@ -156,7 +156,7 @@ const src = createFakeSources();
     ok('two new papers (the two about plasma sheaths, best first), one review to fill the third place', fresh.length === 2 && rev.length === 1 && fresh.some((e) => /blackout measurements/.test(e.paper.title)) && fresh.some((e) => /RAM C-II/.test(e.paper.title)), open.map((e) => [e.kind, e.paper.title, e.score]));
     ok('the paper already in Zotero is not pushed; unrelated ones are not', !feed.items.some((e) => /magnetic window|stock|traffic/i.test(e.paper.title)), feed.items.map((e) => e.paper.title));
     const ramc = fresh.find((e) => /RAM C-II/.test(e.paper.title)), closed = fresh.find((e) => /blackout/.test(e.paper.title));
-    ok('the same paper from OpenAlex and AIAA is one, with the open PDF link; the why and the question number', ramc.paper.sources.sort().join() === 'aiaa,openalex' && /\/pdf\/new1\.pdf$/.test(ramc.paper.pdf) && ramc.question === 1 && /剖面/.test(ramc.why), ramc);
+    ok('the same paper from Crossref and AIAA\'s feed is one; its abstract and open PDF link filled in from OpenAlex; the why and the question number', ramc.paper.sources.sort().join() === 'aiaa,crossref' && /\/pdf\/new1\.pdf$/.test(ramc.paper.pdf) && /electron density/.test(ramc.paper.abstract) && ramc.question === 1 && /剖面/.test(ramc.why), ramc);
     ok('the review: recall questions, from the annotated paper', rev[0].key === 'AAAAAAA1' && rev[0].mode === 'recall' && rev[0].recall.length === 2, rev[0]);
     const searches = src.hits.slice(hits0).filter((h) => h.startsWith('/oa/works?') && /[?&]search=/.test(h));
     const dated = searches.filter((h) => /from_publication_date/.test(h)), anyYear = searches.filter((h) => !/from_publication_date/.test(h));
@@ -168,9 +168,9 @@ const src = createFakeSources();
     const rec = src.s2.bodies.find((b) => b.p === '/s2/recommendations/v1/papers'), batch = src.s2.bodies.find((b) => b.p === '/s2/graph/v1/paper/batch');
     ok('相似推荐: the key paper as the positive (by its DOI, turned into Semantic Scholar ids), its papers among the candidates', rec && rec.body.positivePaperIds.length >= 1 &&
       batch && batch.body.ids.includes('DOI:10.1109/tap.2018.1') && run1.sources['相似推荐'] === 1, [src.s2.bodies, run1.sources]);
-    ok('the run log counts each way of finding, and the good ones it brought', run1.sources['期刊'] === 3 && run1.sources['引用核心文献'] === 1 && run1.sources['AIAA 目录'] === 1 &&
-      run1.good['期刊'] === 1 && run1.good['引用核心文献'] === 1 && run1.good['AIAA 目录'] === 1, run1);
-    ok('the sources were asked: journals by ISSN, papers citing the key one, AIAA\'s feed, arXiv', ['/oa/works?filter=primary_location.source.issn%3A0018-926X', 'cites%3AW9', '/aiaa/action/showFeed', '/arxiv/api/query'].every((s) => src.hits.some((h) => h.includes(s))), src.hits);
+    ok('the run log counts each way of finding, and the good ones it brought', run1.sources['期刊目录'] === 3 && run1.sources['引用核心文献'] === 1 && run1.sources['AIAA 目录'] === 1 &&
+      run1.good['期刊目录'] === 1 && run1.good['引用核心文献'] === 1 && run1.good['AIAA 目录'] === 1 && run1.toc === 2, run1);
+    ok('the sources were asked: the journal\'s new articles at Crossref, papers citing the key one, AIAA\'s feed, arXiv', ['/cr/works?filter=issn%3A0018-926X%2Cfrom-created-date', 'cites%3AW9', '/aiaa/action/showFeed', '/arxiv/api/query'].every((s) => src.hits.some((h) => h.includes(s))), src.hits);
 
     // ---- 摘要对照 ----
     const trd = await until(async () => { const f = await G('/api/lit/feed'); const es = f.items.filter((e) => e.kind === 'new' && e.status === 'new' && !e.old); return es.length && es.every((e) => e.tr) && es; }, 20000);
