@@ -5,8 +5,8 @@
 //   fingers: two always move and zoom; one moves the sheet once a pen has been seen on this device (remembered: the
 //     palm resting while you write is then ignored) and draws before that -- 「手指画」 in the toolbar sets it either way
 //   picking (the 选中 tool, or the right button / the pen's side button with any tool): a line drawn around strokes
-//     picks those mostly inside it, a tap picks the stroke under it (or nothing). What is picked can be dragged to
-//     another place, deleted, or given to the model on its own.
+//     picks those mostly inside it, a tap picks the stroke under it (or nothing). What is picked can be deleted, given
+//     to the model on its own, or dragged to another place: a press on it drags it, with any tool, button or finger.
 // Two canvases: `base` holds the strokes as last drawn for the view, `live` the stroke under the pen (laid over the
 // base with the same blending the ink uses, so it looks the same before and after the pen lifts). While the sheet is
 // being moved a busy board is not redrawn for every frame: the picture is shifted and scaled, then drawn again when
@@ -194,15 +194,16 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
   const pressure = (e) => (e.pointerType === 'pen' ? Math.round(Math.max(0.05, e.pressure || 0) * 100) / 100 : NO_PRESSURE);
   const fingerDrawsNow = () => (fingerDraws == null ? !penSeen : fingerDraws);
   // which of draw / erase / pan / lasso / move this pointer starts (p: where, on the surface)
+  const onPicked = (p) => { if (!sel) return false; const [bx, by] = toBoard(p.x, p.y); return bx >= sel[0] && bx <= sel[2] && by >= sel[1] && by <= sel[3]; };
   function kindOf(e, p) {
     let pick = tool === 'lasso';
     if (e.pointerType === 'pen') { if (e.button === 5 || (e.buttons & 32)) return 'erase'; if (e.button === 2 || (e.buttons & 2)) pick = true; }
     else if (e.pointerType === 'mouse') { if (e.button === 1) return 'pan'; if (e.button === 2) pick = true; }
-    else if (!fingerDrawsNow()) return 'pan';
-    if (pick) {                                      // on what is picked: it is dragged; anywhere else: a new line round things
-      const [bx, by] = toBoard(p.x, p.y);
-      return sel && bx >= sel[0] && bx <= sel[2] && by >= sel[1] && by <= sel[3] ? 'move' : 'lasso';
-    }
+    // on what is picked: it is dragged, whatever the tool and whatever presses (a finger too); to draw there, let go of
+    // it first (a tap anywhere else with the 选中 tool, Esc, or simply drawing outside it)
+    if (onPicked(p)) return 'move';
+    if (e.pointerType === 'touch' && !fingerDrawsNow()) return 'pan';
+    if (pick) return 'lasso';
     return tool === 'hand' ? 'pan' : tool === 'eraser' ? 'erase' : 'draw';
   }
   function lassoShow(pts) {
@@ -233,7 +234,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
       if (touches.size !== 1) return;
     } else if (act) { if (act.type !== 'touch') return; drop(); }
     const kind = kindOf(e, p);
-    act = { kind, id: e.pointerId, type: e.pointerType, x: p.x, y: p.y, v: { ...view }, list: [] };
+    act = { kind, id: e.pointerId, type: e.pointerType, x: p.x, y: p.y, v: { ...view }, list: [], had: picked.size > 0 };
     if (kind === 'draw' || kind === 'erase') unpick();
     if (kind === 'draw') begin(p.x, p.y, pressure(e));
     else if (kind === 'erase') eraseAt(p.x, p.y);
@@ -242,6 +243,11 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
     e.preventDefault();
   }
   function move(e) {
+    if (!act && e.pointerType !== 'touch') {         // hovering: the cursor says what a press here would do
+      box = el.getBoundingClientRect();
+      el.classList.toggle('bd-over', onPicked(at(e)));
+      return;
+    }
     if (!box) return;
     if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, at(e));
     if (!act) return;
@@ -278,7 +284,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
     if (act.kind === 'rest') { if (!touches.size) act = null; return; }
     if (e.pointerId !== act.id) return;
     const a = act; act = null;
-    if (a.kind === 'draw') finish(!cancelled);
+    if (a.kind === 'draw') finish(!cancelled && !(a.had && cur && cur.p.length === 3));     // (a tap that only let go of what was picked leaves no dot)
     else if (a.kind === 'erase' && a.list.length) { history.push({ k: 'del', list: a.list }); undone = []; onInk(); }
     else if (a.kind === 'move' && (a.dx || a.dy)) { history.push({ k: 'move', list: [...picked], dx: a.dx, dy: a.dy }); undone = []; onInk(); }
     else if (a.kind === 'lasso') {

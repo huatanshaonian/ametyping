@@ -19,6 +19,7 @@
 .bd-surface[data-tool="eraser"] { cursor: cell; }
 .bd-base, .bd-live { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; pointer-events: none; }
 .bd-surface[data-tool="lasso"] { cursor: crosshair; }
+.bd-surface.bd-over { cursor: move; }
 .bd-sel { position: absolute; border: 1.5px dashed #4d23cf; background: rgba(77, 35, 207, .05); pointer-events: none; box-sizing: border-box; }
 .bd-lasso { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
 .bd-lasso polygon { fill: rgba(77, 35, 207, .07); stroke: #4d23cf; stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; }

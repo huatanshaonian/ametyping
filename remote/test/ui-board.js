@@ -32,7 +32,9 @@ function login() {
   const errors = [];
   let chrome;
   try {
-    kids.push(cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: 'ignore' })); await sleep(2500);
+    kids.push(cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: 'ignore' }));
+    // (a cold start can take a while: wait for the port rather than a fixed time)
+    for (let i = 0; i < 60; i++) { await sleep(500); if (await new Promise((r) => http.get(`http://127.0.0.1:${PORT}/`, (res) => { res.resume(); r(true); }).on('error', () => r(false)))) break; }
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
       `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
@@ -132,10 +134,31 @@ function login() {
     const sb = await selBox();
     ok('a line drawn round the red stroke with the right button picks it, and only it', sb && Math.abs(sb[0] - 76) < 6 && Math.abs(sb[2] - 408) < 10 && sb[1] > 185 && /选中的 1 笔/.test(await evalJs("document.querySelector('.bd-bar [data-act=ai]').title")) &&
       await evalJs("document.querySelector('.bd-bar [data-act=ai]').textContent === 'AI（选中的）'"), sb);
-    await pointer('mouse', [[280, 230], [300, 260], [280, 330]], 'mouse', R2); await sleep(250);
-    ok('dragged from inside, it goes along (the others stay)', (await pixel(280, 330))[1] < 90 && (await pixel(280, 230)).join() === '255,255,255' && (await pixel(300, 140))[0] < 90, [await pixel(280, 330), await pixel(280, 230)]);
-    await evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))"); await sleep(200);
+    // a press on what is picked drags it: the left button with the pencil (no line is drawn), the hand tool, a finger
+    const movedTo = async () => (await pixel(280, 330))[1] < 90 && (await pixel(280, 230)).join() === '255,255,255' && (await pixel(300, 140))[0] < 90;
+    const undoKey = () => evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
+    const hover = (x, y) => call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...B(x, y), button: 'none', buttons: 0, pointerType: 'mouse' });
+    await hover(280, 230); const curIn = await evalJs("getComputedStyle(document.querySelector('.bd-surface')).cursor");
+    await hover(600, 400); const curOut = await evalJs("getComputedStyle(document.querySelector('.bd-surface')).cursor");
+    ok('over what is picked the cursor says it can be moved', curIn === 'move' && curOut !== 'move', [curIn, curOut]);
+    await pointer('mouse', [[280, 230], [300, 260], [280, 330]]); await sleep(250);
+    ok('dragged from inside with the left button (pencil chosen), it goes along and nothing is drawn', await movedTo() && await evalJs("document.querySelector('.bd-bar [data-act=ai]').title").then((t) => /选中的 1 笔/.test(t)), [await pixel(280, 330), await pixel(280, 230)]);
+    await undoKey(); await sleep(200);
     ok('undo puts it back', (await pixel(280, 230))[1] < 90 && (await pixel(280, 330)).join() === '255,255,255' && !(await selBox()));
+    await pointer('mouse', [[280, 230]], 'mouse', R2); await sleep(120);
+    await evalJs("document.querySelector('.bd-tool[data-tool=hand]').click()");
+    await pointer('mouse', [[280, 230], [300, 260], [280, 330]]); await sleep(250);
+    const byHand = await movedTo(); await undoKey(); await sleep(200);
+    await pointer('mouse', [[280, 230]], 'mouse', R2); await sleep(120);
+    const tch = (type, pts) => call('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ ...B(x, y), id: i + 1, force: 0.5 })) });
+    await tch('touchStart', [[280, 230]]); await tch('touchMove', [[300, 260]]); await tch('touchMove', [[280, 330]]); await tch('touchEnd', []); await sleep(250);
+    const byFinger = await movedTo(); await undoKey(); await sleep(200);
+    ok('the hand tool and a finger drag it too (the sheet stays)', byHand && byFinger && (await pixel(280, 230))[1] < 90, [byHand, byFinger]);
+    // a tap elsewhere with the pencil only lets go of it: no dot is left
+    await evalJs("document.querySelector('.bd-tool[data-tool=pencil]').click()");
+    await pointer('mouse', [[280, 230]], 'mouse', R2); await sleep(120);
+    await pointer('mouse', [[600, 400]]); await sleep(150);
+    ok('a tap elsewhere with the pencil lets go of it and leaves no dot', !(await selBox()) && (await pixel(600, 400)).join() === '255,255,255', await pixel(600, 400));
     // the 选中 tool: a tap on a stroke picks it; Delete removes it; undo brings it back; a tap on nothing picks nothing
     await evalJs("document.querySelector('.bd-tool[data-tool=lasso]').click()");
     await pointer('mouse', [[280, 230]]); await sleep(150);
