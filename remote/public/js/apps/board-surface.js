@@ -1,6 +1,8 @@
 // 画板's surface: an endless sheet you draw on. It owns the strokes, the view (where you are and how far in), what
 // the pen / mouse / fingers do, and undo; the ink itself is board-ink.js, the window around it board.js.
-//   a pen draws with the tool chosen; its eraser end erases; its side button picks (below)
+//   a pen draws with the tool chosen; its side button set to the right click picks (below), the one set to the middle
+//     click erases (so does its eraser end). A tablet driver may send that middle click as a mouse's while the pen
+//     itself goes on reporting as a pen: a middle button going down right after the pen was heard is the pen's.
 //   a mouse: left = the tool, right = pick, middle = move the sheet; the wheel moves, Ctrl + wheel zooms
 //   fingers: two always move and zoom; one moves the sheet once a pen has been seen on this device (remembered: the
 //     palm resting while you write is then ignored) and draws before that -- 「手指画」 in the toolbar sets it either way
@@ -39,6 +41,8 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
   let fingerDraws = prefs.get('board.finger', null);   // true / false as set in the toolbar; null = until a pen is seen
   let penSeen = !!prefs.get('board.pen', false);
   let act = null, cur = null;                      // what the pointer is doing; the stroke under the pen
+  let penAt = -1e9;                                // when the pen was last heard (performance.now())
+  const PEN_MS = 600;
   const touches = new Map();                       // pointerId -> { x, y } (layout pixels within the surface)
 
   // ---------- drawing the board ----------
@@ -197,8 +201,8 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
   const onPicked = (p) => { if (!sel) return false; const [bx, by] = toBoard(p.x, p.y); return bx >= sel[0] && bx <= sel[2] && by >= sel[1] && by <= sel[3]; };
   function kindOf(e, p) {
     let pick = tool === 'lasso';
-    if (e.pointerType === 'pen') { if (e.button === 5 || (e.buttons & 32)) return 'erase'; if (e.button === 2 || (e.buttons & 2)) pick = true; }
-    else if (e.pointerType === 'mouse') { if (e.button === 1) return 'pan'; if (e.button === 2) pick = true; }
+    if (e.pointerType === 'pen') { if (e.button === 5 || (e.buttons & 32) || e.button === 1 || (e.buttons & 4)) return 'erase'; if (e.button === 2 || (e.buttons & 2)) pick = true; }
+    else if (e.pointerType === 'mouse') { if (e.button === 1) return performance.now() - penAt < PEN_MS ? 'erase' : 'pan'; if (e.button === 2) pick = true; }
     // on what is picked: it is dragged, whatever the tool and whatever presses (a finger too); to draw there, let go of
     // it first (a tap anywhere else with the 选中 tool, Esc, or simply drawing outside it)
     if (onPicked(p)) return 'move';
@@ -225,6 +229,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
     box = el.getBoundingClientRect();
     el.focus({ preventScroll: true });
     const p = at(e);
+    if (e.pointerType === 'pen') penAt = performance.now();
     if (e.pointerType === 'pen' && !penSeen) { penSeen = true; prefs.set('board.pen', true); onUi(); }
     try { el.setPointerCapture(e.pointerId); } catch {}       // (every finger: one lifted outside the board must still be heard)
     if (e.pointerType === 'touch') {
@@ -235,6 +240,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
     } else if (act) { if (act.type !== 'touch') return; drop(); }
     const kind = kindOf(e, p);
     act = { kind, id: e.pointerId, type: e.pointerType, x: p.x, y: p.y, v: { ...view }, list: [], had: picked.size > 0 };
+    if (kind === 'erase' && e.pointerType === 'mouse' && e.button === 1) act.pen = true;     // (the pen's button as a mouse's: the pen's own movements erase)
     if (kind === 'draw' || kind === 'erase') unpick();
     if (kind === 'draw') begin(p.x, p.y, pressure(e));
     else if (kind === 'erase') eraseAt(p.x, p.y);
@@ -243,6 +249,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
     e.preventDefault();
   }
   function move(e) {
+    if (e.pointerType === 'pen') penAt = performance.now();
     if (!act && e.pointerType !== 'touch') {         // hovering: the cursor says what a press here would do
       box = el.getBoundingClientRect();
       el.classList.toggle('bd-over', onPicked(at(e)));
@@ -260,7 +267,7 @@ export function createSurface({ onInk = () => {}, onUi = () => {} } = {}) {
       moved(); onUi();
       return;
     }
-    if (e.pointerId !== act.id) return;
+    if (e.pointerId !== act.id && !(act.pen && e.pointerType === 'pen')) return;
     const p = at(e);
     if (act.kind === 'draw') {
       const from = cur.p.length / 3;

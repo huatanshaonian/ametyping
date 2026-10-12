@@ -125,6 +125,19 @@ function login() {
     const penErased = (await pixel(180, 215)).join() === '255,255,255';
     await evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))"); await sleep(150);
     ok('the eraser end of the pen erases with any tool chosen; Ctrl+Z undoes', penErased && (await pixel(280, 230))[1] < 90);
+    // the pen's side button set to the middle click: as the pen's own button, and as a driver sends it (a mouse's
+    // middle button while the pen goes on moving as a pen)
+    const undoBtn = () => evalJs("document.querySelector('.bd-bar [data-act=undo]').click()");
+    await evalJs(`(() => { const el = document.querySelector('.bd-surface'), r = el.getBoundingClientRect();
+      const ev = (type, y, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 77, pointerType: 'pen', button: type === 'pointermove' ? -1 : 1, buttons, clientX: r.left + 280, clientY: r.top + y, pressure: buttons ? 0.5 : 0 }));
+      ev('pointerdown', 190, 4); for (let y = 195; y <= 270; y += 5) ev('pointermove', y, 4); ev('pointerup', 270, 0); })()`); await sleep(200);
+    const midPen = (await pixel(180, 215)).join() === '255,255,255'; await undoBtn(); await sleep(150);
+    await evalJs(`(() => { const el = document.querySelector('.bd-surface'), r = el.getBoundingClientRect();
+      const ev = (type, kind, id, button, buttons, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: id, pointerType: kind, button, buttons, clientX: r.left + 280, clientY: r.top + y }));
+      ev('pointermove', 'pen', 77, -1, 0, 190); ev('pointerdown', 'mouse', 1, 1, 4, 190);
+      for (let y = 195; y <= 270; y += 5) ev('pointermove', 'pen', 77, -1, 0, y); ev('pointerup', 'mouse', 1, 1, 0, 270); })()`); await sleep(200);
+    const midMouse = (await pixel(180, 215)).join() === '255,255,255'; await undoBtn(); await sleep(150);
+    ok('the pen button set to the middle click erases, whether it comes as its own or as a mouse button beside the pen', midPen && midMouse && (await pixel(280, 230))[1] < 90, [midPen, midMouse]);
 
     // ---- picking: the right button draws a line round strokes (any shape), what is picked is dragged, deleted
     await evalJs("document.querySelector('.bd-tool[data-tool=pencil]').click()");
