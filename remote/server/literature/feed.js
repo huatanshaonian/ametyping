@@ -6,6 +6,8 @@
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
 // annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
 // day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
+// The good ones a day has no room for are not thrown away: they wait (status "spare", 更多候选) and compete with the
+// next days' finds by score, up to 30 days -- a day that finds little shows what earlier days left.
 // Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; after 7 days it lapses.
 //   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...] }
 'use strict';
@@ -17,6 +19,7 @@ const { fingerprint, paper } = require('./sources/normalize');
 const { createArchive } = require('./archive');
 
 const DAY_MS = 86400e3;
+const SPARE_DAYS = 30;                                         // how long a good paper waits for a day with room
 // n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
 function rotate(list, n, day) {
   if (list.length <= n) return list.slice();
@@ -214,9 +217,14 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const good = ranked.filter((r) => r.score >= minScore());
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
-        for (const r of good.slice(0, want)) { add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun }); log1.picked++; }
-        // the next best few, kept aside (更多 shows them)
-        for (const r of good.slice(want, want + 4)) add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' });
+        // today's good ones join the ones earlier days left; the best of them all are the day's picks, the rest waits
+        const fresh = new Set(good.map((r) => add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' }).id));
+        const pool = entries().filter((e) => e.kind === 'new' && !e.old && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
+        for (const e of pool.slice(0, want)) {
+          if (!fresh.has(e.id)) { e.found = e.found || e.date; log1.held = (log1.held || 0) + 1; }
+          Object.assign(e, { status: 'new', date, created: now() }); log1.picked++;
+        }
+        log1.waiting = Math.max(0, pool.length - want);
         let room = want - log1.picked;
         for (const x of reviewPool().slice(0, room)) { add({ date, ...(await reviewEntry(x.it, x.survey)) }); st.reviewed[x.it.key] = now(); log1.reviews++; room--; }
        }
@@ -230,12 +238,13 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       .finally(() => { running = null; });
     return running;
   }
-  // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse; old entries go
+  // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse (the ones kept aside: 30
+  // days); old entries go
   function prune() {
     const t = now();
     for (const [fp, at] of Object.entries(st.seen)) if (t - at > 180 * DAY_MS) delete st.seen[fp];
     for (const e of entries()) {
-      if ((e.status === 'new' || e.status === 'spare') && t - e.created > 7 * DAY_MS) e.status = 'expired';
+      if ((e.status === 'new' && t - e.created > 7 * DAY_MS) || (e.status === 'spare' && t - e.created > SPARE_DAYS * DAY_MS)) e.status = 'expired';
       if (['expired', 'skipped'].includes(e.status) && t - e.created > 60 * DAY_MS) delete st.items[e.id];
     }
   }
@@ -251,7 +260,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   // what the window shows: today's (and still open) picks first, then the last two weeks
   function list() {
     const t = now();
-    return entries().filter((e) => e.status !== 'expired' || t - e.created < 3 * DAY_MS).sort((a, b) => b.created - a.created).slice(0, 80);
+    return entries().filter((e) => e.status !== 'expired' || t - e.created < 3 * DAY_MS).sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created - a.created).slice(0, 120);
   }
 
   // ---- the schedule: workdays (and Saturday's report) after "at"; a failure is retried after 30 minutes, 3 times a day ----

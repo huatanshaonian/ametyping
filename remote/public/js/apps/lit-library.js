@@ -1,6 +1,7 @@
 // 文献 › 文献库: the Zotero library (as the NAS's copy has it) by collection, searchable; a paper on the right with its
 // card (速读卡 / 深读卡: made on request, edited here, 已核对 when the user has checked it against the paper), the
 // actions it suggests (one click into 重要计划), the user's annotations, and the way into 深读 and the PDF.
+import { abstractBody } from './lit-abstract.js';
 import { h } from '../util.js';
 import { openUrl } from './viewer.js';
 import { get, post, authors, STATUS } from './lit-api.js';
@@ -22,7 +23,7 @@ export function mount(el, ctx) {
   el.classList.add('lb');
   const pdfq = pdfqBox(ctx);                                                    // 图书馆通道: PDFs on their way, what waits for the user
   el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), pdfq.el, h('div', { class: 'lb-main' }, listEl, view));
-  let items = [], cur = null, cols = [], qT = null, vbox = null;
+  let items = [], cur = null, cols = [], qT = null, vbox = null, absOpen = '';
 
   async function loadCols() {
     const r = await get('/api/lit/collections'); cols = (r && r.items) || [];
@@ -96,7 +97,8 @@ export function mount(el, ctx) {
     d.card ? cardBox : h('p', { class: 'lit-empty', text: '还没有卡片：点「速读卡」先看个大概，或「深读」边读边写。' }),
     d.annotations.length ? h('details', { class: 'lb-sec' }, h('summary', { text: `我的批注（${d.annotations.length}）` }),
       h('ul', {}, ...d.annotations.map((a) => h('li', {}, a.type === 'ink' ? h('i', { text: '（手写）' }) : h('span', { text: a.text ? `“${a.text}”` : '' }), a.comment ? h('b', { text: ' ' + a.comment }) : null, a.page ? h('small', { text: ` p.${a.page}` }) : null)))) : null,
-    d.abstract ? h('details', { class: 'lb-sec', open: !d.card }, h('summary', { text: '摘要' }), h('p', { text: d.abstract })) : null].filter(Boolean));
+    d.abstract ? h('details', { class: 'lb-sec', open: !d.card || absOpen === key, ontoggle: (e) => { absOpen = e.target.open ? key : ''; } }, h('summary', { text: d.abstractTr ? '摘要（中文对照）' : '摘要' }), abstractBody(d.abstract, d.abstractTr),
+      !d.abstractTr && d.abstractForeign ? btn('中文对照', '把摘要逐句译成中文，和原文并排', async (e) => { e.target.disabled = true; e.target.textContent = '翻译中…'; absOpen = key; const r = await post('/api/lit/translate', { key }); if (r.ok) show(key, true); else { e.target.disabled = false; e.target.textContent = r.msg || '没译出来'; } }) : null) : null].filter(Boolean));
     if (d.card) renderMd(cardBox, d.card.text, { onLink: (k) => ctx.openCitekey(k), onPage: (n) => ctx.openReader(key, n) });
     if (!quiet) view.scrollTop = 0;
     el.classList.add('viewing');

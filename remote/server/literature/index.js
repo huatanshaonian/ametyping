@@ -37,6 +37,7 @@ const { createHistory } = require('./history');
 const { createReview } = require('./review');
 const { createLibrary } = require('./browser/library');
 const { createUpload } = require('./upload');
+const { createTranslate } = require('./translate');
 const { createPdfQueue } = require('./pdfqueue');
 
 const KEY = /^[A-Z0-9]{8}$/;
@@ -83,7 +84,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
     ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
-  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => changed('feed') });
+  // 摘要对照: the abstracts of the picks waiting (today's and the ones kept aside) in Chinese, as soon as they are there
+  const translate = createTranslate({ dir, ask: askFeed, field: () => (profile.get() || {}).line || '', log, onChange: () => changed('feed') });
+  const wantFeed = () => { translate.want(feed.list().filter((e) => e.kind === 'new' && (e.status === 'new' || e.status === 'spare')).map((e) => e.paper.abstract)); };
+  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => { changed('feed'); wantFeed(); } });
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
   const libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
   const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
@@ -119,7 +123,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     const it = mirror.item(key); if (!it) return null;
     const card = cards.find(key);
     const entry = feed.entries().find((e) => e.zkey === key || e.key === key) || null;
-    return { ...itemOut(it), abstract: it.abstract, url: it.url, tags: it.tags, number: it.number,
+    return { ...itemOut(it), abstract: it.abstract, abstractTr: translate.get(it.abstract), abstractForeign: translate.foreign(it.abstract), url: it.url, tags: it.tags, number: it.number,
       annotations: mirror.annotationsOf(key).map((a) => ({ type: a.type, text: a.text, comment: a.comment, page: a.page, color: a.color })),
       card: card ? { path: card.path, text: card.text, hash: card.hash, meta: card.meta } : null, job: cards.state(key), actions: cards.actions(key), entry,
       pdfNote: pdfq.note(key), pdfVia: pdfq.status().enabled && !!it.doi,
@@ -159,7 +163,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       return true;
     }
     if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state(), survey: { ...survey.status(), canWrite: api.canWrite() } }); return true; }
-    if (G && p === '/api/lit/feed') { json(res, 200, { items: feed.list(), status: feed.status(), canWrite: api.canWrite() }); return true; }
+    if (G && p === '/api/lit/feed') { wantFeed(); json(res, 200, { items: feed.list().map((e) => (e.kind === 'new' ? { ...e, tr: translate.get(e.paper.abstract) } : e)), status: feed.status(), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb/search') { json(res, 200, { items: kb.search(qs('q').slice(0, 200)) }); return true; }
@@ -231,6 +235,11 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       }
     }
     else if (what === 'card') r = KEY.test(key) && mirror.item(key) ? (({ wait, ...x }) => x)(cards.run(key, d.kind === 'deep' ? 'deep' : 'quick')) : { ok: false, msg: '找不到这篇' };
+    else if (what === 'translate') {
+      // a library paper's abstract in Chinese, asked for in its page (waits for it)
+      const it = KEY.test(key) ? mirror.item(key) : null;
+      r = !it ? { ok: false, msg: '找不到这篇' } : !translate.foreign(it.abstract) ? { ok: false, msg: '没有可译的外文摘要' } : (await translate.one(it.abstract)) ? { ok: true } : { ok: false, msg: '没译出来，过会儿再试' };
+    }
     else if (what === 'card/meta') r = cards.setMeta(key, d);
     else if (what === 'card/own') r = cards.setOwn(key, String(d.section || ''), String(d.text || '').slice(0, 20000), d.base == null ? null : String(d.base));
     else if (what === 'kb/save') { try { r = kb.write(String(d.path || ''), String(d.text || '').slice(0, 300000), d.base == null ? null : String(d.base), '手动编辑'); } catch (e) { r = { ok: false, msg: e.message }; } }

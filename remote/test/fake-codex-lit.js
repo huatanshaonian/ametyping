@@ -18,6 +18,9 @@ process.stdin.on('end', () => {
     // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
     a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$' : '') })) : [] };
+  } else if (P.items && P.items.items && P.items.items.properties && P.items.items.properties.segs) {
+    // 摘要对照: every sentence with its translation (an abstract with "GARBLE" comes back with its sentences changed)
+    a = { items: [...prompt.matchAll(/^### (T\d+)\n(.*)$/gm)].map((m) => ({ ref: m[1], segs: m[2].split(/(?<=\.)\s+/).map((s) => ({ src: /GARBLE/.test(m[2]) ? s.toUpperCase() : s, zh: '译：' + s.slice(0, 12) })) })) };
   } else if (P.items && schema.properties.items.items && schema.properties.items.items.properties.folder) {
     // 调研工作: a folder for each paper of the batch
     a = { items: [...prompt.matchAll(/^(P\d+)：(.*)$/gm)].map((m) => ({ ref: m[1], folder: /wake/i.test(m[2]) ? '高超声速尾迹' : '等离子体鞘套' })) };

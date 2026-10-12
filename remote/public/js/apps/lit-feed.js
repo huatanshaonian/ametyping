@@ -4,6 +4,7 @@
 // best papers of the day, for a day with time to spare.
 import { h } from '../util.js';
 import { get, post, authors } from './lit-api.js';
+import { abstractBody } from './lit-abstract.js';
 
 const STAGE = { pdf: '找 PDF…', waiting: '等 PDF…', card: '生成速读卡…', ready: '速读卡好了', 'needs-pdf': '没有 PDF', error: '出错了' };
 
@@ -14,6 +15,7 @@ export function mount(el, ctx) {
   const asks = h('div', { class: 'lf-sec lf-vision', hidden: true });     // 读图 requests waiting for approval
   el.append(h('div', { class: 'lit-sub' }, runBtn, st), asks, list);
   let questions = [], items = [], canWrite = true, showSpare = false;
+  const openAbs = new Set();                                   // abstracts left open (a refresh keeps them so)
 
   async function refresh() {
     const [f, p, va] = await Promise.all([get('/api/lit/feed'), get('/api/lit/profile'), get('/api/lit/vision/pending')]);
@@ -26,7 +28,7 @@ export function mount(el, ctx) {
     questions = ((p && p.profile && p.profile.questions) || []).filter((q) => q.status !== 'done' && q.status !== 'shelved');
     const s = f.status || {}, last = (s.runs || []).slice(-1)[0];
     st.classList.toggle('bad', !!(last && last.error));
-    st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
+    st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献${last.held ? `（${last.held} 篇是前几天留下的）` : ''}、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
     if (s.archive && s.archive.queue) st.textContent += ` · 老报告还有 ${s.archive.queue} 篇在排队`;
     if (s.dtic && s.dtic.up) st.textContent += ' · DTIC 的公共检索恢复了（告诉 Claude 接上）';
@@ -43,7 +45,8 @@ export function mount(el, ctx) {
       !open.length && !kept.length ? h('p', { class: 'lit-empty', text: '今天没有待看的文献。宁缺毋滥——没有足够相关的新文献时，会从「气动隐身」里挑旧文献复习。' }) : null,
       sec('待看', open.sort((a, b) => (b.date === today) - (a.date === today) || b.created - a.created)),
       sec('收下的', kept.slice(0, 12)),
-      spare.length ? h('details', { class: 'lf-more', open: showSpare, ontoggle: (e) => { showSpare = e.target.open; } }, h('summary', { text: `更多候选（${spare.length}）` }), ...spare.map((e) => card(e, { spare: true }))) : null,
+      spare.length ? h('details', { class: 'lf-more', open: showSpare, ontoggle: (e) => { showSpare = e.target.open; } }, h('summary', { text: `更多候选（${spare.length}）` }),
+        h('div', { class: 'lf-tip', text: '够分但当天没排上的。之后每天和新找到的一起按分数排，分高的先推出来；30 天没轮到就过期。' }), ...spare.sort((a, b) => b.score - a.score).map((e) => card(e, { spare: true }))) : null,
       past.length ? h('details', { class: 'lf-more' }, h('summary', { text: `看过的（${past.length}）` }), ...past.slice(0, 30).map((e) => card(e, { past: true }))) : null].filter(Boolean));
   }
 
@@ -57,7 +60,8 @@ export function mount(el, ctx) {
       p.url ? h('a', { class: 'lf-t', href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('b', { class: 'lf-t', text: p.title }));
     const meta = h('div', { class: 'lf-m', text: [e.old ? (p.source === 'dtic' ? 'DTIC' : 'NTRS') : '', authors(p.authors), p.venue, p.year || (p.date || '').slice(0, 4), p.number, (e.paper && e.paper.sources || []).length > 1 ? `来自 ${e.paper.sources.join('、')}` : ''].filter(Boolean).join(' · ') });
     const why = e.why ? h('div', { class: 'lf-why' }, q ? h('b', { text: `Q${e.question}：${q.text}` }) : null, h('span', { text: e.why })) : null;
-    const abs = p.abstract ? h('details', { class: 'lf-abs' }, h('summary', { text: '摘要' }), h('p', { text: p.abstract })) : h('div', { class: 'lf-m', text: '（没有摘要）' });
+    const abs = p.abstract ? h('details', { class: 'lf-abs', open: openAbs.has(e.id), ontoggle: (ev) => { if (ev.target.open) openAbs.add(e.id); else openAbs.delete(e.id); } },
+      h('summary', { text: e.tr ? '摘要（中文对照）' : '摘要' }), abstractBody(p.abstract, e.tr)) : h('div', { class: 'lf-m', text: '（没有摘要）' });
     const acts = h('div', { class: 'gbtns' });
     const note = h('div', { class: 'lf-note' });
     if (e.kind === 'review') reviewBody(e, acts, note);

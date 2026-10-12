@@ -170,6 +170,13 @@ const src = createFakeSources();
       run1.good['期刊'] === 1 && run1.good['引用核心文献'] === 1 && run1.good['AIAA 目录'] === 1, run1);
     ok('the sources were asked: journals by ISSN, papers citing the key one, AIAA\'s feed, arXiv', ['/oa/works?filter=primary_location.source.issn%3A0018-926X', 'cites%3AW9', '/aiaa/action/showFeed', '/arxiv/api/query'].every((s) => src.hits.some((h) => h.includes(s))), src.hits);
 
+    // ---- 摘要对照 ----
+    const trd = await until(async () => { const f = await G('/api/lit/feed'); const es = f.items.filter((e) => e.kind === 'new' && e.status === 'new' && !e.old); return es.length && es.every((e) => e.tr) && es; }, 20000);
+    ok('摘要对照: the picks\' abstracts come with their Chinese, each sentence its own (the original untouched)', trd && trd.every((e) => e.tr.map((s) => s[0]).join(' ') === e.paper.abstract && e.tr.every((s) => /^译：/.test(s[1]))), trd && trd.map((e) => e.tr));
+    ok('one call for the abstracts waiting, with the research line for the terms', fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => /逐句对照/.test(x.prompt)).some((x) => /### T2\n/.test(x.prompt) && /读者的研究方向/.test(x.prompt)));
+    const lt0 = await G('/api/lit/item?key=AAAAAAA1'), ltr = await P('/api/lit/translate', { key: 'AAAAAAA1' }), lt1 = await G('/api/lit/item?key=AAAAAAA1');
+    ok('a library paper: translated when asked, then there with the paper', lt0.abstractForeign && !lt0.abstractTr && ltr.ok && lt1.abstractTr && lt1.abstractTr.map((s) => s[0]).join(' ') === lt1.abstract, [ltr, lt1.abstractTr]);
+
     // ---- 收下 ----
     const k0 = await P('/api/lit/feed/keep', { id: ramc.id });
     ok('收下 without write access: refused, asks for the authorization', !k0.ok && k0.need === 'authorize', k0);
