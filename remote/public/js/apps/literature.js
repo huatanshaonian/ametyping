@@ -3,6 +3,7 @@
 //   候选    every good paper found that no day has had room for yet, to look through and take
 //   文献库  the Zotero library by collection, a paper's card, annotations, and the way into 深读; the PDFs on their
 //           way through the library access (图书馆通道)
+//   卡片库  every card made so far, each with its first figure, to look through
 //   知识库  the model's suggested changes waiting for 接受, topic pages, search over cards and topics
 //   画像    research summary, the questions being worked on, what to follow
 //   产出    what reading turned into lately
@@ -13,6 +14,7 @@ import { get, post, onLit } from './lit-api.js';
 import * as feedTab from './lit-feed.js';
 import * as poolTab from './lit-pool.js';
 import * as libTab from './lit-library.js';
+import * as cardsTab from './lit-cards.js';
 import * as kbTab from './lit-kb.js';
 import * as profTab from './lit-profile.js';
 import * as reviewTab from './lit-review.js';
@@ -29,7 +31,7 @@ export function open(tab) {
 }
 
 function mount(first) {
-  const TABS = [['feed', '今日', feedTab], ['pool', '候选', poolTab], ['library', '文献库', libTab], ['kb', '知识库', kbTab], ['profile', '画像', profTab], ['review', '回顾', reviewTab], ['stats', '产出', profTab]];
+  const TABS = [['feed', '今日', feedTab], ['pool', '候选', poolTab], ['library', '文献库', libTab], ['cards', '卡片库', cardsTab], ['kb', '知识库', kbTab], ['profile', '画像', profTab], ['review', '回顾', reviewTab], ['stats', '产出', profTab]];
   const status = h('span', { class: 'lit-st' });
   const authBtn = h('button', { class: 'btn go', type: 'button', text: '授权写入 Zotero', hidden: true, title: '收下文献、写回卡片需要 Zotero 的写入授权：点了之后到 Zotero 的网页桌面里点「始终允许」' });
   const authNote = h('span', { class: 'lit-auth', hidden: true });

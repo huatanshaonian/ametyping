@@ -17,7 +17,11 @@ process.stdin.on('end', () => {
   if (P.pages && P.pages.items && P.pages.items.properties && P.pages.items.properties.md) {
     // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
-    a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$' : '') })) : [] };
+    a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$\n\n[图 1：电子密度随高度的变化；横轴高度，纵轴电子密度]' : '') })) : [] };
+  } else if (P.figs) {
+    // 图表: one figure on every page asked that speaks of one in the deep card's test (the block of text on the page)
+    const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
+    a = { figs: png ? nos.map((p) => ({ page: p, label: 'Fig. ' + p, x0: 0.05, y0: 0.03, x1: 0.95, y1: 0.3, caption: `Fig. ${p}  Electron density against altitude.`, desc: '横轴是高度，纵轴是电子密度。' })) : [] };
   } else if (P.items && P.items.items && P.items.items.properties && P.items.items.properties.segs) {
     // 摘要对照: every sentence with its translation (an abstract with "GARBLE" comes back with its sentences changed)
     a = { items: [...prompt.matchAll(/^### (T\d+)\n(.*)$/gm)].map((m) => ({ ref: m[1], segs: m[2].split(/(?<=\.)\s+/).map((s) => ({ src: /GARBLE/.test(m[2]) ? s.toUpperCase() : s, zh: '译：' + s.slice(0, 12) })) })) };
@@ -77,6 +81,7 @@ process.stdin.on('end', () => {
     a = { oneLine: '深读：鞘套剖面与 RCS', problem: '问题', method: '方法 $n_e(z)$', assumptions: ['假设碰撞频率恒定'], results: ['结果一 [p.1]', '结果二 [p.2]'], relevance: '直接相关', question: 1,
       actions: ['用第 2 页的剖面重算 X 波段 RCS'], reusable: ['式 (3) 的碰撞频率模型 [p.2]'], doubts: ['推导跳步'], follow: ['Smith 1990：原始数据'], history: '',
       relations: other ? [{ citekey: other, type: '对比', note: '方法不同' }] : [],
+      figures: [...prompt.matchAll(/^- \[F:(p\d+-\d+)\]/gm)].map((m) => ({ id: m[1], title: '电子密度剖面', reading: '峰值在 60 km 附近，可直接作为 RCS 计算的输入。' })),
       vision: /vision：这篇有 \d+ 页/.test(prompt) ? { worth: true, pages: '2', why: '第 2 页有碰撞频率的推导' } : { worth: false, pages: '', why: '' } };
   } else if (P.missed) a = { feedback: '你抓住了主线，但漏了假设的适用条件 [p.1]', missed: ['碰撞频率的取值'], askBack: '这个假设在 60 km 以下还成立吗？' };
   else if (P.askBack) a = { answer: '原文第 1 页给出了剖面 [p.1]。（背景知识）通常用指数分布。', askBack: '你的工况和它一样吗？' };
