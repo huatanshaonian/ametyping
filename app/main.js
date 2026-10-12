@@ -686,10 +686,14 @@ async function locateSession(s, pid) {
   s.terminal = await inTerminal({ parent, pid: s.claudePid, isTermHost: (n) => TERM_HOSTS.test(n), screen: (p) => bridge.screen(p) });
   pushBubble(null);                                                // the reply box may have become usable
 }
+// "gone" must be certain: a session taken for ended is off the list (and "历史" on the dashboard) until its next hook.
+// The bridge not answering (its PowerShell slow or restarting gives an empty chain) says nothing about the process.
 async function procAlive(pid) {
   if (!pid) return false;
+  try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') return false; }
   const c = await bridge.ancestors(pid);
-  return !!c.length && (CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name));   // same pid, still that process (not a reused pid)
+  if (!c.length) return true;
+  return CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name);   // same pid, still that process (not a reused pid)
 }
 
 function onClaudeEvent(type, d) {
@@ -735,7 +739,7 @@ setInterval(() => {
       s.checking = true; s.aliveAt = t;
       procAlive(s.claudePid).then((alive) => { s.checking = false; if (!alive && sessions.get(id) === s) { permissions.advance({ session: id, hookEvent: 'SessionEnd' }); onClaudeEvent('quit', { session: id }); } });
     }
-    if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS) { s.state = 'idle'; changed = true; }
+    if (s.state === 'waiting' && t - s.last > WAIT_SHOW_MS && !permissions.list(id).length) { s.state = 'idle'; changed = true; }   // (a card still up: still waiting)
     if (t - s.last > (chatMode() ? CHAT_KEEP_MS : KEEP_MS) && !s.dormant && !s.checking) {
       // long quiet: gone from the list only when its Claude process is gone too. One still open in its terminal stays
       // an active session (here and on the dashboard, where it can still be replied to); its process is looked at

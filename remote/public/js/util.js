@@ -54,4 +54,12 @@ const STATE = { message: ['working', '进行中'], thinking: ['working', '进行
   error: ['working', '出错'], working: ['working', '进行中'], waiting: ['waiting', '等你确认'], done: ['done', '完成'], idle: ['idle', '空闲'], ended: ['idle', '已关闭'],
   history: ['idle', '历史'] };
 export const stateOf = (s) => STATE[s] || ['idle', s || '空闲'];
+// "waiting" is two things: a permission asked (a card, or a 确认 line when the card has gone) -- 等你确认; and Claude
+// Code's notice that it has stopped and waits for the next message -- 等你回复. s: a session of the snapshot.
+export function stateName(s) {
+  const [cls, name] = stateOf(s.state);
+  if (s.state !== 'waiting') return [cls, name];
+  const last = [...(s.lines || [])].reverse().find((l) => l.text);
+  return [cls, (s.perms || []).length || /确认/.test(last ? last.text : '') ? '等你确认' : '等你回复'];
+}
 export const isWorking = (s) => stateOf(s)[0] === 'working';

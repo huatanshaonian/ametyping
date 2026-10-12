@@ -28,14 +28,14 @@ fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, 
 const petToken = 'z'.repeat(64);
 fs.writeFileSync(path.join(HOME, '.ametyping', `control-token-${PET}`), petToken);
 const CYCLE = ['auto', 'manual', 'acceptEdits', 'plan'];
-let mode = 'plan', perms = [];
+let mode = 'plan', perms = [], waitOnly = false;      // waitOnly: "waiting" with no card (Claude Code's notice that it waits for input)
 const keys = [], decisions = [];
 http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => b += c); req.on('end', () => {
     res.setHeader('Content-Type', 'application/json');
     if (req.headers['x-ame-control'] !== petToken) { res.statusCode = 403; return res.end('{}'); }
     const d = b ? JSON.parse(b) : {};
-    if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: [{ id: SID, label: 'demo 会话', project: 'demo', state: perms.length ? 'waiting' : 'idle', via: 'terminal', t0: now, last: now, lines: [], perms },
+    if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: [{ id: SID, label: 'demo 会话', project: 'demo', state: perms.length || waitOnly ? 'waiting' : 'idle', via: 'terminal', t0: now, last: now, lines: waitOnly ? [{ text: '在等你回复～', t: now, type: 'waiting' }] : [], perms },
       { id: SID2, label: '第二个会话', project: 'demo', state: 'idle', via: 'terminal', t0: now, last: now - 1000, lines: [], perms: [] }] }));
     if (req.url === '/control/key') {
       keys.push(d.key);
@@ -149,7 +149,13 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     perms = [{ id: 'p10', provider: 'claude', tool: 'Edit', cwd: '/demo', always: '', input: JSON.stringify({ file_path: '/demo/a.js' }) }];
     for (let i = 0; i < 40; i++) { await sleep(100); if (await evalJs("!!document.querySelector('.dash .perm[data-id=p10]')")) break; }
     chk('no suggestions: no 总是允许', !(await evalJs("document.querySelector('.dash .perm[data-id=p10]').textContent")).includes('总是允许'), 0);
-    perms = [];
+    // what "waiting" is called: 等你确认 while a card asks, 等你回复 when the session has only stopped and waits for a message
+    const stText = () => evalJs("[...document.querySelectorAll('.dash .card')].map((c) => c.querySelector('.st').textContent).find((t) => /等你/.test(t)) || ''");
+    const asked = await stText();
+    perms = []; waitOnly = true;
+    let told = ''; for (let i = 0; i < 50; i++) { await sleep(100); told = await stText(); if (/等你回复/.test(told)) break; }
+    chk('waiting: 等你确认 with a card, 等你回复 without one', /^等你确认/.test(asked) && /^等你回复/.test(told), [asked, told]);
+    waitOnly = false;
   } catch (e) { errors.push('script: ' + e.stack); }
   finally {
     console.log(res.join('\n'));

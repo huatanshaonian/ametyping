@@ -20,6 +20,11 @@ test('the Codex process of a hook: in a terminal, from the desktop app, started 
   assert.equal(codexCli.findCodex([P(8, 'codex.exe'), P(7, 'Codex.exe'), P(6, 'explorer.exe')], 1).parent.name, 'Codex.exe');   // the app: no shell
   assert.equal(codexCli.findCodex([P(9, 'powershell.exe'), P(8, 'codex.exe'), P(7, 'node.exe'), P(6, 'cmd.exe'), P(1, 'AmeTyping.exe')], 1).own, true);
   assert.equal(codexCli.findCodex([P(9, 'powershell.exe'), P(8, 'claude.exe')], 1), null);
+  // a hook run from inside one of Codex's own helpers (its sandbox around a command, the app-server of its node REPL):
+  // the session is the outermost codex.exe, not the helper that will be gone in a moment
+  const nested = codexCli.findCodex([P(20, 'codex-command-runner.exe'), P(19, 'codex.exe'), P(18, 'node_repl.exe'), P(17, 'node.exe'), P(8, 'codex.exe'), P(7, 'node.exe'), P(6, 'powershell.exe'), P(5, 'WindowsTerminal.exe')], 1);
+  assert.deepEqual(nested, { pid: 8, parent: P(6, 'powershell.exe'), own: false });
+  assert.equal(codexCli.findCodex([P(19, 'codex.exe'), P(18, 'node_repl.exe'), P(8, 'codex.exe'), P(7, 'Codex.exe'), P(6, 'explorer.exe')], 1).parent.name, 'Codex.exe');
 });
 
 function fakeBridge() {
