@@ -48,7 +48,7 @@ function createAsk({ codex, claude, api = null, egress = null, pick, log = () =>
 
   const resting = (u) => { const d = down.get(u.model); return !!d && now() - d.at < REST_MS; };
 
-  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft, litFeed, litRead, litReview, litVision);
+  // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft, litFeed, litRead, litReview, litVision, board, boardDesign);
   // images: files the model looks at too (文献's page images)
   async function ask(prompt, schema, task = 'daily', { images = [] } = {}) {
     const use = pick(task);
