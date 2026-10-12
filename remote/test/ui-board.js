@@ -1,5 +1,5 @@
 // UI check: 画板 in headless Chrome (a throwaway server, the fake Codex as the model). Drawn with a pen (pressure),
-// a mouse and fingers through the browser's own input; then erased, undone, moved and zoomed; saved and read back;
+// a mouse and fingers through the browser's own input; then erased, undone, picked and dragged, moved and zoomed; saved and read back;
 // given to the model and shown again as 还原稿 / 文字档 / 设计稿; exported. Screenshots in test/out/shots.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = path.resolve(__dirname, '..');
@@ -90,7 +90,7 @@ function login() {
     await sleep(1800);
     let st = await strokesOf();
     ok('it is saved on its own, with the pressures', st.length === 1 && st[0].t === 'pencil' && st[0].p.length >= 60 && st[0].p[2] < 0.25 && st[0].p[st[0].p.length - 1] > 0.9, st.map((s) => [s.t, s.p.length, s.p[2], s.p[s.p.length - 1]]));
-    ok('a pen has been seen: fingers now move the sheet', await evalJs("![...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '手指画').classList.contains('sel')"));
+    ok('a pen has been seen: fingers now move the sheet', await evalJs("!document.querySelector('.bd-bar [data-act=finger]').classList.contains('sel')"));
 
     // ---- a mouse; the marker over it; colours
     await pointer('mouse', line(80, 140, 480, 140, 20)); await sleep(100);
@@ -108,11 +108,11 @@ function login() {
     await evalJs("document.querySelector('.bd-tool[data-tool=eraser]').click()");
     await pointer('mouse', line(280, 190, 280, 270, 10)); await sleep(200);
     ok('the eraser takes the whole stroke it touches', (await pixel(180, 215)).join() === '255,255,255', await pixel(180, 215));
-    await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '撤销').click()"); await sleep(150);
+    await evalJs("document.querySelector('.bd-bar [data-act=undo]').click()"); await sleep(150);
     const back = await pixel(280, 230);
-    await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '撤销').click()"); await sleep(150);   // (the red stroke itself)
+    await evalJs("document.querySelector('.bd-bar [data-act=undo]').click()"); await sleep(150);   // (the red stroke itself)
     const gone = await pixel(280, 230);
-    await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '重做').click()"); await sleep(150);
+    await evalJs("document.querySelector('.bd-bar [data-act=redo]').click()"); await sleep(150);
     ok('undo brings it back, undo again takes the stroke away, redo draws it again', back[0] > 180 && back[1] < 90 && gone.join() === '255,255,255' && (await pixel(280, 230))[1] < 90, [back, gone]);
     // the pen's own eraser end (button 5)
     await evalJs("document.querySelector('.bd-tool[data-tool=pencil]').click()");
@@ -124,10 +124,35 @@ function login() {
     await evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))"); await sleep(150);
     ok('the eraser end of the pen erases with any tool chosen; Ctrl+Z undoes', penErased && (await pixel(280, 230))[1] < 90);
 
+    // ---- picking: the right button draws a line round strokes (any shape), what is picked is dragged, deleted
+    await evalJs("document.querySelector('.bd-tool[data-tool=pencil]').click()");
+    const R2 = { button: 'right', buttons: 2 }, selBox = () => evalJs("(() => { const e = document.querySelector('.bd-sel'); if (e.hidden) return null; const r = e.getBoundingClientRect(), s = document.querySelector('.bd-surface').getBoundingClientRect(); return [r.left - s.left, r.top - s.top, r.width, r.height].map(Math.round); })()");
+    // a slanted loop round the red stroke only (the lines above it stay outside)
+    await pointer('mouse', [[60, 185], [200, 180], [500, 240], [500, 285], [300, 280], [60, 225], [60, 185]], 'mouse', R2); await sleep(200);
+    const sb = await selBox();
+    ok('a line drawn round the red stroke with the right button picks it, and only it', sb && Math.abs(sb[0] - 76) < 6 && Math.abs(sb[2] - 408) < 10 && sb[1] > 185 && /选中的 1 笔/.test(await evalJs("document.querySelector('.bd-bar [data-act=ai]').title")) &&
+      await evalJs("document.querySelector('.bd-bar [data-act=ai]').textContent === 'AI（选中的）'"), sb);
+    await pointer('mouse', [[280, 230], [300, 260], [280, 330]], 'mouse', R2); await sleep(250);
+    ok('dragged from inside, it goes along (the others stay)', (await pixel(280, 330))[1] < 90 && (await pixel(280, 230)).join() === '255,255,255' && (await pixel(300, 140))[0] < 90, [await pixel(280, 330), await pixel(280, 230)]);
+    await evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))"); await sleep(200);
+    ok('undo puts it back', (await pixel(280, 230))[1] < 90 && (await pixel(280, 330)).join() === '255,255,255' && !(await selBox()));
+    // the 选中 tool: a tap on a stroke picks it; Delete removes it; undo brings it back; a tap on nothing picks nothing
+    await evalJs("document.querySelector('.bd-tool[data-tool=lasso]').click()");
+    await pointer('mouse', [[280, 230]]); await sleep(150);
+    const tapped = await selBox();
+    await evalJs("document.querySelector('.board').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))"); await sleep(200);
+    const deleted = (await pixel(280, 230)).join() === '255,255,255';
+    await evalJs("document.querySelector('.bd-bar [data-act=undo]').click()"); await sleep(200);
+    await pointer('mouse', [[280, 230]]); await sleep(100); const again = await selBox();
+    await pointer('mouse', [[600, 400]]); await sleep(100);
+    ok('a tap with the 选中 tool picks the stroke under it; Delete removes it; a tap on nothing lets go', tapped && tapped[2] > 380 && deleted && (await pixel(280, 230))[1] < 90 && again && !(await selBox()), [tapped, deleted, again]);
+    await sleep(1700);
+    ok('all of it is saved as it now is (4 strokes, the red one where it was)', (await strokesOf()).length === 4 && Math.abs((await strokesOf())[3].p[1] / (await strokesOf())[0].p[1] - 200 / 80) < 0.02, (await strokesOf()).map((s) => s.p.slice(0, 2)));
+
     // ---- moving and zooming
     await evalJs("document.querySelector('.bd-tool[data-tool=pencil]').click()");
-    await pointer('mouse', [[300, 300], [360, 340]], 'mouse', { button: 'right', buttons: 2 }); await sleep(250);
-    ok('the right button drags the sheet', (await pixel(340, 270))[1] < 90 && (await pixel(280, 230)).join() === '255,255,255', [await pixel(340, 270), await pixel(280, 230)]);
+    await pointer('mouse', [[300, 300], [360, 340]], 'mouse', { button: 'middle', buttons: 4 }); await sleep(250);
+    ok('the middle button drags the sheet', (await pixel(340, 270))[1] < 90 && (await pixel(280, 230)).join() === '255,255,255', [await pixel(340, 270), await pixel(280, 230)]);
     await call('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x + 400, y: box.y + 300, deltaX: 0, deltaY: -200, modifiers: 2 }); await sleep(300);
     const zoomed = await evalJs("document.querySelector('.bd-zoom').textContent");
     ok('Ctrl + wheel zooms in', parseInt(zoomed) > 120, zoomed);
@@ -141,7 +166,7 @@ function login() {
     // one finger: moves (a pen was seen), draws once 手指画 is on
     await touch('touchStart', [[500, 400]]); await touch('touchMove', [[520, 420]]); await touch('touchMove', [[560, 440]]); await touch('touchEnd', []); await sleep(1700);
     const afterFinger = (await strokesOf()).length;
-    await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '手指画').click()");
+    await evalJs("document.querySelector('.bd-bar [data-act=finger]').click()");
     await touch('touchStart', [[500, 400]]); await touch('touchMove', [[520, 420]]); await touch('touchMove', [[560, 440]]); await touch('touchEnd', []); await sleep(1700);
     ok('one finger moves the sheet; with 手指画 on it draws', afterFinger === 4 && (await strokesOf()).length === 5, [afterFinger, (await strokesOf()).length]);
     await evalJs("document.querySelector('.bd-zoom').click()"); await sleep(300);
@@ -151,10 +176,10 @@ function login() {
     // ---- closed and opened again: the board is as it was
     await evalJs("[...document.querySelectorAll('.win')].find((w) => w.querySelector('.title').textContent === '画板').querySelector('.tbtn.close').click()"); await sleep(600);
     await evalJs("document.querySelector('.dicon[data-id=board]').dispatchEvent(new MouseEvent('dblclick', {bubbles:true}))"); await sleep(1500);
-    ok('opened again: the same board with its strokes', await evalJs("document.querySelector('.bd-pick').selectedOptions[0].textContent.startsWith('画板 ')") && !(await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '清空').disabled")));
+    ok('opened again: the same board with its strokes', await evalJs("document.querySelector('.bd-pick').selectedOptions[0].textContent.startsWith('画板 ')") && !(await evalJs("document.querySelector('.bd-bar [data-act=clear]').disabled")));
 
     // ---- to the model and back
-    await evalJs("[...document.querySelectorAll('.bd-bar .btn')].find((b) => b.textContent === '交给 AI').click()"); await sleep(4500);
+    await evalJs("document.querySelector('.bd-bar [data-act=ai]').click()"); await sleep(4500);
     const frame = "document.querySelector('.bo-frame').contentDocument";
     const sheet = await evalJs(`(() => { const d = ${frame}; const s = d.querySelector('.sheet'); const r = s.getBoundingClientRect(), t = d.querySelector('.t').getBoundingClientRect(), m = d.querySelector('.m').getBoundingClientRect();
       return { w: r.width, h: r.height, texts: d.querySelectorAll('.t').length, katex: d.querySelectorAll('.katex').length, rects: d.querySelectorAll('svg rect').length, heads: d.querySelectorAll('svg polygon').length, cells: d.querySelectorAll('.tb td, .tb th').length,
