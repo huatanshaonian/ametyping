@@ -32,6 +32,7 @@ const { createStats } = require('./stats');
 const { createS2 } = require('./sources/s2');
 const { createSettings } = require('./settings');
 const { createVision } = require('./vision');
+const { createFigures } = require('./figures');
 const { createSurvey } = require('./survey');
 const { createHistory } = require('./history');
 const { createReview } = require('./review');
@@ -67,6 +68,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 读图: pages read as images take the place of the text layer's wherever the paper's text is used
   const vision = createVision({ dir, mirror, fulltext, ask: askVision, maxPages: () => settings.feed().visionMaxPages, log, onChange: (k) => changed('vision:' + k) });
   fulltext.useOverlay(vision.apply);
+  // 图表: the papers' figures, cut out of their pages for the deep cards
+  const figures = createFigures({ dir, kbDir: kb.dir, mirror, fulltext, ask: askVision, log, ...(cfg.figuresOpts || {}) });
   const mailto = () => settings.mailto();
   const sources = {
     openalex: createOpenAlex({ http, base: E.openalex, key: () => settings.keyOf('openalex'), mailto }),
@@ -82,7 +85,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const history = createHistory({ dir, onChange: () => changed('review') });
   const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log,
     onEdit: (before, after, by) => { if (!history.count()) history.seed({ ...before, organizedAt: Date.now() }); history.track(before, after, by); } });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, figures: cfg.figures === false ? null : figures, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
@@ -168,6 +171,13 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
         'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Cache-Control': 'private, max-age=600' });
       res.end(f.buf); audit('lit-pdf', ip, qs('key'));
       return true;
+    }
+    if (G && p === '/api/lit/cards') { json(res, 200, { items: cards.all() }); return true; }
+    if (G && p === '/api/lit/fig') {
+      const buf = figures.file(qs('p'));
+      if (!buf) { json(res, 404, { error: 'not found' }); return true; }
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=3600' });
+      res.end(buf); return true;
     }
     if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state(), survey: { ...survey.status(), canWrite: api.canWrite() } }); return true; }
     if (G && p === '/api/lit/feed') { wantFeed(); json(res, 200, { items: feed.list().map((e) => (e.kind === 'new' ? { ...e, tr: translate.get(e.paper.abstract) } : e)), status: feed.status(), canWrite: api.canWrite() }); return true; }

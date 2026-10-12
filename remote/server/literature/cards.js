@@ -3,6 +3,8 @@
 // The sections the model writes are tracked by a hash in the front matter ("ai"): when the user has changed them, a new
 // version from the model becomes a proposal instead of overwriting; the user's own sections (我的理解, 我的笔记) and
 // the annotations pulled from Zotero (我的批注) are carried over every time.
+// A deep card shows the paper's key figures, each with what the model says of it (图表: the figures are cut out of the
+// pages -- figures.js -- and kept beside the cards, figures/<citekey>/; Zotero's note gets the text without the pictures).
 // A copy goes to Zotero as a child note of the paper (tag "Windose卡片"), when Zotero's write access was granted.
 'use strict';
 const path = require('path');
@@ -37,6 +39,7 @@ function noteHtml(md) {
     const li = /^\s*-\s+(\[[ x]\]\s+)?(.*)$/.exec(line);
     if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${li[1] ? (li[1].includes('x') ? '☑ ' : '☐ ') : ''}${inl(li[2])}</li>`); continue; }
     if (inList) { out.push('</ul>'); inList = false; }
+    if (/^!\[[^\]]*\]\([^)]*\)\s*$/.test(line)) continue;               // (a figure: the note has no pictures)
     const hd = /^(#{1,3})\s+(.*)$/.exec(line);
     if (hd) out.push(`<h${hd[1].length}>${inl(hd[2])}</h${hd[1].length}>`);
     else if (/^>\s?/.test(line)) out.push(`<blockquote>${inl(line.replace(/^>\s?/, ''))}</blockquote>`);
@@ -47,7 +50,7 @@ function noteHtml(md) {
 }
 
 // ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js)
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, writeNotes = true, log = () => {}, onChange = () => {} }) {
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, writeNotes = true, log = () => {}, onChange = () => {} }) {
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
 
@@ -61,13 +64,22 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
   const others = (except) => kb.list('papers').filter((r) => r.meta.zotero !== except).map((r) => ({ citekey: path.basename(r.path, '.md'), title: r.meta.title || '' })).slice(0, 150);
   const qText = (n) => { const q = profile.openQuestions()[n - 1]; return q ? q.text : ''; };
 
+  // 图表: the figures the model picked, each with its reading -- the picture, what it says, the caption as printed
+  // shown: [{ fig: { id, page, label, caption }, title, reading, rel: its path in the knowledge base }]
+  function figureSection(shown) {
+    return shown.map((x) => {
+      const name = [x.fig.label, x.title].filter(Boolean).join(' · ') || '图';
+      return [`### ${name} [p.${x.fig.page}]`, `![${(x.fig.label || x.title || '图').replace(/[\[\]]/g, '')}](../${x.rel})`, x.reading, x.fig.caption ? `> 图题：${x.fig.caption}` : ''].filter(Boolean).join('\n\n');
+    }).join('\n\n');
+  }
   // the model's answer -> the card's sections (the ones the model owns)
-  function aiSections(kind, a, item) {
+  function aiSections(kind, a, item, shown = []) {
     const s = [];
     s.push({ title: '', text: `# ${item.title}\n\n> ${a.oneLine || ''}` });
     s.push({ title: '问题', text: a.problem || '' }, { title: '方法', text: a.method || '' });
     if (kind === 'deep') s.push({ title: '关键假设', text: list(a.assumptions) });
     s.push({ title: '主要结果', text: list(a.results) });
+    if (shown.length) s.push({ title: '图表', text: figureSection(shown) });
     s.push({ title: '与我的关系', text: (a.question > 0 && qText(a.question) ? `**Q${a.question}：${qText(a.question)}**\n\n` : '') + (a.relevance || '') });
     if (kind === 'deep') {
       s.push({ title: '可以采取的行动', text: list(a.actions, (x) => '[ ] ' + x) }, { title: '可复用的公式与数据', text: list(a.reusable) },
@@ -83,12 +95,17 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
   function store(item, kind, a, extra = {}) {
     const cur = find(item.key);
     const rel = cur ? cur.path : `papers/${kb.fileName(item.citekey)}.md`;
-    const secs = aiSections(kind, a, item);
+    // the figures the model picked (by their ids, the ones that exist), copied to the knowledge base under the card's name
+    const picked = (extra.figs || []).length ? (a.figures || []).map((x) => ({ fig: extra.figs.find((g) => g.id === String(x.id || '').replace(/^\[?F:/, '').replace(/\]$/, '').trim()), title: String(x.title || '').trim().slice(0, 40), reading: String(x.reading || '').trim() }))
+      .filter((x, i, all) => x.fig && x.reading && all.findIndex((y) => y.fig === x.fig) === i).slice(0, 8) : [];
+    const put = figures && kind === 'deep' ? figures.publish(item.key, path.basename(rel, '.md'), picked.map((x) => x.fig.id)) : {};
+    const shown = picked.map((x) => ({ ...x, rel: put[x.fig.id] })).filter((x) => x.rel);
+    const secs = aiSections(kind, a, item, shown);
     const notes = annotationLines(mirror, item.key);
     if (notes.length) secs.push({ title: '我的批注', text: list(notes) });
     if (cur) for (const s of cur.sections) if (USER_SECTIONS.has(s.title) && s.text) secs.push(s);
     const meta = { title: item.title, zotero: item.key, citekey: path.basename(rel, '.md'), doi: item.doi || undefined, year: item.year || undefined, venue: item.venue || undefined,
-      authors: item.creators.slice(0, 8), status: kind, question: a.question > 0 ? a.question : undefined, verified: false, pdf: extra.pdf, getpdf: extra.getPdf, vision: extra.vision,
+      authors: item.creators.slice(0, 8), status: kind, question: a.question > 0 ? a.question : undefined, verified: false, pdf: extra.pdf, getpdf: extra.getPdf, vision: extra.vision, cover: shown.length ? shown[0].rel : undefined, figs: shown.length || undefined,
       starred: cur ? cur.meta.starred : undefined, updated: today(), ai: aiHash(secs) };
     const text = kb.stringify(meta, secs.map((s) => (s.title ? `## ${s.title}\n\n${s.text}` : s.text)).join('\n\n') + '\n');
     // the user changed what the model wrote last time: this version waits as a proposal
@@ -142,10 +159,11 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const vi = vision ? await vision.info(key) : null;
     const read = ft.vision && ft.vision.length ? formatRanges(ft.vision) : '';
     const long = !!(vi && vi.n && !vi.auto && (ft.vision || []).length < vi.n);
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), annotationLines(mirror, key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }), DEEP_SCHEMA);
+    const figs = figures ? await figures.ensure(key) : [];          // the paper's figures, cut out of its pages
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), annotationLines(mirror, key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }, figs), DEEP_SCHEMA);
     // a long paper with pages worth reading as images: the request waits for the user's approval
     if (long && a.vision && a.vision.worth && String(a.vision.pages || '').trim()) vision.request(key, a.vision.pages, a.vision.why, 'model');
-    const r = store(item, 'deep', a, { pdf: true, vision: read || undefined });
+    const r = store(item, 'deep', a, { pdf: true, vision: read || undefined, figs });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: true };
   }
@@ -191,7 +209,16 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const s = cur.sections.find((x) => x.title === '可以采取的行动');
     return s ? s.text.split('\n').map((l) => /^-\s+\[( |x)\]\s+(.*)$/.exec(l)).filter(Boolean).map((m) => ({ done: m[1] === 'x', text: m[2].trim() })) : [];
   }
-  return { find, run, state, setOwn, setMeta, actions, makeQuick, makeDeep, annotationLines: (k) => annotationLines(mirror, k), NOTE_TAG };
+  // every card, for 卡片库: what it is of, how far it got, its one line and its first figure
+  function all() {
+    return kb.list('papers').filter((r) => r.meta.zotero && r.meta.status && r.meta.status !== 'none').map((r) => {
+      const it = mirror.item(r.meta.zotero);
+      return { key: r.meta.zotero, citekey: path.basename(r.path, '.md'), title: r.meta.title || (it && it.title) || '', status: r.meta.status, starred: !!r.meta.starred, verified: !!r.meta.verified,
+        updated: r.meta.updated || '', year: r.meta.year || '', venue: r.meta.venue || '', authors: r.meta.authors || [], question: r.meta.question || 0,
+        oneLine: ((/^>\s*(.+)$/m.exec(r.body) || [])[1] || '').trim(), cover: r.meta.cover || '', figs: r.meta.figs || 0, gone: !it };
+    }).sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.title.localeCompare(b.title));
+  }
+  return { find, all, run, state, setOwn, setMeta, actions, makeQuick, makeDeep, annotationLines: (k) => annotationLines(mirror, k), NOTE_TAG };
 }
 
 module.exports = { createCards, noteHtml, annotationLines, NOTE_TAG };

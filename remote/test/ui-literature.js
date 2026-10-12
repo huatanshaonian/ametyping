@@ -26,7 +26,7 @@ const zot = createFakeZotero({ webdavDir: WD,
     { key: 'ANNAAAA1', itemType: 'annotation', parentItem: 'ATTAAAA1', annotationType: 'highlight', annotationText: 'electron density', annotationComment: '关键', annotationPageLabel: '1', annotationSortIndex: '00001' },
     { key: 'AAAAAAA2', itemType: 'journalArticle', title: 'Radar cross section of cones', creators: [{ creatorType: 'author', lastName: 'Ross', firstName: 'R.' }], date: '1990', collections: ['4WQG3HZQ'] },
   ] });
-toWebdav(WD, 'ATTAAAA1', 'sun2018.pdf', makePdf(['plasma sheath electron density profile page one', 'collision frequency model page two']));
+toWebdav(WD, 'ATTAAAA1', 'sun2018.pdf', makePdf(['plasma sheath electron density profile page one', 'collision frequency model page two, see Fig. 1']));
 const src = createFakeSources();
 
 const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { const r = http.request(url, { method }, (res) => { let b = ''; res.on('data', (c) => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } }); }); r.on('error', reject); r.end(); });
@@ -132,6 +132,24 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('文献库: 读图 says a short paper will be read as images when it is read deeply', await waitFor("/读图：这篇 2 页，第一次深读时会自动看原图/.test((document.querySelector('.lb-view .lv') || {}).textContent || '')"), await evalJs("(document.querySelector('.lb-view .lv')||{}).textContent"));
     await shot('82-lit-library.png');
 
+    // 深读卡 with its figures, and 卡片库 (before the card is changed by hand below: a card the user changed is not overwritten)
+    await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '文献库').click()");
+    await evalJs("[...document.querySelectorAll('.lb-i')].find(i => i.textContent.includes('Backward scattering')).click()"); await sleep(800);
+    await evalJs("[...document.querySelectorAll('.lb-acts .btn')].find(b => /深读卡/.test(b.textContent)).click()");
+    chk('深读卡: the paper\'s figure cut out of its page and shown in the card with its reading and its caption', await waitFor("(() => { const i = document.querySelector('.lb-card img.md-fig'); return !!i && i.complete && i.naturalWidth > 100; })()", 60000) &&
+      /Fig\. 2 · 电子密度剖面/.test(await evalJs("document.querySelector('.lb-card').textContent")) && /峰值在 60 km 附近/.test(await evalJs("document.querySelector('.lb-card').textContent")) && /图题：Fig\. 2/.test(await evalJs("document.querySelector('.lb-card').textContent")),
+      await evalJs("(document.querySelector('.lb-card')||{}).innerHTML").then((x) => String(x).slice(0, 1500)));
+    await evalJs("document.querySelector('.lb-card img.md-fig').scrollIntoView()");
+    await shot('86-lit-card-figure.png');
+    await evalJs("document.querySelector('.lit-tab[data-tab=cards]').click()");
+    chk('卡片库: every card as a tile -- the deep card with its figure as the cover, the quick card without; kinds can be told apart and filtered', await waitFor("document.querySelectorAll('.lc-i').length >= 2 && (() => { const i = document.querySelector('.lc-i .lc-cover img'); return !!i && i.complete && i.naturalWidth > 100; })()", 15000) &&
+      await evalJs("(() => { const t = [...document.querySelectorAll('.lc-i')]; const d = t.find(x => x.textContent.includes('Backward scattering')), q = t.find(x => x.textContent.includes('RAM C-II')); return !!d && !!q && !!d.querySelector('.lc-cover img') && /深读卡/.test(d.textContent) && /1 张图/.test(d.textContent) && !q.querySelector('.lc-cover img') && /速读卡/.test(q.textContent); })()") &&
+      await evalJs("(() => { const s = document.querySelector('.lit-pane:not([hidden]) select'); s.value = 'figs'; s.dispatchEvent(new Event('change')); return document.querySelectorAll('.lc-i').length === 1; })()"),
+      await evalJs("[...document.querySelectorAll('.lc-i')].map(x => x.textContent.slice(0, 80))"));
+    await shot('87-lit-cards.png');
+    await evalJs("document.querySelector('.lc-i').click()");
+    chk('a tile opens the card in 文献库', await waitFor("document.querySelector('.lit-tab.on').textContent.startsWith('文献库') && /Backward scattering/.test((document.querySelector('.lb-head h3') || {}).textContent || '')"), await evalJs("document.querySelector('.lit-tab.on').textContent"));
+
     // 深读
     await evalJs("[...document.querySelectorAll('.lb-i')].find(i => i.textContent.includes('Backward scattering')).click()"); await sleep(800);
     await evalJs("[...document.querySelectorAll('.lb-acts .btn')].find(b => b.textContent === '深读').click()");
@@ -151,6 +169,15 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("document.querySelector('.lr-ai .plink').click()"); await sleep(600);
     chk('the page link moves the PDF', (await evalJs("document.querySelector('.pdf-no').value")) === '1', await evalJs("document.querySelector('.pdf-no').value"));
     await shot('84-lit-reader.png');
+    // the bar between the PDF and the side: dragged, the side gets wider; the width is kept
+    const sideW = () => evalJs("document.querySelector('.lr-side').offsetWidth");
+    const zoom = await evalJs("(() => { const s = document.querySelector('.lr-side'); return s.getBoundingClientRect().width / s.offsetWidth; })()");
+    const w0 = await sideW();
+    await evalJs("(() => { const s = document.querySelector('.lr-split'), r = s.getBoundingClientRect(), ev = (t, x) => s.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 7, clientX: x, clientY: r.top + 40 })); ev('pointerdown', r.left + 3); ev('pointermove', r.left - 77); ev('pointerup', r.left + 3 - 120 * " + zoom + "); })()");
+    const w1 = await sideW();
+    chk('深读: the bar between the two columns is dragged -- the side gets as much wider, and the width is remembered', w0 === 440 && w1 === w0 + 120 && (await evalJs("localStorage.getItem('lit.reader.side')")) === String(w1), [w0, w1]);
+    await evalJs("document.querySelector('.lr-split').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
+    chk('a double click puts it back', (await sideW()) === 440 && (await evalJs("localStorage.getItem('lit.reader.side')")) === null, await sideW());
     await evalJs("[...document.querySelectorAll('.lr-box .btn')].find(b => b.textContent === '沉淀到卡片').click()");
     await sleep(2500);
 

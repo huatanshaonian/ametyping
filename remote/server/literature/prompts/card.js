@@ -15,6 +15,7 @@ const DEEP_SCHEMA = obj({
   reusable: strs, doubts: strs, follow: strs, history: str,
   relations: { type: 'array', items: obj({ citekey: str, type: str, note: str }) },
   vision: obj({ worth: bool, pages: str, why: str }),
+  figures: { type: 'array', items: obj({ id: str, title: str, reading: str }) },
 });
 
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
@@ -39,7 +40,9 @@ function quickPrompt(profile, it, pages, notes) {
 
 // pages: the text (fitPages); notes: annotations; mine: the user's own understanding (if written); others: [{ citekey, title }]
 // src: { n: the PDF's pages, read: the pages read as images ("1-12"), rest: other pages from the text layer, long: too long to read whole as images }
-function deepPrompt(profile, it, pages, notes, mine, others, src = {}) {
+// figs: the paper's figures as cut out of its pages [{ id, page, label, caption, desc }] (figures.js) -- the card shows
+// the ones the model picks, each with what the model says of it
+function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []) {
   return [
     '为用户写一张文献“深读卡”（中文；术语、公式符号保留原文；公式用 LaTeX，行内 $...$）。这张卡要帮用户把阅读变成产出：读完能用它做事。',
     '用户的研究主线：' + directionOf(profile), '用户现在要解决的问题：', questionsBlock(profile), '',
@@ -56,6 +59,8 @@ function deepPrompt(profile, it, pages, notes, mine, others, src = {}) {
     'relations 和用户已有卡片的关系（只从下面列出的卡片里选，type 用：延续 / 对比 / 推翻 / 使用其数据 / 方法相同；没有就空数组）。',
     others.length ? '用户已有的卡片：\n' + others.map((o) => `- ${o.citekey}：${cut(o.title, 100)}`).join('\n') : '（用户还没有别的卡片）',
     src.long ? `vision：这篇有 ${src.n} 页，太长，没有整篇看原图，你读到的大多是文字层。如果其中有值得看原图精读的部分（关键推导、公式密集的页、数据表、要读数的图），worth 填 true，pages 写页码范围（如 "12-18, 25"，只挑真正需要的，一般不超过 20 页），why 一句话说明读了能得到什么；没有必要就 worth 填 false、其余空字符串。` : 'vision：填 worth false、pages 和 why 空字符串。',
+    figs.length ? '这篇的图已经从页面上裁出来了，卡片里会把图和你的解读放在一起（desc 是看图得到的描述，供你对照正文）：\n' + figs.map((g) => `- [F:${g.id}] ${g.label || '（无编号）'}，第 ${g.page} 页。图题：${cut(g.caption, 300) || '（无）'}\n  画面：${cut(g.desc, 500)}`).join('\n') : '',
+    figs.length ? 'figures：从上面的图里挑出理解这篇最关键的，最多 8 张（方法 / 模型示意、关键结果、要读数的图优先；重复的、装饰性的不选），按在文中出现的顺序给出。每张：id 照抄方括号里 F: 后面的编号（如 p4-1）；title 中文短标题（不超过 20 字，说这张图是什么）；reading 解读，3～6 句：这张图说明了什么结论、怎么读它（看哪条曲线、哪个区域、哪个量级）、图上能读出的关键数值、对用户的问题意味着什么或能拿来做什么。不要复述图题，不要写图上看不出、正文里也没有的东西。' : 'figures：这篇没有裁出图，给空数组。',
     '只依据正文；正文里没有的不要编造，不确定就写进 doubts。',
   ].filter((x) => x !== '').join('\n');
 }

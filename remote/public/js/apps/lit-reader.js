@@ -21,6 +21,7 @@ export function openReader(key, page) {
   r.setTitle = (t) => { const w = wm.get(id); if (w) w.handle.setTitle('深读：' + t); };
 }
 const readers = new Map();
+const SIDE_KEY = 'lit.reader.side';                           // the side's width as the user left it
 
 function mountReader(key, firstPage) {
   const pdfBox = h('div', { class: 'pdf-wrap lr-pdf' }, h('div', { class: 'vnote', text: '读取 PDF…' }));
@@ -30,7 +31,21 @@ function mountReader(key, firstPage) {
   // 读图: how much has been read as images, a request to approve, the transcription of the page shown
   const vbox = visionBox(key, { curPage: () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0) });
   const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap), vbox.el, pane);
-  const root = h('div', { class: 'lr' }, pdfBox, side);
+  // the bar between the PDF and the side: dragged to give either more room (kept for the next paper; a double click
+  // puts it back)
+  const split = h('div', { class: 'lr-split', title: '拖动调整左右两栏的宽度（双击还原）' });
+  const root = h('div', { class: 'lr' }, pdfBox, split, side);
+  const setSide = (w, keep) => { const max = Math.max(300, root.clientWidth - 320); const v = Math.round(Math.max(300, Math.min(max, w))); side.style.width = v + 'px'; if (keep) { try { localStorage.setItem(SIDE_KEY, String(v)); } catch {} } };
+  try { const w = +localStorage.getItem(SIDE_KEY); if (w > 0) side.style.width = w + 'px'; } catch {}
+  split.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); try { split.setPointerCapture(e.pointerId); } catch {} root.classList.add('dragging');
+    // (the desktop may be shown enlarged: the pointer moves in screen pixels, the width is set in the page's own)
+    const x0 = e.clientX, w0 = side.offsetWidth, k = (side.getBoundingClientRect().width / w0) || 1;
+    const move = (ev) => setSide(w0 + (x0 - ev.clientX) / k, false);
+    const up = (ev) => { split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', up); root.classList.remove('dragging'); setSide(w0 + (x0 - ev.clientX) / k, true); };
+    split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', up);
+  });
+  split.addEventListener('dblclick', () => { side.style.width = ''; try { localStorage.removeItem(SIDE_KEY); } catch {} });
   let item = null, st = { turns: [] }, tab = '理解', pdf = null, destroyed = false;
   const drafts = { chat: '', mine: null };                // (what is being typed survives a refresh)
 

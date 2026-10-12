@@ -1,9 +1,13 @@
 // Markdown of the knowledge base (cards, topics, answers) in the 文献 windows: marked + DOMPurify + KaTeX (md-math.js),
 // the YAML front matter left out, [[citekey]] links opening that card (onLink), "- [ ]" tasks shown as ☐ / ☑, and the
-// page numbers the model cites ([p.12]) clickable when the reader has the PDF open (onPage).
+// page numbers the model cites ([p.12]) clickable when the reader has the PDF open (onPage). A card's figures
+// (![…](../figures/<citekey>/<id>.png), kept beside the cards) are shown from the server; no other picture is.
 import { Marked } from '/vendor/marked.esm.js';
 import DOMPurify from '/vendor/purify.es.js';
 import { createMath, drawMath } from './md-math.js';
+
+const FIG = '/api/lit/fig?p=';
+export const figUrl = (rel) => FIG + encodeURIComponent(rel);
 
 export const stripFront = (text) => String(text || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 
@@ -11,10 +15,16 @@ export async function renderMd(el, text, { onLink, onPage } = {}) {
   const src = stripFront(text)
     .replace(/^(\s*)- \[ \] /gm, '$1- ☐ ').replace(/^(\s*)- \[x\] /gim, '$1- ☑ ')
     .replace(/\[\[([^\]|#\n]+)(?:\|([^\]\n]+))?\]\]/g, (m, k, label) => `[${label || k}](#lit:${encodeURIComponent(k.trim())})`)
-    .replace(/\[p\.\s?(\d{1,4})\]/g, (m, n) => `[p.${n}](#page:${n})`);
+    .replace(/\[p\.\s?(\d{1,4})\]/g, (m, n) => `[p.${n}](#page:${n})`)
+    .replace(/!\[([^\]\n]*)\]\((?:\.\.\/)?(figures\/[^)\s]+\.png)\)/g, (m, alt, rel) => `![${alt}](${figUrl(rel)})`);
   const math = createMath();
   const html = new Marked({ gfm: true, breaks: false }, { extensions: math.extensions }).parse(src);
-  el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed', 'img'], FORBID_ATTR: ['style'] });
+  el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'] });
+  for (const img of el.querySelectorAll('img')) {
+    if (!String(img.getAttribute('src') || '').startsWith(FIG)) { img.remove(); continue; }
+    img.loading = 'lazy'; img.classList.add('md-fig'); img.title = '点一下放大 / 还原';
+    img.addEventListener('click', () => img.classList.toggle('big'));
+  }
   await drawMath(el, math.found);
   for (const a of el.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href');
