@@ -225,6 +225,14 @@ img { image-rendering: pixelated; }
 .wallmsg { padding: 0 12px 10px; font-size: 12px; color: var(--border); min-height: 16px; }
 .wallmsg.bad { color: var(--bad); }
 
+/* a wide screen with the panel put away (netpanel.js): the desktop takes its place, the tray's button brings it back */
+@media (min-width: 701px) {
+  html.net-off { --npw: 0px; }
+  html.net-off #netpanel { display: none; }
+  html.net-off #netbtn { display: block; }
+}
+#netpanel .ptitle #hidepc { margin-left: 4px; }
+
 /* ---------- narrow screens (phones): windows fill the desktop, the panel becomes a sheet ---------- */
 @media (max-width: 700px) {
   :root { --npw: 0px; }

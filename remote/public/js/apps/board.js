@@ -2,7 +2,8 @@
 // (remote/server/board). The toolbar (icons, each saying what it is when pointed at): which board, the tools (铅笔 /
 // 荧光笔 / 橡皮 / 选中 / 移动画布), colour and width, undo, the view; 「AI」 sends the board -- or only what is picked --
 // as a picture to be 誊清 (board-out.js shows what comes back). Saved about a second after the last stroke and when the window closes; a board changed on
-// another device meanwhile is kept as a separate 「冲突副本」.
+// another device meanwhile is kept as a separate 「冲突副本」. The first button turns the window into the gallery of all
+// the boards (board-gallery.js) and back.
 import { h, icon, prefs } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
@@ -12,6 +13,7 @@ import { TOOLS } from './board-ink.js';
 import { download } from './board-page.js';
 import * as out from './board-out.js';
 import { icon as ico } from './board-icons.js';
+import { createGallery } from './board-gallery.js';
 
 const COLORS = ['#222222', '#d93025', '#1a73e8', '#188038', '#f29900', '#8e24aa', '#ffd400'];
 const TOOL_LIST = [['pencil', '铅笔：压感决定深浅'], ['marker', '荧光笔：盖在字上，字还看得见'], ['eraser', '橡皮：碰到的一整笔擦掉（笔的橡皮端随时可以擦）'],
@@ -50,13 +52,20 @@ function mount() {
   const pngB = btn('image', '', exportPng);
   const aiB = btn('ai', '', toAi, 'go', 'AI'), outB = btn('result', '看结果：AI 誊清的页面、文字档和设计稿', () => { if (cur.id) out.show(cur.id, cur.title); });
   const status = h('span', { class: 'bd-st' });
+  const gallery = createGallery({ onOpen: (id) => { showGallery(false); if (id !== cur.id) select(id); }, onNew: () => { showGallery(false); newBoard(); } });
+  const galB = btn('gallery', '画廊：所有画板的缩略图，点一块打开', () => showGallery(!root.classList.contains('gal')));
   const root = h('div', { class: 'board', tabindex: '-1' },
-    h('div', { class: 'bd-bar' }, pick, btn('add', '新建一块画板', newBoard), btn('rename', '给这块画板改名', rename), btn('trash', '删除这块画板', remove), h('span', { class: 'bd-gap' }),
+    h('div', { class: 'bd-bar' }, galB, pick, btn('add', '新建一块画板', newBoard), btn('rename', '给这块画板改名', rename), btn('trash', '删除这块画板', remove), h('span', { class: 'bd-gap' }),
       aiB, outB, pngB, status),
     h('div', { class: 'bd-bar' }, ...tools, h('span', { class: 'bd-gap' }), ...swatches, width, h('span', { class: 'bd-gap' }),
       undoB, redoB, clearB, h('span', { class: 'bd-gap' }), btn('zoomOut', '缩小', () => surface.zoomBy(1 / 1.25)), zoomB, btn('zoomIn', '放大', () => surface.zoomBy(1.25)), fingerB),
-    surface.el);
+    surface.el, gallery.el);
 
+  async function showGallery(on) {
+    if (on) { await flush(); await loadList(); }
+    root.classList.toggle('gal', on); galB.classList.toggle('sel', on);
+    if (on) gallery.show(items, cur.id); else surface.el.focus({ preventScroll: true });
+  }
   const say = (s, bad) => { status.textContent = s || ''; status.classList.toggle('bad', !!bad); };
   function buttons() {
     const n = surface.picked();
@@ -97,6 +106,7 @@ function mount() {
     let d = null; try { d = await (await fetch('/api/boards')).json(); } catch { return; }
     items = d.items || []; hasAi = d.ai !== false;
     fill(); buttons();
+    if (root.classList.contains('gal')) gallery.show(items, cur.id);
     const e = cur.id && items.find((b) => b.id === cur.id);
     if (cur.id && !e && !dirty) return newBoard();                              // deleted on another device
     if (e && e.updated > cur.updated && !dirty && !saving) select(cur.id, true);   // drawn on from another device
@@ -170,7 +180,7 @@ function mount() {
   }
 
   root.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || root.classList.contains('gal')) return;
     if ((e.key === 'Delete' || e.key === 'Backspace') && surface.picked()) { surface.removePicked(); e.preventDefault(); return; }
     if (e.key === 'Escape' && surface.picked()) { surface.unpick(); e.stopPropagation(); return; }
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -181,5 +191,5 @@ function mount() {
   const off = net.on('boards', loadList);
   setTool('pencil'); buttons();
   loadList().then(() => { if (items[0]) select(items[0].id, true); else newBoard(); });
-  return { root, destroy() { flush(); off(); surface.destroy(); } };
+  return { root, destroy() { flush(); off(); surface.destroy(); gallery.destroy(); } };
 }
