@@ -28,20 +28,22 @@ function createOpenAlex({ http, base = 'https://api.openalex.org', key = '', mai
     const s = new URLSearchParams({ ...params, ...(K() ? { api_key: K() } : {}), ...(M() ? { mailto: M() } : {}) });
     return `${base}/works?${s}`;
   };
-  async function works(filter, { search = '', perPage = 40, sort = 'publication_date:desc' } = {}) {
-    const j = await http.json(q({ filter, ...(search ? { search } : {}), sort, per_page: String(perPage) }));
+  async function works(filter, { search = '', perPage = 40, sort = 'publication_date:desc', page = 1 } = {}) {
+    const j = await http.json(q({ ...(filter ? { filter } : {}), ...(search ? { search } : {}), sort, per_page: String(perPage), ...(page > 1 ? { page: String(page) } : {}) }));
     return (j.results || []).map(fromWork);
   }
   const since = (d) => `from_publication_date:${d}`;
+  const all = (...parts) => parts.filter(Boolean).join(',');
+  // (from: a date -- only what was published since; null -- of any year, a page at a time: page 1, 2, ...)
   return {
     // new papers in these journals (ISSNs) since a date
     byIssn: (issns, from) => (issns.length ? works(`primary_location.source.issn:${issns.slice(0, 50).join('|')},${since(from)}`) : []),
-    // new papers by these authors (OpenAlex author ids A123...)
-    byAuthors: (ids, from) => (ids.length ? works(`authorships.author.id:${ids.slice(0, 50).join('|')},${since(from)}`) : []),
-    // new papers citing these works (OpenAlex ids W123...)
-    citing: (ids, from) => (ids.length ? works(`cites:${ids.slice(0, 50).join('|')},${since(from)}`) : []),
-    // a search, newest first
-    search: (words, from) => works(since(from), { search: words, perPage: 25 }),
+    // papers by these authors (OpenAlex author ids A123...), newest first
+    byAuthors: (ids, from, page = 1) => (ids.length ? works(all(`authorships.author.id:${ids.slice(0, 50).join('|')}`, from && since(from)), { page }) : []),
+    // papers citing these works (OpenAlex ids W123...), newest first
+    citing: (ids, from, page = 1) => (ids.length ? works(all(`cites:${ids.slice(0, 50).join('|')}`, from && since(from)), { page }) : []),
+    // a search: since a date newest first; of any year most relevant first
+    search: (words, from, page = 1) => works(from ? since(from) : '', { search: words, perPage: 25, page, ...(from ? {} : { sort: 'relevance_score:desc' }) }),
     // one work by DOI (to fill in an abstract / find its OpenAlex id), or null
     async byDoi(doi) {
       try { const s = new URLSearchParams({ ...(K() ? { api_key: K() } : {}), ...(M() ? { mailto: M() } : {}) }).toString();

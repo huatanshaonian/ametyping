@@ -1,7 +1,7 @@
 // 文献 › 今日: the day's picks (server/literature/feed.js). A new paper: why it matters to which question, the abstract,
 // 收下 (into Zotero's 每日文献, then its PDF and card -- intake.js shows how far it got) or 跳过. A review: questions to
-// answer from memory first (the answers go into the card's 我的笔记), then 对照原文 in the reader. 更多候选: the next
-// best papers of the day, for a day with time to spare.
+// answer from memory first (the answers go into the card's 我的笔记), then 对照原文 in the reader. The good papers a
+// day had no room for wait in the 候选 tab (lit-pool.js).
 import { h } from '../util.js';
 import { get, post, authors } from './lit-api.js';
 import { abstractBody } from './lit-abstract.js';
@@ -14,7 +14,7 @@ export function mount(el, ctx) {
   const list = h('div', { class: 'lf-list' });
   const asks = h('div', { class: 'lf-sec lf-vision', hidden: true });     // 读图 requests waiting for approval
   el.append(h('div', { class: 'lit-sub' }, runBtn, st), asks, list);
-  let questions = [], items = [], canWrite = true, showSpare = false;
+  let questions = [], items = [], canWrite = true, pool = 0;
   const openAbs = new Set();                                   // abstracts left open (a refresh keeps them so)
 
   async function refresh() {
@@ -24,12 +24,13 @@ export function mount(el, ctx) {
     asks.replaceChildren(h('h3', { text: `等你批准读图（${reqs.length}）` }), ...reqs.map((r) => h('div', { class: 'lf-va' },
       h('span', { text: `${r.title}：第 ${r.ranges} 页${r.why ? ' — ' + r.why : ''}` }), h('button', { class: 'btn', type: 'button', text: '去看看', onclick: () => ctx.openItem(r.key) }))));
     if (!f) { list.replaceChildren(h('p', { class: 'lit-empty', text: '读不到推送。' })); return; }
-    items = f.items || []; canWrite = f.canWrite;
+    items = f.items || []; canWrite = f.canWrite; pool = (f.status || {}).pool || 0;
     questions = ((p && p.profile && p.profile.questions) || []).filter((q) => q.status !== 'done' && q.status !== 'shelved');
     const s = f.status || {}, last = (s.runs || []).slice(-1)[0];
     st.classList.toggle('bad', !!(last && last.error));
     st.textContent = s.running ? '正在找今天的文献…' : !p || !p.profile ? '还没有兴趣画像：先到「画像」生成并确认' : last ? (last.error ? `上次推送失败：${last.error}` : `上次：${last.date}，候选 ${last.found} 篇，推了 ${last.picked} 篇新文献${last.held ? `（${last.held} 篇是前几天留下的）` : ''}、${last.reviews || 0} 篇复习${(last.errors || []).length ? '（部分来源出错）' : ''}`) : '还没推送过';
     runBtn.disabled = !!s.running;
+    if (s.unscored) st.textContent += ` · 还有 ${s.unscored} 篇找到了没打分`;
     if (s.archive && s.archive.queue) st.textContent += ` · 老报告还有 ${s.archive.queue} 篇在排队`;
     if (s.dtic && s.dtic.up) st.textContent += ' · DTIC 的公共检索恢复了（告诉 Claude 接上）';
     render();
@@ -37,7 +38,6 @@ export function mount(el, ctx) {
   function render() {
     const n = new Date(), today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
     const open = items.filter((e) => e.status === 'new');
-    const spare = items.filter((e) => e.status === 'spare');
     const kept = items.filter((e) => e.status === 'kept');
     const past = items.filter((e) => ['skipped', 'done', 'expired'].includes(e.status));
     const sec = (title, arr, opts = {}) => (arr.length ? h('div', { class: 'lf-sec' }, h('h3', { text: title }), ...arr.map((e) => card(e, opts))) : null);
@@ -45,15 +45,14 @@ export function mount(el, ctx) {
       !open.length && !kept.length ? h('p', { class: 'lit-empty', text: '今天没有待看的文献。宁缺毋滥——没有足够相关的新文献时，会从「气动隐身」里挑旧文献复习。' }) : null,
       sec('待看', open.sort((a, b) => (b.date === today) - (a.date === today) || b.created - a.created)),
       sec('收下的', kept.slice(0, 12)),
-      spare.length ? h('details', { class: 'lf-more', open: showSpare, ontoggle: (e) => { showSpare = e.target.open; } }, h('summary', { text: `更多候选（${spare.length}）` }),
-        h('div', { class: 'lf-tip', text: '够分但当天没排上的。之后每天和新找到的一起按分数排，分高的先推出来；30 天没轮到就过期。' }), ...spare.sort((a, b) => b.score - a.score).map((e) => card(e, { spare: true }))) : null,
+      pool ? h('div', { class: 'lf-pool' }, h('span', { text: `还有 ${pool} 篇够分的候选在等：每天和新找到的一起按分数排，一直留着。` }), h('button', { class: 'btn', type: 'button', text: '去候选里看', onclick: () => ctx.show('pool') })) : null,
       past.length ? h('details', { class: 'lf-more' }, h('summary', { text: `看过的（${past.length}）` }), ...past.slice(0, 30).map((e) => card(e, { past: true }))) : null].filter(Boolean));
   }
 
-  function card(e, { spare, past } = {}) {
+  function card(e, { past } = {}) {
     const p = e.paper || {};
     const q = e.qText ? { text: e.qText } : e.question > 0 ? questions[e.question - 1] : null;
-    const kind = e.kind === 'review' ? (e.mode === 'recall' ? ['复习', 'rv'] : ['补读', 'cu']) : e.old ? ['老报告', 'old'] : e.fun ? ['有趣', 'fun'] : ['新文献', 'new'];
+    const kind = e.kind === 'review' ? (e.mode === 'recall' ? ['复习', 'rv'] : ['补读', 'cu']) : e.old ? ['老报告', 'old'] : e.fun ? ['有趣', 'fun'] : e.fresh ? ['近期发表', 'new'] : e.found ? ['候选', 'new'] : ['新文献', 'new'];
     const head = h('div', { class: 'lf-h' }, h('i', { class: 'tag ' + kind[1], text: kind[0] }),
       q ? h('i', { class: 'tag q', text: 'Q' + e.question, title: q.text }) : null,
       e.score ? h('small', { class: 'lf-score', text: `${e.score}/10`, title: '和你当前问题的相关度（模型打分）' }) : null,
@@ -65,17 +64,14 @@ export function mount(el, ctx) {
     const acts = h('div', { class: 'gbtns' });
     const note = h('div', { class: 'lf-note' });
     if (e.kind === 'review') reviewBody(e, acts, note);
-    else if (e.status === 'new' || spare) {
-      if (spare) acts.append(h('button', { class: 'btn', type: 'button', text: '放进今天的', onclick: async () => { await post('/api/lit/feed/promote', { id: e.id }); refresh(); } }));
-      else {
-        acts.append(h('button', { class: 'btn go', type: 'button', text: '收下', title: '放进 Zotero 的「每日文献」，然后找 PDF、生成速读卡', onclick: async (ev) => {
-          ev.target.disabled = true;
-          const r = await post('/api/lit/feed/keep', { id: e.id });
-          if (!r.ok) { note.textContent = r.need === 'authorize' ? '需要先授权写入 Zotero：点窗口右上角的「授权写入 Zotero」。' : r.msg || '没能收下'; ev.target.disabled = false; return; }
-          refresh();
-        } }), h('button', { class: 'btn', type: 'button', text: '跳过', onclick: async () => { await post('/api/lit/feed/skip', { id: e.id }); refresh(); } }));
-        if (!canWrite) note.textContent = '收下前要先授权写入 Zotero（右上角）。';
-      }
+    else if (e.status === 'new') {
+      acts.append(h('button', { class: 'btn go', type: 'button', text: '收下', title: '放进 Zotero 的「每日文献」，然后找 PDF、生成速读卡', onclick: async (ev) => {
+        ev.target.disabled = true;
+        const r = await post('/api/lit/feed/keep', { id: e.id });
+        if (!r.ok) { note.textContent = r.need === 'authorize' ? '需要先授权写入 Zotero：点窗口右上角的「授权写入 Zotero」。' : r.msg || '没能收下'; ev.target.disabled = false; return; }
+        refresh();
+      } }), h('button', { class: 'btn', type: 'button', text: '跳过', onclick: async () => { await post('/api/lit/feed/skip', { id: e.id }); refresh(); } }));
+      if (!canWrite) note.textContent = '收下前要先授权写入 Zotero（右上角）。';
     } else if (e.status === 'kept') {
       const s = e.intake || {};
       note.append(h('b', { text: STAGE[s.stage] || '' }), s.msg ? ' ' + s.msg : '');
@@ -83,7 +79,7 @@ export function mount(el, ctx) {
       if (s.stage === 'needs-pdf') note.append(h('div', { class: 'lf-tip', text: '图书馆通道拿到，或者你自己把 PDF 拖进 Zotero 里这篇下面，系统发现后都会按全文重新生成速读卡。' }));
       if (e.zkey) acts.append(h('button', { class: 'btn', type: 'button', text: '看卡片', onclick: () => ctx.openItem(e.zkey) }),
         h('button', { class: 'btn', type: 'button', text: '深读', onclick: () => ctx.openReader(e.zkey) }));
-    } else if (past) note.textContent = { skipped: '跳过了', done: '复习过了', expired: '过期了（7 天没处理）' }[e.status] || '';
+    } else if (past) note.textContent = { skipped: '跳过了', done: '复习过了', expired: '过期了（7 天没复习，以后还会轮到）' }[e.status] || '';
     return h('div', { class: 'lf-i k-' + kind[1] + (past ? ' past' : '') }, head, meta, why, e.kind === 'review' ? null : abs, note, acts.childNodes.length ? acts : null);
   }
 

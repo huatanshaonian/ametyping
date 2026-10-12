@@ -2,14 +2,22 @@
 // a quota. New papers come from the follow lists of the profile (journals through OpenAlex / Crossref / AIAA's feeds,
 // authors, papers citing the key papers, search words, arXiv categories) and from the papers the mail triage picked out
 // of journal and ResearchGate mails; anything already in the library or shown before is dropped, the rest is prefiltered
-// by the profile's words and scored by the model against the user's questions (prompts/feed.js). Fewer than `daily`
+// by the profile's words and scored by the model against the user's questions (prompts/feed.js) -- `rankPerDay` (30)
+// of them a day; the others wait their turn (feed-inbox.json), so nothing found is lost and nothing is fetched twice
+// for nothing. The search is not only for what is new: besides what came out since the last run (journals, feeds,
+// arXiv, and each search / author / citing query), the searches, the followed authors and the papers citing the key
+// ones are also asked without a date, a page further each time ("cursors"), while the waiting list has room. Fewer than `daily`
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
 // annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
 // day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
-// The good ones a day has no room for are not thrown away: they wait (status "spare", 更多候选) and compete with the
-// next days' finds by score, up to 30 days -- a day that finds little shows what earlier days left.
-// Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; after 7 days it lapses.
-//   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...] }
+// The good ones a day has no room for are never thrown away: they wait (status "spare", the 候选 tab) and compete with
+// the next days' finds by score -- a day that finds little shows what earlier days left. One of the day's places goes
+// to the best of the ones found lately (FRESH_DAYS), so that what waits does not keep the new out.
+// Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; one left alone for 7 days
+// goes back among the candidates ("lapsed": there to be found, not pushed a second time).
+//   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...],
+//                                     cursors: { query: next page } }
+//   <dataDir>/literature/feed-inbox.json  { fingerprint: candidate }   found, not scored yet
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +27,10 @@ const { fingerprint, paper } = require('./sources/normalize');
 const { createArchive } = require('./archive');
 
 const DAY_MS = 86400e3;
-const SPARE_DAYS = 30;                                         // how long a good paper waits for a day with room
+const FRESH_DAYS = 90;                                         // "published lately": one place a day is for these
+const INBOX_MAX = 400;                                         // candidates waiting to be scored (the most promising)
+const PER_CALL = 30;                                           // papers scored in one call of the model
+const LAST_PAGE = 40;                                          // how deep a query without a date is followed
 // n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
 function rotate(list, n, day) {
   if (list.length <= n) return list.slice();
@@ -32,13 +43,18 @@ const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
 function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now() }) {
   const file = path.join(dir, 'feed.json');
-  let st = { items: {}, seen: {}, reviewed: {}, runs: [] };
+  let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+  const inboxFile = path.join(dir, 'feed-inbox.json');
+  let inbox = {};
+  try { inbox = JSON.parse(fs.readFileSync(inboxFile, 'utf8')) || {}; } catch {}
+  const saveInbox = () => { fs.writeFileSync(inboxFile + '.tmp', JSON.stringify(inbox)); fs.renameSync(inboxFile + '.tmp', inboxFile); };
   const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
   // (cfg: an object, or a function giving the settings in effect now -- 控制面板 › 文献 changes them while running)
   const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
   const daily = () => Math.max(0, Math.min(5, C().daily != null ? +C().daily : 2));
   const minScore = () => (C().minScore != null ? +C().minScore : 6);
+  const rankN = () => Math.max(10, Math.min(120, +C().rankPerDay || 30));
   const atTime = () => String(C().at || '07:30').split(':').map(Number);
   let running = null, lastError = '', lastErrorAt = 0;
   const oldDaily = () => Math.max(0, Math.min(3, C().oldDaily != null ? +C().oldDaily : 1));
@@ -51,7 +67,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   // The search phrases are used a few a day in turn (all of them come round), without quotes -- a quoted phrase is an
   // exact-phrase search on OpenAlex, too narrow for finding; the model's scoring does the narrowing. arXiv's categories
   // are broad: only papers with one of the profile's phrases in their title or abstract.
-  async function gather(since) {
+  // deep: also without a date -- each such query a page further than the last time (back to the first after the last)
+  async function gather(since, deep = false) {
     const prof = profile.get() || {}, f = prof.follow || {};
     const out = [], errors = [], counts = {};
     const tryIt = async (name, fn) => {
@@ -59,17 +76,25 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       catch (e) { errors.push(`${name}：${e.message}`); counts[name] = counts[name] || 0; }
     };
     const day = Math.floor(now() / DAY_MS);
+    const turn = async (id, per, fn) => { const p = st.cursors[id] || 1; const r = (await fn(p)) || []; st.cursors[id] = r.length < per || p >= LAST_PAGE ? 1 : p + 1; return r; };
+    const words = (f.keywords || []).map(unquote).filter(Boolean);
     const issns = [...new Set((f.venues || []).flatMap((v) => v.issns || []))];
     const S = sources;
     if (S.openalex) {
       await tryIt('期刊', () => S.openalex.byIssn(issns, since));
-      await tryIt('作者', () => S.openalex.byAuthors((f.authors || []).map((a) => a.openalex).filter(Boolean), since));
-      await tryIt('引用核心文献', () => S.openalex.citing((f.seeds || []).map((s) => s.openalex).filter(Boolean), since));
-      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), C().searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
+      const authors = (f.authors || []).map((a) => a.openalex).filter(Boolean), seeds = (f.seeds || []).map((s) => s.openalex).filter(Boolean);
+      await tryIt('作者', () => S.openalex.byAuthors(authors, since));
+      await tryIt('引用核心文献', () => S.openalex.citing(seeds, since));
+      for (const k of rotate(words, C().searchesPerDay || 4, day)) await tryIt('检索式', () => S.openalex.search(k, since));
+      if (deep) {
+        if (authors.length) await tryIt('作者（往年）', () => turn('oa:authors:' + authors.join(), 40, (p) => S.openalex.byAuthors(authors, null, p)));
+        if (seeds.length) await tryIt('引用核心文献（往年）', () => turn('oa:citing:' + seeds.join(), 40, (p) => S.openalex.citing(seeds, null, p)));
+        for (const k of rotate(words, C().searchesPerDay || 4, day)) await tryIt('检索式（不限年份）', () => turn('oa:search:' + k, 25, (p) => S.openalex.search(k, null, p)));
+      }
     }
     // Semantic Scholar (with a key): two of the phrases a day, and papers like the ones kept / starred, unlike the skipped
     if (S.s2 && S.s2.enabled()) {
-      for (const k of rotate((f.keywords || []).map(unquote).filter(Boolean), 2, day + 1)) await tryIt('S2 检索', () => S.s2.search(k, +since.slice(0, 4), 10));
+      for (const k of rotate(words, 2, day + 1)) await tryIt('S2 检索', () => (deep ? turn('s2:search:' + k, 10, (p) => S.s2.search(k, 0, 10, (p - 1) * 10)) : S.s2.search(k, +since.slice(0, 4), 10)));
       if (C().s2Recommend !== false) {
         const L = taste();
         if (L.pos.length) await tryIt('相似推荐', () => S.s2.recommend(L.pos, L.neg, 30));
@@ -98,20 +123,19 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     const neg = [...new Set([...recent.filter((e) => e.status === 'skipped').map((e) => e.paper.doi), ...(x.neg || [])])].filter((d) => !pos.includes(d)).slice(0, 50);
     return { pos, neg };
   }
-  // drop what is in the library, was shown before, or is old; merge the same paper from several sources
-  function dedupe(cands, maxAgeDays = 60) {
+  // drop what is in the library or was shown before; merge the same paper from several sources (a candidate that
+  // waited comes with the sources and ways it had)
+  function dedupe(cands) {
     const byId = new Map(), byFp = new Map();
-    const oldest = ymd(now() - maxAgeDays * DAY_MS);
     for (const c of cands) {
       if (!c.title) continue;
       const fp = fingerprint(c);
       if (st.seen[fp] || (c.doi && mirror.findDoi(c.doi)) || mirror.findTitle(c.title)) continue;
-      if (c.date && c.date < oldest && c.source !== 'mail' && c.type !== 'report') continue;
       const prev = byId.get(c.id) || byFp.get(fp);
-      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), c.source])];
-        prev.vias = [...new Set([...(prev.vias || []), c.via].filter(Boolean))]; continue; }
+      if (prev) { for (const k of ['abstract', 'pdf', 'doi', 'venue', 'date']) if (!prev[k] && c[k]) prev[k] = c[k]; prev.sources = [...new Set([...(prev.sources || [prev.source]), ...(c.sources || [c.source])])];
+        prev.vias = [...new Set([...(prev.vias || []), ...(c.vias || []), c.via].filter(Boolean))]; continue; }
       const { via, ...rest } = c;
-      const x = { ...rest, sources: [c.source], vias: via ? [via] : [] };
+      const x = { ...rest, sources: c.sources || [c.source], vias: c.vias || (via ? [via] : []) };
       byId.set(c.id, x); byFp.set(fp, x);
     }
     return [...byId.values()];
@@ -129,8 +153,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       } catch {}
     }
   }
-  // the profile's words in the title / abstract: the 30 most promising go to the model (followed authors / citing: always)
-  function prefilter(list, n = 30) {
+  // the profile's words in the title / abstract: the most promising first (the first `rankPerDay` go to the model)
+  function prefilter(list, n = list.length) {
     const words = profile.words().map((w) => w.toLowerCase());
     const score = (c) => { const t = (c.title + ' ' + c.abstract).toLowerCase(); return words.reduce((s, w) => s + (t.includes(w) ? 1 : 0), 0) + (c.abstract ? 0.5 : 0) + ((c.sources || []).length - 1); };
     return list.map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.c);
@@ -141,7 +165,12 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   }
   // the question's own text kept with a pick (its number changes when questions are reordered, solved or removed)
   const qText = (n) => { const q = n > 0 ? profile.openQuestions()[n - 1] : null; return q ? q.text : ''; };
-  async function rank(list) {
+  async function rank(all) {
+    const out = [];
+    for (let i = 0; i < all.length; i += PER_CALL) out.push(...await rankSome(all.slice(i, i + PER_CALL)));
+    return out.sort((a, b) => b.score - a.score);
+  }
+  async function rankSome(list) {
     if (!list.length) return [];
     const refs = list.map((c, i) => ({ ref: 'C' + (i + 1), c }));
     const a = await ask(rankPrompt(profile.get() || {}, refs.map(({ ref, c }) => ({ ref, title: c.title, venue: c.venue, year: c.year, abstract: c.abstract, source: c.source })), feedback()), RANK_SCHEMA);
@@ -206,21 +235,27 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
        if (want > 0) {
         const last = st.runs.filter((r) => !r.error).map((r) => r.date).sort().pop();
         const since = ymd(Math.min(now() - 3 * DAY_MS, last ? Date.parse(last) - 2 * DAY_MS : now() - 14 * DAY_MS));
-        const { cands, errors, counts } = await gather(since);
+        // (the ones found before and not scored yet come first into the count: a full waiting list is not dug deeper)
+        const { cands, errors, counts } = await gather(since, Object.keys(inbox).length < 2 * rankN());
         log1.errors = errors; log1.found = cands.length; log1.sources = counts;
-        let list = dedupe(cands);
+        let list = dedupe([...Object.values(inbox), ...cands]);
         await enrich(list);
         list = prefilter(list);
-        const ranked = await rank(list);
+        const ranked = await rank(list.slice(0, rankN()));
         log1.ranked = ranked.length;
         for (const r of ranked) st.seen[fingerprint(r.c)] = now();
+        inbox = Object.fromEntries(list.slice(rankN(), rankN() + INBOX_MAX).map((c) => [fingerprint(c), c]));
+        log1.unscored = Object.keys(inbox).length; saveInbox();
         const good = ranked.filter((r) => r.score >= minScore());
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
         // today's good ones join the ones earlier days left; the best of them all are the day's picks, the rest waits
         const fresh = new Set(good.map((r) => add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' }).id));
-        const pool = entries().filter((e) => e.kind === 'new' && !e.old && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
-        for (const e of pool.slice(0, want)) {
+        const pool = entries().filter((e) => e.kind === 'new' && !e.old && !e.lapsed && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
+        const picks = [], lately = pool.find((e) => { const t = Date.parse(e.paper.date || ''); return t && now() - t < FRESH_DAYS * DAY_MS; });
+        if (lately && !pushedOn(date).some((e) => e.fresh)) { lately.fresh = true; picks.push(lately); }
+        for (const e of pool) if (picks.length < want && !picks.includes(e)) picks.push(e);
+        for (const e of picks.slice(0, want)) {
           if (!fresh.has(e.id)) { e.found = e.found || e.date; log1.held = (log1.held || 0) + 1; }
           Object.assign(e, { status: 'new', date, created: now() }); log1.picked++;
         }
@@ -238,13 +273,15 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       .finally(() => { running = null; });
     return running;
   }
-  // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse (the ones kept aside: 30
-  // days); old entries go
+  // seen fingerprints older than half a year are forgotten; a paper shown and not decided in 7 days goes back among
+  // the candidates (a review lapses: it comes round again by itself); what the user skipped goes after two months
   function prune() {
     const t = now();
     for (const [fp, at] of Object.entries(st.seen)) if (t - at > 180 * DAY_MS) delete st.seen[fp];
     for (const e of entries()) {
-      if ((e.status === 'new' && t - e.created > 7 * DAY_MS) || (e.status === 'spare' && t - e.created > SPARE_DAYS * DAY_MS)) e.status = 'expired';
+      const paper = e.kind === 'new' && !e.zkey;
+      if (e.status === 'new' && t - e.created > 7 * DAY_MS) Object.assign(e, paper ? { status: 'spare', lapsed: true } : { status: 'expired' });
+      if (e.status === 'expired' && paper) Object.assign(e, { status: 'spare', lapsed: true });     // (lapsed under the old rule)
       if (['expired', 'skipped'].includes(e.status) && t - e.created > 60 * DAY_MS) delete st.items[e.id];
     }
   }
@@ -257,10 +294,18 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     save(); onChange('feed');
     return e;
   }
-  // what the window shows: today's (and still open) picks first, then the last two weeks
+  // what 今日 shows: the picks still open first, then the latest of the rest; pool(): every candidate waiting, best first
   function list() {
     const t = now();
-    return entries().filter((e) => e.status !== 'expired' || t - e.created < 3 * DAY_MS).sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created - a.created).slice(0, 120);
+    return entries().filter((e) => e.status !== 'spare' && (e.status !== 'expired' || t - e.created < 3 * DAY_MS)).sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created - a.created).slice(0, 120);
+  }
+  const pool = () => entries().filter((e) => e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
+  // a candidate into today's picks, by the user's hand
+  function promote(id) {
+    const e = st.items[id]; if (!e || e.status !== 'spare') return null;
+    Object.assign(e, { status: 'new', found: e.found || e.date, date: ymd(now()), created: now() }); delete e.lapsed;
+    save(); onChange('feed');
+    return e;
   }
 
   // ---- the schedule: workdays (and Saturday's report) after "at"; a failure is retried after 30 minutes, 3 times a day ----
@@ -281,9 +326,9 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   }
   let timer = null;
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }
-  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null });
+  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null, unscored: Object.keys(inbox).length, pool: entries().filter((e) => e.status === 'spare').length });
 
-  return { run, tick, start, stop: () => timer && clearInterval(timer), list, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
+  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, promote, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }
 
 module.exports = { createFeed, ymd, rotate, unquote };

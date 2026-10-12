@@ -26,6 +26,8 @@
 .lf-score { font-size: 11px; color: var(--muted); }
 .lf-m { font-size: 12px; color: var(--muted); }
 .lf-why { margin: 4px 0; padding: 4px 8px; background: var(--tint); } .lf-why b { display: block; font-size: 12px; color: var(--border); font-weight: normal; }
+.lf-pool { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 12.5px; color: var(--muted); }
+.lp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .lp-bar .field { flex: 1 1 180px; min-width: 0; }
 /* 摘要对照: a sentence and its translation side by side (one under the other when the window is narrow) */
 .lit-tr { margin: 4px 0; font-size: 12.5px; line-height: 1.55; } .lit-tr > div { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 3px 0; }
 .lit-tr > div + div { border-top: 1px dotted var(--muted); } .lit-tr span { flex: 1 1 240px; min-width: 0; color: var(--ink); } .lit-tr span.zh { color: var(--border); }

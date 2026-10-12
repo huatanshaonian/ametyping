@@ -40,8 +40,8 @@ function createS2({ http, base = 'https://api.semanticscholar.org', key = '' }) 
     enabled: () => true,
     hasKey: () => !!K(),
     // the literature on a subject since a year, most relevant first
-    async search(words, fromYear = 0, n = 8) {
-      const s = new URLSearchParams({ query: words, limit: String(n), fields: FIELDS, ...(fromYear ? { year: `${fromYear}-` } : {}) });
+    async search(words, fromYear = 0, n = 8, offset = 0) {
+      const s = new URLSearchParams({ query: words, limit: String(n), fields: FIELDS, ...(fromYear ? { year: `${fromYear}-` } : {}), ...(offset ? { offset: String(offset) } : {}) });
       const j = await call(`/graph/v1/paper/search?${s}`);
       return (j.data || []).filter((x) => x.title).map(fromS2);
     },
