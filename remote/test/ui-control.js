@@ -73,6 +73,13 @@ function login() {
     const menu = await evalJs("[...document.querySelectorAll('#startmenu .smi')].map(b => b.textContent).join('|')");
     chk('desktop and start menu: 控制面板 in, the separate settings out', /控制面板/.test(desk) && !/显示属性/.test(desk) && /控制面板/.test(menu) &&
       !/添加电脑|Google 账户|声音/.test(menu) && /重要计划/.test(menu) && /网上邻居/.test(menu), [desk, menu]);
+    // 网上邻居 on a wide screen: there at the right; » puts it away (the desktop takes the room, remembered), the tray's button brings it back
+    const netState = () => evalJs("({ panel: document.querySelector('#netpanel').getBoundingClientRect().width, desk: document.querySelector('#desktop').getBoundingClientRect().width, btn: getComputedStyle(document.querySelector('#netbtn')).display, kept: localStorage.getItem('ame.net.off') })");
+    const n0 = await netState();
+    await evalJs("document.querySelector('#hidepc').click()"); const n1 = await netState();
+    await evalJs("document.querySelector('#netbtn').click()"); const n2 = await netState();
+    chk('网上邻居 can be put away on a wide screen and brought back from the tray', n0.panel > 200 && n0.btn === 'none' && n1.panel === 0 && n1.desk > n0.desk + 200 && n1.btn !== 'none' && n1.kept === 'true' &&
+      n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
     chk('控制面板: the eight items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|文献' &&
@@ -87,7 +94,7 @@ function login() {
     // both tools' state
     await sleep(800);
     const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
-    chk('AI 模型: default + backup rows and the ten jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 12 &&
+    chk('AI 模型: default + backup rows and the twelve jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 14 &&
       ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude|OpenAI（Codex）' &&
       /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
@@ -104,7 +111,7 @@ function login() {
     await evalJs("(() => { const m = document.querySelector('.aim-bak select'); m.value = 'claude-opus-5-5'; m.dispatchEvent(new Event('change')); })()"); await sleep(1500);
     const bak = await evalJs("fetch('/api/ai').then(r => r.json()).then(v => JSON.stringify(v.backup))");
     const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
-    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 10 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
+    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 12 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);

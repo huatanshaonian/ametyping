@@ -1,16 +1,25 @@
 // 网上邻居: every remote computer with its state; clicking one makes it the desktop's current computer.
-// On phones the panel is a sheet opened from the tray / start menu.
-import { $, h, icon, isWorking } from './util.js';
+// On a wide screen it stands at the right and can be put away (» in its title; remembered); on phones it is a sheet.
+// Either way the tray's button / the start menu opens it again.
+import { $, h, icon, isWorking, prefs } from './util.js';
 
 const panel = $('#netpanel'), box = $('#machines');
 let onSelect = () => {};
 
 export function init(select) {
   onSelect = select;
+  document.documentElement.classList.toggle('net-off', !!prefs.get('net.off', false));
+  $('#hidepc').addEventListener('click', (e) => { e.stopPropagation(); toggle(false); });
   $('#netbtn').addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   document.addEventListener('pointerdown', (e) => { if (panel.classList.contains('open') && !panel.contains(e.target) && !$('#netbtn').contains(e.target)) panel.classList.remove('open'); });
 }
-export function toggle(force) { panel.classList.toggle('open', force); }
+const wide = () => !window.matchMedia('(max-width: 700px)').matches;
+export function toggle(force) {
+  if (!wide()) return panel.classList.toggle('open', force);
+  const root = document.documentElement, off = force == null ? !root.classList.contains('net-off') : !force;
+  root.classList.toggle('net-off', off); prefs.set('net.off', off);
+  window.dispatchEvent(new Event('resize'));       // (the desktop's width changed: whatever lays itself out by it)
+}
 
 // counts shown for a computer
 export function summary(m) {
