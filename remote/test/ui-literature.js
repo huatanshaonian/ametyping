@@ -109,6 +109,14 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
       await evalJs("({ items: document.querySelectorAll('.lf-i').length, answers: document.querySelectorAll('.lf-ans').length, kinds: [...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12)) })"));
     chk('no stray "null" text in the list', !(await evalJs("/null/.test(document.querySelector('.lf-list').textContent)")), 0);
     await shot('80-lit-feed.png');
+    // 摘要对照, and the 候选 tab (here the day has room for every good paper: nothing waits)
+    chk('摘要对照: a pick\'s abstract opens as sentences beside their Chinese', await waitFor("document.querySelectorAll('.lf-abs .lit-tr span.zh').length >= 1", 25000) &&
+      await evalJs("(() => { const d = document.querySelector('.lf-abs .lit-tr').closest('details'); d.open = true; d.scrollIntoView(); const r = d.querySelector('.lit-tr > div'); return /对照/.test(d.querySelector('summary').textContent) && r.children.length === 2 && /^译：/.test(r.children[1].textContent); })()"),
+      await evalJs("document.querySelector('.lf-list').textContent.slice(0, 300)"));
+    await shot('80b-lit-abstract.png');
+    await evalJs("document.querySelector('.lit-tab[data-tab=pool]').click()");
+    chk('候选: its own tab, with search and order; empty here, and says what it is for', await waitFor("[...document.querySelectorAll('.lit-pane')].some(p => !p.hidden && p.querySelector('.lp-bar input[type=search]') && p.querySelector('.lp-bar select') && /没有候选/.test(p.textContent))", 10000), await evalJs("[...document.querySelectorAll('.lit-pane')].map(p => p.textContent.slice(0, 80))"));
+    await evalJs("document.querySelector('.lit-tab[data-tab=feed]').click()");
     await evalJs("[...document.querySelectorAll('.lf-i')].find(i => i.textContent.includes('RAM C-II')).querySelector('.btn.go').click()");
     chk('收下 -> the stages shown, then the card is ready', await waitFor("[...document.querySelectorAll('.lf-i')].some(i => i.textContent.includes('RAM C-II') && i.textContent.includes('速读卡好了'))", 25000),
       await evalJs("document.querySelector('.lf-list').textContent"));

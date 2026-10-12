@@ -6,9 +6,11 @@
 // worth it: the rest is filled with reviews from the user's own collection (config "reviewCollection", 气动隐身) --
 // annotated papers as active recall, unread ones as catch-up. Old reports (NTRS, DTIC) come on their own, `oldDaily` a
 // day (default 1, not counted in `daily`), from a queue filled a page at a time (archive.js); Saturdays: old reports only.
-// The good ones a day has no room for are not thrown away: they wait (status "spare", 更多候选) and compete with the
-// next days' finds by score, up to 30 days -- a day that finds little shows what earlier days left.
-// Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; after 7 days it lapses.
+// The good ones a day has no room for are never thrown away: they wait (status "spare", the 候选 tab) and compete with
+// the next days' finds by score -- a day that finds little shows what earlier days left. One of the day's places goes
+// to the best of the ones found lately (FRESH_DAYS), so that what waits does not keep the new out.
+// Nothing is decided for the user: a pick waits for 收下 (into Zotero, intake.js) or 跳过; one left alone for 7 days
+// goes back among the candidates ("lapsed": there to be found, not pushed a second time).
 //   <dataDir>/literature/feed.json  { items: { id: entry }, seen: { fingerprint: t }, reviewed: { key: t }, runs: [...] }
 'use strict';
 const fs = require('fs');
@@ -19,7 +21,7 @@ const { fingerprint, paper } = require('./sources/normalize');
 const { createArchive } = require('./archive');
 
 const DAY_MS = 86400e3;
-const SPARE_DAYS = 30;                                         // how long a good paper waits for a day with room
+const FRESH_DAYS = 7;                                          // "found lately": one place a day is for these
 // n items of a list, a different stretch each day (day: days since the epoch), so every item comes round
 function rotate(list, n, day) {
   if (list.length <= n) return list.slice();
@@ -219,8 +221,11 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
         // today's good ones join the ones earlier days left; the best of them all are the day's picks, the rest waits
         const fresh = new Set(good.map((r) => add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' }).id));
-        const pool = entries().filter((e) => e.kind === 'new' && !e.old && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
-        for (const e of pool.slice(0, want)) {
+        const pool = entries().filter((e) => e.kind === 'new' && !e.old && !e.lapsed && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
+        const picks = [], lately = pool.find((e) => now() - e.created < FRESH_DAYS * DAY_MS);
+        if (lately && !pushedOn(date).some((e) => e.fresh)) { lately.fresh = true; picks.push(lately); }
+        for (const e of pool) if (picks.length < want && !picks.includes(e)) picks.push(e);
+        for (const e of picks.slice(0, want)) {
           if (!fresh.has(e.id)) { e.found = e.found || e.date; log1.held = (log1.held || 0) + 1; }
           Object.assign(e, { status: 'new', date, created: now() }); log1.picked++;
         }
@@ -238,13 +243,15 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       .finally(() => { running = null; });
     return running;
   }
-  // seen fingerprints older than half a year are forgotten; picks not decided in 7 days lapse (the ones kept aside: 30
-  // days); old entries go
+  // seen fingerprints older than half a year are forgotten; a paper shown and not decided in 7 days goes back among
+  // the candidates (a review lapses: it comes round again by itself); what the user skipped goes after two months
   function prune() {
     const t = now();
     for (const [fp, at] of Object.entries(st.seen)) if (t - at > 180 * DAY_MS) delete st.seen[fp];
     for (const e of entries()) {
-      if ((e.status === 'new' && t - e.created > 7 * DAY_MS) || (e.status === 'spare' && t - e.created > SPARE_DAYS * DAY_MS)) e.status = 'expired';
+      const paper = e.kind === 'new' && !e.zkey;
+      if (e.status === 'new' && t - e.created > 7 * DAY_MS) Object.assign(e, paper ? { status: 'spare', lapsed: true } : { status: 'expired' });
+      if (e.status === 'expired' && paper) Object.assign(e, { status: 'spare', lapsed: true });     // (lapsed under the old rule)
       if (['expired', 'skipped'].includes(e.status) && t - e.created > 60 * DAY_MS) delete st.items[e.id];
     }
   }
@@ -257,10 +264,18 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     save(); onChange('feed');
     return e;
   }
-  // what the window shows: today's (and still open) picks first, then the last two weeks
+  // what 今日 shows: the picks still open first, then the latest of the rest; pool(): every candidate waiting, best first
   function list() {
     const t = now();
-    return entries().filter((e) => e.status !== 'expired' || t - e.created < 3 * DAY_MS).sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created - a.created).slice(0, 120);
+    return entries().filter((e) => e.status !== 'spare' && (e.status !== 'expired' || t - e.created < 3 * DAY_MS)).sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created - a.created).slice(0, 120);
+  }
+  const pool = () => entries().filter((e) => e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
+  // a candidate into today's picks, by the user's hand
+  function promote(id) {
+    const e = st.items[id]; if (!e || e.status !== 'spare') return null;
+    Object.assign(e, { status: 'new', found: e.found || e.date, date: ymd(now()), created: now() }); delete e.lapsed;
+    save(); onChange('feed');
+    return e;
   }
 
   // ---- the schedule: workdays (and Saturday's report) after "at"; a failure is retried after 30 minutes, 3 times a day ----
@@ -281,9 +296,9 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   }
   let timer = null;
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }
-  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null });
+  const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null, pool: entries().filter((e) => e.status === 'spare').length });
 
-  return { run, tick, start, stop: () => timer && clearInterval(timer), list, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
+  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, promote, get, decide, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }
 
 module.exports = { createFeed, ymd, rotate, unquote };

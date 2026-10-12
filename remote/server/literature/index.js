@@ -86,7 +86,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     ...(((profile.get() || {}).follow || {}).seeds || []).map((x) => x.doi).filter(Boolean)])], neg: [] });
   // 摘要对照: the abstracts of the picks waiting (today's and the ones kept aside) in Chinese, as soon as they are there
   const translate = createTranslate({ dir, ask: askFeed, field: () => (profile.get() || {}).line || '', log, onChange: () => changed('feed') });
-  const wantFeed = () => { translate.want(feed.list().filter((e) => e.kind === 'new' && (e.status === 'new' || e.status === 'spare')).map((e) => e.paper.abstract)); };
+  const wantFeed = () => { translate.want([...feed.list().filter((e) => e.kind === 'new' && e.status === 'new'), ...feed.pool()].map((e) => e.paper.abstract)); };
   const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, onChange: () => { changed('feed'); wantFeed(); } });
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
   const libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
@@ -164,6 +164,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     }
     if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state(), survey: { ...survey.status(), canWrite: api.canWrite() } }); return true; }
     if (G && p === '/api/lit/feed') { wantFeed(); json(res, 200, { items: feed.list().map((e) => (e.kind === 'new' ? { ...e, tr: translate.get(e.paper.abstract) } : e)), status: feed.status(), canWrite: api.canWrite() }); return true; }
+    if (G && p === '/api/lit/feed/pool') { wantFeed(); json(res, 200, { items: feed.pool().map((e) => ({ ...e, tr: translate.get(e.paper.abstract) })), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb/search') { json(res, 200, { items: kb.search(qs('q').slice(0, 200)) }); return true; }
@@ -218,7 +219,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
-    else if (what === 'feed/promote') r = feed.decide(String(d.id || ''), null, { status: 'new' }) ? { ok: true } : { ok: false, msg: '找不到这条' };
+    else if (what === 'feed/promote') r = feed.promote(String(d.id || '')) ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/review') {
       // the user's answers from memory go into the card's 我的笔记, dated (the recall becomes a note)
       const e = feed.get(String(d.id || ''));

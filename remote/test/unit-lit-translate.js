@@ -1,7 +1,8 @@
 // 摘要对照 and the push's waiting list, with stand-ins for everything around them (no server):
 //   translate.js -- pairs only when the sentences given back are the abstract's own; Chinese abstracts left alone; a
 //                   failure is not asked again at once
-//   feed.js      -- the good papers a day has no room for wait, and compete with the next day's finds by score
+//   feed.js      -- the good papers a day has no room for wait for good, and compete with the next day's finds by
+//                   score; one place a day is for the ones found lately; a pick left alone goes back among them
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -52,22 +53,32 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-unit-'));
     cards: { find: () => null, annotationLines: () => [] } });
   const titles = (s) => feed.entries().filter((e) => e.status === s).map((e) => e.paper.title).sort();
   const skipAll = () => { for (const e of feed.entries().filter((x) => x.status === 'new')) feed.decide(e.id, 'skipped'); };
-  clock = day(0); found = ['alpha score 9', 'bravo score 8', 'charlie score 7', 'delta score 6', 'echo score 6', 'foxtrot score 6', 'golf score 6', 'hotel score 3'].map(mk);
+  clock = day(0); found = ['alpha score 9', 'bravo score 8', 'charlie score 8', 'delta score 7', 'echo score 7', 'foxtrot score 7', 'golf score 7', 'hotel score 3'].map(mk);
   const r1 = await feed.run();
   ok('a day with seven good papers: the two best shown, the other five wait (none thrown away), the poor one gone', titles('new').join() === 'alpha score 9,bravo score 8' && titles('spare').length === 5 && r1.picked === 2 && r1.waiting === 5 && !r1.held, [titles('new'), titles('spare'), r1]);
   skipAll();
   clock = day(1); found = ['india score 8', 'juliet score 5'].map(mk);
   const r2 = await feed.run();
-  ok('the next day finds one good paper: it and the best of the ones waiting are shown', titles('new').join() === 'charlie score 7,india score 8', titles('new'));
+  ok('the next day finds one good paper: it and the best of the ones waiting are shown', titles('new').join() === 'charlie score 8,india score 8' && feed.pool().length === 4 && feed.list().every((e) => e.status !== 'spare'), titles('new'));
   ok('the run says how many came from earlier days; the one from before keeps the day it was found', r2.picked === 2 && r2.held === 1 && r2.waiting === 4 && feed.entries().some((e) => e.status === 'new' && e.found === '2026-10-12' && e.date === '2026-10-13'), r2);
   skipAll();
   clock = day(2); found = [];
   const r3 = await feed.run();
-  ok('a day that finds nothing: two more from the ones waiting', r3.picked === 2 && r3.held === 2 && r3.ranked === 0 && titles('spare').length === 2, r3);
+  ok('a day that finds nothing: two more from the ones waiting', r3.picked === 2 && r3.held === 2 && r3.ranked === 0 && titles('new').join() === 'delta score 7,echo score 7' && titles('spare').length === 2, r3);
   skipAll();
-  clock = day(40); found = [];
+  clock = day(14); found = ['kilo score 6'].map(mk);
   await feed.run();
-  ok('after 30 days the ones still waiting lapse', titles('spare').length === 0 && titles('new').length === 0, [titles('spare'), titles('new')]);
+  ok('one place is for what was found lately: the new 6 is shown beside the best of the old 7s, the other 7 still waits', titles('new').join() === 'foxtrot score 7,kilo score 6' && titles('spare').join() === 'golf score 7' &&
+    feed.entries().find((e) => e.paper.title === 'kilo score 6').fresh && !feed.entries().find((e) => e.paper.title === 'foxtrot score 7').fresh, [titles('new'), titles('spare')]);
+  clock = day(70); found = [];
+  await feed.run();
+  const back = feed.pool().filter((e) => e.lapsed).map((e) => e.paper.title).sort();
+  ok('months later nothing has lapsed: the one waiting is shown; the two shown and left alone are back among the candidates, not to be pushed again', titles('new').join() === 'golf score 7' && back.join() === 'foxtrot score 7,kilo score 6', [titles('new'), back]);
+  clock = day(71);
+  const r6 = await feed.run();
+  ok('the day after: nothing pushed a second time', r6.picked === 0 && feed.pool().length === 2, r6);
+  const pr = feed.promote(feed.pool()[0].id);
+  ok('taken into today by hand: shown again as of today, no longer marked', pr && pr.status === 'new' && pr.date === '2026-12-22' && !pr.lapsed && feed.pool().length === 1, pr);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   fs.rmSync(T, { recursive: true, force: true });
