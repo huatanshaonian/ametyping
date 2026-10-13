@@ -237,6 +237,23 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('Claude\'s questions as the terminal draws them: tabs, boxes to tick', c.tabs.join('|') === '☒ 配菜|☐ 饮料|✔ Submit' && c.rows.length === 5 && c.rows[0] === '>青菜绿' && c.rows[1] === ' 鸡蛋黄' && c.rows[4] === ' Chat about this' && c.text.includes('Tab/Arrow keys to navigate'), c);
     await shot('60-term-ask-screen.png');
 
+    // /login: the sign-in link whole (copied and opened from the card, not selected out of the terminal's lines), the
+    // code typed in with Enter
+    c = await refresh('login');
+    chk('/login: the ways to sign in as rows', c.head === 'Login' && c.rows.length === 3 && c.rows[0].startsWith('>Claude account with subscription'), c);
+    c = await refresh('login-url');
+    const want = (() => { const ls = fs.readFileSync(path.join(FIX, 'login-url.txt'), 'utf8').split('\n'); const i = ls.findIndex((l) => l.startsWith('https://')); return ls.slice(i, i + 6).join(''); })();
+    await call('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] }).catch(() => {}); await call('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await evalJs("[...document.querySelectorAll('.dash .term .tlink .btn')].find(b => b.textContent === '复制链接').click()"); await sleep(500);
+    const lk = await evalJs("(async () => { const t = document.querySelector('.dash .term .tlink'); let clip = ''; try { clip = await navigator.clipboard.readText(); } catch (e) { clip = 'ERR ' + e.message; } return { box: t.querySelector('.tlurl').value, href: t.querySelector('a.btn').getAttribute('href'), target: t.querySelector('a.btn').target, said: t.querySelector('.tlsaid').textContent, clip }; })()");
+    chk('/login: the link in the card is the address itself, to copy and to open', lk.box === want && lk.href === want && lk.target === '_blank' && /已复制，共 465 个字符/.test(lk.said), lk);
+    chk('/login: what 复制链接 puts on the clipboard is that address, character for character', lk.clip === want, [lk.clip.length, lk.clip.slice(0, 60)]);
+    await shot('60-term-login-url.png');
+    keys.length = 0;
+    await evalJs("(() => { const i = document.querySelector('.dash .term .ttype'); i.value = '  abc123#state-456  '; i.dispatchEvent(new Event('input')); [...document.querySelectorAll('.dash .term .ttyper .btn')].find(b => b.textContent === '输入并回车').click(); })()"); await sleep(2200);
+    chk('/login: the code goes into the terminal as typed (trimmed), then Enter', keys.join('|') === 'c:abc123#state-456|enter', keys);
+    c = await refresh('ask-multi');
+
     // 原文: the screen as the text it is
     await evalJs("[...document.querySelectorAll('.dash .term .tbar .btn')].find(b => b.textContent === '原文').click()"); await sleep(200);
     const rawText = await evalJs("(() => { const t = document.querySelector('.dash .term'); return [t.querySelector('.tcard').hidden, t.querySelector('.tscr').hidden, t.querySelector('.tscr').textContent.includes('5. Chat about this'), /[\\uE000\\uE001]/.test(t.querySelector('.tscr').textContent)]; })()");

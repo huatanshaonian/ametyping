@@ -60,6 +60,32 @@ p = P('memory');
 chk('/memory: two groups, each with its cursor', p.title === 'Memory' && rows(p) === '>Auto-memory|>User instructions| Project instructions| Open auto-memory folder' && list(p)[1].gap, rows(p));
 p = P('theme');
 chk('/theme: the one in use marked, the preview as a block', p.title === 'Theme' && rows(p).startsWith(' Auto (match terminal)|>Dark mode| Light mode') && list(p)[1].glyph === '✔' && !list(p).some((r) => r.head) && p.blocks.some((b) => b.type === 'code' && /Hello, Claude!/.test(b.text)), rows(p));
+// /login: the ways to sign in as rows; the link the screen broke over six lines is one address again, character for
+// character; the code is asked for on a line of its own and goes in with Enter
+p = P('login');
+chk('/login: titled, the three ways to sign in as numbered rows, Esc', p.kind === 'dialog' && p.title === 'Login' && p.blocks.filter((b) => b.type === 'list').length === 1 &&
+  p.blocks.find((b) => b.type === 'list').rows.map((r) => (r.cur ? '>' : '') + r.num).join() === '>1,2,3' && p.hints.map((x) => x.keys.map((k) => k.key).join()).join() === 'esc' && !p.ask, p);
+p = P('login-url');
+const loginRaw = fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'login-url.txt'), 'utf8').split('\n');
+const loginAt = loginRaw.findIndex((l) => l.startsWith('https://'));
+const loginUrl = loginRaw.slice(loginAt, loginAt + 6).join('');
+const link = p.blocks.find((b) => b.type === 'link');
+chk('/login: the sign-in link over six lines of the screen is one address, exactly', p.title === 'Login' && !!link && link.url === loginUrl && link.url.length === 465 && !/\s/.test(link.url) &&
+  /&code_challenge_method=S256&state=[\w-]{43}$/.test(link.url) && p.blocks.filter((b) => b.type === 'link').length === 1, link);
+chk('/login: no line of the link is left as text', !p.blocks.some((b) => b.type === 'text' && b.lines.some((l) => /oauth|code_challe|3Aplugins/.test(l))), p.blocks);
+const ask = p.blocks.find((b) => b.type === 'input');
+chk('/login: the code is asked for -- typed and Enter, which the screen does not name among its keys', p.ask && p.typing && ask && ask.ask && ask.label === 'Paste code here if prompted' && ask.empty &&
+  p.hints.map((x) => x.keys.map((k) => k.key).join()).join() === 'enter,esc', [ask, p.hints]);
+p = parseScreen(fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'login-url.txt'), 'utf8').replace('if prompted >', 'if prompted > abc#def'));
+chk('/login: what has been typed after the question', p.blocks.find((b) => b.type === 'input').text === 'abc#def' && !p.blocks.find((b) => b.type === 'input').empty, p.blocks);
+p = parseScreen(['─'.repeat(80), '  Docs', '', '  https://example.com/a?b=1', '', '  a > b is not a question', '', '  Esc to cancel'].join('\n'));
+chk('a short address on a line of its own is a link too; nothing joined to it', p.blocks.find((b) => b.type === 'link').url === 'https://example.com/a?b=1', p.blocks);
+chk('keys: "Press Enter to continue…"', hl('Press Enter to continue…') === 'enter=继续', hl('Press Enter to continue…'));
+for (const name of fs.readdirSync(path.join(__dirname, 'fixtures', 'screens')).filter((f) => f.endsWith('.txt') && !f.startsWith('login')).map((f) => f.slice(0, -4))) {
+  const q = P(name), bad = q.kind === 'dialog' && (q.ask || q.blocks.some((b) => b.type === 'link' || b.ask));
+  if (bad) chk('no other menu is taken for a link or a question to type into: ' + name, false, q.blocks);
+}
+
 p = P('export');
 chk('/export (closed by a rule with the session\'s name in it)', p.title === 'Export conversation' && p.sub === 'Select export method' && rows(p) === '>Copy to clipboard| Save to file' && list(p)[0].rest === 'Copy the conversation to your system clipboard' && p.blocks.length === 1, p.blocks);
 p = P('add-dir');
