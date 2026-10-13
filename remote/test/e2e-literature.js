@@ -187,26 +187,34 @@ const src = createFakeSources();
     const k1 = await P('/api/lit/feed/keep', { id: ramc.id });
     ok('收下: a Zotero item', k1.ok && /^[A-Z0-9]{8}$/.test(k1.key), k1);
     const e1 = await until(async () => { const f = await G('/api/lit/feed'); const e = f.items.find((x) => x.id === ramc.id); return e && e.intake && /ready|error/.test(e.intake.stage) && e; }, 30000);
-    ok('the open PDF went to Zotero (upload flow) and the quick card was made from the text', e1 && e1.intake.stage === 'ready' && zot.writes.some((w) => w.kind === 'file'), e1 && e1.intake);
+    ok('the open PDF went to Zotero (upload flow) and the deep card was made from the text by itself', e1 && e1.intake.stage === 'ready' && e1.intake.card === 'deep' && zot.writes.some((w) => w.kind === 'file'), e1 && e1.intake);
+    ok('今日 gets the kept paper with its card in brief: the kind, the one line, the figures and the first as the cover', e1.card && e1.card.status === 'deep' && /深读/.test(e1.card.oneLine) && e1.card.figs >= 1 && /^figures\/.+\/p1-1\.png$/.test(e1.card.cover) && !!e1.card.hash, e1.card);
     const col = [...zot.cols.values()].find((c) => c.parent === 'JDF645IP');
     const made = zot.objs.get(k1.key);
     ok('filed under 每日文献 in a folder by topic, which the model named and the module made; tagged, with its DOI and abstract', col && col.name === '等离子体鞘套' && made.collections.join() === col.key && e1.folder === '等离子体鞘套' && made.tags.some((t) => t.tag === 'Windose推送') && made.DOI === '10.2514/1.new1' && /electron density/.test(made.abstractNote), [col, made]);
     const d1 = await G('/api/lit/item?key=' + k1.key);
-    ok('the card: from the full text (page references), in the knowledge base as Markdown with front matter', d1.card && d1.card.meta.status === 'quick' && /\[p\.1\]/.test(d1.card.text) && /^---\ntitle: /.test(d1.card.text) &&
+    ok('the card: from the full text (page references, the figures), in the knowledge base as Markdown with front matter', d1.card && d1.card.meta.status === 'deep' && /## 图表/.test(d1.card.text) && /\[p\.1\]/.test(d1.card.text) && /^---\ntitle: /.test(d1.card.text) &&
       fs.existsSync(path.join(KB, 'papers', d1.citekey + '.md')), d1.card);
     ok('a copy of the card went to Zotero as a note', [...zot.objs.values()].some((o) => o.itemType === 'note' && o.parentItem === k1.key && (o.tags || []).some((t) => t.tag === 'Windose卡片') && /<h2>/.test(o.note)));
     ok('the catalogue lists the card', /\[\[/.test(fs.readFileSync(path.join(KB, 'index.md'), 'utf8')));
 
     const k2 = await P('/api/lit/feed/keep', { id: closed.id });
     const e2 = await until(async () => { const f = await G('/api/lit/feed'); const e = f.items.find((x) => x.id === closed.id); return e && e.intake && /needs-pdf|ready|error/.test(e.intake.stage) && e; }, 30000);
-    ok('no PDF: a card from the abstract, and the advice to get the full text', k2.ok && e2.intake.stage === 'needs-pdf' && /建议手动获取全文/.test(e2.intake.msg), e2 && e2.intake);
+    ok('no PDF: a quick card from the abstract, and the advice to get the full text', k2.ok && e2.intake.stage === 'needs-pdf' && e2.intake.card === 'quick' && e2.card && e2.card.status === 'quick' && /建议手动获取全文/.test(e2.intake.msg), e2 && e2.intake);
     ok('the second paper on the same topic goes into the folder already there (told to the model with its count); no second folder', zot.objs.get(k2.key).collections.join() === col.key &&
       [...zot.cols.values()].filter((c) => c.parent === 'JDF645IP').length === 1 && /- 等离子体鞘套（1 篇）/.test(fs.readFileSync(path.join(T, 'codex.log'), 'utf8')));
     const d2 = await G('/api/lit/item?key=' + k2.key);
     ok('that card says so too', d2.card && d2.card.meta.getpdf && !/\[p\.1\]/.test(d2.card.text), d2.card && d2.card.meta);
     zot.addPdf(k2.key, 'blackout.pdf', makePdf(['blackout telemetry measurements', 'attenuation versus altitude']));
     const e3 = await until(async () => { const f = await G('/api/lit/feed'); const e = f.items.find((x) => x.id === closed.id); return e && e.intake.stage === 'ready' && e; }, 20000);
-    ok('the PDF dropped in later is noticed: the card is made again from the text', !!e3 && /\[p\.1\]/.test((await G('/api/lit/item?key=' + k2.key)).card.text));
+    ok('the PDF dropped in later is noticed: the deep card is made from the text', !!e3 && e3.intake.card === 'deep' && e3.card.status === 'deep' && /\[p\.1\]/.test((await G('/api/lit/item?key=' + k2.key)).card.text), e3 && e3.intake);
+    // 读完了: the card is put away (and can be taken back); only a kept paper has one
+    const rd = await P('/api/lit/feed/read', { id: ramc.id }), rd1 = (await G('/api/lit/feed')).items.find((x) => x.id === ramc.id);
+    const un = await P('/api/lit/feed/read', { id: ramc.id, undo: true }), rd2 = (await G('/api/lit/feed')).items.find((x) => x.id === ramc.id);
+    ok('读完了 marks the kept paper read, 放回待读 takes it back; not for a paper that was not kept', rd.ok && rd1.readAt > 0 && un.ok && !rd2.readAt && !(await P('/api/lit/feed/read', { id: rev[0].id })).ok && (await G('/api/lit')).morning.cards === 2, [rd, rd1 && rd1.readAt, rd2 && rd2.readAt]);
+    // (with the limit at 0 the deep cards made by themselves asked for pages to be read as images: put aside here,
+    // the reading of images has its own part below)
+    await P('/api/lit/vision/decline', { key: k1.key }); await P('/api/lit/vision/decline', { key: k2.key });
 
     // ---- the review ----
     ok('review answered', (await P('/api/lit/feed/review', { id: rev[0].id, answers: ['指数分布', '约 10 dB'] })).ok);

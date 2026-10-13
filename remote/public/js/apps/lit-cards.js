@@ -28,7 +28,7 @@ export function mount(el, ctx) {
     let hit = items.filter((c) => (k === 'deep' ? deep(c) : k === 'quick' ? c.status === 'quick' : k === 'starred' ? c.starred : k === 'figs' ? c.figs > 0 : true));
     if (terms.length) hit = hit.filter((c) => { const t = [c.title, (c.authors || []).join(' '), c.venue, c.oneLine, c.citekey].join(' ').toLowerCase(); return terms.every((w) => t.includes(w)); });
     st.textContent = hit.length === items.length ? `${items.length} 张` : `${hit.length} / ${items.length} 张`;
-    grid.replaceChildren(...(hit.length ? hit.map(card) : [h('p', { class: 'lit-empty', text: items.length ? '没有符合的卡片。' : '还没有卡片。收下一篇文献会自动做速读卡；在文献库里点「深读卡」做带图的深读卡。' })]));
+    grid.replaceChildren(...(hit.length ? hit.map(card) : [h('p', { class: 'lit-empty', text: items.length ? '没有符合的卡片。' : '还没有卡片。收下一篇文献，拿到 PDF 后会自动做带图的深读卡（没有 PDF 时先按摘要做速读卡）。' })]));
   }
   function card(c) {
     const deep = /deep|reviewed/.test(c.status);
