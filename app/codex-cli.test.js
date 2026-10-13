@@ -55,6 +55,35 @@ test('reply to a Codex session through remote-control: its terminal when it is o
   assert.match((await rc.chatSend(s.id, 'x')).msg, /不在终端里/);                    // the desktop app
 });
 
+test('a Codex thread opened again from the dashboard is on the list before its first hook', async () => {
+  // what was launched is the PowerShell of launch.ps1; Codex comes up under it a moment later (through npm's node.exe)
+  const id = 'codex:01a0aaaa-0000-7000-8000-000000000002', cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-codex-cwd-'));
+  fs.mkdirSync(path.join(HOME, '.ametyping'), { recursive: true });
+  fs.writeFileSync(path.join(HOME, '.ametyping', 'launch.ps1'), '');
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-codex-bin-'));
+  fs.writeFileSync(path.join(bin, 'codex.exe'), '');
+  const PATH = process.env.PATH; process.env.PATH = bin;
+  let asked = 0, pushed = 0;
+  const b = { ...fakeBridge(), launch: async () => 40, alive: async () => true, screen: async () => null,
+    descendants: async () => (++asked < 3 ? [P(40, 'powershell.exe')] : [P(40, 'powershell.exe'), P(41, 'node.exe'), P(42, 'codex.exe'), P(43, 'codex.exe')]) };
+  const sessions = new Map();
+  const rc = createRemoteControl({ sessions, permissions: { list: () => [] }, bridge: b, procAlive: async () => true, pushBubble: () => { pushed++; }, home: () => HOME });
+  try {
+    assert.equal((await rc.launch(cwd, '', id)).ok, true);
+    for (let n = 0; n < 60 && !sessions.has(id); n++) await new Promise((r) => setTimeout(r, 100));
+    const s = sessions.get(id);
+    assert.ok(s, 'the thread is a session of the list');
+    assert.deepEqual([s.provider, s.rawSession, s.claudePid, s.terminal, s.headless, s.state, s.project, s.cwd],
+      ['codex', id.slice(6), 42, true, false, 'idle', path.basename(cwd), cwd]);         // the nearest codex.exe, not its helper
+    assert.ok(pushed > 0);
+    assert.deepEqual(await rc.chatSend(id, '继续'), { ok: true });                         // and a message reaches its terminal
+    assert.deepEqual(b.log.at(-1), ['send', 42, '继续']);
+    assert.match((await rc.launch(cwd, '', id)).msg, /还开着/);
+    // a window that closed before Codex came up: nothing is listed
+    assert.equal(await codexCli.started({ descendants: async () => [], alive: async () => false }, 50, 8), 0);
+  } finally { process.env.PATH = PATH; fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(bin, { recursive: true, force: true }); }
+});
+
 test('a rollout read for the panel: found by its thread id, a first line longer than one read, the conversation', () => {
   const id = '01a0aaaa-0000-7000-8000-000000000001';
   const d = new Date(), p2 = (n) => String(n).padStart(2, '0');

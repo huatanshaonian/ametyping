@@ -135,6 +135,21 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     };
     setTimeout(tick, 1000);
   }
+  // A Codex thread opened again in a window of ours. Codex runs no hook until the first message of the new window
+  // (Claude Code's SessionStart comes at once), so nothing would say the thread is open: it stayed "历史" on the
+  // dashboard, where a message can only be sent to an open session -- never to become one. It is put on the list here,
+  // by the process we started.
+  async function adoptCodex(id, pid, cwd) {
+    const cpid = await codexCli.started(bridge, pid);
+    if (!cpid) return;
+    const t = Date.now();
+    let s = sessions.get(id);
+    if (s && s.claudePid && s.state !== 'ended') return;           // (its own hook came in meanwhile)
+    if (!s) { s = { id, provider: 'codex', rawSession: id.slice(6), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
+    Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: cpid, fromPid: null, headless: false, terminal: true });
+    pushBubble(null);
+  }
+
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
   // tool: 'codex' -- a new Codex session instead of Claude Code's
@@ -164,6 +179,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
     if (codex) codexCli.greet(bridge, pid, thread ? '' : first).catch(() => {}); else answerTrust(pid);
+    if (thread) adoptCodex(resume, pid, cwd).catch(() => {});
     return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 

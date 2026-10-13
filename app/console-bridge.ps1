@@ -1,6 +1,7 @@
 # Console bridge for the Claude panel (one long-lived hidden powershell, driven line by line over stdin/stdout).
 #   anc <pid>             -> "ok <pid>:<name>|<pid>:<name>|..."  the process and its ancestors (Toolhelp snapshot)
 #   alive <pid>           -> "ok 1" | "ok 0"
+#   desc <pid>            -> "ok <pid>:<name>|..."   the process and everything started under it, nearest first
 #   send <pid> <base64>   -> "ok" | "err <reason>"   types UTF-8 text, then Enter, into the console <pid> is attached to
 #   key <pid> <name>      -> "ok" | "err <reason>"   one key: up down left right enter esc tab btab (Shift+Tab) bksp,
 #                                                   ctrl<letter> (Ctrl+A ... as Claude Code's menus name them),
@@ -68,6 +69,18 @@ public static class AmeCon {
     return sb.ToString();
   }
   public static bool Alive(uint pid) { return Snapshot().ContainsKey(pid); }
+  public static string Descendants(uint pid) {
+    var d = Snapshot(); var sb = new StringBuilder(); var seen = new HashSet<uint>(); var todo = new Queue<uint>();
+    if (pid != 0 && d.ContainsKey(pid)) todo.Enqueue(pid);
+    while (todo.Count > 0 && seen.Count < 64) {
+      uint p = todo.Dequeue();
+      if (!seen.Add(p)) continue;
+      if (sb.Length > 0) sb.Append('|');
+      sb.Append(p).Append(':').Append(d[p].Value);
+      foreach (var e in d) if (e.Value.Key == p && e.Key != p) todo.Enqueue(e.Key);
+    }
+    return sb.ToString();
+  }
 
   // attach to the console of pid, run fn on its input buffer (CONIN$), always detach again
   delegate string ConFn(IntPtr h);
@@ -213,6 +226,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     switch ($p[0]) {
       'anc'    { $r = 'ok ' + [AmeCon]::Ancestors([uint32]$p[1]) }
       'alive'  { $r = 'ok ' + [int][AmeCon]::Alive([uint32]$p[1]) }
+      'desc'   { $r = 'ok ' + [AmeCon]::Descendants([uint32]$p[1]) }
       'screen' { $t = [AmeCon]::Screen([uint32]$p[1], ($p.Length -gt 2 -and $p[2] -eq 'hl')); if ($t.StartsWith('=')) { $r = 'ok ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t.Substring(1))) } else { $r = 'err ' + $t.TrimStart('!') } }
       'launch' {
         $j = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[1])) | ConvertFrom-Json
