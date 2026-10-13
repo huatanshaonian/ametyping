@@ -25,6 +25,9 @@ const RELOADS = 4;                  // a menu still loading is read again by its
 
 // read(): asks for the current session's screen -> { ok, screen, msg }; press(key): a key into the terminal, resolves
 // true once the screen after it has been shown (set), false when the key could not be sent
+const KEYNAME = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab' };
+const keyName = (e) => (e.key === 'Tab' && e.shiftKey ? 'btab' : e.shiftKey ? '' : KEYNAME[e.key] || '');
+
 export function createTerm({ read, press = async () => false, onToggle = () => {} }) {
   const pre = h('pre', { class: 'tscr', hidden: true });
   const card = h('div', { class: 'tcard' });
@@ -104,7 +107,8 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     if (b.type === 'code') return h('pre', { class: 'tcode', text: b.text });
     if (b.type === 'bar') return h('div', { class: 'tprog' }, h('span', { class: 'bar' }, h('i', { style: `width:${Math.max(0, Math.min(100, b.pct))}%` })), h('span', { text: `${b.pct}% ${b.word}`.trim() }));
     if (b.type === 'input') return h('div', { class: 'tin' + (b.empty ? ' empty' : '') }, b.search ? h('span', { class: 'tic', text: '⌕' }) : null,
-      b.label ? h('span', { class: 'tic', text: b.label + ' >' }) : null, h('span', { text: b.text || (b.ask ? '（还没输入）' : ' ') }));
+      b.label ? h('span', { class: 'tic', text: b.label + ' >' }) : null,
+      h('span', { text: b.text || (b.typed ? `终端里已经输入了${b.more ? '至少 ' : ''}${b.typed} 个字符（内容不显示）` : b.ask ? '（还没输入）' : ' ') }));
     if (b.type === 'link') return linkEl(b.url);
     if (b.type === 'slider') {
       return h('div', { class: 'tslide' },
@@ -142,13 +146,22 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     const inp = h('input', { class: 'field ttype', placeholder: p.ask ? '在这里粘贴 / 输入，回车送进终端' : hint ? `输入文字${hint}（不带回车）` : '往菜单里输入文字（不带回车）', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: draft });
     const go = async () => {
       const v = p.ask ? inp.value.trim() : inp.value; if (!v) return;
+      // (the sign-in link pasted where its code belongs: the terminal would take it for a wrong code, and the sign-in
+      // would have to be started over with a new link)
+      if (p.ask && (/^https?:\/\//i.test(v) || p.blocks.some((b) => b.type === 'link' && b.url === v))) { st.textContent = '这是链接，不是授权码：没有送进终端'; inp.select(); return; }
       draft = ''; inp.value = '';
       // (as much at a time as one key message carries)
       for (let i = 0; i < v.length; i += 200) if (!(await send('c:' + v.slice(i, i + 200)))) return;
       if (p.ask) await send('enter');
     };
     inp.addEventListener('input', () => { draft = inp.value; });
-    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });   // (not the dashboard's own keys)
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();                                                    // (not the dashboard's own keys)
+      if (e.isComposing) return;
+      // nothing typed: the key is the terminal's (the arrows through a menu, Enter, Esc), as in the reply box
+      const k = !inp.value && !e.ctrlKey && !e.altKey && !e.metaKey ? keyName(e) : '';
+      if (k) { e.preventDefault(); send(k); } else if (e.key === 'Enter') { e.preventDefault(); go(); }
+    });
     return h('div', { class: 'ttyper' + (p.typing ? ' want' : '') }, inp,
       h('button', { class: 'btn' + (p.ask ? ' go' : ''), type: 'button', text: p.ask ? '输入并回车' : '输入', onclick: go }),
       h('button', { class: 'btn', type: 'button', text: '⌫', title: '退格：删掉菜单输入框里的一个字', onclick: () => send('bksp') }));
@@ -222,5 +235,20 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     cur = key; seq++; draft = '';
     if (!key) { open = false; el.hidden = true; onToggle(false); } else if (open) { pre.textContent = ''; parsed = { kind: 'empty' }; card.replaceChildren(); load(); }
   }
-  return { el, show, set, load, target, get open() { return open; } };
+  // A key pressed while the panel is open and no box has the focus (a click on a row or a button leaves the focus
+  // nowhere: the card is drawn anew): the arrows, Enter, Esc and Tab go to the terminal; a letter or a digit the menu
+  // names (a row's number, "s for this session only") too; any other character starts typing in the panel's box when
+  // the menu takes text. Returns true when the key was used.
+  function key(e) {
+    if (!open || raw || e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return false;
+    const k = keyName(e);
+    if (k) { send(k); return true; }
+    if (e.key.length !== 1 || parsed.kind !== 'dialog') return false;
+    const named = parsed.hints.some((x) => x.keys.some((y) => y.key === 'c:' + e.key)) || parsed.blocks.some((b) => b.type === 'list' && b.rows.some((r) => r.num === e.key));
+    if (named && !parsed.ask) { send('c:' + e.key); return true; }
+    const inp = card.querySelector('.ttype');
+    if (inp && (parsed.ask || parsed.typing)) inp.focus();                    // (the character itself is typed there)
+    return false;
+  }
+  return { el, show, set, load, target, key, get open() { return open; } };
 }

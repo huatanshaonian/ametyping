@@ -78,8 +78,15 @@ chk('/login: the code is asked for -- typed and Enter, which the screen does not
   p.hints.map((x) => x.keys.map((k) => k.key).join()).join() === 'enter,esc', [ask, p.hints]);
 p = parseScreen(fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'login-url.txt'), 'utf8').replace('if prompted >', 'if prompted > abc#def'));
 chk('/login: what has been typed after the question', p.blocks.find((b) => b.type === 'input').text === 'abc#def' && !p.blocks.find((b) => b.type === 'input').empty, p.blocks);
+p = P('login-typed');
+const typed = p.blocks.find((b) => b.type === 'input');
+chk('/login: a code typed is shown as stars right against the ">": still the question, with how many', p.ask && typed && typed.ask && typed.typed === 46 && typed.more && typed.text === '' && !typed.empty &&
+  p.blocks.some((b) => b.type === 'link'), typed);
+p = P('login-error');
+chk('/login: a code refused -- the error as text, Enter to try again (a new link), Esc', p.title === 'Login' && !p.ask && p.blocks.length === 1 && p.blocks[0].lines.join() === 'OAuth error: Request failed with status code 400' &&
+  p.hints.map((x) => x.keys.map((k) => k.key).join() + '=' + x.label).join() === 'enter=重试,esc=取消', [p.blocks, p.hints]);
 p = parseScreen(['─'.repeat(80), '  Docs', '', '  https://example.com/a?b=1', '', '  a > b is not a question', '', '  Esc to cancel'].join('\n'));
-chk('a short address on a line of its own is a link too; nothing joined to it', p.blocks.find((b) => b.type === 'link').url === 'https://example.com/a?b=1', p.blocks);
+chk('a short address on a line of its own is a link too; nothing joined to it; a sentence with ">" in it is no question', p.blocks.find((b) => b.type === 'link').url === 'https://example.com/a?b=1' && !p.ask && !p.blocks.some((b) => b.type === 'input'), p.blocks);
 chk('keys: "Press Enter to continue…"', hl('Press Enter to continue…') === 'enter=继续', hl('Press Enter to continue…'));
 for (const name of fs.readdirSync(path.join(__dirname, 'fixtures', 'screens')).filter((f) => f.endsWith('.txt') && !f.startsWith('login')).map((f) => f.slice(0, -4))) {
   const q = P(name), bad = q.kind === 'dialog' && (q.ask || q.blocks.some((b) => b.type === 'link' || b.ask));

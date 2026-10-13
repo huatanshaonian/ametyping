@@ -1,0 +1,15 @@
+
+❯ /login
+  ⎿  Login interrupted
+
+❯ /login
+
+────────────────────────────────────────────────────────────────────────────────
+  Login
+
+  OAuth error: Request failed with status code 400
+
+
+  Press Enter to retry.
+
+  Esc to cancel

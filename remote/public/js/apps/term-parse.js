@@ -13,7 +13,8 @@
 //         | { type: 'link', url }                      an address, whole: one the screen broke over several lines
 //           (/login's sign-in link) is put together again exactly, character for character
 //   an input block may be a question to type an answer to ("Paste code here if prompted >"): then it has label and
-//   ask: true, and the dialog says ask: true -- what is typed goes in followed by Enter
+//   ask: true, and the dialog says ask: true -- what is typed goes in followed by Enter; typed: how many characters
+//   the terminal shows as typed already when it hides what they are ("*****…": at least that many)
 //   a list row: { cur, head, more, scroll, num, glyph, label, rest, current, gap, text, detail }   (text: the row as
 //         drawn, without the cursor -- what a row is known by from one reading of the screen to the next; detail: a
 //         second line that belongs to it)
@@ -36,7 +37,7 @@ export const plainScreen = (text) => String(text || '').replace(MARKS, '');
 const ARROWS = { '↑': 'up', '↓': 'down', '←': 'left', '→': 'right' };
 // what the menus call their keys' effects, said the way the rest of the dashboard talks (anything else stays as it is)
 const SAY = { preview: '预览', rename: '改名', 'only show current repo': '只看当前仓库', cancel: '取消', confirm: '确认', select: '选择', close: '关闭', back: '返回', 'go back': '返回', continue: '继续', navigate: '移动',
-  adjust: '调整', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
+  adjust: '调整', retry: '重试', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
   filter: '筛选', return: '返回', tabs: '到标签页', favorite: '收藏', 'set as default': '设为默认', 'use this session only': '只用于本会话',
   'for this session only': '只用于本会话', 'show all projects': '显示所有项目', 'only show current branch': '只看当前分支', day: '按天', week: '按周' };
 
@@ -302,7 +303,11 @@ function dialog(src, hot = new Map()) {
     if (bar) { blocks.push({ type: 'bar', pct: +bar[1], word: bar[2] || '' }); continue; }
     // a question answered by typing, on its own line: "Paste code here if prompted >"
     const ask = mc < 0 && !/^\s*\d+\.\s/.test(l) ? ASK.exec(l) : null;
-    if (ask) { blocks.push({ type: 'input', label: ask[1].trim(), text: ask[2] || '', search: false, empty: !ask[2], ask: true }); continue; }
+    if (ask) {
+      const t = ask[2] || ask[3] || '', stars = !!ask[2];
+      blocks.push({ type: 'input', label: ask[1].trim(), text: stars ? '' : t, typed: stars ? t.replace('…', '').length : 0, more: stars && t.endsWith('…'), search: false, empty: !t, ask: true });
+      continue;
+    }
     if (isRow(l)) {
       const r = row(l, mc);
       const b = last();
@@ -348,7 +353,9 @@ const BAR = /^\s*[█▉▊▋▌▍▎▏░▒▓]+\s+(\d+)%\s*(\w*)/;
 const URL_LINE = /^\s*(https?:\/\/\S+)$/;
 const LINK = '\uE002';
 // "Paste code here if prompted >" and what has been typed after it
-const ASK = /^\s*([^>]*[^>\s]) >(?: (.*))?$/;
+// (a code is shown as stars, right against the ">": "prompted >*********…")
+// Told from a sentence with a ">" in it by what follows: nothing, the stars, or one unbroken word typed so far.
+const ASK = /^\s*([^>\s]+ [^>]*[^>\s]) >(?:(\*+…?)| (\S+))?$/;
 
 // An address longer than the screen is wide is drawn broken at the right edge, from the first column, with nothing to
 // say the lines belong together: read as text it came out with spaces (or line breaks) in it, and a sign-in link

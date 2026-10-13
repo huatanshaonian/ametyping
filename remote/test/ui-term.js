@@ -252,6 +252,30 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     keys.length = 0;
     await evalJs("(() => { const i = document.querySelector('.dash .term .ttype'); i.value = '  abc123#state-456  '; i.dispatchEvent(new Event('input')); [...document.querySelectorAll('.dash .term .ttyper .btn')].find(b => b.textContent === '输入并回车').click(); })()"); await sleep(2200);
     chk('/login: the code goes into the terminal as typed (trimmed), then Enter', keys.join('|') === 'c:abc123#state-456|enter', keys);
+    // the link pasted where the code belongs is not sent (the terminal would refuse it and the sign-in start over)
+    keys.length = 0;
+    await evalJs("(() => { const i = document.querySelector('.dash .term .ttype'); i.value = document.querySelector('.dash .term .tlurl').value; i.dispatchEvent(new Event('input')); [...document.querySelectorAll('.dash .term .ttyper .btn')].find(b => b.textContent === '输入并回车').click(); })()"); await sleep(600);
+    const refused = await evalJs("[document.querySelector('.dash .term .tst').textContent, document.querySelector('.dash .term .ttype').value.length]");
+    chk('/login: the link pasted into the code box is refused, nothing reaches the terminal', keys.length === 0 && /不是授权码/.test(refused[0]) && refused[1] === 465, [keys, refused]);
+    await evalJs("(() => { const i = document.querySelector('.dash .term .ttype'); i.value = ''; i.dispatchEvent(new Event('input')); })()");
+    // the keyboard without a box clicked first: the arrows, Enter and a row's number go to the terminal
+    const press = async (key, opt = {}) => { await evalJs(`(() => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true, ...${JSON.stringify(opt)} })); })()`); await sleep(700); };
+    c = await refresh('login');
+    keys.length = 0;
+    await press('ArrowDown'); await press('ArrowUp'); await press('2'); await press('x'); await press('Enter');
+    chk('the keyboard works the menu with nothing clicked: ↓ ↑, a row\'s number, Enter (a letter the menu does not name: nothing)', keys.join() === 'down,up,c:2,enter', keys);
+    c = await refresh('login-error');
+    keys.length = 0;
+    await press('Enter');
+    chk('/login refused: 回车 重试 as a button, and the Enter key', c.acts.join('|') === '回车 重试|Esc 取消' && keys.join() === 'enter', [c.acts, keys]);
+    c = await refresh('login-typed');
+    chk('/login: a code already in the terminal is said so', /终端里已经输入了至少 46 个字符/.test(c.text), c.text);
+    c = await refresh('login-url');
+    keys.length = 0;
+    await press('a');
+    chk('a character on a screen that asks for text: the panel\'s box takes the focus, nothing is sent yet', keys.length === 0 && (await evalJs("document.activeElement.classList.contains('ttype')")), keys);
+    await evalJs("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))"); await sleep(700);
+    chk('Esc in the empty box goes to the terminal', keys.join() === 'esc', keys);
     c = await refresh('ask-multi');
 
     // 原文: the screen as the text it is
