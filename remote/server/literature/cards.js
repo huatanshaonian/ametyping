@@ -209,16 +209,21 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const s = cur.sections.find((x) => x.title === '可以采取的行动');
     return s ? s.text.split('\n').map((l) => /^-\s+\[( |x)\]\s+(.*)$/.exec(l)).filter(Boolean).map((m) => ({ done: m[1] === 'x', text: m[2].trim() })) : [];
   }
-  // every card, for 卡片库: what it is of, how far it got, its one line and its first figure
-  function all() {
-    return kb.list('papers').filter((r) => r.meta.zotero && r.meta.status && r.meta.status !== 'none').map((r) => {
-      const it = mirror.item(r.meta.zotero);
-      return { key: r.meta.zotero, citekey: path.basename(r.path, '.md'), title: r.meta.title || (it && it.title) || '', status: r.meta.status, starred: !!r.meta.starred, verified: !!r.meta.verified,
-        updated: r.meta.updated || '', year: r.meta.year || '', venue: r.meta.venue || '', authors: r.meta.authors || [], question: r.meta.question || 0,
-        oneLine: ((/^>\s*(.+)$/m.exec(r.body) || [])[1] || '').trim(), cover: r.meta.cover || '', figs: r.meta.figs || 0, gone: !it };
-    }).sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.title.localeCompare(b.title));
+  // a card in brief: what it is of, how far it got, its one line and its first figure
+  function briefOf(r) {
+    const it = mirror.item(r.meta.zotero);
+    return { key: r.meta.zotero, citekey: path.basename(r.path, '.md'), title: r.meta.title || (it && it.title) || '', status: r.meta.status, starred: !!r.meta.starred, verified: !!r.meta.verified,
+      updated: r.meta.updated || '', year: r.meta.year || '', venue: r.meta.venue || '', authors: r.meta.authors || [], question: r.meta.question || 0,
+      oneLine: ((/^>\s*(.+)$/m.exec(r.body) || [])[1] || '').trim(), cover: r.meta.cover || '', figs: r.meta.figs || 0, gone: !it };
   }
-  return { find, all, run, state, setOwn, setMeta, actions, makeQuick, makeDeep, annotationLines: (k) => annotationLines(mirror, k), NOTE_TAG };
+  const made = (r) => !!(r && r.meta.zotero && r.meta.status && r.meta.status !== 'none');
+  // the card of one paper (今日卡片), or null; hash: of its text as it is now
+  function brief(key) { const r = find(key); return made(r) ? { ...briefOf(r), hash: r.hash } : null; }
+  // every card, for 卡片库
+  function all() {
+    return kb.list('papers').filter(made).map(briefOf).sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.title.localeCompare(b.title));
+  }
+  return { find, all, brief, run, state, setOwn, setMeta, actions, makeQuick, makeDeep, annotationLines: (k) => annotationLines(mirror, k), NOTE_TAG };
 }
 
 module.exports = { createCards, noteHtml, annotationLines, NOTE_TAG };

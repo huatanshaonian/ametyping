@@ -2,10 +2,12 @@
 // local API, and from there into a folder by research topic under it: the model picks one of the folders there or
 // names a new one, which is then made (the folders by month of earlier versions stay as they are, and are not offered). An open-access PDF (OpenAlex / arXiv / NTRS / Unpaywall) is fetched and handed to Zotero as
 // the paper's attachment (Zotero files it and syncs it to WebDAV). Then the module waits a little for a PDF to be there
-// (`pdfWaitMs`, default 3 minutes -- whatever put it there): with one, the card is made from the full text; without,
-// from the abstract, and the card says whether the full text is worth getting by hand (paywalled papers: through the
-// institute). A PDF that turns up later (dragged into Zotero) is noticed on the next library refresh and the card is
-// made again from it. Without an open-access copy the paper is put in the queue of the library access (pdfqueue.js: the
+// (`pdfWaitMs`, default 3 minutes -- whatever put it there): with one, the deep card is made from the full text, its
+// figures in it (settings "autoDeep"; off, or a PDF without text to read: the quick card); without, the quick card from
+// the abstract, which says whether the full text is worth getting by hand (paywalled papers: through the institute). A
+// PDF that turns up later (the library access, or dragged into Zotero) is noticed on the next library refresh and the
+// deep card is made then. What 今日 shows of a kept paper is that card (entry.intake.card: 'deep' | 'quick').
+// Without an open-access copy the paper is put in the queue of the library access (pdfqueue.js: the
 // browser signed in to the institution's subscriptions), which brings the PDF the same way a little later.
 'use strict';
 const { toZotero } = require('./sources/normalize');
@@ -20,6 +22,8 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
   const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
   const pdfWaitMs = C().pdfWaitMs != null ? +C().pdfWaitMs : 180e3, pollMs = C().pollMs != null ? +C().pollMs : 20e3;
   const working = new Set();
+  const autoDeep = () => C().autoDeep !== false;
+  const AGAIN_MS = 10 * 60e3;
 
   // 每日文献 (made when missing)
   async function inbox() {
@@ -58,7 +62,20 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
     return null;
   }
 
-  function setStage(e, stage, msg = '') { feed.decide(e.id, null, { intake: { stage, msg, at: now() } }); onChange('feed'); }
+  function setStage(e, stage, msg = '', more = {}) { feed.decide(e.id, null, { intake: { stage, msg, at: now(), ...more } }); onChange('feed'); }
+  // the card of a kept paper: the deep one when there is a PDF to read, else (or when that one cannot be made) the
+  // quick one. -> { kind, st: the job as it ended, again: the PDF's file was not there yet -- worth another try }
+  async function makeCard(key, has) {
+    const done = async (kind) => { while ((cards.state(key) || {}).running) await sleep(Math.min(pollMs, 2000)); const r = cards.run(key, kind); if (r.wait) await r.wait; return cards.state(key) || {}; };
+    let again = false;
+    if (has && autoDeep()) {
+      const st = await done('deep');
+      if (!st.error) return { kind: 'deep', st };
+      again = st.code === 'NOPDF';
+      log(`文献：${key} 的深读卡没做成（${st.error}），先做速读卡`);
+    }
+    return { kind: 'quick', st: await done('quick'), again };
+  }
 
   async function keep(id) {
     const e = feed.get(id);
@@ -103,31 +120,44 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
     const until = now() + pdfWaitMs;
     while (!fulltext.hasPdf(key) && now() < until) { await sleep(pollMs); await mirror.refresh(true).catch(() => {}); }
     const has = fulltext.hasPdf(key);
-    setStage(feed.get(id), 'card', has ? '有 PDF，生成速读卡…' : '没有 PDF，按摘要生成速读卡…');
-    const r = cards.run(key, 'quick');
-    if (r.wait) await r.wait;
-    const st = cards.state(key) || {};
+    setStage(feed.get(id), 'card', !has ? '没有 PDF，按摘要生成速读卡…' : autoDeep() ? '有 PDF，生成深读卡（读全文、找图，要几分钟）…' : '有 PDF，生成速读卡…');
+    const { kind, st, again } = await makeCard(key, has);
     if (st.error) return setStage(feed.get(id), 'error', st.error);
     const gp = st.result && st.result.getPdf;
     const via = !has && pdfq ? pdfq.note(key) : '';
-    setStage(feed.get(id), has ? 'ready' : 'needs-pdf', has ? '' : (via ? via + '。' : '') + (gp && gp.worth ? '建议手动获取全文：' + (gp.why || '') : '按摘要看，不一定需要全文' + (gp && gp.why ? '：' + gp.why : '')));
+    setStage(feed.get(id), has ? 'ready' : 'needs-pdf', has ? '' : (via ? via + '。' : '') + (gp && gp.worth ? '建议手动获取全文：' + (gp.why || '') : '按摘要看，不一定需要全文' + (gp && gp.why ? '：' + gp.why : '')), { card: kind, again: again ? 1 : undefined });
   }
 
-  // called after each library refresh: a kept paper still without a PDF that now has one gets its card from the full text
+  // called after each change of the library, and every minute (the library does not change when a PDF's file reaches
+  // the NAS, nor when this is first started): a kept paper with a PDF now and only a quick card so far gets its deep card --
+  // the PDF came late; or its file had not reached the NAS when the card was made (tried again a few times); or it was
+  // kept when only quick cards were made on their own (once, the ones not read yet)
+  let looking = false, timer = null;
   async function onLibrary() {
+    if (looking) return;
+    looking = true;
+    try { await upgrade(); } finally { looking = false; }
+  }
+  async function upgrade() {
     for (const e of feed.entries()) {
-      if (!e.zkey || !e.intake || e.intake.stage !== 'needs-pdf' || working.has(e.id) || !fulltext.hasPdf(e.zkey)) continue;
+      const s = e.intake;
+      if (!e.zkey || !s || working.has(e.id) || !fulltext.hasPdf(e.zkey)) continue;
+      const late = s.stage === 'needs-pdf';
+      const again = s.stage === 'ready' && s.again > 0 && s.again < 4 && now() - s.at > AGAIN_MS;
+      const old = s.stage === 'ready' && !s.card && !e.readAt && autoDeep() && ((cards.find(e.zkey) || { meta: {} }).meta.status === 'quick');
+      if (!late && !again && !old) continue;
       working.add(e.id);
       try {
-        setStage(e, 'card', 'PDF 到了，重新生成速读卡…');
-        const r = cards.run(e.zkey, 'quick'); if (r.wait) await r.wait;
-        const st = cards.state(e.zkey) || {};
-        setStage(feed.get(e.id), st.error ? 'error' : 'ready', st.error || '');
-        log(`文献：「${e.paper.title.slice(0, 40)}」的 PDF 到了，速读卡已按全文更新`);
+        setStage(e, 'card', late ? 'PDF 到了，生成深读卡…' : '补做深读卡…', { card: s.card, again: s.again });
+        const r = await makeCard(e.zkey, true);
+        setStage(feed.get(e.id), r.st.error ? 'error' : 'ready', r.st.error || '', { card: r.kind, again: r.again ? (s.again || 0) + 1 : undefined });
+        if (!r.st.error) log(`文献：「${e.paper.title.slice(0, 40)}」的${r.kind === 'deep' ? '深读卡' : '速读卡'}按全文做好了`);
       } finally { working.delete(e.id); }
     }
   }
-  return { keep, onLibrary, fetchPdf, TAG };
+  function start(everyMs = 60e3) { if (!timer) { timer = setInterval(() => onLibrary().catch((e) => log('文献：补做卡片出错：' + e.message)), everyMs); timer.unref && timer.unref(); } }
+  const stop = () => { clearInterval(timer); timer = null; };
+  return { keep, onLibrary, fetchPdf, start, stop, TAG };
 }
 
 module.exports = { createIntake };

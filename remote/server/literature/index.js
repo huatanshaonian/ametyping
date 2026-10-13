@@ -110,6 +110,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   if (cfg.review !== false) review.startTimer();
 
   mirror.start();
+  intake.start();
   pdfq.start();
   absjob.start();
   if (cfg.feed !== false) feed.start();
@@ -139,6 +140,12 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       pdfNote: pdfq.note(key), pdfVia: pdfq.status().enabled && !!it.doi,
       collectionNames: it.collections.map((c) => (mirror.collections().find((x) => x.key === c) || {}).name).filter(Boolean) };
   }
+  // a pick as 今日 shows it: an open one with its abstract in Chinese, a kept one with its card in brief
+  function feedOut(e) {
+    if (e.kind !== 'new') return e;
+    if (e.status === 'kept' && e.zkey) return { ...e, card: cards.brief(e.zkey), job: (cards.state(e.zkey) || {}).running ? cards.state(e.zkey).kind : '' };
+    return { ...e, tr: translate.get(e.paper.abstract) };
+  }
   // the profile as the window shows it: each branch's papers with their titles (keys mean nothing to the user)
   function profileOut() {
     const pr = profile.get(); if (!pr) return null;
@@ -148,7 +155,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 糖糖's morning note / the desktop: what is waiting today
   function morning() {
     const open = feed.list().filter((e) => e.status === 'new');
-    return { new: open.filter((e) => e.kind === 'new').length, review: open.filter((e) => e.kind === 'review').length, top: open.slice(0, 2).map((e) => String(e.paper.title).slice(0, 60)) };
+    return { cards: feed.list().filter((e) => e.status === 'kept' && !e.readAt && e.zkey && cards.brief(e.zkey)).length, new: open.filter((e) => e.kind === 'new').length, review: open.filter((e) => e.kind === 'review').length, top: open.slice(0, 2).map((e) => String(e.paper.title).slice(0, 60)) };
   }
 
   // ---- web API ----
@@ -180,7 +187,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       res.end(buf); return true;
     }
     if (G && p === '/api/lit/profile') { json(res, 200, { profile: profileOut(), state: profile.state(), survey: { ...survey.status(), canWrite: api.canWrite() } }); return true; }
-    if (G && p === '/api/lit/feed') { wantFeed(); json(res, 200, { items: feed.list().map((e) => (e.kind === 'new' ? { ...e, tr: translate.get(e.paper.abstract) } : e)), status: feed.status(), canWrite: api.canWrite() }); return true; }
+    if (G && p === '/api/lit/feed') { wantFeed(); json(res, 200, { items: feed.list().map(feedOut), status: feed.status(), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/feed/pool') { wantFeed(); json(res, 200, { items: feed.pool().map((e) => ({ ...e, tr: translate.get(e.paper.abstract) })), canWrite: api.canWrite() }); return true; }
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
@@ -236,6 +243,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
+    else if (what === 'feed/read') { const e = feed.get(String(d.id || '')); r = e && e.status === 'kept' ? (feed.decide(e.id, null, { readAt: d.undo ? 0 : Date.now() }), { ok: true }) : { ok: false, msg: '找不到这条' }; }
     else if (what === 'feed/promote') r = feed.promote(String(d.id || '')) ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/review') {
       // the user's answers from memory go into the card's 我的笔记, dated (the recall becomes a note)
@@ -300,7 +308,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
 }
 
 module.exports = { createLiterature };

@@ -103,10 +103,15 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('文献')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     // (how many new papers are good enough varies by a paper with how the fake sources answer in time; what is left
     // of the day's five is filled with reviews -- so: at least one review with its two recall questions, not a count)
-    chk('今日: the picks with why and question, a review with its recall questions', await waitFor("document.querySelectorAll('.lf-i').length >= 3") &&
+    chk('今日 in two parts; 今日入库: the new papers with why and question, to keep or pass', await waitFor("document.querySelectorAll('.lf-i').length >= 1 && document.querySelectorAll('.lf-seg').length === 2") &&
       /Q1：鞘套电子密度剖面/.test(await evalJs("document.querySelector('.lf-list').textContent")) &&
-      await evalJs("(() => { const r = [...document.querySelectorAll('.lf-i')].find(e => e.textContent.startsWith('复习')); return !!r && r.querySelectorAll('.lf-ans').length === 2 && [...document.querySelectorAll('.lf-i')].some(e => e.textContent.startsWith('新文献')); })()"),
-      await evalJs("({ items: document.querySelectorAll('.lf-i').length, answers: document.querySelectorAll('.lf-ans').length, kinds: [...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12)) })"));
+      await evalJs("(() => { const s = [...document.querySelectorAll('.lf-seg')]; const i = [...document.querySelectorAll('.lf-i')]; return s[0].classList.contains('on') && /^今日入库（\\d+）$/.test(s[0].textContent) && /^今日卡片（\\d+）$/.test(s[1].textContent) && i.some(e => e.textContent.startsWith('新文献')) && i.every(e => !e.textContent.startsWith('复习') && e.querySelector('.btn.go').textContent === '收下'); })()"),
+      await evalJs("({ segs: [...document.querySelectorAll('.lf-seg')].map(b => b.textContent), kinds: [...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12)) })"));
+    await evalJs("document.querySelector('.lf-seg[data-view=cards]').click()");
+    chk('今日卡片: the reviews with their recall questions (nothing kept yet: no card to read)', await waitFor("[...document.querySelectorAll('.lf-i')].some(e => e.textContent.startsWith('复习'))") &&
+      await evalJs("(() => { const r = [...document.querySelectorAll('.lf-i')].find(e => e.textContent.startsWith('复习')); return r.querySelectorAll('.lf-ans').length === 2 && !document.querySelector('.lf-c') && ![...document.querySelectorAll('.lf-i')].some(e => e.textContent.startsWith('新文献')); })()"),
+      await evalJs("[...document.querySelectorAll('.lf-i')].map(e => e.textContent.slice(0, 12))"));
+    await evalJs("document.querySelector('.lf-seg[data-view=inbox]').click()");
     chk('no stray "null" text in the list', !(await evalJs("/null/.test(document.querySelector('.lf-list').textContent)")), 0);
     await shot('80-lit-feed.png');
     // 摘要对照, and the 候选 tab (here the day has room for every good paper: nothing waits)
@@ -118,9 +123,21 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('候选: its own tab, with search and order; empty here, and says what it is for', await waitFor("[...document.querySelectorAll('.lit-pane')].some(p => !p.hidden && p.querySelector('.lp-bar input[type=search]') && p.querySelector('.lp-bar select') && /没有候选/.test(p.textContent))", 10000), await evalJs("[...document.querySelectorAll('.lit-pane')].map(p => p.textContent.slice(0, 80))"));
     await evalJs("document.querySelector('.lit-tab[data-tab=feed]').click()");
     await evalJs("[...document.querySelectorAll('.lf-i')].find(i => i.textContent.includes('RAM C-II')).querySelector('.btn.go').click()");
-    chk('收下 -> the stages shown, then the card is ready', await waitFor("[...document.querySelectorAll('.lf-i')].some(i => i.textContent.includes('RAM C-II') && i.textContent.includes('速读卡好了'))", 25000),
-      await evalJs("document.querySelector('.lf-list').textContent"));
+    chk('收下 -> the paper waits under 正在准备卡片 with its stage', await waitFor("[...document.querySelectorAll('.lf-sec')].some(s => /正在准备卡片/.test(s.querySelector('h3').textContent) && s.textContent.includes('RAM C-II')) || !!document.querySelector('.lf-pool .btn')", 15000), await evalJs("document.querySelector('.lf-list').textContent.slice(0, 400)"));
+    chk('the deep card made by itself: 今日入库 says a card is ready, 今日卡片 counts it', await waitFor("[...document.querySelectorAll('.lf-pool')].some(p => /1 张卡片做好了/.test(p.textContent))", 60000), await evalJs("document.querySelector('.lf-list').textContent.slice(0, 400)"));
+    await evalJs("[...document.querySelectorAll('.lf-pool')].find(p => /卡片做好了/.test(p.textContent)).querySelector('.btn').click()");
+    chk('今日卡片: the kept paper as a card to read -- a deep card, its first figure as the cover, its one line', await waitFor("(() => { const c = document.querySelector('.lf-c'); const i = c && c.querySelector('.lf-cover img'); return !!i && i.complete && i.naturalWidth > 100; })()", 15000) &&
+      await evalJs("(() => { const c = document.querySelector('.lf-c'); return document.querySelector('.lf-seg[data-view=cards]').classList.contains('on') && c.textContent.startsWith('深读卡') && /RAM C-II/.test(c.textContent) && /张图/.test(c.textContent) && /深读：鞘套剖面与 RCS/.test(c.querySelector('.lf-one').textContent) && c.querySelector('.lf-full').hidden; })()"),
+      await evalJs("(document.querySelector('.lf-c')||{}).textContent"));
     await shot('81-lit-kept.png');
+    await evalJs("[...document.querySelectorAll('.lf-c .btn')].find(b => b.textContent === '展开卡片').click()");
+    chk('展开卡片: the whole card in place -- sections, the figures with their readings, page links', await waitFor("(() => { const f = document.querySelector('.lf-c .lf-full'); const i = f && f.querySelector('img.md-fig'); return !!f && !f.hidden && !!i && i.complete && i.naturalWidth > 100 && !!f.querySelector('.plink') && !f.querySelector('h1'); })()", 15000) &&
+      /与我的关系/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")) && /峰值在 60 km 附近/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")),
+      await evalJs("(document.querySelector('.lf-c .lf-full')||{}).textContent"));
+    await evalJs("document.querySelector('.lf-c .lf-full img.md-fig').scrollIntoView()");
+    await shot('81b-lit-card-open.png');
+    await evalJs("[...document.querySelectorAll('.lf-c .btn')].find(b => b.textContent === '读完了').click()");
+    chk('读完了: the card leaves 待读 and is under 读过的, from where it can be put back', await waitFor("!document.querySelector('.lf-sec .lf-c') && [...document.querySelectorAll('.lf-more')].some(d => /读过的（1）/.test(d.querySelector('summary').textContent) && [...d.querySelectorAll('.btn')].some(b => b.textContent === '放回待读'))", 10000), await evalJs("document.querySelector('.lf-list').textContent.slice(0, 300)"));
 
     // 文献库: a paper's card
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '文献库').click()");
@@ -129,7 +146,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('文献库: the card rendered (sections, question, page links)', await waitFor("!!document.querySelector('.lb-card h2')") && /与我的关系/.test(await evalJs("document.querySelector('.lb-card').textContent")) &&
       await evalJs("!!document.querySelector('.lb-card .plink')"), await evalJs("(document.querySelector('.lb-view')||{}).textContent"));
     chk('no stray "null" text in the paper', !(await evalJs("/null/.test(document.querySelector('.lb-view').textContent)")), 0);
-    chk('文献库: 读图 says a short paper will be read as images when it is read deeply', await waitFor("/读图：这篇 2 页，第一次深读时会自动看原图/.test((document.querySelector('.lb-view .lv') || {}).textContent || '')"), await evalJs("(document.querySelector('.lb-view .lv')||{}).textContent"));
+    chk('文献库: 读图 says the short paper was read as images (the deep card made on keeping it did that)', await waitFor("/读图：已看原图转写 全部 2 页/.test((document.querySelector('.lb-view .lv') || {}).textContent || '')"), await evalJs("(document.querySelector('.lb-view .lv')||{}).textContent"));
     await shot('82-lit-library.png');
 
     // 深读卡 with its figures, and 卡片库 (before the card is changed by hand below: a card the user changed is not overwritten)
@@ -143,11 +160,11 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await shot('86-lit-card-figure.png');
     await evalJs("document.querySelector('.lit-tab[data-tab=cards]').click()");
     chk('卡片库: every card as a tile -- the deep card with its figure as the cover, the quick card without; kinds can be told apart and filtered', await waitFor("document.querySelectorAll('.lc-i').length >= 2 && (() => { const i = document.querySelector('.lc-i .lc-cover img'); return !!i && i.complete && i.naturalWidth > 100; })()", 15000) &&
-      await evalJs("(() => { const t = [...document.querySelectorAll('.lc-i')]; const d = t.find(x => x.textContent.includes('Backward scattering')), q = t.find(x => x.textContent.includes('RAM C-II')); return !!d && !!q && !!d.querySelector('.lc-cover img') && /深读卡/.test(d.textContent) && /1 张图/.test(d.textContent) && !q.querySelector('.lc-cover img') && /速读卡/.test(q.textContent); })()") &&
-      await evalJs("(() => { const s = document.querySelector('.lit-pane:not([hidden]) select'); s.value = 'figs'; s.dispatchEvent(new Event('change')); return document.querySelectorAll('.lc-i').length === 1; })()"),
+      await evalJs("(() => { const t = [...document.querySelectorAll('.lc-i')]; const d = t.find(x => x.textContent.includes('Backward scattering')), q = t.find(x => x.textContent.includes('RAM C-II')); return !!d && !!q && !!d.querySelector('.lc-cover img') && /深读卡/.test(d.textContent) && /1 张图/.test(d.textContent) && !!q.querySelector('.lc-cover img') && /深读卡/.test(q.textContent); })()") &&
+      await evalJs("(() => { const s = document.querySelector('.lit-pane:not([hidden]) select'); s.value = 'quick'; s.dispatchEvent(new Event('change')); const n = document.querySelectorAll('.lc-i').length; s.value = 'figs'; s.dispatchEvent(new Event('change')); return n === 0 && document.querySelectorAll('.lc-i').length === 2; })()"),
       await evalJs("[...document.querySelectorAll('.lc-i')].map(x => x.textContent.slice(0, 80))"));
     await shot('87-lit-cards.png');
-    await evalJs("document.querySelector('.lc-i').click()");
+    await evalJs("[...document.querySelectorAll('.lc-i')].find(x => x.textContent.includes('Backward scattering')).click()");
     chk('a tile opens the card in 文献库', await waitFor("document.querySelector('.lit-tab.on').textContent.startsWith('文献库') && /Backward scattering/.test((document.querySelector('.lb-head h3') || {}).textContent || '')"), await evalJs("document.querySelector('.lit-tab.on').textContent"));
 
     // 深读
