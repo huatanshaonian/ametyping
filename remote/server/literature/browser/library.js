@@ -9,8 +9,8 @@
 //   2. IEEE Xplore without access, or AIP refusing the PDF: signed in through the institution once (signin.js), when
 //      an account is set -- what the library's extension does not cover may be covered by the user's other institution;
 //   3. the tab goes to the PDF, and the answer's body is taken as it arrives.
-// It stops, and says what it needs, when the page asks for a person ("are you a robot": the user answers it in the
-// web desktop -- it is never answered here; the tab is left open for that), when a sign-in is needed that it cannot
+// A visible Cloudflare checkbox on a challenge page is clicked once, then the page is checked again. A challenge
+// that remains (or an unknown widget) stops the site, with the tab left for the user, as does a sign-in it cannot
 // do, or when the page offers no PDF (not subscribed). One paper at a time (pdfqueue.js paces them).
 // The same browser reads an article's abstract off its page for the candidates of the push whose index has none
 // (abstract(): nothing is signed in to, nothing downloaded; absjob.js paces that).
@@ -19,6 +19,7 @@ const { connect } = require('./cdp');
 const { byHost, byDoi, LOOK, ABSTRACT, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED } = require('./sites');
 const { signIn } = require('./signin');
 const { siteLogin } = require('./extlogin');
+const { clickTurnstile } = require('./verify');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MAX_BYTES = 80 * 1024 * 1024;
@@ -27,9 +28,10 @@ const MAX_BYTES = 80 * 1024 * 1024;
 function stop(msg, o = {}) { return Object.assign(new Error(msg), o); }
 
 function createLibrary({ port = () => 0, account = () => '', idp = () => '', accessAccount = () => '', doiBase = 'https://doi.org/',
-  access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, absMs = 25e3, lookMs = 1000, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
+  access = ACCESS, reviveMs = 40e3, slowMs = 10e3, loadMs = 45e3, absMs = 25e3, lookMs = 1000, pdfMs = 6 * 60e3, quietMs = 25e3, checkMs = 3000, verifyMs = 30e3, settleMs = 2500, stepMs = 1500, log = () => {} } = {}) {
   let busy = false;
   const left = new Map();                                    // site -> the tab left open on its check (closed when the site is next asked)
+  const attempted = new WeakMap();                           // at most one checkbox attempt per tab/session
   const enabled = () => +port() > 0;
 
   async function ping() {
@@ -52,11 +54,30 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
     }
     return !!(last && last.host && !/(^|\.)doi\.org$/.test(last.host));
   }
-  // a check that the browser passes by itself takes a few seconds: look again before calling it one for the user
+  // First allow the browser's automatic check to finish. A known, visible checkbox is clicked once; success means
+  // the publisher really serves a page without the challenge afterwards, never just that the click was sent.
+  async function verify(c, sid, v, expression = LOOK) {
+    if (!v.challenge || (attempted.get(c) || new Set()).has(sid)) return v;
+    if (!attempted.has(c)) attempted.set(c, new Set());
+    attempted.get(c).add(sid);
+    if (!(await clickTurnstile(c, sid, { waitMs: Math.min(15e3, verifyMs), pollMs: Math.min(checkMs, 1000) }).catch(() => false)))
+      return c.evaluate(sid, expression).catch(() => v);
+    log(`文献：${v.host} 出现 Cloudflare 点击验证，已点一次，等待页面通过`);
+    for (const until = Date.now() + verifyMs; Date.now() < until;) {
+      await sleep(Math.min(checkMs, Math.max(1, until - Date.now())));
+      v = await c.evaluate(sid, expression).catch(() => v);
+      if (v && v.host && !/^(about|chrome)/.test(v.url) && !v.challenge) {
+        log(`文献：${v.host} 点击验证已通过`);
+        return v;
+      }
+    }
+    log(`文献：${v.host} 点击验证后仍未通过，交给你处理`);
+    return v;
+  }
   async function look(c, sid) {
     let v = await c.evaluate(sid, LOOK);
     for (let i = 0; v.challenge && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
-    return v;
+    return verify(c, sid, v);
   }
 
   // is the library's extension signed in? Asked on a page of its own, in the paper's tab before it goes anywhere.
@@ -214,21 +235,38 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
       // IEEE: not recognised as the institution -> through the institution's sign-in, once (its page writes who the
       // access is from a little after it has loaded: looked at a few more times first)
       for (let i = 0; site.signin && v.access === false && i < 4; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
+      if (v.challenge) { v = await verify(c, sid, v); if (v.challenge) throw check(); }
       if (site.signin && v.access === false && account() && idp()) await institution(v.url);
       // (the link to the PDF is written into some pages a little after they have loaded: looked at a few more times)
       for (let i = 0; !v.pdf && !v.challenge && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
+      if (v.challenge) { v = await verify(c, sid, v); if (v.challenge) throw check(); }
       if (!v.pdf) throw stop(`${at.site.name} 的页面上没有 PDF 入口（多半是没有订购这篇）`, { final: true, ...at });
 
       const paper = v.url;
-      let r = await capture(c, sid, mainFrame, v.pdf, v.url);
-      await c.send('Fetch.disable', {}, sid).catch(() => {});
+      const download = async (url, referrer) => {
+        let r = await capture(c, sid, mainFrame, url, referrer);
+        await c.send('Fetch.disable', {}, sid).catch(() => {});
+        if (r.html) {
+          const probe = await c.evaluate(sid, LOOK).catch(() => null);
+          if (probe && probe.challenge) {
+            v = await look(c, sid);
+            if (v.challenge) throw check();
+            // The verification redirect may itself have started a download while interception was off. Ask for
+            // the same PDF once with capture enabled, using the browser's now-verified session.
+            r = await capture(c, sid, mainFrame, url, referrer);
+            await c.send('Fetch.disable', {}, sid).catch(() => {});
+          }
+        }
+        return r;
+      };
+      let r = await download(v.pdf, v.url);
       // the PDF refused (AIP sends the tab back to the abstract): the user's institution may have what the library's
       // extension has not -- signed in through it, and asked once more
       if (r.html && site.signin && !signed && account() && idp()) {
         if (site.fresh) await standAside(c, site);
         await institution(paper);
         for (let i = 0; !v.pdf && i < 3; i++) { await sleep(checkMs); v = await c.evaluate(sid, LOOK).catch(() => v); }
-        if (v.pdf) { r = await capture(c, sid, mainFrame, v.pdf, v.url); await c.send('Fetch.disable', {}, sid).catch(() => {}); }
+        if (v.pdf) r = await download(v.pdf, v.url);
       }
       if (r.err) throw stop(r.err, at);
       if (r.html) {
@@ -250,7 +288,7 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
   }
 
   // abstract({ doi, url }) -> { abs ('' when the page shows none), site: { id, name } }; throws stop(...) -- need
-  // 'verify' when the page asks for a person (the tab is closed; nothing is answered)
+  // 'verify' when a challenge remains after the one checkbox attempt (the tab is closed).
   async function abstract(p) {
     if (!enabled()) throw stop('图书馆通道没有开启', { need: 'browser' });
     if (busy) throw stop('浏览器正忙');
@@ -262,13 +300,20 @@ function createLibrary({ port = () => 0, account = () => '', idp = () => '', acc
       try { c = await connect(+port()); } catch (e) { throw stop('连不上网页桌面里的浏览器：' + e.message, { need: 'browser' }); }
       ({ targetId } = await c.send('Target.createTarget', { url: 'about:blank' }));
       const sid = await c.attach(targetId);
+      await c.send('Page.enable', {}, sid);
       c.send('Page.navigate', { url: start }, sid).catch(() => {});
       let v = null, checks = 0, done = 0;
-      for (const until = Date.now() + absMs; Date.now() < until;) {
+      for (let until = Date.now() + absMs; Date.now() < until;) {
         await sleep(lookMs);
         try { v = await c.evaluate(sid, ABSTRACT); } catch { continue; }
         if (!v.host || /(^|\.)doi\.org$/.test(v.host) || /^(about|chrome)/.test(v.url)) continue;
-        if (v.challenge) { if (++checks >= 5) break; continue; }       // (a check the browser passes by itself: a few looks)
+        if (v.challenge) {
+          if (++checks < 5) continue;                              // give an automatic check a few looks first
+          v = await verify(c, sid, v, ABSTRACT);
+          if (v.challenge) break;
+          until = Date.now() + absMs;                              // the article has just arrived: allow its abstract to load
+          done = 0;
+        }
         checks = 0;
         if (v.abs.length >= 80) break;
         if (v.ready === 'complete' && ++done >= 3) break;                // (loaded, looked at a few more times: none)
