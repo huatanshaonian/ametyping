@@ -25,6 +25,7 @@ const LOGIN_OFF = { x: 100, y: 50 }, USER_AT = { x: 30, y: 10 }, BUTTON_AT = { x
 
 function createFakeBrowser({ pdf }) {
   const B = { passed: false, signedIn: false, idpSession: false, saved: 'me@mails.test', captchaBox: false, aipIn: false, aipOwn: false, consent: false, consents: 0, consentBtn: true, extOn: true, extAsked: 0, webSession: true, homeOpened: 0, mlSaved: 'lib@inst.test', mlTyped: '', mlLogins: 0, typed: '', logins: 0, opened: 0, closed: 0, log: [], tabs: new Map() };
+  Object.assign(B, { turnstile: false, checkPass: true, checkClicks: 0, pdfChallenge: false, widgetLooks: 0, readyAfter: 0 });
   const server = http.createServer((req, res) => {
     if (req.url === '/json/version') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ Browser: 'FakeChrome/1.0', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/devtools/browser/x` })); }
     res.writeHead(404); res.end();
@@ -56,7 +57,7 @@ function createFakeBrowser({ pdf }) {
   function look(tab) {
     const h = host(tab), base = { host: h, url: tab.url, title: 'page', challenge: false, pdf: '', access: null };
     if (h === 'www.sciencedirect.com') {
-      if (/CHECK$/.test(tab.url) && !B.passed) return { ...base, title: 'Just a moment', challenge: true };
+      if ((/CHECK$/.test(tab.url) || (B.pdfChallenge && /\/pdfft/.test(tab.url))) && !B.passed) return { ...base, title: 'Just a moment', challenge: true };
       return { ...base, pdf: /NONE$/.test(tab.url) ? '' : tab.url + '/pdfft?pid=main.pdf' };
     }
     if (h === 'www.mdpi.com') return { ...base, pdf: tab.url + '/pdf' };
@@ -67,7 +68,7 @@ function createFakeBrowser({ pdf }) {
   }
   // what going to a PDF address answers with: 'pdf' | 'frame' (a viewer page, the PDF in a frame of it) | 'html'
   function pdfAnswer(tab, url) {
-    if (/\/pdfft/.test(url)) return 'pdf';
+    if (/\/pdfft/.test(url)) return B.pdfChallenge && !B.passed ? 'html' : 'pdf';
     if (url.includes('/article-pdf/')) return B.aipIn && B.aipOwn ? 'pdf' : 'html';
     if (url.startsWith('https://www.mdpi.com/') && url.endsWith('/pdf')) return 'download';
     if (/getPDF\.jsp/.test(url)) return !B.signedIn ? 'html' : tab.framed ? 'pdf' : (tab.framed = true, 'frame');
@@ -76,18 +77,31 @@ function createFakeBrowser({ pdf }) {
 
   wss.on('connection', (ws) => {
     let n = 0;
+    const discovered = new Set();
     const emit = (sessionId, method, params) => ws.send(JSON.stringify({ sessionId, method, params }));
     ws.on('message', (raw) => {
-      const d = JSON.parse(raw), tab = B.tabs.get(String(d.sessionId || '').slice(1)), p = d.params || {};
+      const d = JSON.parse(raw), target = String(d.sessionId || '').slice(1), widget = target.startsWith('CF_'),
+        tab = B.tabs.get(widget ? target.slice(3) : target), p = d.params || {};
       const reply = (result) => ws.send(JSON.stringify({ id: d.id, result }));
       switch (d.method) {
         case 'Target.createTarget': { const id = 'T' + (++n) + Date.now().toString(36); B.tabs.set(id, { id, url: p.url, fetch: false }); B.opened++; return reply({ targetId: id }); }
-        case 'Target.attachToTarget': return reply({ sessionId: 'S' + p.targetId });
+        case 'Target.getTargets': {
+          const targetInfos = [...B.tabs.values()].map(t => ({ targetId: t.id, type: 'page', url: t.url }));
+          for (const t of B.tabs.values()) if (B.turnstile && look(t).challenge) { const id = 'CF_' + t.id; discovered.add(id); targetInfos.push({ targetId: id, type: 'iframe' }); }
+          return reply({ targetInfos });
+        }
+        case 'Target.attachToTarget':
+          if (String(p.targetId).startsWith('CF_') && !discovered.has(p.targetId)) return ws.send(JSON.stringify({ id: d.id, error: { message: 'No target with given id found' } }));
+          return reply({ sessionId: 'S' + p.targetId });
         case 'Target.closeTarget': if (B.tabs.delete(p.targetId)) B.closed++; return reply({ success: true });
         case 'Page.getFrameTree': return reply({ frameTree: { frame: { id: 'main' }, childFrames: tab.login ? [{ frame: { id: 'loginframe' } }] : [] } });
+        case 'DOM.getDocument': return reply({ root: { nodeName: '#document', children: widget
+          ? (++B.widgetLooks > B.readyAfter ? [{ nodeName: 'INPUT', backendNodeId: 10, attributes: ['type', 'checkbox'] }] : [])
+          : B.turnstile && look(tab).challenge ? [{ nodeName: 'DIV', shadowRoots: [{ nodeName: '#document-fragment', children: [{ nodeName: 'IFRAME', backendNodeId: 9, frameId: 'CF_' + tab.id, attributes: ['src', 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/test'] }] }] }] : [] } });
+        case 'Page.getLayoutMetrics': return reply({ cssVisualViewport: { clientWidth: 1920, clientHeight: 1080 } });
         case 'Page.createIsolatedWorld': return reply({ executionContextId: p.frameId === 'loginframe' ? 7 : 1 });
         case 'DOM.getFrameOwner': return reply({ backendNodeId: 5 });
-        case 'DOM.getBoxModel': return reply({ model: { content: [LOGIN_OFF.x, LOGIN_OFF.y, 0, 0, 0, 0, 0, 0] } });
+        case 'DOM.getBoxModel': return reply({ model: { content: p.backendNodeId === 10 ? [9, 20.5, 139, 20.5, 139, 44.5, 9, 44.5] : p.backendNodeId === 9 ? [650, 220, 950, 220, 950, 285, 650, 285] : [LOGIN_OFF.x, LOGIN_OFF.y, 0, 0, 0, 0, 0, 0] } });
         case 'Fetch.enable': tab.fetch = true; return reply({});
         case 'Fetch.disable': tab.fetch = false; return reply({});
         case 'Page.navigate': {
@@ -115,6 +129,7 @@ function createFakeBrowser({ pdf }) {
           if (tab.login && p.type === 'rawKeyDown' && p.key === 'Backspace') B.typed = '';
           return reply({});
         case 'Input.dispatchMouseEvent':
+          if (B.turnstile && look(tab).challenge && p.type === 'mouseReleased' && p.x === 671 && p.y === 252.5) { B.checkClicks++; if (B.checkPass) B.passed = true; }
           if (tab.consent && p.type === 'mouseReleased' && p.x === 70 && p.y === 90) { B.consents++; B.consent = false; B.aipIn = true; B.aipOwn = !B.extOn; tab.consent = false; tab.url = tab.target; emit(d.sessionId, 'Page.frameNavigated', { frame: { id: 'main', url: tab.url } }); }
           if (tab.url.endsWith('/user/login') && p.type === 'mouseReleased') {
             if (p.x === 10 && p.y === 30 && tab.mlStep === 1 && B.mlTyped) tab.mlStep = 2;

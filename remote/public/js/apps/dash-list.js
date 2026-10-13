@@ -3,7 +3,7 @@
 // until you ask to see them. Right click (long press on a phone) a session, a group or the list for the menu.
 // Marks and groups live on the server (js/marks.js) so every device shows the same list. Above it: 活动 / 全部 and
 // the search box (dash-filter.js); the list element itself is `el`, the bar is returned as `tool`.
-import { $, h, esc, ago, stateOf, prefs, ctxLeft, CTX_LOW, plain } from '../util.js';
+import { $, h, esc, ago, stateName, prefs, ctxLeft, CTX_LOW, plain } from '../util.js';
 import * as net from '../net.js';
 import * as marks from '../marks.js';
 import * as ctx from '../ctxmenu.js';
@@ -105,7 +105,7 @@ export function createList({ el, current, selected, onSelect, onNote }) {
         h('button', { class: 'cm', type: 'button', title: '更多操作', 'aria-label': '更多操作', text: '⋯' }));   // (shown on touch screens)
       cards.set(key, c);
     }
-    const [cls, name] = stateOf(s.state), n = (s.perms || []).length;
+    const [cls, name] = stateName(s), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
     // (whose session it is: the mark of Codex or of Claude Code before its name -- the rest of the card is the same)

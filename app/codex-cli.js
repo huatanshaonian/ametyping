@@ -13,9 +13,15 @@ const SHIM = /^node\.exe$/i;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // chain: a process and its ancestors, nearest first ({ pid, name }) -> the Codex process in it, what started that
-// (the shim skipped), and whether this app did (a background resume of ours)
+// (the shim skipped), and whether this app did (a background resume of ours).
+// The session's process is the outermost codex.exe: Codex starts more of itself under it (`codex.exe sandbox` around
+// a command, an app-server for its node REPL), and a hook run from inside one of those has that short-lived helper
+// nearest. Taken for the session, its ending would look like the session's own. (The desktop app's "Codex.exe", with
+// a capital, is not one of them: it is what started the session there.)
 function findCodex(chain, ownPid) {
-  const i = chain.findIndex((p) => CODEX_EXE.test(p.name));
+  let i = -1;
+  chain.forEach((p, n) => { if (p.name === 'codex.exe') i = n; });
+  if (i < 0) i = chain.findIndex((p) => CODEX_EXE.test(p.name));
   if (i < 0) return null;
   let j = i + 1;
   if (chain[j] && SHIM.test(chain[j].name)) j++;
@@ -55,6 +61,20 @@ async function greet(bridge, pid, prompt) {
   }
 }
 
+// The Codex process of a window we started (launch): what was launched may be Codex itself, or a PowerShell / cmd.exe
+// / npm's node.exe that starts it a moment later. Looked for under it for a while; the nearest codex.exe is the
+// session's (its helpers are started under it). Returns its pid, or 0: the window closed, or Codex never came up.
+async function started(bridge, pid, tries = 40) {
+  for (let n = 0; n < tries; n++) {
+    const all = await bridge.descendants(pid);
+    const c = all.find((p) => p.name === 'codex.exe') || all.find((p) => CODEX_EXE.test(p.name));
+    if (c) return c.pid;
+    if (n > 3 && !all.length && !(await bridge.alive(pid))) return 0;
+    await sleep(500);
+  }
+  return 0;
+}
+
 // how to start Codex here: codex.exe on PATH (a standalone install), or npm's codex.cmd through cmd.exe
 function command() {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
@@ -76,4 +96,4 @@ function resume(id, cwd, text) {
   return p;
 }
 
-module.exports = { CODEX_EXE, findCodex, send, greet, command, resume };
+module.exports = { CODEX_EXE, findCodex, send, greet, started, command, resume };

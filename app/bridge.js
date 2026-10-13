@@ -50,12 +50,13 @@ const b64 = (s) => Buffer.from(String(s), 'utf8').toString('base64');
 // one argument for a Windows command line (CommandLineToArgvW rules)
 const winArg = (a) => (a && !/[\s"]/.test(a) ? a : '"' + String(a).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"');
 
+const procs = (r) => (r.ok && r.v ? r.v.split('|').map((x) => { const [p, n] = x.split(':'); return { pid: +p, name: n || '' }; }) : []);
+
 module.exports = {
   start,
-  ancestors: async (pid) => {
-    const r = await call(`anc ${pid | 0}`, 3000);
-    return r.ok && r.v ? r.v.split('|').map((x) => { const [p, n] = x.split(':'); return { pid: +p, name: n || '' }; }) : [];
-  },
+  ancestors: async (pid) => procs(await call(`anc ${pid | 0}`, 3000)),
+  // the process and everything started under it, nearest first
+  descendants: async (pid) => procs(await call(`desc ${pid | 0}`, 3000)),
   alive: async (pid) => { const r = await call(`alive ${pid | 0}`, 3000); return r.ok && r.v === '1'; },
   send: (pid, text) => call(`send ${pid | 0} ${b64(text)}`, 15000),
   // hl: with what is highlighted on the screen (a menu's current tab) between U+E000 and U+E001

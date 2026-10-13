@@ -126,6 +126,7 @@ function describe(p, event) {
       const msg = String(p.message || '');
       const perm = /permission to use (.+)$/i.exec(msg);
       if (perm) return `要你确认：用 ${cut(perm[1], 30)}`;
+      if (/needs your permission|needs your approval/i.test(msg)) return '要你确认权限';      // (newer versions do not name the tool)
       if (/waiting for your input/i.test(msg)) return '在等你回复～';
       return `等你一下：${cut(msg, 50)}`;
     }

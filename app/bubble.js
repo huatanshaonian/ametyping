@@ -8,7 +8,10 @@ let data = [], selected = null, pinned = false, typeTimer = null, lastTypedKey =
 const seen = {};                       // session id -> last activity time the user has looked at
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
-const stateName = (st) => (WORKING.has(st) ? ['working', '进行中'] : st === 'waiting' ? ['waiting', '等你确认']
+// "waiting" is two things: a permission asked (a card here, or a 确认 line when the card has gone) -- 等你确认; and
+// Claude Code's notice that it has stopped and waits for the next message -- 等你回复
+const confirming = (s) => !!(s.permissions || []).length || /确认/.test(([...(s.lines || [])].reverse().find((l) => !l.sep) || {}).text || '');
+const stateName = (st, s) => (WORKING.has(st) ? ['working', '进行中'] : st === 'waiting' ? ['waiting', s && !confirming(s) ? '等你回复' : '等你确认']
   : st === 'done' ? ['done', '完成'] : st === 'paused' ? ['idle', '已中断'] : st === 'ended' ? ['idle', '已关闭'] : ['idle', '空闲']);
 const ago = (t0) => { const s = Math.round((Date.now() - t0) / 1000); return s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分`; };
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -27,7 +30,7 @@ function header() {
   const s = data.find((x) => x.id === selected);
   if (s) {
     $('hname').textContent = s.project && s.project !== s.label ? `${s.label}  ─ ${s.project}` : s.label;
-    $('hmeta').textContent = `${stateName(s.state)[1]}${s.steps ? ` · 第${s.steps}步` : ''} · ${ago(s.t0)}`;
+    $('hmeta').textContent = `${stateName(s.state, s)[1]}${s.steps ? ` · 第${s.steps}步` : ''} · ${ago(s.t0)}`;
   }
 }
 
@@ -45,7 +48,7 @@ function renderList() {
       cards.set(s.id, c);
     }
     if (list.children[i] !== c) list.insertBefore(c, list.children[i] || null);
-    const [cls, name] = stateName(s.state);
+    const [cls, name] = stateName(s.state, s);
     c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
     const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
