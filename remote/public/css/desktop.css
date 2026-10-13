@@ -56,7 +56,9 @@ img { image-rendering: pixelated; }
 #mark small { font-size: 12px; }
 
 /* ---------- windows ---------- */
-#windows { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbb); pointer-events: none; overflow: hidden; }
+/* (z-index: the windows stack among themselves in here. Each one brought to the front gets a number one higher,
+   without end: counted against the page, a window would in time be above the menus, message boxes and the taskbar) */
+#windows { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbb); pointer-events: none; overflow: hidden; z-index: 10; }
 .win { position: absolute; pointer-events: auto; min-width: 240px; min-height: 160px;
   border-style: solid; border-width: var(--wt) var(--wr) var(--wb) var(--wl);
   border-image: url(/img/windowbase_active_clean.png) 42 14 22 8 fill;

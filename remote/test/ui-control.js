@@ -44,7 +44,7 @@ function login() {
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: 'ignore' });
   let chrome;
   try {
-    await sleep(2500);
+    for (let n = 0; n < 60; n++) { if (await new Promise((ok) => http.get(`http://127.0.0.1:${PORT}/`, (r) => { r.resume(); ok(true); }).on('error', () => ok(false)))) break; await sleep(250); }
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
       `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
@@ -120,6 +120,21 @@ function login() {
     await evalJs("(async () => (await import('/js/apps/mail.js')).open())()"); await sleep(1200);
     await evalJs("[...document.querySelectorAll('.ml-bar .btn')].find(b => b.textContent === '设置').click()"); await sleep(1200);
     chk('邮件\'s 设置 opens 控制面板 → 邮箱 (one 控制面板 window)', (await winTitle()).includes('控制面板 - 邮箱') && (await evalJs("document.querySelectorAll('.cp').length")) === 1, await winTitle());
+    // a window brought to the front many times (a page left open for days) still stays under the menus and message boxes
+    const over = await evalJs(`(async () => {
+      const wm = await import('/js/wm.js'), menu = await import('/js/ctxmenu.js');
+      const el = document.querySelector('.win:not(.minimized)'), r = el.getBoundingClientRect();
+      for (let n = 0; n < 400; n++) el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      menu.show(x, y, [{ label: '一' }, { label: '二' }]);
+      const m = document.querySelector('.ctxm').getBoundingClientRect();
+      const hit = document.elementFromPoint(m.left + m.width / 2, m.top + m.height / 2);
+      const bar = document.querySelector('#taskbar').getBoundingClientRect();
+      const out = { z: +el.style.zIndex, menu: !!(hit && hit.closest('.ctxm')), layer: getComputedStyle(document.querySelector('#windows')).zIndex };
+      menu.close();
+      return out;
+    })()`);
+    chk('a window focused 400 times is still under a right-click menu opened over it', over.z > 300 && over.menu, over);
     // phone: icons first, then the page with a way back
     await evalJs("[...document.querySelectorAll('.win')].forEach(w => { const t = w.querySelector('.title'); if (t && !t.textContent.startsWith('控制面板')) w.querySelector('.tbtn.close').click(); })"); await sleep(300);
     await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 780, deviceScaleFactor: 2, mobile: true });
