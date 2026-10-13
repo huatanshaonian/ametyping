@@ -50,7 +50,7 @@ const br = createFakeBrowser({ pdf: PDF });
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex-lit.js')] };
   cfg.literature = { zotero: `http://127.0.0.1:${zp}`, webdavDir: WD, kbDir: path.join(T, 'kb'), refreshMs: 300, feed: false, review: false, pdfGapSec: 0.15,
-    browser: { loadMs: 3000, settleMs: 10, stepMs: 20, quietMs: 300, checkMs: 20, pdfMs: 5000 }, pdfQueue: { tickMs: 40 } };
+    browser: { loadMs: 3000, settleMs: 10, stepMs: 20, quietMs: 300, checkMs: 20, verifyMs: 50, pdfMs: 5000 }, pdfQueue: { tickMs: 40 } };
   fs.writeFileSync(CFG, JSON.stringify(cfg));
   const srv = cp.spawn(process.execPath, [R + '/server/server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = ''; srv.stdout.on('data', (d) => { out += d; }); srv.stderr.on('data', (d) => { out += d; });
