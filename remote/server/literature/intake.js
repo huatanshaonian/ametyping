@@ -128,10 +128,17 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
     setStage(feed.get(id), has ? 'ready' : 'needs-pdf', has ? '' : (via ? via + '。' : '') + (gp && gp.worth ? '建议手动获取全文：' + (gp.why || '') : '按摘要看，不一定需要全文' + (gp && gp.why ? '：' + gp.why : '')), { card: kind, again: again ? 1 : undefined });
   }
 
-  // called after each library refresh: a kept paper with a PDF now and only a quick card so far gets its deep card --
+  // called after each change of the library, and every minute (the library does not change when a PDF's file reaches
+  // the NAS, nor when this is first started): a kept paper with a PDF now and only a quick card so far gets its deep card --
   // the PDF came late; or its file had not reached the NAS when the card was made (tried again a few times); or it was
   // kept when only quick cards were made on their own (once, the ones not read yet)
+  let looking = false, timer = null;
   async function onLibrary() {
+    if (looking) return;
+    looking = true;
+    try { await upgrade(); } finally { looking = false; }
+  }
+  async function upgrade() {
     for (const e of feed.entries()) {
       const s = e.intake;
       if (!e.zkey || !s || working.has(e.id) || !fulltext.hasPdf(e.zkey)) continue;
@@ -148,7 +155,9 @@ function createIntake({ cfg = {}, api, mirror, fulltext, cards, feed, http, unpa
       } finally { working.delete(e.id); }
     }
   }
-  return { keep, onLibrary, fetchPdf, TAG };
+  function start(everyMs = 60e3) { if (!timer) { timer = setInterval(() => onLibrary().catch((e) => log('文献：补做卡片出错：' + e.message)), everyMs); timer.unref && timer.unref(); } }
+  const stop = () => { clearInterval(timer); timer = null; };
+  return { keep, onLibrary, fetchPdf, start, stop, TAG };
 }
 
 module.exports = { createIntake };

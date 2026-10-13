@@ -110,6 +110,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   if (cfg.review !== false) review.startTimer();
 
   mirror.start();
+  intake.start();
   pdfq.start();
   absjob.start();
   if (cfg.feed !== false) feed.start();
@@ -307,7 +308,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
+  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
 }
 
 module.exports = { createLiterature };
