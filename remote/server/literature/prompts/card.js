@@ -11,7 +11,8 @@ const obj = (props) => ({ type: 'object', additionalProperties: false, propertie
 
 const QUICK_SCHEMA = obj({ oneLine: str, problem: str, method: str, results: strs, relevance: str, question: num, worth: str, getPdf: obj({ worth: bool, why: str }) });
 const DEEP_SCHEMA = obj({
-  oneLine: str, problem: str, method: str, assumptions: strs, results: strs, relevance: str, question: num, actions: strs,
+  oneLine: str, problem: str, science: { type: 'array', items: obj({ question: str, answer: str }) }, method: str,
+  flow: obj({ nodes: { type: 'array', items: obj({ id: str, kind: str, text: str }) }, edges: { type: 'array', items: obj({ from: str, to: str, label: str }) } }), assumptions: strs, results: strs, relevance: str, question: num, actions: strs,
   reusable: strs, doubts: strs, follow: strs, history: str,
   relations: { type: 'array', items: obj({ citekey: str, type: str, note: str }) },
   vision: obj({ worth: bool, pages: str, why: str }),
@@ -54,7 +55,11 @@ function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []
     ...(src.digest ? [`这篇正文太长，没有整篇给你：全文按顺序分成 ${src.digest.length} 段，每段先整理成了详细的阅读笔记（公式、数值、图、结论都保留了，[p.N] 是原文页码，可以直接照着引用）。下面是各段的笔记：`,
       src.digest.map((d) => `### 第 ${d.from}～${d.to} 页的笔记\n${d.notes}`).join('\n\n'), '']
       : ['正文（标了页码）：', pagesBlock(pages), '']),
-    '字段：oneLine 一句话总结；problem 问题与动机；method 方法（模型、近似、数值方法、实验条件，具体）；assumptions 关键假设和适用条件（用户套用时最容易出错的地方）；',
+    '字段：oneLine 一句话总结；problem 问题与动机（工程或研究背景上为什么要做）；',
+    'science 这篇提出并回答了哪些科学问题，1～4 条：question 写成一个具体的问句（如“碰撞频率随高度变化时，鞘套对 X 波段的衰减由什么决定？”，不要写成“研究了 xx”），answer 是文中给出的回答，有数写数，句末标页码 [p.N]；只提出、没有回答的，answer 写“文中没有回答：……”；',
+    'method 方法的要点（模型、近似、数值方法、实验条件，具体但简洁，3～6 句；步骤顺序交给下面的流程图，不要逐步复述）；',
+    'flow 把方法画成流程图：nodes 4～12 个，每个有 id（英文字母或数字）、kind（input 输入数据或已知条件 / step 处理步骤 / decision 判断或分支 / output 得到的结果）、text（不超过 20 个字，说清这一步做什么，不写公式）；edges 按先后连起来（from、to 用 id），label 写分支条件（如“收敛”“不收敛”）或空字符串。只画方法的主干，可以有分支和回路；方法实在没有步骤可言时给空数组。',
+    'assumptions 关键假设和适用条件（用户套用时最容易出错的地方）；',
     'results 主要结果，3～6 条，有数写数，每条句末标页码 [p.N]；relevance 对用户当前问题的意义（具体到哪个问题、能替代/验证/补充用户的什么）；question 最相关的问题编号（无关填 0）；',
     'actions 2～4 条用户可以马上做的事（如“用 Fig.5 的电子密度剖面重算 X 波段 RCS 并对比”、“复现式 (12) 的碰撞频率模型”），动词开头，具体可执行；',
     'reusable 可复用的公式、参数、数据表（写清在第几页、怎么用）；doubts 疑点与局限（推导跳步、条件苛刻、数据来源不明等）；follow 值得追的参考文献（写出作者、年份、为什么）；',

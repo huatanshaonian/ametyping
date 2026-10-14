@@ -196,7 +196,11 @@ const src = createFakeSources();
     const d1 = await G('/api/lit/item?key=' + k1.key);
     ok('the card: from the full text (page references, the figures), in the knowledge base as Markdown with front matter', d1.card && d1.card.meta.status === 'deep' && /## 图表/.test(d1.card.text) && /\[p\.1\]/.test(d1.card.text) && /^---\ntitle: /.test(d1.card.text) &&
       fs.existsSync(path.join(KB, 'papers', d1.citekey + '.md')), d1.card);
-    ok('a copy of the card went to Zotero as a note', [...zot.objs.values()].some((o) => o.itemType === 'note' && o.parentItem === k1.key && (o.tags || []).some((t) => t.tag === 'Windose卡片') && /<h2>/.test(o.note)));
+    ok('科学问题: each as a question and the answer the paper gives (with its page; one left open said so)', /## 科学问题\n\n1\. \*\*问：\*\* 碰撞频率随高度变化时，X 波段的衰减由什么决定？\n   \*\*答：\*\* 主要由电子密度峰值决定 \[p\.1\]\n2\. \*\*问：\*\* 低空还能用指数剖面吗？\n   \*\*答：\*\* （文中没有回答）/.test(d1.card.text), d1.card.text.slice(0, 1500));
+    ok('方法 begins with its flowchart, written as Mermaid from the steps (shapes by kind, a loop with its condition, the edge to a step that is not there dropped)',
+      /## 方法\n\n```mermaid\nflowchart TD\n  n1\[\/"实测电子密度剖面"\/\]\n  n2\["分层计算反射系数"\]\n  n3\{"是否收敛"\}\n  n4\(\["RCS 随频率的曲线"\]\)\n  n1 --> n2\n  n2 --> n3\n  n3 -->\|"不收敛"\| n2\n  n3 -->\|"收敛"\| n4\n```\n\n方法 \$n_e\(z\)\$/.test(d1.card.text), d1.card.text.slice(0, 1500));
+    ok('a copy of the card went to Zotero as a note (the flowchart left out of it, the method kept)', [...zot.objs.values()].some((o) => o.itemType === 'note' && o.parentItem === k1.key && (o.tags || []).some((t) => t.tag === 'Windose卡片') && /<h2>/.test(o.note) &&
+      /<h2>科学问题<\/h2>/.test(o.note) && !/mermaid|flowchart|```/.test(o.note) && /方法 \$n_e/.test(o.note)));
     ok('the catalogue lists the card', /\[\[/.test(fs.readFileSync(path.join(KB, 'index.md'), 'utf8')));
 
     const k2 = await P('/api/lit/feed/keep', { id: closed.id });

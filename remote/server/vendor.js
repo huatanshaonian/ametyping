@@ -4,12 +4,13 @@
 //   /vendor/pdfjs/pdf.min.mjs, pdf.worker.min.mjs, cmaps/<name>.bcmap, standard_fonts/<name>.(pfb|ttf), and the plain-JS
 //   image decoders wasm/*_nowasm_fallback.js (WebAssembly would need the CSP loosened; the viewer asks for these)
 // KaTeX (LaTeX formulas in Markdown): /vendor/katex/katex.mjs, katex.min.css, fonts/KaTeX_<name>.woff2
+// Mermaid (the flowcharts of the deep cards): /vendor/mermaid/mermaid.min.js, one file, loaded only when a card has one
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'public', 'vendor');
-const FILES = /^\/vendor\/(pdfjs\/(?:pdf(?:\.worker)?\.min\.mjs|cmaps\/[A-Za-z0-9_.-]+\.bcmap|standard_fonts\/[A-Za-z0-9_.-]+\.(?:pfb|ttf)|wasm\/[a-z0-9_]+_nowasm_fallback\.js)|katex\/(?:katex\.mjs|katex\.min\.css|fonts\/KaTeX_[A-Za-z0-9_-]+\.woff2))$/;
+const FILES = /^\/vendor\/(pdfjs\/(?:pdf(?:\.worker)?\.min\.mjs|cmaps\/[A-Za-z0-9_.-]+\.bcmap|standard_fonts\/[A-Za-z0-9_.-]+\.(?:pfb|ttf)|wasm\/[a-z0-9_]+_nowasm_fallback\.js)|katex\/(?:katex\.mjs|katex\.min\.css|fonts\/KaTeX_[A-Za-z0-9_-]+\.woff2)|mermaid\/mermaid\.min\.js)$/;
 const TYPES = { '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf' };
 
 // true when the request was one of these (answered)

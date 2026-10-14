@@ -11,6 +11,7 @@ const path = require('path');
 const { QUICK_SCHEMA, DEEP_SCHEMA, quickPrompt, deepPrompt } = require('./prompts/card');
 const { pickPages, fitPages } = require('./fulltext');
 const { formatRanges, parseRanges } = require('./vision');
+const { flowMermaid } = require('./flow');
 
 const NOTE_TAG = 'Windose卡片';
 const USER_SECTIONS = new Set(['我的理解', '我的笔记']);
@@ -34,8 +35,11 @@ function annotationLines(mirror, key) {
 function noteHtml(md) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const inl = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[\[([^\]]+)\]\]/g, '$1');
-  const out = []; let inList = false;
+  const out = []; let inList = false, fence = false;
   for (const line of md.split('\n')) {
+    // (a flowchart: the note cannot draw it -- the method's text is there anyway)
+    if (/^```/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
     const li = /^\s*-\s+(\[[ x]\]\s+)?(.*)$/.exec(line);
     if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${li[1] ? (li[1].includes('x') ? '☑ ' : '☐ ') : ''}${inl(li[2])}</li>`); continue; }
     if (inList) { out.push('</ul>'); inList = false; }
@@ -79,7 +83,11 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
   function aiSections(kind, a, item, shown = []) {
     const s = [];
     s.push({ title: '', text: `# ${item.title}\n\n> ${a.oneLine || ''}` });
-    s.push({ title: '问题', text: a.problem || '' }, { title: '方法', text: a.method || '' });
+    s.push({ title: '问题', text: a.problem || '' });
+    if (kind === 'deep') s.push({ title: '科学问题', text: (a.science || []).filter((x) => x && String(x.question || '').trim()).map((x, i) => `${i + 1}. **问：** ${String(x.question).trim()}\n   **答：** ${String(x.answer || '').trim() || '（文中没有回答）'}`).join('\n') });
+    // (the deep card's method begins with its flowchart)
+    const chart = kind === 'deep' ? flowMermaid(a.flow) : '';
+    s.push({ title: '方法', text: [chart, a.method || ''].filter(Boolean).join('\n\n') });
     if (kind === 'deep') s.push({ title: '关键假设', text: list(a.assumptions) });
     s.push({ title: '主要结果', text: list(a.results) });
     if (shown.length) s.push({ title: '图表', text: figureSection(shown) });

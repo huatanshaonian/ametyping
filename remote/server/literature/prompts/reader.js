@@ -15,7 +15,7 @@ const DISTILL_SCHEMA = obj({ ops: { type: 'array', items: obj({ section: str, te
 const TOPIC_SCHEMA = obj({ overview: str, evidence: strs, disagreements: strs, gaps: strs });
 const RELATED_SCHEMA = obj({ paragraph: str, used: strs });
 
-const CARD_SECTIONS = ['问题', '方法', '关键假设', '主要结果', '与我的关系', '可以采取的行动', '可复用的公式与数据', '疑点', '值得追的文献', '历史与后续', '我的理解', '关系'];
+const CARD_SECTIONS = ['问题', '科学问题', '方法', '关键假设', '主要结果', '与我的关系', '可以采取的行动', '可复用的公式与数据', '疑点', '值得追的文献', '历史与后续', '我的理解', '关系'];
 const cut = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
 const pagesBlock = (pages) => pages.map((p) => `[p.${p.page}]\n${p.text}`).join('\n\n');
 

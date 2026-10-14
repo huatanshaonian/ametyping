@@ -134,6 +134,11 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('展开卡片: the whole card in place -- sections, the figures with their readings, page links', await waitFor("(() => { const f = document.querySelector('.lf-c .lf-full'); const i = f && f.querySelector('img.md-fig'); return !!f && !f.hidden && !!i && i.complete && i.naturalWidth > 100 && !!f.querySelector('.plink') && !f.querySelector('h1'); })()", 15000) &&
       /与我的关系/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")) && /峰值在 60 km 附近/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")),
       await evalJs("(document.querySelector('.lf-c .lf-full')||{}).textContent"));
+    chk('展开卡片: 科学问题, and 方法 drawn as a flowchart (Mermaid, under the page\'s own rules: no eval, no outside scripts)', await waitFor("(() => { const f = document.querySelector('.lf-c .lf-full .md-flow svg'); return !!f && /分层计算反射系数/.test(f.textContent) && /不收敛/.test(f.textContent) && f.querySelectorAll('.node').length === 4; })()", 20000) &&
+      /科学问题[\s\S]*问：\s*碰撞频率随高度变化时/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")) && !(await evalJs("!!document.querySelector('.lf-c .lf-full pre code.language-mermaid')")),
+      await evalJs("(document.querySelector('.lf-c .lf-full .md-flow, .lf-c .lf-full pre')||{}).outerHTML"));
+    await evalJs("document.querySelector('.lf-c .lf-full .md-flow').scrollIntoView()");
+    await shot('81c-lit-card-flow.png');
     await evalJs("document.querySelector('.lf-c .lf-full img.md-fig').scrollIntoView()");
     await shot('81b-lit-card-open.png');
     await evalJs("[...document.querySelectorAll('.lf-c .btn')].find(b => b.textContent === '读完了').click()");

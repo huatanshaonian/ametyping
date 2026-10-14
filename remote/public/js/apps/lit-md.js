@@ -2,9 +2,11 @@
 // the YAML front matter left out, [[citekey]] links opening that card (onLink), "- [ ]" tasks shown as ☐ / ☑, and the
 // page numbers the model cites ([p.12]) clickable when the reader has the PDF open (onPage). A card's figures
 // (![…](../figures/<citekey>/<id>.png), kept beside the cards) are shown from the server; no other picture is.
+// A flowchart (```mermaid, a deep card's 方法) is drawn (lit-flow.js).
 import { Marked } from '/vendor/marked.esm.js';
 import DOMPurify from '/vendor/purify.es.js';
 import { createMath, drawMath } from './md-math.js';
+import { drawFlows } from './lit-flow.js';
 
 const FIG = '/api/lit/fig?p=';
 export const figUrl = (rel) => FIG + encodeURIComponent(rel);
@@ -26,6 +28,7 @@ export async function renderMd(el, text, { onLink, onPage } = {}) {
     img.addEventListener('click', () => img.classList.toggle('big'));
   }
   await drawMath(el, math.found);
+  await drawFlows([...el.querySelectorAll('pre > code.language-mermaid')]);
   for (const a of el.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href');
     if (href.startsWith('#lit:')) { a.classList.add('wlink'); a.addEventListener('click', (e) => { e.preventDefault(); if (onLink) onLink(decodeURIComponent(href.slice(5))); }); }
