@@ -8,8 +8,8 @@ const { questionsBlock } = require('./feed');
 const str = { type: 'string' }, strs = { type: 'array', items: str };
 const obj = (props) => ({ type: 'object', additionalProperties: false, properties: props, required: Object.keys(props) });
 
-const FEEDBACK_SCHEMA = obj({ feedback: str, missed: strs, askBack: str });
-const CHAT_SCHEMA = obj({ answer: str, askBack: str });
+const FEEDBACK_SCHEMA = obj({ feedback: str, missed: strs });
+const CHAT_SCHEMA = obj({ answer: str });
 const DISTILL_SCHEMA = obj({ ops: { type: 'array', items: obj({ section: str, text: str, reason: str }) } });
 const TOPIC_SCHEMA = obj({ overview: str, evidence: strs, disagreements: strs, gaps: strs });
 const RELATED_SCHEMA = obj({ paragraph: str, used: strs });
@@ -22,8 +22,7 @@ function feedbackPrompt(it, card, pages, mine) {
   return [
     '用户在深读一篇文献前，先用自己的话写下了理解。请对照原文给出反馈（中文，像一位耐心的导师）：',
     '- feedback：哪些理解对、哪些偏了或漏了（指出原文页码 [p.N]），2～5 句，具体；',
-    '- missed：用户没注意到但对用户的问题重要的点（0～3 条）；',
-    '- askBack：一个反问，检验用户是否真的抓住了关键（例如关于假设的适用条件）。', '',
+    '- missed：用户没注意到但对用户的问题重要的点（0～3 条）。', '',
     `文献：${it.title}`, card ? '卡片：\n' + cut(card, 4000) : '', '用户写的理解：\n' + cut(mine, 3000), '', '原文（标了页码）：', pagesBlock(pages),
   ].filter((x) => x !== '').join('\n');
 }
@@ -33,8 +32,7 @@ function chatPrompt(profile, it, card, pages, turns, q, sel) {
   return [
     '你在陪一位博士生精读一篇文献。回答用中文，术语保留原文，公式用 LaTeX（行内 $...$，独立 $$...$$）。',
     '回答要依据原文，引用处标页码 [p.N]；原文里没有的要明说“原文没有写”，可以补充你的背景知识但要标明“（背景知识）”。',
-    '用户的目标是把阅读变成产出：回答时尽量联系用户的问题，说明能怎么用。',
-    'askBack：在合适时给出一个反问，促使用户自己思考（检验理解、追问适用条件、或建议下一步看哪里）；不需要时给空字符串。', '',
+    '用户的目标是把阅读变成产出：回答时尽量联系用户的问题，说明能怎么用。直接回答问题，不要反问用户。', '',
     '用户现在要解决的问题：', questionsBlock(profile), '',
     `文献：${it.title}（${it.venue || ''} ${it.year || ''}）`, card ? '卡片：\n' + cut(card, 5000) : '', '',
     '相关原文（标了页码）：', pagesBlock(pages), '',

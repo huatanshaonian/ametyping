@@ -1,11 +1,11 @@
 // 深读: one paper read together with the model.
 //   understand  the user writes what they understood (or want from it) first -- kept in the card's 我的理解 -- and the
-//               model compares it with the paper: what is right, what was missed, one question back
+//               model compares it with the paper: what is right, what was missed
 //   chat        questions about the paper; every turn is sent with the card, the pages that matter (by the question's
 //               words, the selected text, a page asked for) and the talk so far -- nothing relies on the model's memory
 //   distill     沉淀: what the talk found worth keeping becomes proposed additions to the card (accepted one by one)
 // Topics (专题): a review page built from cards, and a related-work paragraph with \cite{citekey} for a thesis.
-//   <dataDir>/literature/chats/<key>.json  { turns: [{ q, a, askBack, sel, page, at }], feedback }
+//   <dataDir>/literature/chats/<key>.json  { turns: [{ q, a, sel, page, at }], feedback }   (older turns may carry an askBack: not shown)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -52,7 +52,7 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision =
       const it = mirror.item(key);
       const a = await ask(feedbackPrompt(it, cardText(key), pickPages(ft.pages, text.split(/[\s，。,.;；]+/), 50000, ft.labels), text), FEEDBACK_SCHEMA);
       const c = load(key);
-      c.feedback = { mine: text, feedback: a.feedback || '', missed: a.missed || [], askBack: a.askBack || '', at: Date.now() };
+      c.feedback = { mine: text, feedback: a.feedback || '', missed: a.missed || [], at: Date.now() };
       save(key, c);
     });
   }
@@ -70,7 +70,7 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision =
       if (page > 0 && at >= 0 && at < pages.length && !picked.some((p) => p.page === page)) picked = [...picked, { page, text: pages[at] }];
       const it = mirror.item(key);
       const a = await ask(chatPrompt(profile.get() || {}, it, cardText(key), picked, c.turns.slice(-8), q, sel), CHAT_SCHEMA);
-      c.turns.push({ q, a: a.answer || '', askBack: a.askBack || '', sel: String(sel).slice(0, 2000), page: page || 0, at: Date.now() });
+      c.turns.push({ q, a: a.answer || '', sel: String(sel).slice(0, 2000), page: page || 0, at: Date.now() });
       c.turns = c.turns.slice(-200);
       save(key, c);
     });

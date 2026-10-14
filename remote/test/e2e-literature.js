@@ -225,11 +225,11 @@ const src = createFakeSources();
     // ---- 深读 ----
     ok('understanding written', (await P('/api/lit/understand', { key: 'AAAAAAA1', text: '它测了鞘套的电子密度，用来算后向散射。' })).ok);
     const fb = await until(async () => { const r = await G('/api/lit/read?key=AAAAAAA1'); return r.feedback && !(r.job && r.job.running) && r; });
-    ok('the feedback on it (with a page) and a question back; the understanding is in the card', fb.feedback && /\[p\.1\]/.test(fb.feedback.feedback) && fb.feedback.askBack && /## 我的理解\n\n它测了鞘套/.test((await G('/api/lit/item?key=AAAAAAA1')).card.text), fb);
+    ok('the feedback on it (with a page and what was missed, no question back); the understanding is in the card', fb.feedback && /\[p\.1\]/.test(fb.feedback.feedback) && fb.feedback.missed.length === 1 && !('askBack' in fb.feedback) && /## 我的理解\n\n它测了鞘套/.test((await G('/api/lit/item?key=AAAAAAA1')).card.text), fb);
     ok('a question asked', (await P('/api/lit/chat', { key: 'AAAAAAA1', q: 'collision frequency 怎么取？', sel: 'collision frequency model', page: 2 })).ok);
     const ch = await until(async () => { const r = await G('/api/lit/read?key=AAAAAAA1'); return r.turns && r.turns.length && !(r.job && r.job.running) && r; });
-    const lg = fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => /answer,askBack/.test(x.kind)).pop();
-    ok('answered with a page reference; the question was sent with the selected text and the pages that matter', ch.turns[0].a.includes('[p.1]') && /collision frequency model page two/.test(lg.prompt) && /选中的文字/.test(lg.prompt), ch.turns);
+    const lg = fs.readFileSync(path.join(T, 'codex.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.kind === 'answer').pop();
+    ok('answered with a page reference; the question was sent with the selected text and the pages that matter', ch.turns[0].a.includes('[p.1]') && !('askBack' in ch.turns[0]) && /不要反问用户/.test(lg.prompt) && /collision frequency model page two/.test(lg.prompt) && /选中的文字/.test(lg.prompt), ch.turns);
     ok('沉淀 started', (await P('/api/lit/distill', { key: 'AAAAAAA1' })).ok);
     const props = await until(async () => { const r = await G('/api/lit/proposals'); return r.items.filter((x) => x.source === 'distill').length === 2 && r.items; });
     ok('two proposals (a section that does not exist goes to 我的笔记); nothing written yet', props && props.some((x) => x.op.section === '疑点') && props.some((x) => x.op.section === '我的笔记') &&
@@ -306,7 +306,7 @@ const src = createFakeSources();
       (await req('GET', '/api/lit/vision/page?key=AAAAAAA2&page=1', null, cookie)).status === 404, pg2);
     await P('/api/lit/chat', { key: 'AAAAAAA1', q: '式 (2) 怎么来的？', page: 2 });
     await until(async () => { const r = await G('/api/lit/read?key=AAAAAAA1'); return r.turns.length === 2 && !(r.job && r.job.running) && r; });
-    ok('a question afterwards uses the transcription too', /读图第 2 页/.test(nLog().filter((x) => /answer,askBack/.test(x.kind)).pop().prompt));
+    ok('a question afterwards uses the transcription too', /读图第 2 页/.test(nLog().filter((x) => x.kind === 'answer').pop().prompt));
     // a paper longer than the limit: the deep card's model asks for page 2, the user approves (or declines)
     ok('limit 1', (await P('/api/lit/settings', { visionMaxPages: 1 })).ok);
     vi = await G('/api/lit/vision?key=' + k2.key);

@@ -124,7 +124,6 @@
 .lr-me { align-self: flex-end; max-width: 88%; padding: 5px 9px; background: var(--fill); color: var(--on-fill); white-space: pre-wrap; }
 .lr-me blockquote { margin: 0 0 4px; padding-left: 6px; border-left: 2px solid rgba(255, 255, 255, .6); font-size: 12px; opacity: .85; }
 .lr-ai { align-self: stretch; padding: 5px 9px; background: var(--surface); border: 1px solid var(--edge); }
-.lr-ask { padding: 4px 9px; border-left: 3px solid var(--pink); background: var(--quote-bg); font-size: 12.5px; } .lr-ask .md { font-size: 12.5px; }
 .lr-box { flex: none; border-top: 1px solid var(--edge); padding-top: 6px; }
 .lr-sel { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lr.narrow .lr-side { width: 100%; } .lr.narrow .lr-pdf { display: none; } .lr.narrow.side .lr-pdf { display: block; } .lr.narrow.side .lr-side { display: none; }

@@ -86,8 +86,8 @@ process.stdin.on('end', () => {
       relations: other ? [{ citekey: other, type: '对比', note: '方法不同' }] : [],
       figures: [...prompt.matchAll(/^- \[F:(p\d+-\d+)\]/gm)].map((m) => ({ id: m[1], title: '电子密度剖面', reading: '峰值在 60 km 附近，可直接作为 RCS 计算的输入。' })),
       vision: /vision：这篇有 \d+ 页/.test(prompt) ? { worth: true, pages: '2', why: '第 2 页有碰撞频率的推导' } : { worth: false, pages: '', why: '' } };
-  } else if (P.missed) a = { feedback: '你抓住了主线，但漏了假设的适用条件 [p.1]', missed: ['碰撞频率的取值'], askBack: '这个假设在 60 km 以下还成立吗？' };
-  else if (P.askBack) a = { answer: '原文第 1 页给出了剖面 [p.1]。（背景知识）通常用指数分布。', askBack: '你的工况和它一样吗？' };
+  } else if (P.missed) a = { feedback: '你抓住了主线，但漏了假设的适用条件 [p.1]', missed: ['碰撞频率的取值'] };
+  else if (P.answer && !P.sources) a = { answer: '原文第 1 页给出了剖面 [p.1]。（背景知识）通常用指数分布。' };
   else if (P.ops) a = { ops: [{ section: '疑点', text: '- 对话发现：碰撞频率取常数在低空不成立 [p.1]', reason: '第 1 轮' }, { section: '不存在的小节', text: '- 归到我的笔记', reason: '第 1 轮' }] };
   else if (P.gaps) { const k = (/^### \[\[([^\]]+)\]\]/m.exec(prompt) || [])[1] || 'x'; a = { overview: `主线综述 [[${k}]]`, evidence: [`证据 [[${k}]]`], disagreements: [], gaps: ['低空碰撞频率没人测过'] }; }
   else if (P.paragraph) { const k = (/^### (\S+)：/m.exec(prompt) || [])[1] || 'x'; a = { paragraph: `已有研究 \\cite{${k}} 测量了鞘套剖面。`, used: [k] }; }
