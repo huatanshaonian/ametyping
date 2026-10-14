@@ -1,0 +1,23 @@
+────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+  Extra rules for the auto mode classifier. Rules are plain sentences; new
+  rules are saved to your user settings.
+
+  ╭────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                              │
+  ╰────────────────────────────────────────────────────────────────────────╯
+
+    1. Add a new rule…
+  ❯ 2. Soft allow          [x] Built-in rules · 17
+    3. Soft deny           [x] Built-in rules · 72
+    4. Hard deny           [x] Built-in rules · 1
+    5. Environment         Built-in default document · enter to edit
+                           **Organization**: None configured
+                           **Primary use of Claude Code**: software develop…
+                           **Cloud provider(s)**: None configured
+                           **Repository visibility**: assume private unless…
+                           **Internal sharing / snippet hosting**: None con…
+                           … (+16 more lines)
+
+  ↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel

@@ -7,6 +7,7 @@
 // cursor is Enter. What is not recognised is shown as the text it is; 「原文」 shows the whole screen that way.
 import { h } from '../util.js';
 import { parseScreen, cursorOf, plainScreen } from './term-parse.js';
+import { artEl } from './term-art.js';
 
 // Claude Code's commands that open a menu or a screen of their own in the terminal (the panel opens by itself for
 // these only; others -- /compact, /clear, /context, a skill -- just run and print into the conversation). The first
@@ -104,7 +105,7 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
   function blockEl(b) {
     if (b.type === 'list') return h('div', { class: 'tlist' }, ...b.rows.map((r, i) => rowEl(r, b.rows, i)));
     if (b.type === 'kv') return h('div', { class: 'tkv' }, ...b.rows.flatMap(([k, v]) => [h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v })]));
-    if (b.type === 'code') return h('pre', { class: 'tcode', text: b.text });
+    if (b.type === 'code') return (b.art && artEl(b.text)) || h('pre', { class: 'tcode' + (b.art ? ' tart' : ''), text: b.text });
     if (b.type === 'bar') return h('div', { class: 'tprog' }, h('span', { class: 'bar' }, h('i', { style: `width:${Math.max(0, Math.min(100, b.pct))}%` })), h('span', { text: `${b.pct}% ${b.word}`.trim() }));
     if (b.type === 'input') return h('div', { class: 'tin' + (b.empty ? ' empty' : '') }, b.search ? h('span', { class: 'tic', text: '⌕' }) : null,
       b.label ? h('span', { class: 'tic', text: b.label + ' >' }) : null,

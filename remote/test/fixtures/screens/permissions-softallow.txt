@@ -1,0 +1,23 @@
+│   read those manifests (`pip install -r requirements.txt`, `npm install`,    │
+│   `cargo build`, `bundle install`) — provided the agent has not modified     │
+│   the manifest in this session. Does NOT cover installing agent-chosen       │
+│   package names (e.g. `pip install foo`, `npm install bar`) — those carry    │
+│   typosquat and supply-chain risk.                                           │
+│                                                                              │
+│   - Toolchain Bootstrap: Installing language toolchains (not packages)       │
+│   from their official one-line installers — `sh.rustup.rs`,                  │
+│   `bootstrap.pypa.io`, `astral.sh`, `bun.sh`, `deb.nodesource.com`,          │
+│   `get.docker.com`, `brew.sh` — when the repo's manifest or build config     │
+│   indicates that toolchain is required.                                      │
+│                                                                              │
+│   … +10 more rules — run `claude auto-mode defaults` to print the full       │
+│   set.                                                                       │
+│                                                                              │
+│                                                                              │
+│ This section has no configured rules, so the built-ins apply. Add a rule to  │
+│ customize it.                                                                │
+│                                                                              │
+│ ❯ 1. View in editor (vi)                                                     │
+│   2. Cancel                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Esc to cancel

@@ -1,0 +1,23 @@
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/amprobe-proj
+
+
+❯ /permissions
+  ⎿  Permissions dialog dismissed
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code can read files in the workspace, and make edits when auto-accept
+  edits is on.
+
+    -  /home/dell/amprobe-proj (Original working directory)
+    1. /tmp
+  ❯ 2. /home/dell/cem_files
+    3. Add directory…
+
+
+  ↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel

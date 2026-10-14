@@ -1,0 +1,22 @@
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask before using allowed tools.
+  ╭───────────────────────────────────────────────╮
+  │ ⌕ Search…                                     │
+  ╰───────────────────────────────────────────────╯
+
+    1.  Add a new rule…
+    2.  Bash(./run.sh)
+    3.  Bash(cat *)
+    4.  Bash(cmake --build build)
+    5.  Bash(conda run -n cem python *)
+    6.  Bash(find . -name '*.py' -newer setup.py)
+    7.  Bash(git diff *)
+    8.  Bash(git log *)
+    9.  Bash(git status)
+  ↓ 10. Bash(grep -rn TODO .)
+
+  ←/→ to switch · ↓ to select · Esc to cancel

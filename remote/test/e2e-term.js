@@ -29,7 +29,8 @@ p = P('model');
 chk('/model: title and what it says', p.kind === 'dialog' && p.title === 'Select model' && /^Switch between Claude models\..*--model\.$/.test(p.sub) && !p.tabs, [p.title, p.sub]);
 chk('/model: rows, the cursor, the scroll mark, the rest below', rows(p) === ' Default (recommended)|>Opus 5.5| Fable 5.1| Sonnet 5.5| Haiku 4.5| Sonnet 5|~… +6 models' && list(p)[5].scroll === '↓', rows(p));
 chk('/model: number, ✔ = the one in use, the description', list(p)[1].num === '2' && list(p)[1].current && list(p)[1].rest === 'For complex work and everyday tasks' && !list(p)[2].current, list(p)[1]);
-chk('/model: keys', keys(p) === 'enter=设为默认 ; c:s=只用于本会话 ; esc=取消', keys(p));
+chk('/model: keys, the effort\'s ←/→ named at the end of its line among them', keys(p) === 'enter=设为默认 ; c:s=只用于本会话 ; esc=取消 ; left/right=调整（High effort）' &&
+  p.blocks.some((b) => b.type === 'text' && b.lines.includes('● High effort')), keys(p));
 chk('/model after ↓: the cursor one down', cursorOf(P('model-down')).row.label === 'Fable 5.1' && cursorOf(p).row.label === 'Opus 5.5', 0);
 p = P('effort-real');
 const sl = p.blocks.find((b) => b.type === 'slider');
@@ -92,6 +93,54 @@ for (const name of fs.readdirSync(path.join(__dirname, 'fixtures', 'screens')).f
   const q = P(name), bad = q.kind === 'dialog' && (q.ask || q.blocks.some((b) => b.type === 'link' || b.ask));
   if (bad) chk('no other menu is taken for a link or a question to type into: ' + name, false, q.blocks);
 }
+
+// /permissions (2.1.299, captured on Linux): what lies under its tabs
+const texts = (q) => q.blocks.filter((b) => b.type === 'text').map((b) => b.lines.join(' / '));
+p = P('permissions-allow');
+chk('/permissions, Allow with rules: numbered rows, the window\'s ↓ on the last', p.title === 'Permissions' && p.tab === 1 && list(p).length === 10 && list(p)[1].label === 'Bash(./run.sh)' && list(p)[9].scroll === '↓' && list(p)[9].num === '10', rows(p));
+p = P('permissions-rule');
+chk('/permissions, deleting a rule (a menu drawn inside a box of its own): titled, the rule as text, Yes / No as the rows', p.kind === 'dialog' && p.title === 'Delete allowed tool?' && rows(p) === ' Yes|>No' &&
+  texts(p).join(' | ') === 'Bash(./run.sh) / The Bash command ./run.sh / From project local settings | Are you sure you want to delete this permission rule?' && keys(p) === 'enter=确认 ; esc=取消' && !p.typing, [p.title, rows(p), texts(p)]);
+p = P('permissions-softallow');
+chk('/permissions, the built-in rules (a box taller than the screen, its top scrolled away): the text without the box\'s sides, the two choices as rows', rows(p) === '>View in editor (vi)| Cancel' &&
+  !texts(p).some((t) => /│|╰/.test(t)) && texts(p).some((t) => /^This section has no configured rules/.test(t)) && keys(p) === 'esc=取消', [rows(p), texts(p)]);
+p = P('permissions-workspace-del');
+chk('/permissions, taking a folder off the workspace: the folder is what is asked about, not a row to choose', p.title === 'Remove directory from workspace?' && rows(p) === ' Yes|>No' && texts(p)[0] === '/home/dell/cem_files', [rows(p), texts(p)]);
+p = P('permissions-workspace');
+chk('/permissions, Workspace: the folder it began in is no choice (its "-" dropped), the others are', rows(p) === '#/home/dell/amprobe-proj (Original working directory)| /tmp|>/home/dell/cem_files| Add directory…', rows(p));
+p = P('permissions-auto');
+const env = list(p)[4];
+chk('/permissions, Auto mode: the lines under "5. Environment" are its detail, one line each (they are cut short, not broken)', list(p).length === 5 && env.label === 'Environment' &&
+  env.detail.split('\n').length === 6 && env.detail.split('\n')[2] === '**Cloud provider(s)**: None configured' && !texts(p).some((t) => /\*\*/.test(t)), env);
+p = parseScreen(fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'permissions-auto.txt'), 'utf8').replace(/^(\s*)❯ /m, '$1  '));
+chk('... the same with no cursor on the screen', list(p).length === 5 && list(p)[4].detail.split('\n').length === 6 && !texts(p).some((t) => /\*\*/.test(t)), [list(p)[4], texts(p)]);
+p = P('trust-rules');
+chk('trusting a folder: the rules and folders it brings are text (each list on its lines), the two answers the rows', rows(p) === '>No, exit| Yes, I trust this folder' &&
+  texts(p).some((t) => /\.json: \/ +mcp__notebooklm__notebook_query, .*Bash\(git diff \*\), Bash\(git log \*\)/.test(t)) && texts(p).some((t) => / \/ ⚠ This folder adds 2 directories/.test(t)), texts(p));
+p = P('permissions-env');
+chk('Enter to submit, and other effects said in Chinese', hl('Enter to submit · Esc to cancel') === 'enter=提交 ; esc=取消' && rows(p) === ' Yes|>No', hl('Enter to submit · Esc to cancel'));
+
+// other commands (2.1.299)
+p = P('usage-forbidden');
+chk('/usage: a name one longer than the rest leaves one blank before its value -- still a name and a value', p.blocks.find((b) => b.type === 'kv').rows.map((r) => r[0]).join() === 'Total cost,Total duration (API),Total duration (wall),Total code changes,Usage' && keys(p) === 'c:r=重试 ; esc=取消', p.blocks);
+p = parseScreen(['─'.repeat(80), '  Settings  Status   Config   Usage', '', '  Version:          2.1.299', '  Setting sources:  User settings, Project local settings,', '                    Command line arguments', '', '  Esc to cancel'].join('\n'));
+chk('a value broken after a comma keeps its blank', p.blocks[0].rows[1][1] === 'User settings, Project local settings, Command line arguments', p.blocks[0].rows);
+p = P('sandbox');
+chk('/sandbox: a title and one tab, told by its highlight; short lines are not run together', p.title === 'Sandbox' && p.tabs.join() === 'Dependencies' && p.tab === 0 &&
+  texts(p).join(' | ') === 'ripgrep (rg): found | bubblewrap (bwrap): installed | socat: not installed /   · apt install socat | seccomp filter: installed', texts(p));
+p = P('skills');
+chk('/skills: its keys said after commas, in small letters', keys(p).endsWith('enter/c: =切换 ; c:/=搜索 ; c:t=排序 ; esc=关闭') && rows(p).startsWith('>anthropic-skills:deep-research'), keys(p));
+p = P('export-wrap');
+chk('/export: a row\'s second cell broken at the right edge goes on in that cell', list(p)[1].rest === 'Save the conversation to a file in the current directory' && !list(p)[1].detail, list(p)[1]);
+p = P('help-shortcuts');
+const sc = p.blocks.find((b) => b.type === 'text' && b.lines.some((l) => l.includes('for shell mode')));
+chk('/help: the shortcuts\' columns are never run together', sc && sc.lines.some((l) => /alt \+ p to switch model$/.test(l)) && sc.lines.some((l) => /^ +alt \+ o to toggle fast$/.test(l)), sc);
+p = P('theme');
+chk('/theme: a key named at the end of a line of text ("(ctrl+t to disable)")', p.hints.some((h) => h.keys[0] && h.keys[0].key === 'ctrlt' && h.label === '关闭（Syntax theme）') && !texts(p).some((t) => /ctrl\+t/.test(t)), [keys(p), texts(p)]);
+chk('... a sentence is no key', !parseScreen(['─'.repeat(80), '  Hooks', '', '  Hooks run when the tools are used, from start to finish', '', '  Esc to close'].join('\n')).hints.some((h) => h.label !== '关闭'), 0);
+p = P('mobile');
+const qr = p.blocks.find((b) => b.type === 'code');
+chk('/mobile: the QR code is a picture, its lines as drawn', qr && qr.art && qr.text.split('\n').length === 15 && qr.text.startsWith('█▀▀▀▀▀█') && texts(p).join() === 'Scan the QR code, or visit claude.ai/mobile,Then run /rc to continue this session from your phone', [qr, texts(p)]);
 
 p = P('export');
 chk('/export (closed by a rule with the session\'s name in it)', p.title === 'Export conversation' && p.sub === 'Select export method' && rows(p) === '>Copy to clipboard| Save to file' && list(p)[0].rest === 'Copy the conversation to your system clipboard' && p.blocks.length === 1, p.blocks);

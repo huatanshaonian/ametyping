@@ -1,0 +1,23 @@
+ /home/dell/amprobe-proj
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ ⚠ This folder pre-approves 20 tool permissions in .claude/settings.local.json:
+   mcp__notebooklm__notebook_query, Bash(ls *), Bash(git status), Bash(git diff
+ *), Bash(git log *), WebFetch(domain:github.com),
+ WebFetch(domain:docs.python.org), Bash(python -m pytest *), and 12 more
+ ⚠ This folder adds 2 directories to the workspace in
+ .claude/settings.local.json:
+   /tmp and /home/dell/cem_files
+ These will apply without asking. Only proceed if you trust this configuration.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel

@@ -1,0 +1,15 @@
+❯ /sandbox
+
+────────────────────────────────────────────────────────────────────────────────
+  Sandbox  Dependencies
+
+  ripgrep (rg): found
+
+  bubblewrap (bwrap): installed
+
+  socat: not installed
+    · apt install socat
+
+  seccomp filter: installed
+
+  ←/→ to switch · ↑/↓ to navigate · Enter to select · Esc to close

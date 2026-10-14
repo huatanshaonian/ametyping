@@ -153,7 +153,11 @@
 .dash .term .trow .tg[data-g="✘"], .dash .term .trow .tg[data-g="✗"] { color: var(--bad); }
 .dash .term .trow .tg[data-g="⚠"] { color: var(--warn); }
 .dash .term .trow .tl { flex: 0 1 auto; min-width: 0; word-break: break-word; }
-.dash .term .trow .td { display: block; font-size: 11.5px; color: var(--muted); }   /* a row's second line (/resume: when, branch, size) */
+/* a picture drawn with blocks (/mobile's QR code): solid squares (term-art.js); one of another shape as text, its
+   lines touching as in the terminal */
+.dash .term svg.tart { display: block; margin: 4px 0; }
+.dash .term .tcode.tart { max-height: none; line-height: 1; letter-spacing: 0; width: max-content; background: #fff; color: #000; border-left: 0; padding: 8px; }
+.dash .term .trow .td { display: block; font-size: 11.5px; color: var(--muted); white-space: pre-line; }   /* a row's second line (/resume: when, branch, size) */
 .dash .term .trow.cur .td { color: var(--on-fill); opacity: .8; }
 .dash .term .trow .tr { flex: 1 1 0; min-width: 0; text-align: right; font-size: 12px; color: var(--muted); word-break: break-word; }
 .dash .term .trow .tnow { flex: none; padding: 0 5px; font-size: 10.5px; color: var(--ok-text); border: 1px solid var(--ok-text); }

@@ -1,0 +1,21 @@
+❯ /skills
+
+────────────────────────────────────────────────────────────────────────────────
+  Skills
+  13 skills · enter/space to cycle, / to search, t to sort, Esc to close
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search skills…                                                         │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+  ❯ ✔ anthropic-skills:deep-research   claude.ai sync · ~200 tok
+    ✔ built-in-browser                 claude.ai sync · ~280 tok
+    ✔ chrome-browser                   claude.ai sync · ~260 tok
+    ✔ computer-use                     claude.ai sync · ~320 tok
+    ✔ docs                             claude.ai sync · ~340 tok
+    ✔ docx                             claude.ai sync · ~320 tok
+    ✔ google-workspace                 claude.ai sync · ~330 tok
+    ✔ import-memory                    claude.ai sync · ~60 tok
+    ✔ morning                          claude.ai sync · ~120 tok
+    ↓ 4 more
+
+  /deep-research runs a workflow, not your claude.ai skill.
