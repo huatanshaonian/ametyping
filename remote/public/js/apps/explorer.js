@@ -1,6 +1,7 @@
 // 我的电脑 / 资源管理器 for one remote computer: its roots (drives or allowed folders), then folder listings.
 // Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code or Codex
-// can be started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows).
+// can be started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows). 下载
+// saves the file picked in the list to this device without opening it (download.js).
 // Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
 // 网上邻居 does: main.js's setSwitch).
 import { h, icon, prefs, $ as $q } from '../util.js';
@@ -10,6 +11,7 @@ import * as net from '../net.js';
 import * as rpath from '../rpath.js';
 import { iconOf, size } from '../filetypes.js';
 import { openFile } from './viewer.js';
+import { download } from './download.js';
 
 const touch = matchMedia('(pointer: coarse)').matches;
 const views = new Map();                  // machine -> view
@@ -46,6 +48,7 @@ function create(machine, startPath) {
   renderPcs();
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
+  const dlBtn = h('button', { class: 'btn', type: 'button', text: '下载', disabled: true, title: '把列表里选中的文件下载到这台设备' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
   const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
     h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
@@ -58,8 +61,8 @@ function create(machine, startPath) {
     h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
-  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, launchBtn), launchBar, body, status);
-  let cur = null, parent = null, seq = 0;
+  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, dlBtn, launchBtn), launchBar, body, status);
+  let cur = null, parent = null, seq = 0, picked = null, job = null;
 
   function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; }
   async function load(path) {
@@ -68,14 +71,21 @@ function create(machine, startPath) {
     const r = path == null ? await fsc.roots(machine) : await fsc.list(machine, path);
     if (my !== seq) return;                               // a newer navigation won
     if (!r.ok) { status.textContent = r.msg || '打不开'; return; }
+    picked = null; dlBtn.disabled = !job;                 // (a download still running can still be stopped)
     if (path == null) { cur = null; parent = null; renderRoots(r.roots || []); }
     else { cur = r.path; parent = r.parent; renderList(r.entries || [], r.truncated); }
     setTitle();
     body.scrollTop = 0;
   }
-  function activate(el, fn) {
+  function activate(el, fn, entry = null) {
     el.addEventListener('dblclick', fn);
-    el.addEventListener('click', () => { for (const x of body.querySelectorAll('.sel')) x.classList.remove('sel'); el.classList.add('sel'); if (touch) fn(); });
+    el.addEventListener('click', () => {
+      for (const x of body.querySelectorAll('.sel')) x.classList.remove('sel');
+      el.classList.add('sel');
+      picked = entry && !entry.dir ? entry : null;
+      if (!job) dlBtn.disabled = !picked;
+      if (touch) fn();
+    });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') fn(); });
   }
   function renderRoots(roots) {
@@ -93,7 +103,7 @@ function create(machine, startPath) {
         h('td', { class: 'xn' }, h('div', {}, h('img', { src: icon(iconOf(e), true), alt: '' }), h('span', { text: e.name, title: e.name }))),
         h('td', { class: 'xs', text: e.dir ? '' : size(e.size) }),
         h('td', { class: 'xt', text: when(e.mtime) }));
-      activate(tr, () => (e.dir ? load(rpath.join(cur, e.name)) : openFile(machine, rpath.join(cur, e.name), e, openPath)));
+      activate(tr, () => (e.dir ? load(rpath.join(cur, e.name)) : openFile(machine, rpath.join(cur, e.name), e, openPath)), e);
       return tr;
     });
     body.replaceChildren(h('table', { class: 'xlist' },
@@ -114,13 +124,22 @@ function create(machine, startPath) {
     status.textContent = r.ok ? (r.msg || '已启动') + ' —— 会话出现后可在糖糖看板里查看和回复' : r.msg || '启动失败';
     if (r.ok) { launchBar.hidden = true; first.value = ''; }
   });
+  // (one download at a time; while it runs the button stops it)
+  dlBtn.addEventListener('click', () => {
+    if (job) { job.cancel(); return; }
+    if (!picked || cur == null) return;
+    const e = picked;
+    job = download(machine, rpath.join(cur, e.name), e, (msg) => { status.textContent = msg; });
+    dlBtn.textContent = '取消下载'; dlBtn.disabled = false;
+    job.promise.then(() => { job = null; dlBtn.textContent = '下载'; dlBtn.disabled = !picked; });
+  });
   up.addEventListener('click', () => load(parent));      // the parent of a root is the root list (null)
   refresh.addEventListener('click', () => load(cur));
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = addr.value.trim(); load(p || null); } });
   body.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && cur != null) { e.preventDefault(); load(parent); } });
 
   const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), content: root, width: 720, height: 460,
-    onClose: () => { views.delete(machine); offPcs(); } });
+    onClose: () => { views.delete(machine); offPcs(); if (job) job.cancel(); } });
   load(startPath);
   return { id, load };
 }
