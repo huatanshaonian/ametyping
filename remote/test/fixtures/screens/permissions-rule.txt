@@ -1,0 +1,19 @@
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/amprobe-proj
+
+
+❯ /permissions
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Delete allowed tool?                                                         │
+│                                                                              │
+│   Bash(./run.sh)                                                             │
+│   The Bash command ./run.sh                                                  │
+│   From project local settings                                                │
+│                                                                              │
+│ Are you sure you want to delete this permission rule?                        │
+│                                                                              │
+│   Yes                                                                        │
+│ ❯ No                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+   Enter to confirm · Esc to cancel

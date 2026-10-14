@@ -1,0 +1,23 @@
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/amprobe-proj
+
+
+❯ /permissions
+  ⎿  Permissions dialog dismissed
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────
+  Replace the built-in environment?
+
+  Writing your own environment replaces the built-in default document — the
+  classifier context that defines trusted hosts, sensitive targets, and
+  repository scope. The editor starts from the full default text so you can
+  edit rather than rewrite; deleting all your environment entries later
+  restores the default.
+
+    Yes
+  ❯ No
+
+  Enter to confirm · Esc to cancel

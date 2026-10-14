@@ -8,7 +8,8 @@
 //                      | { kind: 'idle', input, status: [..], tail }         the input box; tail: the lines above it
 //                      | { kind: 'dialog', title, tabs: [..] | null, sub, blocks: [..], hints: [..], typing, loading }
 //   blocks: { type: 'text', lines } | { type: 'list', rows } | { type: 'kv', rows: [[name, value]] }
-//         | { type: 'input', text, search, empty } | { type: 'code', text } | { type: 'bar', pct, word }
+//         | { type: 'input', text, search, empty } | { type: 'code', text, art } | { type: 'bar', pct, word }
+//           (art: a picture drawn with blocks -- /mobile's QR code -- to be shown with its lines touching)
 //         | { type: 'slider', labels, at, ends, aside }
 //         | { type: 'link', url }                      an address, whole: one the screen broke over several lines
 //           (/login's sign-in link) is put together again exactly, character for character
@@ -29,7 +30,7 @@ const RULE = /^─{12,}(\s\S.{0,80}\s─+)?$/;
 const GLYPHS = '✔✘⚠✓✗○●◯☐☑☒◉';
 const GLYPH = new RegExp('^([' + GLYPHS + '])\\s+');
 const MORE = /^[↓↑…]\s*\+?\d*\s*(more|models?)\b/;
-const KEYTOK = /^(Enter|Esc|Tab|tab|Space|Type|[Cc]trl\+[A-Za-z]|Shift\+Tab|[↑↓←→]|[A-Za-z0-9\/])$/;
+const KEYTOK = /^([Ee]nter|[Ee]sc|Tab|tab|[Ss]pace|Type|[Cc]trl\+[A-Za-z]|Shift\+Tab|[↑↓←→]|[A-Za-z0-9\/])$/;
 // what the terminal's highlight is carried in (app/screen-text.js): U+E000 ... U+E001 around what is drawn on another
 // background -- the tab a menu is on
 const MARKS = /[\uE000\uE001]/g;
@@ -37,16 +38,16 @@ export const plainScreen = (text) => String(text || '').replace(MARKS, '');
 const ARROWS = { '↑': 'up', '↓': 'down', '←': 'left', '→': 'right' };
 // what the menus call their keys' effects, said the way the rest of the dashboard talks (anything else stays as it is)
 const SAY = { preview: '预览', rename: '改名', 'only show current repo': '只看当前仓库', cancel: '取消', confirm: '确认', select: '选择', close: '关闭', back: '返回', 'go back': '返回', continue: '继续', navigate: '移动',
-  adjust: '调整', retry: '重试', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
+  adjust: '调整', retry: '重试', submit: '提交', cycle: '切换', sort: '排序', disable: '关闭', enable: '开启', save: '保存', edit: '编辑', delete: '删除', remove: '移除', open: '打开', copy: '复制', expand: '展开', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
   filter: '筛选', return: '返回', tabs: '到标签页', favorite: '收藏', 'set as default': '设为默认', 'use this session only': '只用于本会话',
   'for this session only': '只用于本会话', 'show all projects': '显示所有项目', 'only show current branch': '只看当前分支', day: '按天', week: '按周' };
 
 function keyOf(tok) {
-  if (tok === 'Enter') return { cap: '回车', key: 'enter' };
-  if (tok === 'Esc') return { cap: 'Esc', key: 'esc' };
+  if (/^enter$/i.test(tok)) return { cap: '回车', key: 'enter' };
+  if (/^esc$/i.test(tok)) return { cap: 'Esc', key: 'esc' };
   if (/^tab$/i.test(tok)) return { cap: 'Tab', key: 'tab' };
   if (tok === 'Shift+Tab') return { cap: '⇧Tab', key: 'btab' };
-  if (tok === 'Space') return { cap: '空格', key: 'c: ' };
+  if (/^space$/i.test(tok)) return { cap: '空格', key: 'c: ' };
   if (ARROWS[tok]) return { cap: tok, key: ARROWS[tok] };
   const c = /^[Cc]trl\+([A-Za-z])$/.exec(tok);
   // (Ctrl+C / D / Z would interrupt or end the session: never sent from a card)
@@ -58,7 +59,8 @@ function keyOf(tok) {
 export function hintLine(s) {
   s = String(s || '').trim();
   if (!s) return null;
-  const out = [], segs = s.split(/\s+·\s+/);
+  // (some put their keys after a comma: "13 skills · enter/space to cycle, / to search, t to sort, Esc to close")
+  const out = [], segs = s.split(/\s+·\s+|,\s+(?=\S+ (?:to|for) )/);
   let known = 0;
   for (const seg of segs) {
     if (/\s{2,}/.test(seg)) return null;                              // (columns: a table of shortcuts, not a key line)
@@ -94,6 +96,8 @@ export function parseScreen(text) {
     const r2 = rules[rules.length - 1], r1 = rules[rules.length - 2];
     if (r1 + 1 < r2 && lines[r1 + 1].startsWith('❯') && r2 - r1 <= 14 && lines.length - r2 <= 8) return idle(lines, r1, r2);
   }
+  const framed = unframe(lines);
+  if (framed) return dialog(framed, hot);
   // a menu: under the last rule (some close with a rule of their own); on a screen too short for it the rule above
   // has scrolled away -- then all of the screen is the menu, if it ends the way menus do
   let end = lines.length;
@@ -110,7 +114,26 @@ export function parseScreen(text) {
   }
   if (!body.some(Boolean)) return { kind: 'raw', text: lines.join('\n') };
   if (!rules.length && !body.some((l) => hintLine(l))) return { kind: 'raw', text: lines.join('\n') };
-  return dialog(body, hot);
+  return dialog(body, hot, Math.max(...lines.map((l) => l.length)));
+}
+
+// A menu drawn inside a box of its own (/permissions: "Delete allowed tool?", the built-in rules of auto mode): the
+// box's bottom edge ends the screen, but for the key line under it; its top edge may have scrolled away. Not a box to
+// type into: that is one line, or a few with neither a blank line nor a cursor among them. -> the lines inside the box
+// with the key lines after them, or null
+function unframe(lines) {
+  let e = lines.length - 1;
+  const tail = [];
+  while (e >= 0 && (!lines[e].trim() || hintLine(lines[e]))) tail.unshift(lines[e--]);
+  const bottom = e >= 0 ? /^(\s*)╰─{38,}╯$/.exec(lines[e]) : null;
+  if (!bottom) return null;
+  const col = bottom[1].length, side = (l) => l[col] === '│' && /│$/.test(l);
+  let k = e - 1;
+  while (k >= 0 && side(lines[k])) k--;
+  if (k >= 0 && !new RegExp('^\\s{' + col + '}╭─+╮$').test(lines[k])) return null;
+  const inner = lines.slice(k + 1, e).map((l) => l.slice(col + 1, -1).replace(/^ /, '').replace(/\s+$/, ''));
+  if (inner.length < 3 || !inner.some((l) => !l || /^\s*❯ /.test(l))) return null;
+  return inner.concat(tail);
 }
 
 function idle(lines, r1, r2) {
@@ -127,6 +150,8 @@ const indentOf = (l) => l.search(/\S/);
 
 function row(l, mc) {
   const r = { type: 'row', cur: false, head: false, more: false, scroll: '', num: '', glyph: '', label: '', rest: '', current: false, gap: false, col: 0, text: '' };
+  // (how long the line is on the screen and where it starts: whether a line under it goes on with it -- withDetails)
+  Object.defineProperties(r, { w: { value: l.length }, ind: { value: indentOf(l) } });
   let rest = l;
   if (mc >= 0 && indentOf(l) === mc && '❯↓↑'.includes(l[mc]) && (l[mc + 1] === ' ' || l[mc + 1] === undefined)) {
     if (l[mc] === '❯') r.cur = true;
@@ -140,6 +165,7 @@ function row(l, mc) {
   if (MORE.test(t) || /^more (below|above)/.test(t)) { r.more = true; r.label = t; return r; }
   let m = /^(\d+)\.\s+/.exec(t);
   if (m) { r.num = m[1]; t = t.slice(m[0].length); }
+  t = t.replace(/^-\s{2,}/, '');                                    // (/permissions' workspace: "-  the folder it began in")
   m = GLYPH.exec(t);
   if (m) { r.glyph = m[1]; t = t.slice(m[0].length); }
   m = /^\[([ xX✔✓])\]\s+/.exec(t);                                // a box to tick (a question with several answers)
@@ -148,6 +174,8 @@ function row(l, mc) {
   if (/\s✔$/.test(cells[0])) { r.current = true; cells[0] = cells[0].replace(/\s*✔$/, ''); }
   r.label = cells[0];
   r.rest = cells.slice(1).join('  ');
+  // (the column the second cell starts in: a line under the row starting there may be that cell going on)
+  if (r.rest) Object.defineProperty(r, 'restAt', { value: l.indexOf(cells[1], l.indexOf(cells[0]) + cells[0].length) });
   return r;
 }
 
@@ -155,14 +183,24 @@ function row(l, mc) {
 // /rewind: a point and what it would undo): the second line of each pair says more about the first -- it becomes that
 // row's detail, not a row of its own. Told by the shape alone: every group one or two lines, a marked row (the cursor,
 // ↑ ↓) always the first of its group, at least one pair.
-function withDetails(rows) {
-  // (numbered options, each with a line under it saying more: "1. 面条" / "   快")
+function withDetails(rows, width = 0) {
+  // (numbered options, each with a line under it saying more: "1. 面条" / "   快"; several lines under it are one
+  // sentence the terminal broke at its right edge, or lines of their own -- /permissions' "5. Environment" and the
+  // first lines of its document, some cut short with "…": where lines are cut, none is broken)
   if (rows.some((r) => r.num)) {
-    const out = [];
+    const out = [], under = new Map();
     for (const r of rows) {
       const prev = out[out.length - 1];
-      if (prev && prev.num && !r.num && !r.cur && !r.scroll && !r.more && !r.gap && r.col > prev.col) prev.detail = prev.detail ? prev.detail + ' ' + r.text : r.text;
+      if (prev && prev.num && !r.num && !r.cur && !r.scroll && !r.more && !r.gap && r.col > prev.col) under.set(prev, (under.get(prev) || []).concat(r));
       else out.push(r);
+    }
+    for (const [r, ds] of under) {
+      const cut = ds.some((d) => /…$/.test(d.text));
+      const text = ds.map((d, n) => (n ? (!cut && ds[n - 1].w >= width - 14 ? ' ' : '\n') : '') + d.text).join('');
+      // (the row's second cell broken at the right edge goes on in its own column: /export's "Save the conversation to
+      // a file in the current" / "directory")
+      if (!cut && r.rest && ds[0].ind === r.restAt && r.w >= width - 14) r.rest += ' ' + text.replace(/\n/g, ' ');
+      else r.detail = text;
     }
     rows = out;
   }
@@ -195,7 +233,8 @@ function markHeads(rows) {
   }
 }
 
-function dialog(src, hot = new Map()) {
+// cols0: how wide the screen is (0: not known -- the menu's own width is used)
+function dialog(src, hot = new Map(), cols0 = 0) {
   const hints = [];
   const addHints = (hs, note) => { for (const x of hs) { const label = note ? `${x.label}（${note}）` : x.label; const sig = (h) => h.keys.map((k) => k.cap).join('/') + '|' + h.label; const y = { ...x, label }; if (!hints.some((h) => sig(h) === sig(y))) hints.push(y); } };
   // (the key lines first: some are drawn a column off the rest, which would hide where the menu's own margin is;
@@ -227,7 +266,9 @@ function dialog(src, hot = new Map()) {
     // (Claude's questions: "←  ☐ one  ☐ two  ✔ Submit  →" -- all of them tabs, no title)
     const arrows = parts[0] === '←' || parts[parts.length - 1] === '→';
     if (arrows) parts = parts.filter((x) => x !== '←' && x !== '→');
-    if ((arrows && parts.length >= 2) || (parts.length >= 3 && parts.every((x) => x.length <= 24))) {
+    // (a title and one tab: told by the tab being highlighted -- /sandbox "Sandbox  Dependencies")
+    const one = parts.length === 2 && on.some((o) => o === parts[1]);
+    if ((arrows && parts.length >= 2) || one || (parts.length >= 3 && parts.every((x) => x.length <= 24))) {
       if (arrows) tabs = parts; else { title = parts[0]; tabs = parts.slice(1); }
       tab = tabs.findIndex((t) => on.some((o) => o === t || o.includes(t) || t.includes(o)));
     } else title = ls[i].trim();
@@ -245,8 +286,27 @@ function dialog(src, hot = new Map()) {
   const isRow = (l) => {
     const n = indentOf(l);
     if (mc < 0) return /^\s*\d+\.\s+\S/.test(l);
-    return (n === mc && '❯↓↑'.includes(l[mc]) && (l[mc + 1] === ' ' || l[mc + 1] === undefined)) || n >= mc + 2;
+    return marked(l) || n >= mc + 2;
   };
+  const marked = (l) => mc >= 0 && indentOf(l) === mc && '❯↓↑'.includes(l[mc]) && (l[mc + 1] === ' ' || l[mc + 1] === undefined);
+  // the list the cursor is in: the rows next to it, blank lines between them allowed. A line indented as deep
+  // elsewhere on such a screen says more about what is asked ("Delete allowed tool?" and the rule under it; the folder
+  // to be taken off the workspace): text, not a row to choose -- unless it is numbered
+  const inList = new Set();
+  rest.forEach((l, k0) => {
+    if (!marked(l) || inList.has(k0)) return;
+    inList.add(k0);
+    for (const dir of [-1, 1]) {
+      for (let k = k0; ;) {
+        let n = k + dir;
+        while (rest[n] === '') n += dir;
+        if (n < 0 || n >= rest.length || !isRow(rest[n]) || isLink(rest[n])) break;
+        for (let x = Math.min(k, n); x <= Math.max(k, n); x++) inList.add(x);
+        k = n;
+      }
+    }
+  });
+  const choice = (l, j) => isRow(l) && (mc < 0 || inList.has(j) || /^\s*\d+\.\s/.test(l));
   const blocks = [];
   let gap = false;
   const last = () => blocks[blocks.length - 1];
@@ -308,34 +368,59 @@ function dialog(src, hot = new Map()) {
       blocks.push({ type: 'input', label: ask[1].trim(), text: stars ? '' : t, typed: stars ? t.replace('…', '').length : 0, more: stars && t.endsWith('…'), search: false, empty: !t, ask: true });
       continue;
     }
-    if (isRow(l)) {
+    // (with no cursor on the screen, a line deeper than the numbered row just above it is still that row's: its detail)
+    const b0 = last(), numbered = b0 && b0.type === 'list' ? b0.rows.filter((r) => r.num).pop() : null;
+    const under = mc < 0 && !wasGap && numbered && indentOf(l) > numbered.ind + 2;
+    if (choice(l, j) || under) {
       const r = row(l, mc);
       const b = last();
       if (b && b.type === 'list') { r.gap = wasGap; b.rows.push(r); } else blocks.push({ type: 'list', rows: [r] });
       continue;
     }
-    // "Name:   value" (a value too long for the line goes on under itself)
-    const kv = KV.exec(l);
+    // "Name:   value" (a value too long for the line goes on under itself); the longest name of a few leaves one blank
+    // before its value, which still starts where the others' do ("Total duration (wall): 10m 23s")
+    const kb = last(), kv = KV.exec(l) || (kb && kb.type === 'kv' && !wasGap ? alignedKv(l, kb.at) : null);
     if (kv) {
       let v = kv[2];
       const at = l.indexOf(kv[2], kv[1].length + 1);
       let prev = l;
-      while (j + 1 < rest.length && rest[j + 1] && indentOf(rest[j + 1]) >= at && !KV.test(rest[j + 1])) { v += (prev.length >= width - 1 ? '' : ' ') + rest[j + 1].trim(); prev = rest[++j]; }
-      const b = last();
-      if (b && b.type === 'kv' && !wasGap) b.rows.push([kv[1].trim(), v]); else blocks.push({ type: 'kv', rows: [[kv[1].trim(), v]] });
+      // (no blank put back where a line ran to the right edge in the middle of a word -- but after a comma there is one)
+      while (j + 1 < rest.length && rest[j + 1] && indentOf(rest[j + 1]) >= at && !KV.test(rest[j + 1])) { v += (prev.length >= width - 1 && !/[,;]$/.test(prev) ? '' : ' ') + rest[j + 1].trim(); prev = rest[++j]; }
+      if (kb && kb.type === 'kv' && !wasGap) kb.rows.push([kv[1].trim(), v]);
+      else blocks.push(Object.defineProperty({ type: 'kv', rows: [[kv[1].trim(), v]] }, 'at', { value: at, writable: true }));
       continue;
     }
+    // a picture drawn with blocks (/mobile's QR code): kept line for line, to be shown as it is drawn
+    if (ART.test(l) && ART.test(rest[j + 1] || '') && ART.test(rest[j + 2] || '')) {
+      const art = [l];
+      while (j + 1 < rest.length && ART.test(rest[j + 1])) art.push(rest[++j]);
+      const n = Math.min(...art.map(indentOf));
+      blocks.push({ type: 'code', art: true, text: art.map((x) => x.slice(n)).join('\n') });
+      continue;
+    }
+    // a key named at the end of a line of text ("◐ Medium effort (default) ←/→ to adjust", "Syntax theme: Monokai
+    // Extended (ctrl+t to disable)"): a key of the menu's, said what it is for
+    let t = l;
+    const inl = INLINE_KEY.exec(l), ih = inl ? hintLine(inl[2]) : null;
+    if (ih && ih.every((x) => !x.words && !x.type)) { addHints(ih, inl[1].trim().replace(/^[◐◑◒◓●○]\s*/, '').replace(/:.*$/, '')); t = inl[1]; }
     // (lines laid out in columns -- /help's shortcuts -- are a block of their own: they are shown with their columns)
-    const b = last(), cols = (x) => /\S {3,}\S/.test(x) || /^ {12,}\S/.test(x);
-    if (b && b.type === 'text' && !wasGap && cols(b.lines[b.lines.length - 1]) === cols(l)) b.lines.push(l); else blocks.push({ type: 'text', lines: [l] });
+    const b = last();
+    if (b && b.type === 'text' && !wasGap && cols(b.lines[b.lines.length - 1]) === cols(t)) b.lines.push(t); else blocks.push({ type: 'text', lines: [t] });
   }
   for (const b of blocks) {
-    if (b.type === 'list') { b.rows = withDetails(b.rows); markHeads(b.rows); }
+    if (b.type === 'list') { b.rows = withDetails(b.rows, width); markHeads(b.rows); }
     if (b.type === 'text') {
-      // (a sentence the terminal broke at its right edge is one line again)
-      const out = [];
+      // (a sentence the terminal broke at its right edge is one line again; not one that ends with a colon or is cut
+      // short ("…"), and not into a line that starts with a mark of its own: "⚠ This folder adds …")
+      // A line is full when it reaches near the right edge of the screen, not of the menu: a menu of a few short lines
+      // (/sandbox: "socat: not installed" / "· apt install socat") is no paragraph. Lines in columns are left as they are.
+      const out = [], edge = Math.max(width, cols0 - ind - 2);
       let was = 0;                                     // how long the line before was on the screen
-      for (const x of b.lines) { if (out.length && was >= width - 14 && !/\S {3,}\S/.test(x)) out[out.length - 1] += ' ' + x.trim(); else out.push(x); was = x.length; }
+      for (const x of b.lines) {
+        if (out.length && was >= edge - 14 && !cols(x) && !cols(out[out.length - 1]) && !/[:…]$/.test(out[out.length - 1]) && !GLYPH.test(x.trim())) out[out.length - 1] += ' ' + x.trim();
+        else out.push(x);
+        was = x.length;
+      }
       const n = Math.min(...out.map(indentOf));
       b.lines = out.map((x) => x.slice(n));
     }
@@ -374,6 +459,18 @@ function joinLinks(ls) {
   return out;
 }
 const KV = /^\s*(\S[^:]{0,28}):\s{2,}(\S.*)$/;
+// "Name: value" with one blank only, its value where the block's values start ("at": the column, kept on the block)
+function alignedKv(l, at) {
+  const m = /^\s*(\S[^:]{0,28}): (\S.*)$/.exec(l);
+  return m && l.length - m[2].length === at ? m : null;
+}
+// lines laid out in columns (/help's shortcuts)
+const cols = (x) => /\S {3,}\S/.test(x) || /^ {12,}\S/.test(x);
+// a line of a picture drawn with blocks
+const ART = /^\s*[█▀▄▌▐▖▗▘▝▚▞]+(?: +[█▀▄▌▐▖▗▘▝▚▞]+)*\s*$/;
+// a key at the end of a line of text, bare or in brackets; only keys that are not also words (an arrow, Ctrl+x, Tab,
+// Space, Enter, Esc): "go to sleep" is no key
+const INLINE_KEY = /^(\s*.*?\S)\s+\(?((?:[←→↑↓](?:\/[←→↑↓])?|[Cc]trl\+[A-Za-z]|Tab|Space|Enter|Esc) (?:to|for) [^()·]+?)\)?$/;
 
 // the row under the cursor (the first, when a menu shows two), and where a row known by its text is now
 export function cursorOf(p) {

@@ -1,7 +1,11 @@
 // Win98 system sounds for desktop events. Each event can be switched off; the tray speaker sets the volume or mutes;
-// the choice is kept per browser. Browsers refuse to play sound before the first click on a page: a start-up sound
-// refused that way is played on the first click / key press instead.
+// the choice is kept per browser, and every Windose page open in it follows a change made in another (the speaker's
+// icon too). Browsers refuse to play sound before the first click on a page: a start-up sound refused that way is
+// played on the first click / key press instead.
+// What the server tells every page at once (a new permission card, a session done, a mail alert) sounds in one page
+// of the browser only, not once per page open (sound-once.js).
 import { prefs } from './util.js';
+import { once } from './sound-once.js';
 
 export const EVENTS = [
   ['startup', '启动（登录后进入桌面）', 'startup'],
@@ -12,6 +16,8 @@ export const EVENTS = [
   ['error', '操作失败', 'chord'],
   ['recycle', '删除壁纸', 'recycle'],
 ];
+// (the events every page hears of from the server at the same moment)
+const SHARED = new Set(['perm', 'done', 'mail']);
 const listeners = new Set();
 let pending = null;
 
@@ -39,6 +45,10 @@ export function buzz(pattern = [180, 90, 180]) { if (vibrates()) { try { navigat
 export function play(ev, { force = false } = {}) {
   const e = EVENTS.find((x) => x[0] === ev);
   if (!e || (!force && (muted() || !enabled(ev))) || volume() === 0) return Promise.resolve();
+  if (!force && SHARED.has(ev)) return once(ev, () => sounded(e, ev));
+  return sounded(e, ev);
+}
+function sounded(e, ev) {
   return new Promise((resolve) => {
     const a = new Audio(`/sounds/${e[2]}.wav`);
     a.volume = volume();
@@ -50,3 +60,5 @@ export function play(ev, { force = false } = {}) {
 const later = () => { if (pending) { const ev = pending; pending = null; play(ev); } };
 addEventListener('pointerdown', later, true);
 addEventListener('keydown', later, true);
+// another page of this browser muted, turned the volume, switched a sound on or off: this one shows it too
+addEventListener('storage', (e) => { if (e.key && e.key.startsWith('ame.sound.')) for (const fn of listeners) fn(); });

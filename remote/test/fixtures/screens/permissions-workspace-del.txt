@@ -1,0 +1,21 @@
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/amprobe-proj
+
+
+❯ /permissions
+  ⎿  Permissions dialog dismissed
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────
+  Remove directory from workspace?
+
+    /home/dell/cem_files
+
+  Claude Code will no longer have access to files in this directory.
+
+    Yes
+  ❯ No
+
+  Enter to confirm · Esc to cancel

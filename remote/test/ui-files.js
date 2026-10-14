@@ -23,6 +23,11 @@ const SHARE = path.join(T, 'share'); fs.mkdirSync(path.join(SHARE, 'docs', 'img'
 fs.writeFileSync(path.join(SHARE, 'docs', 'README.md'), ["# 网格加密说明","","下面是**示意图**：","","![网格示意](img/mesh.png)","","| 参数 | 值 |","|---|---|","| dx | 1e-3 |","","外链图片：![x](https://example.com/a.png)","","[看笔记](notes.txt)",""].join(String.fromCharCode(10)));
 fs.copyFileSync(R + '/public/wall/illust_bike_inaba.webp', path.join(SHARE, 'docs', 'img', 'mesh.png'));
 fs.writeFileSync(path.join(SHARE, 'docs', 'notes.txt'), ['中文笔记', 'line 2', ''].join(String.fromCharCode(10)));
+// a CSV as Excel writes one: a cell with a comma and a line break in quotes, "" for a quote, CRLF; and 2 500 rows more
+const CSV = ['名称,数值,备注', '"网格, 粗",1.5,"第一行' + String.fromCharCode(10) + '第二行"', '细网格,"2,048","他说 ""好"""', ',,']
+  .concat(Array.from({ length: 2500 }, (_, i) => `r${i},${i},`)).join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
+fs.writeFileSync(path.join(SHARE, 'docs', 'data.csv'), CSV);
+const DL = path.join(T, 'downloads'); fs.mkdirSync(DL);
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
 // a second computer with files of its own (我的电脑's computer switch)
@@ -100,9 +105,35 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("document.querySelector('.md a').click()"); await sleep(1500);
     console.log('linked text file:', await evalJs("(document.querySelector('.vtext')||{}).textContent"));
     await shot('9-text.png');
-    // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const res = [];
     const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
+    // a CSV: a table, the heads from its first row, the quoted cells whole, numbers to the right, a page of rows at a time
+    console.log('open data.csv', await dbl({ q: '.xlist tr', t: 'data.csv' })); await sleep(2500);
+    const tbl = () => evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('data.csv')); const t = v.querySelector('table.csv'); return { info: (v.querySelector('.vinfo') || {}).textContent, as: (v.querySelector('.vtools .btn') || {}).textContent, heads: t ? [...t.querySelectorAll('thead th')].map(x => x.textContent) : null, r1: t ? [...t.querySelectorAll('tbody tr:first-child td')].map(x => x.textContent) : null, r2: t ? [...t.querySelectorAll('tbody tr:nth-child(2) td')].map(x => x.textContent + (x.classList.contains('num') ? '#' : '')) : null, n: t ? t.querySelectorAll('tbody tr').length : 0, more: (v.querySelector('.csvmore .btn') || {}).textContent, raw: (v.querySelector('.vtext') || {}).textContent || '' }; })()");
+    let tb = await tbl();
+    chk('CSV: a table with its heads, rows and columns counted, the separator named', tb.info === '2503 行 × 3 列 · 逗号分隔' && tb.heads.join('|') === '|名称|数值|备注' && tb.as === '原文', tb);
+    chk('CSV: a quoted cell with a comma or a line break in it is one cell; "" is a quote; numbers marked', tb.r1.join('|') === '1|网格, 粗|1.5|第一行' + String.fromCharCode(10) + '第二行' && tb.r2.join('|') === '2|细网格|2,048#|他说 "好"', [tb.r1, tb.r2]);
+    chk('CSV: a thousand rows at first, a button for the next', tb.n === 1000 && tb.more === '再显示 1000 行（还有 1503 行）', [tb.n, tb.more]);
+    await shot('9c-csv.png');
+    await evalJs("[...document.querySelectorAll('.viewer .csvmore .btn')].pop().click()"); await sleep(400);
+    tb = await tbl();
+    chk('CSV: 再显示 adds the next thousand', tb.n === 2000 && tb.more === '再显示 503 行（还有 503 行）', [tb.n, tb.more]);
+    await evalJs("[...document.querySelectorAll('.viewer .vtools .btn')].pop().click()"); await sleep(300);
+    tb = await tbl();
+    chk('CSV: 原文 shows the text as it is (and the button says 表格 to go back)', tb.as === '表格' && tb.raw.startsWith('名称,数值,备注') && !tb.heads, [tb.as, tb.raw.slice(0, 30)]);
+    // 下载 in 我的电脑: the file picked in the list, saved under its own name, byte for byte
+    await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
+    const ex = "[...document.querySelectorAll('.explorer')].find(e => e.querySelector('.xpc').value === 'dell97')";
+    const dlState = () => evalJs(`(() => { const e = ${ex}; const b = [...e.querySelectorAll('.xbar .btn')].find(x => /下载/.test(x.textContent)); return { text: b.textContent, disabled: b.disabled, status: e.querySelector('.xstatus').textContent }; })()`);
+    chk('下载: nothing picked, nothing to download', (await dlState()).disabled, await dlState());
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('data.csv')).click(); [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    let saved = '';
+    for (let i = 0; i < 30 && !saved; i++) { await sleep(300); const f = path.join(DL, 'data.csv'); if (fs.existsSync(f) && fs.statSync(f).size === Buffer.byteLength(CSV)) saved = fs.readFileSync(f, 'utf8'); }
+    const st = await dlState();
+    chk('下载: the file saved under its name, as it is on the computer', saved === CSV && /^已下载 data.csv/.test(st.status) && st.text === '下载' && !st.disabled, [saved.length, st]);
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('img')).click(); })()`);
+    chk('下载: a folder picked, nothing to download', (await dlState()).disabled, await dlState());
+    // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
     let w = await wins();
     chk('我的电脑: a computer list with both, this one shown', w.length === 1 && w[0].pc === 'dell97' && w[0].opts.join() === 'box2,dell97', w);

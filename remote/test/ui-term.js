@@ -160,8 +160,17 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
 
     c = await refresh('model');
     chk('/model: title, the models as rows, ❯ and 当前 on Opus 5.5, what is below the window', c.head === 'Select model' && c.rows.join('|') === ' Default (recommended)|>Opus 5.5| Fable 5.1| Sonnet 5.5| Haiku 4.5| Sonnet 5|~… +6 models' && /当前/.test(c.text), c);
-    chk('/model: the keys the menu names are buttons', c.acts.join('|') === '回车 设为默认|s 只用于本会话|Esc 取消', c.acts);
+    chk('/model: the keys the menu names are buttons, the effort\'s ←/→ too', c.acts.join('|') === '回车 设为默认|s 只用于本会话|Esc 取消|←|→' && /调整（High effort）/.test(c.text), c.acts);
     await shot('60-term-model.png');
+    // a menu drawn inside a box of its own: Yes / No to choose, the rule as what is asked about
+    c = await refresh('permissions-rule');
+    chk('/permissions, deleting a rule: titled, Yes / No as rows', c.head === 'Delete allowed tool?' && c.rows.join('|') === ' Yes|>No' && /Bash\(\.\/run\.sh\)/.test(c.text) && !/│/.test(c.text), c);
+    await shot('60-term-perm-delete.png');
+    c = await refresh('mobile');
+    const qr = await evalJs("(() => { const q = document.querySelector('.dash .term svg.tart'); if (!q) return null; const r = q.getBoundingClientRect(); return { box: q.getAttribute('viewBox'), w: r.width, h: r.height, squares: (q.querySelector('path').getAttribute('d').match(/M/g) || []).length, pre: !!document.querySelector('.dash .term pre.tart') }; })()");
+    // (29 characters wide, 15 lines of two squares each, a margin of 4 all round)
+    chk('/mobile: the QR code drawn as solid squares, square, with its margin', qr && qr.box === '0 0 37 38' && Math.abs(qr.w / qr.h - 37 / 38) < 0.01 && qr.squares > 200 && !qr.pre, qr);
+    await shot('60-term-mobile.png');
     c = await refresh('config');
     chk('/config: tabs, the search box, settings with their values', c.head === 'Settings' && c.tabs.join() === 'Status,Config,Usage,Stats' && c.rows[0] === '>Auto-compact' && /Search settings…/.test(c.text) && c.rows[c.rows.length - 1] === '~↓ 31 more', c);
     await shot('60-term-config.png');

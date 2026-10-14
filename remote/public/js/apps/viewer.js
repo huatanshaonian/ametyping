@@ -1,6 +1,7 @@
-// Viewer windows: pictures, PDF (pdfview.js), Markdown (with the pictures it references), text; anything else can be
-// downloaded. Two sources: a remote file, in chunks through the agent (openFile; fs.js), or a URL on this server
-// (openUrl -- a mail attachment fetched from the mailbox). A progress line shows while it loads.
+// Viewer windows: pictures, PDF (pdfview.js), Markdown (with the pictures it references), CSV / TSV as a table
+// (csv-view.js), text; anything else can be downloaded. Two sources: a remote file, in chunks through the agent
+// (openFile; fs.js), or a URL on this server (openUrl -- a mail attachment fetched from the mailbox). A progress line
+// shows while it loads.
 import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
 import * as fsc from '../fs.js';
@@ -8,6 +9,8 @@ import { kindOf, mimeOf, size as fmtSize } from '../filetypes.js';
 
 const MAX = 100 * 1024 * 1024;
 const SNIFF_MAX = 2 * 1024 * 1024;        // an unknown file this small is shown as text if it looks like text
+const TABLE_MAX = 20 * 1024 * 1024;       // a CSV larger than this is shown as text (a table of it would not fit the page)
+const isTable = (name) => /\.(csv|tsv)$/i.test(name);
 const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', text: 'notepad_file', other: 'notepad_file' };
 
 async function decodeText(blob) {
@@ -28,8 +31,9 @@ function frame({ id, title, name, where, kind, onClose }) {
   const note = h('div', { class: 'vnote', text: '读取中…' });
   const body = h('div', { class: 'vbody' }, note, bar);
   const dl = h('a', { class: 'btn', text: '下载', hidden: true });
-  const root = h('div', { class: 'viewer' }, h('div', { class: 'vbar' }, h('span', { class: 'vpath', text: where, title: where }), dl), body);
-  const v = { urls, bar, note, body, dl, cleanup: [] };
+  const tools = h('span', { class: 'vtools' });                // what this kind of file offers (a CSV: 表格 / 原文)
+  const root = h('div', { class: 'viewer' }, h('div', { class: 'vbar' }, h('span', { class: 'vpath', text: where, title: where }), tools, dl), body);
+  const v = { urls, bar, note, body, dl, tools, cleanup: [] };
   wm.open({ id, title, icon: icon(ICONS[kind] || 'notepad_file', true), content: root,
     width: kind === 'image' ? 640 : kind === 'pdf' ? 860 : 760, height: kind === 'pdf' ? 640 : 520,
     onClose: () => { if (onClose) onClose(); for (const f of v.cleanup) f(); for (const u of urls) URL.revokeObjectURL(u); } });
@@ -60,6 +64,16 @@ async function show(v, blob, name, kind, ctx = {}) {
       const doc = await renderPdf(wrap, await blob.arrayBuffer());
       v.cleanup.push(() => doc.destroy());
     } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 PDF 打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用别的程序看。')); }
+  } else if (k === 'text' && isTable(name) && blob.size <= TABLE_MAX) {
+    const text = await decodeText(blob);
+    const { csvTable } = await import('./csv-view.js');
+    const t = csvTable(text, name);
+    const pre = h('pre', { class: 'vtext', text });
+    const as = h('button', { class: 'btn', type: 'button', text: '原文', title: '在表格和原文之间切换' });
+    let raw = false;
+    as.addEventListener('click', () => { raw = !raw; as.textContent = raw ? '表格' : '原文'; v.body.replaceChildren(raw ? pre : t.el); v.body.scrollTop = 0; });
+    v.tools.replaceChildren(h('span', { class: 'vinfo', text: `${t.rows} 行 × ${t.cols} 列 · ${t.sep}分隔` }), as);
+    v.body.replaceChildren(t.el);
   } else if (k === 'text') {
     v.body.replaceChildren(h('pre', { class: 'vtext', text: await decodeText(blob) }));
   } else if (k === 'md') {

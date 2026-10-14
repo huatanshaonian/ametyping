@@ -82,13 +82,40 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('after login: start-up sound once', (await played()).filter((x) => x === 'startup.wav').length === 1, await played());
     await call('Page.reload'); await sleep(2500);
     chk('refresh: no second start-up', !(await played()).includes('startup.wav'), await played());
+    // a second Windose page in the same browser (the login cookie is the browser's): what the server tells both sounds
+    // in one of them only; muting in one shows in the other
+    const tab2 = await getJSON(`http://127.0.0.1:${CDP}/json/new?about:blank`, 'PUT');
+    const ws2 = new WebSocket(tab2.webSocketDebuggerUrl);
+    await new Promise((r) => ws2.on('open', r));
+    let id2 = 0; const pending2 = new Map();
+    ws2.on('message', (m) => { const o = JSON.parse(m); if (o.id && pending2.has(o.id)) { pending2.get(o.id)(o); pending2.delete(o.id); } });
+    const call2 = (method, params = {}) => new Promise((r) => { const i = ++id2; pending2.set(i, r); ws2.send(JSON.stringify({ id: i, method, params })); });
+    const evalJs2 = async (expr) => (await call2('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.result.value;
+    await call2('Page.enable');
+    await call2('Page.addScriptToEvaluateOnNewDocument', { source: "window.__played=[];const __p=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){window.__played.push(this.src.split('/').pop());return __p.call(this)};" });
+    await call2('Page.navigate', { url: `http://127.0.0.1:${PORT}/` }); await sleep(3000);
+    const played2 = async () => JSON.parse(await evalJs2('JSON.stringify(window.__played)'));
     // a working session finishes -> chimes (the demo session "bbbb" is working: its last line is the user's)
     fs.appendFileSync(path.join(PROJ, 'bbbbbbbb-1111-2222-3333-444444444444.jsonl'), L({ type: 'assistant', message: { id: 'z1', role: 'assistant', content: [{ type: 'text', text: '测试都过了' }] } }, Date.now()));
     await sleep(3000);
-    chk('session finished: chimes', (await played()).includes('chimes.wav'), await played());
+    const chimes = [(await played()).filter((x) => x === 'chimes.wav').length, (await played2()).filter((x) => x === 'chimes.wav').length];
+    chk('session finished: chimes -- once, in one of the two pages open', chimes[0] + chimes[1] === 1, chimes);
+    // (the same sound from the same page again is news of its own: it still sounds; once the other page's has passed)
+    await sleep(3500);
+    const again = await evalJs("import('/js/sound.js').then(async (s) => { const n = () => window.__played.filter((x) => x === 'chimes.wav').length, a = n(); await s.play('done'); await s.play('done'); return n() - a; })");
+    chk('... but this page twice in a row: twice (only the same sound from another page just now is left out)', again === 2, again);
+    const before2 = (await played2()).filter((x) => x === 'chimes.wav').length;
+    await evalJs2("import('/js/sound.js').then((s) => s.play('done'))"); await sleep(300);
+    chk('... and the other page, right after: left out', (await played2()).filter((x) => x === 'chimes.wav').length === before2, await played2());
+    await sleep(3200);
+    await evalJs2("import('/js/sound.js').then((s) => s.play('done'))"); await sleep(300);
+    chk('... a few seconds later the other page sounds again', (await played2()).filter((x) => x === 'chimes.wav').length === before2 + 1, await played2());
+    const icon2 = () => evalJs2("document.querySelector('#soundbtn img').src");
     // tray speaker mutes; the settings window can still try a sound
     await evalJs("document.getElementById('soundbtn').click()"); await evalJs("document.querySelector('#volpop .vmute input').click()");
     chk('tray click mutes (icon)', (await evalJs("document.querySelector('#soundbtn img').src")).includes('loudspeaker_muted'), await evalJs("document.querySelector('#soundbtn img').src"));
+    await sleep(300);
+    chk('... the other page shows it muted too', (await icon2()).includes('loudspeaker_muted') && (await evalJs2("document.querySelector('#volpop .vmute input').checked")), await icon2());
     await evalJs("document.getElementById('startbtn').click()"); await sleep(200);
     await evalJs("[...document.querySelectorAll('.smi')].find(b=>b.textContent.includes('控制面板')).click()"); await sleep(400);
     await evalJs("document.querySelector('.cp-item[data-id=sounds]').click()"); await sleep(600);
@@ -97,6 +124,9 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('try-out plays even when muted', (await played()).includes('chord.wav'), await played());
     await evalJs("document.querySelector('#volpop .vmute input').click()");
     chk('tray click unmutes', (await evalJs("document.querySelector('#soundbtn img').src")).includes('loudspeaker_rays'), 0);
+    await sleep(300);
+    chk('... in the other page too', (await icon2()).includes('loudspeaker_rays'), await icon2());
+    ws2.close();
     // logout: shut-down sound, then the login page
     await evalJs("document.getElementById('startbtn').click()"); await sleep(200);
     await evalJs("[...document.querySelectorAll('.smi')].find(b=>b.textContent.includes('注销')).click()"); await sleep(600);
