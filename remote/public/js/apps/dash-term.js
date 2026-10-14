@@ -25,6 +25,9 @@ const RELOADS = 4;                  // a menu still loading is read again by its
 
 // read(): asks for the current session's screen -> { ok, screen, msg }; press(key): a key into the terminal, resolves
 // true once the screen after it has been shown (set), false when the key could not be sent
+const KEYNAME = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab' };
+const keyName = (e) => (e.key === 'Tab' && e.shiftKey ? 'btab' : e.shiftKey ? '' : KEYNAME[e.key] || '');
+
 export function createTerm({ read, press = async () => false, onToggle = () => {} }) {
   const pre = h('pre', { class: 'tscr', hidden: true });
   const card = h('div', { class: 'tcard' });
@@ -103,7 +106,10 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     if (b.type === 'kv') return h('div', { class: 'tkv' }, ...b.rows.flatMap(([k, v]) => [h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v })]));
     if (b.type === 'code') return h('pre', { class: 'tcode', text: b.text });
     if (b.type === 'bar') return h('div', { class: 'tprog' }, h('span', { class: 'bar' }, h('i', { style: `width:${Math.max(0, Math.min(100, b.pct))}%` })), h('span', { text: `${b.pct}% ${b.word}`.trim() }));
-    if (b.type === 'input') return h('div', { class: 'tin' + (b.empty ? ' empty' : '') }, b.search ? h('span', { class: 'tic', text: '⌕' }) : null, h('span', { text: b.text || ' ' }));
+    if (b.type === 'input') return h('div', { class: 'tin' + (b.empty ? ' empty' : '') }, b.search ? h('span', { class: 'tic', text: '⌕' }) : null,
+      b.label ? h('span', { class: 'tic', text: b.label + ' >' }) : null,
+      h('span', { text: b.text || (b.typed ? `终端里已经输入了${b.more ? '至少 ' : ''}${b.typed} 个字符（内容不显示）` : b.ask ? '（还没输入）' : ' ') }));
+    if (b.type === 'link') return linkEl(b.url);
     if (b.type === 'slider') {
       return h('div', { class: 'tslide' },
         b.ends[0] ? h('span', { class: 'te', text: b.ends[0] }) : null,
@@ -115,15 +121,49 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     // (text laid out in columns -- /help's shortcuts -- keeps its columns)
     return h('div', { class: 'ttext' + (b.lines.some((l) => /\S {3,}\S.* {3,}\S/.test(l)) ? ' cols' : ''), text: b.lines.join('\n') });
   }
-  // what is typed here goes into the menu as it is, without Enter (a search box, a path, the letter a menu takes)
+  // An address on the screen (/login's sign-in link), whole. It is not to be selected out of the terminal's lines --
+  // those break it -- but copied or opened from here: the same characters the terminal was given.
+  function linkEl(url) {
+    const said = h('span', { class: 'tlsaid' });
+    const say = (t) => { said.textContent = t; setTimeout(() => { if (said.textContent === t) said.textContent = ''; }, 2500); };
+    const box = h('textarea', { class: 'tlurl', readonly: true, rows: '3', spellcheck: 'false', onfocus: () => box.select() });
+    box.value = url;
+    box.addEventListener('keydown', (e) => e.stopPropagation());
+    const copy = async () => {
+      try { await navigator.clipboard.writeText(url); say('已复制，共 ' + url.length + ' 个字符'); }
+      catch { box.focus(); box.select(); let ok = false; try { ok = document.execCommand('copy'); } catch {} say(ok ? '已复制，共 ' + url.length + ' 个字符' : '没法自动复制：链接已全选，请手动复制'); }
+    };
+    return h('div', { class: 'tlink' }, box,
+      h('div', { class: 'tlact' },
+        h('button', { class: 'btn go', type: 'button', text: '复制链接', title: '把完整的链接复制到剪贴板（和终端里的一字不差）', onclick: copy }),
+        h('a', { class: 'btn', href: url, target: '_blank', rel: 'noopener noreferrer', text: '在这台设备上打开', title: '在你现在用的这台设备的浏览器里打开这个链接' }),
+        said));
+  }
+  // what is typed here goes into the menu as it is, without Enter (a search box, a path, the letter a menu takes);
+  // into a question the menu asks ("Paste code here if prompted >") with Enter after it
   function typeEl(p) {
     const hint = (p.hints.find((x) => x.type) || {}).label;
-    const inp = h('input', { class: 'field ttype', placeholder: hint ? `输入文字${hint}（不带回车）` : '往菜单里输入文字（不带回车）', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: draft });
-    const go = async () => { const v = inp.value; if (!v) return; draft = ''; inp.value = ''; await send('c:' + v.slice(0, 200)); };
+    const inp = h('input', { class: 'field ttype', placeholder: p.ask ? '在这里粘贴 / 输入，回车送进终端' : hint ? `输入文字${hint}（不带回车）` : '往菜单里输入文字（不带回车）', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: draft });
+    const go = async () => {
+      const v = p.ask ? inp.value.trim() : inp.value; if (!v) return;
+      // (the sign-in link pasted where its code belongs: the terminal would take it for a wrong code, and the sign-in
+      // would have to be started over with a new link)
+      if (p.ask && (/^https?:\/\//i.test(v) || p.blocks.some((b) => b.type === 'link' && b.url === v))) { st.textContent = '这是链接，不是授权码：没有送进终端'; inp.select(); return; }
+      draft = ''; inp.value = '';
+      // (as much at a time as one key message carries)
+      for (let i = 0; i < v.length; i += 200) if (!(await send('c:' + v.slice(i, i + 200)))) return;
+      if (p.ask) await send('enter');
+    };
     inp.addEventListener('input', () => { draft = inp.value; });
-    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });   // (not the dashboard's own keys)
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();                                                    // (not the dashboard's own keys)
+      if (e.isComposing) return;
+      // nothing typed: the key is the terminal's (the arrows through a menu, Enter, Esc), as in the reply box
+      const k = !inp.value && !e.ctrlKey && !e.altKey && !e.metaKey ? keyName(e) : '';
+      if (k) { e.preventDefault(); send(k); } else if (e.key === 'Enter') { e.preventDefault(); go(); }
+    });
     return h('div', { class: 'ttyper' + (p.typing ? ' want' : '') }, inp,
-      h('button', { class: 'btn', type: 'button', text: '输入', onclick: go }),
+      h('button', { class: 'btn' + (p.ask ? ' go' : ''), type: 'button', text: p.ask ? '输入并回车' : '输入', onclick: go }),
       h('button', { class: 'btn', type: 'button', text: '⌫', title: '退格：删掉菜单输入框里的一个字', onclick: () => send('bksp') }));
   }
   // a menu's tabs: the one it is on marked (the terminal highlights it); a click on another walks there with ← / →,
@@ -195,5 +235,20 @@ export function createTerm({ read, press = async () => false, onToggle = () => {
     cur = key; seq++; draft = '';
     if (!key) { open = false; el.hidden = true; onToggle(false); } else if (open) { pre.textContent = ''; parsed = { kind: 'empty' }; card.replaceChildren(); load(); }
   }
-  return { el, show, set, load, target, get open() { return open; } };
+  // A key pressed while the panel is open and no box has the focus (a click on a row or a button leaves the focus
+  // nowhere: the card is drawn anew): the arrows, Enter, Esc and Tab go to the terminal; a letter or a digit the menu
+  // names (a row's number, "s for this session only") too; any other character starts typing in the panel's box when
+  // the menu takes text. Returns true when the key was used.
+  function key(e) {
+    if (!open || raw || e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return false;
+    const k = keyName(e);
+    if (k) { send(k); return true; }
+    if (e.key.length !== 1 || parsed.kind !== 'dialog') return false;
+    const named = parsed.hints.some((x) => x.keys.some((y) => y.key === 'c:' + e.key)) || parsed.blocks.some((b) => b.type === 'list' && b.rows.some((r) => r.num === e.key));
+    if (named && !parsed.ask) { send('c:' + e.key); return true; }
+    const inp = card.querySelector('.ttype');
+    if (inp && (parsed.ask || parsed.typing)) inp.focus();                    // (the character itself is typed there)
+    return false;
+  }
+  return { el, show, set, load, target, key, get open() { return open; } };
 }

@@ -10,6 +10,11 @@
 //   blocks: { type: 'text', lines } | { type: 'list', rows } | { type: 'kv', rows: [[name, value]] }
 //         | { type: 'input', text, search, empty } | { type: 'code', text } | { type: 'bar', pct, word }
 //         | { type: 'slider', labels, at, ends, aside }
+//         | { type: 'link', url }                      an address, whole: one the screen broke over several lines
+//           (/login's sign-in link) is put together again exactly, character for character
+//   an input block may be a question to type an answer to ("Paste code here if prompted >"): then it has label and
+//   ask: true, and the dialog says ask: true -- what is typed goes in followed by Enter; typed: how many characters
+//   the terminal shows as typed already when it hides what they are ("*****…": at least that many)
 //   a list row: { cur, head, more, scroll, num, glyph, label, rest, current, gap, text, detail }   (text: the row as
 //         drawn, without the cursor -- what a row is known by from one reading of the screen to the next; detail: a
 //         second line that belongs to it)
@@ -32,7 +37,7 @@ export const plainScreen = (text) => String(text || '').replace(MARKS, '');
 const ARROWS = { '↑': 'up', '↓': 'down', '←': 'left', '→': 'right' };
 // what the menus call their keys' effects, said the way the rest of the dashboard talks (anything else stays as it is)
 const SAY = { preview: '预览', rename: '改名', 'only show current repo': '只看当前仓库', cancel: '取消', confirm: '确认', select: '选择', close: '关闭', back: '返回', 'go back': '返回', continue: '继续', navigate: '移动',
-  adjust: '调整', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
+  adjust: '调整', retry: '重试', switch: '切换', toggle: '切换', view: '查看', search: '搜索', add: '添加', complete: '补全', clear: '清除', change: '修改',
   filter: '筛选', return: '返回', tabs: '到标签页', favorite: '收藏', 'set as default': '设为默认', 'use this session only': '只用于本会话',
   'for this session only': '只用于本会话', 'show all projects': '显示所有项目', 'only show current branch': '只看当前分支', day: '按天', week: '按周' };
 
@@ -57,7 +62,8 @@ export function hintLine(s) {
   let known = 0;
   for (const seg of segs) {
     if (/\s{2,}/.test(seg)) return null;                              // (columns: a table of shortcuts, not a key line)
-    const m = /^(\S+) (to|for) (.+)$/.exec(seg);
+    // ("Press Enter to continue…": the same thing said in a sentence)
+    const m = /^(\S+) (to|for) (.+)$/.exec(seg.replace(/^Press (?=\S+ to )/, '').replace(/[.…]+$/, ''));
     const toks = m ? (m[1] === '/' ? ['/'] : m[1].split('/')) : [];
     // a part that names no key known here ("Tab/Arrow keys to navigate"): kept as the words it is
     if (!m || !toks.every((t) => KEYTOK.test(t))) { out.push({ keys: [], words: true, label: seg }); continue; }
@@ -194,7 +200,7 @@ function dialog(src, hot = new Map()) {
   const addHints = (hs, note) => { for (const x of hs) { const label = note ? `${x.label}（${note}）` : x.label; const sig = (h) => h.keys.map((k) => k.cap).join('/') + '|' + h.label; const y = { ...x, label }; if (!hints.some((h) => sig(h) === sig(y))) hints.push(y); } };
   // (the key lines first: some are drawn a column off the rest, which would hide where the menu's own margin is;
   // a long one runs on into the next line, breaking anywhere: "... · Type" / "to search · Esc to cancel")
-  const kept = [];
+  let kept = [];
   for (let n = 0; n < src.length; n++) {
     let h = hintLine(src[n]);
     const both = src[n] && src[n + 1] && / · /.test(src[n]) ? hintLine(src[n].trim() + ' ' + src[n + 1].trim()) : null;
@@ -202,15 +208,19 @@ function dialog(src, hot = new Map()) {
     if (both && (!h || (h[h.length - 1].words && words(both) < words(h)))) { h = both; n++; }
     if (h) addHints(h); else kept.push(src[n]);
   }
-  if (!kept.some(Boolean)) return { kind: 'dialog', title: '', tabs: null, tab: -1, sub: '', blocks: [], hints, typing: hints.some((h) => h.type), loading: false };
-  const ind = Math.min(...kept.filter(Boolean).map(indentOf));
-  const ls = kept.map((l) => l.slice(ind));
-  const width = Math.max(...ls.map((l) => l.length));
+  if (!kept.some(Boolean)) return { kind: 'dialog', title: '', tabs: null, tab: -1, sub: '', blocks: [], hints, typing: hints.some((h) => h.type), loading: false, ask: false };
+  // (a link's lines start in the first column whatever the menu's margin is: not counted for it)
+  kept = joinLinks(kept);
+  const isLink = (l) => l.startsWith(LINK);
+  const inds = kept.filter((l) => l && !isLink(l)).map(indentOf);
+  const ind = inds.length ? Math.min(...inds) : 0;
+  const ls = kept.map((l) => (isLink(l) ? l : l.slice(ind)));
+  const width = Math.max(0, ...ls.filter((l) => !isLink(l)).map((l) => l.length));
 
   let i = 0;
   while (i < ls.length && !ls[i]) i++;
   let title = '', tabs = null, tab = -1;
-  const special = (l) => /^\s*([╭│╰❯]|╌{8,})/.test(l) || /[─▲]{8,}/.test(l) || /^\s*\d+\.\s/.test(l) || KV.test(l) || BAR.test(l);
+  const special = (l) => isLink(l) || ASK.test(l) || /^\s*([╭│╰❯]|╌{8,})/.test(l) || /[─▲]{8,}/.test(l) || /^\s*\d+\.\s/.test(l) || KV.test(l) || BAR.test(l);
   if (i < ls.length && indentOf(ls[i]) === 0 && !special(ls[i])) {
     let parts = ls[i].trim().split(/\s{2,}/);
     const on = hot.get(ls[i].trim()) || [];
@@ -244,6 +254,7 @@ function dialog(src, hot = new Map()) {
     const l = rest[j];
     if (!l) { gap = true; continue; }
     const wasGap = gap; gap = false;
+    if (isLink(l)) { blocks.push({ type: 'link', url: l.slice(LINK.length) }); continue; }
     // an input box: ╭──╮ / │ what is typed │ / ╰──╯
     if (/^\s*╭─/.test(l)) {
       const inner = [];
@@ -290,6 +301,13 @@ function dialog(src, hot = new Map()) {
     // a usage bar: ███████▌      31% used
     const bar = BAR.exec(l);
     if (bar) { blocks.push({ type: 'bar', pct: +bar[1], word: bar[2] || '' }); continue; }
+    // a question answered by typing, on its own line: "Paste code here if prompted >"
+    const ask = mc < 0 && !/^\s*\d+\.\s/.test(l) ? ASK.exec(l) : null;
+    if (ask) {
+      const t = ask[2] || ask[3] || '', stars = !!ask[2];
+      blocks.push({ type: 'input', label: ask[1].trim(), text: stars ? '' : t, typed: stars ? t.replace('…', '').length : 0, more: stars && t.endsWith('…'), search: false, empty: !t, ask: true });
+      continue;
+    }
     if (isRow(l)) {
       const r = row(l, mc);
       const b = last();
@@ -323,11 +341,38 @@ function dialog(src, hot = new Map()) {
     }
   }
   const all = src.join('\n');
-  return { kind: 'dialog', title, tabs, tab, sub: subs.join(' '), blocks, hints,
+  // (a question to type an answer to is ended with Enter, which such a screen does not name among its keys)
+  const asks = blocks.some((b) => b.ask);
+  if (asks && !hints.some((x) => x.keys.some((k) => k.key === 'enter'))) hints.unshift({ keys: [keyOf('Enter')], label: SAY.confirm });
+  return { kind: 'dialog', title, tabs, tab, sub: subs.join(' '), blocks, hints, ask: asks,
     typing: blocks.some((b) => b.type === 'input') || hints.some((h) => h.type),
     loading: /Loading|Refreshing…/.test(all) };
 }
 const BAR = /^\s*[█▉▊▋▌▍▎▏░▒▓]+\s+(\d+)%\s*(\w*)/;
+// a line that is an address and nothing else; one line of a menu standing for a whole link (dialog)
+const URL_LINE = /^\s*(https?:\/\/\S+)$/;
+const LINK = '\uE002';
+// "Paste code here if prompted >" and what has been typed after it
+// (a code is shown as stars, right against the ">": "prompted >*********…")
+// Told from a sentence with a ">" in it by what follows: nothing, the stars, or one unbroken word typed so far.
+const ASK = /^\s*([^>\s]+ [^>]*[^>\s]) >(?:(\*+…?)| (\S+))?$/;
+
+// An address longer than the screen is wide is drawn broken at the right edge, from the first column, with nothing to
+// say the lines belong together: read as text it came out with spaces (or line breaks) in it, and a sign-in link
+// copied that way is not the link. Its lines are one address again here: a line that is only an address and reaches
+// the right edge goes on in the lines under it, as long as each is unbroken text from the first column and the one
+// before it was full.
+function joinLinks(ls) {
+  const full = Math.max(0, ...ls.map((l) => l.length)), out = [];
+  for (let n = 0; n < ls.length; n++) {
+    const m = URL_LINE.exec(ls[n]);
+    if (!m) { out.push(ls[n]); continue; }
+    let url = m[1];
+    while (ls[n].length >= full && ls[n + 1] && /^\S+$/.test(ls[n + 1])) url += ls[++n];
+    out.push(LINK + url);
+  }
+  return out;
+}
 const KV = /^\s*(\S[^:]{0,28}):\s{2,}(\S.*)$/;
 
 // the row under the cursor (the first, when a menu shows two), and where a row known by its text is now

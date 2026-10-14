@@ -310,7 +310,19 @@ function mount(current) {
     e.preventDefault();
     card.querySelector('button[data-choice="allow"]').click();
   }
+  // 终端画面 open: the keyboard works its menu without a box having to be clicked first (dash-term.js key). A card
+  // waiting for 允许 keeps Enter (above).
+  function onTermKey(e) {
+    if (e.defaultPrevented || !term.open || !termOk) return;
+    const win = root.closest('.win');
+    if (!win || win.classList.contains('inactive') || win.classList.contains('minimized')) return;
+    const t = document.activeElement;
+    if (t && t !== document.body && (!root.contains(t) || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (t && t.tagName === 'BUTTON' && !term.el.contains(t)) return;               // (a button of the dashboard's own: its key)
+    if (term.key(e)) e.preventDefault();
+  }
   document.addEventListener('keydown', onEnter);
+  document.addEventListener('keydown', onTermKey);
 
   // ---- conversation ----
   const inline = (s) => esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
@@ -383,6 +395,6 @@ function mount(current) {
     root,
     setCurrent(c) { sessionList.setCurrent(c); },
     select,
-    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); ro.disconnect(); net.send({ t: 'unwatch' }); backnav.level('dash', 0); },
+    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); document.removeEventListener('keydown', onTermKey); ro.disconnect(); net.send({ t: 'unwatch' }); backnav.level('dash', 0); },
   };
 }
