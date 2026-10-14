@@ -1,4 +1,5 @@
 // 声音 (in 控制面板): switch each event sound on or off, try it, or mute everything (same as the tray speaker).
+// A change made in another Windose page of this browser shows here too (sound.js onChange).
 import { h } from '../util.js';
 import * as sound from '../sound.js';
 
@@ -8,14 +9,15 @@ export function open() { import('./control.js').then((c) => c.open('sounds')); }
 // the page itself, for 控制面板: { root, destroy }
 export function panel() {
   const all = h('input', { type: 'checkbox' });
+  const boxes = new Map();
   const rows = sound.EVENTS.map(([ev, label]) => {
     const box = h('input', { type: 'checkbox' });
-    box.checked = sound.enabled(ev);
+    boxes.set(ev, box);
     box.addEventListener('change', () => sound.setEnabled(ev, box.checked));
     return h('label', {}, box, h('span', { text: label }),
       h('button', { class: 'btn', type: 'button', text: '▶ 试听', onclick: (e) => { e.preventDefault(); sound.play(ev, { force: true }); } }));
   });
-  const sync = () => { all.checked = sound.muted(); };
+  const sync = () => { all.checked = sound.muted(); for (const [ev, box] of boxes) box.checked = sound.enabled(ev); };
   all.addEventListener('change', () => sound.setMuted(all.checked));
   const off = sound.onChange(sync);
   const content = h('div', { class: 'sounds' },
