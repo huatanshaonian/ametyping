@@ -1,6 +1,7 @@
 // 重要计划: the list (js/todos.js) as a small panel always on the desktop, and as a window (start menu; on phones the
 // desktop is covered by full-screen windows). Tick to finish, × to delete, click the text to edit it, add at the
-// bottom with an optional due date. Items the morning report found done show why.
+// bottom with an optional due date. Items the morning report found done show why. One put in from a note on a paper
+// (文献 › 深读 › 笔记) opens that paper at its page again.
 import { h, prefs } from '../util.js';
 import * as wm from '../wm.js';
 import { confirmBox } from '../dialog.js';
@@ -30,7 +31,9 @@ function mount({ widget = false } = {}) {
       h('input', { type: 'checkbox', checked: t.done, title: t.done ? '标回未完成' : '完成', onchange: (e) => todos.update(t.id, { done: e.target.checked }) }),
       h('div', { class: 'td-c' }, label,
         h('small', { text: [t.project, t.due ? md(t.due) + ' 截止' : '', t.done && t.doneBy && t.doneBy.startsWith('report:') ? `日报 ${md(t.doneBy.slice(7))} 判定完成` : ''].filter(Boolean).join(' · ') }),
-        t.done && t.evidence ? h('small', { class: 'td-ev', text: t.evidence }) : null),
+        t.done && t.evidence ? h('small', { class: 'td-ev', text: t.evidence }) : null,
+        t.lit ? h('button', { class: 'td-lit', type: 'button', text: '打开文献' + (t.lit.page ? ` p.${t.lit.page}` : ''), title: '在深读里打开这篇' + (t.lit.page ? `，翻到第 ${t.lit.page} 页` : ''),
+          onclick: () => import('./lit-reader.js').then((m) => m.openReader(t.lit.key, t.lit.page || undefined)) }) : null),
       h('button', { class: 'td-x', type: 'button', title: '删除', text: '×', onclick: async () => { if (await confirmBox(`删除「${t.text}」？`, { title: '删除待办', ok: '删除', danger: true })) todos.remove(t.id); } }));
     if (!t.done) label.addEventListener('click', () => {
       const ed = h('input', { class: 'field td-ed', value: t.text, maxlength: 300 });

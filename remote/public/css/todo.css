@@ -9,6 +9,7 @@
 .td-t { word-break: break-word; cursor: text; }
 .td-c small { font-size: 11px; color: var(--muted); }
 .td-ev { font-style: italic; }
+.td-lit { align-self: flex-start; padding: 0; border: none; background: none; color: var(--border); font-size: 11px; text-decoration: underline; cursor: pointer; }
 .td-i.late small { color: var(--bad); }
 .td-i.soon small { color: var(--warn); }
 .td-i.done .td-t { text-decoration: line-through; color: var(--faint); cursor: default; }

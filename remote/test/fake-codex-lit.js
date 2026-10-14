@@ -18,6 +18,9 @@ process.stdin.on('end', () => {
     // 读图: one transcription per page asked for (page 2 has a symbol it could not make out)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);
     a = { pages: png && images.length === nos.length ? nos.map((p) => ({ page: p, md: `读图第 ${p} 页：$n_e(z)=n_0 e^{-z/H}$ \\tag{${p}}` + (p === 2 ? ' 碰撞频率 $\\nu_{[?]}$\n\n[图 1：电子密度随高度的变化；横轴高度，纵轴电子密度]' : '') })) : [] };
+  } else if (P.transcript) {
+    // 笔记 › 认字: a note written by hand
+    a = { transcript: png && images.length === 1 ? '手写：鞘套厚度 $\\delta$ 和 RCS 的关系，回头和仿真对比' : '' };
   } else if (P.figs) {
     // 图表: one figure on every page asked that speaks of one in the deep card's test (the block of text on the page)
     const nos = ((/PDF 的第 ([\d、]+) 页/.exec(prompt) || [])[1] || '').split('、').map(Number).filter(Boolean);

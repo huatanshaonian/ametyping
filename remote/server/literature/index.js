@@ -42,6 +42,7 @@ const { createTranslate } = require('./translate');
 const { createAbsJob } = require('./absjob');
 const { createCnJournals } = require('./sources/cnjournals');
 const { createPdfQueue } = require('./pdfqueue');
+const { createNotes } = require('./notes');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -85,7 +86,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const history = createHistory({ dir, onChange: () => changed('review') });
   const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log,
     onEdit: (before, after, by) => { if (!history.count()) history.seed({ ...before, organizedAt: Date.now() }); history.track(before, after, by); } });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, figures: cfg.figures === false ? null : figures, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  // 笔记: what the user writes beside a paper in 深读 (typed or by hand), in the knowledge base beside its card
+  const notes = createNotes({ dir, kbDir: kb.dir, mirror, ask: askVision, todos, log, onChange: (k) => changed('notes:' + k),
+    citekeyOf: (it) => { const c = cards.find(it.key); return c ? path.basename(c.path, '.md') : kb.fileName(it.citekey); } });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
@@ -203,6 +207,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/review') { const r = review.get(qs('id')); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/pdfq') { json(res, 200, pdfq.status()); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
+    if (p.startsWith('/api/lit/notes')) return notes.handle(req, res, url, json, readBody);
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
     // a PDF the user found themselves: the file is the body (upload.js)
@@ -308,7 +313,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
+  return { handle, morning, mirror, feed, cards, notes, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
 }
 
 module.exports = { createLiterature };

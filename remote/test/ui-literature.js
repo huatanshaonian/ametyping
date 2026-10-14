@@ -195,6 +195,37 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('深读: the bar between the two columns is dragged -- the side gets as much wider, and the width is remembered', w0 === 440 && w1 === w0 + 120 && (await evalJs("localStorage.getItem('lit.reader.side')")) === String(w1), [w0, w1]);
     await evalJs("document.querySelector('.lr-split').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     chk('a double click puts it back', (await sideW()) === 440 && (await evalJs("localStorage.getItem('lit.reader.side')")) === null, await sideW());
+
+    // 笔记: the third column -- a typed note with the passage selected in the PDF, one written by hand, 认字, into 重要计划
+    const pdfW0 = await evalJs("document.querySelector('.lr-pdf').offsetWidth");
+    await evalJs("document.querySelector('.lr-nb').click()");
+    await sleep(200);
+    chk('笔记: the button opens a third column beside the side, remembered; the PDF keeps room to be read (the window grows)', await waitFor("!!document.querySelector('.lr.notes .lr-notes .ln') && document.querySelector('.lr-notes').offsetWidth > 250") &&
+      (await evalJs("document.querySelector('.lr-pdf').offsetWidth")) >= Math.min(400, pdfW0) - 2 && !/null/.test(await evalJs("document.querySelector('.ln-new').textContent")) &&
+      (await evalJs("localStorage.getItem('lit.reader.notes')")) === '1' && /读的时候随手记/.test(await evalJs("document.querySelector('.ln-list').textContent")), await evalJs("({ pdf: document.querySelector('.lr-pdf').offsetWidth, side: document.querySelector('.lr-side').offsetWidth, notes: document.querySelector('.lr-notes').offsetWidth, win: document.querySelector('.lr').closest('.win').offsetWidth, desk: document.querySelector('.lr').closest('.win').parentElement.clientWidth })"), pdfW0);
+    await evalJs("(() => { const t = [...document.querySelectorAll('.lr-pdf .textLayer span')].find(s => /\\w{4}/.test(s.textContent)); const r = document.createRange(); r.selectNodeContents(t); const s = document.getSelection(); s.removeAllRanges(); s.addRange(r); })()");
+    await sleep(300);
+    chk('the passage selected in the PDF is shown as going with the note', /会带上选中的/.test(await evalJs("document.querySelector('.ln-sel').textContent")), await evalJs("document.querySelector('.ln-sel').textContent"));
+    await evalJs("(() => { const t = document.querySelector('.ln-ta'); t.value = '这里的碰撞频率 $\\\\nu$ 要和我的仿真对比'; t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })); })()");
+    chk('Ctrl+Enter: the note is kept with its page and the passage, its formula drawn', await waitFor("(() => { const i = document.querySelector('.ln-i'); return !!i && /p\\.\\d/.test(i.querySelector('.ln-pg').textContent) && !!i.querySelector('.ln-q') && !!i.querySelector('.katex') && /仿真对比/.test(i.textContent); })()", 10000) &&
+      (await evalJs("document.querySelector('.ln-ta').value")) === '', await evalJs("document.querySelector('.ln-list').textContent"));
+    await evalJs("document.getSelection().removeAllRanges(); [...document.querySelectorAll('.ln-head .lit-tab')].find(b => b.textContent === '手写').click()");
+    chk('手写: a pad to write on, with its tools', await waitFor("(() => { const p = document.querySelector('.ln-pad'); return !p.hidden && p.querySelector('.bd-surface').offsetHeight > 100 && p.querySelectorAll('.bd-sw').length === 4; })()"), await evalJs("document.querySelector('.ln-new').outerHTML.slice(0, 300)"));
+    await evalJs(`(() => { const el = document.querySelector('.ln-pad .bd-surface'), r = el.getBoundingClientRect();
+      const ev = (type, x, y, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 31, pointerType: 'mouse', button: type === 'pointermove' ? -1 : 0, buttons, clientX: r.left + x, clientY: r.top + y, pressure: buttons ? 0.5 : 0 }));
+      ev('pointerdown', 30, 40, 1); for (let x = 35; x <= 200; x += 5) ev('pointermove', x, 40 + Math.sin(x / 15) * 20, 1); ev('pointerup', 200, 40, 0); })()`);
+    await sleep(200);
+    await evalJs("[...document.querySelectorAll('.ln-new .btn')].find(b => b.textContent === '记下').click()");
+    chk('the note by hand is kept as its picture', await waitFor("(() => { const i = document.querySelectorAll('.ln-i')[1]; const g = i && i.querySelector('img.ln-img'); return !!g && g.complete && g.naturalWidth > 50; })()", 10000), await evalJs("document.querySelector('.ln-list').innerHTML.slice(0, 600)"));
+    await shot('84b-lit-notes.png');
+    await evalJs("[...document.querySelectorAll('.ln-i')[1].querySelectorAll('.btn')].find(b => b.textContent === '列入待办').click()");
+    chk('列入待办: read into type first, then in 重要计划 -- the note says so, the todo opens the paper again', await waitFor("(() => { const i = document.querySelectorAll('.ln-i')[1]; return /已在重要计划/.test(i.textContent) && /认字：/.test(i.textContent) && /鞘套厚度/.test(i.textContent); })()", 20000) &&
+      await waitFor("[...document.querySelectorAll('#todowidget .td-i')].some(t => /鞘套厚度/.test(t.textContent) && /打开文献/.test(t.textContent))", 5000), await evalJs("document.querySelectorAll('.ln-i')[1].textContent"));
+    await evalJs("[...document.querySelectorAll('.ln-i')[0].querySelectorAll('.btn')].find(b => b.textContent === '改').click()");
+    chk('改: the note back in the box', /仿真对比/.test(await evalJs("document.querySelector('.ln-ta').value")) && (await evalJs("[...document.querySelectorAll('.ln-new .btn')].map(b => b.textContent).join()")).includes('改好了'), await evalJs("document.querySelector('.ln-ta').value"));
+    await evalJs("[...document.querySelectorAll('.ln-new .btn')].find(b => b.textContent === '不改了').click()");
+    await evalJs("document.querySelector('.lr-nb').click()");
+    chk('the button closes the column again', await waitFor("!document.querySelector('.lr.notes') && document.querySelector('.lr-notes').offsetWidth === 0") && (await evalJs("localStorage.getItem('lit.reader.notes')")) === '0');
     await evalJs("[...document.querySelectorAll('.lr-box .btn')].find(b => b.textContent === '沉淀到卡片').click()");
     await sleep(2500);
 
