@@ -2,7 +2,8 @@
 // ("设为重要") or are typed in on the desktop widget; each morning's report checks the open ones against the day's
 // conversations and ticks off what got done (summary/generate.js). Loose ends you did not star stay in their day's
 // report only.
-//   <dataDir>/todos.json   [{ id, text, project, due, created, from: { date } | null, done, doneAt, doneBy, evidence }]
+//   <dataDir>/todos.json   [{ id, text, project, due, created, from: { date } | null, lit: { key, page } | undefined, done, doneAt, doneBy, evidence }]
+// (lit: put in from a note on a paper in 文献 › 深读 -- the paper's Zotero key and the page, to open it there again)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -28,6 +29,7 @@ function createTodos({ dataDir, onChange = () => {}, audit = () => {} }) {
     if (from && items.some((t) => t.from && t.from.date === from.date && t.text === text)) return { ok: true, dup: true };
     if (items.length >= MAX) items = items.filter((t) => !t.done || Date.now() - (t.doneAt || 0) < 90 * 86400e3);
     const t = { id: crypto.randomBytes(6).toString('hex'), text, project: str(d.project, 60), due: DAY.test(d.due) ? d.due : '', created: Date.now(), from, done: false };
+    if (d.lit && /^[A-Z0-9]{8}$/.test(d.lit.key)) t.lit = { key: d.lit.key, page: Math.max(0, Math.min(100000, Math.round(+d.lit.page || 0))) };
     items.push(t); save();
     return { ok: true, item: t };
   }

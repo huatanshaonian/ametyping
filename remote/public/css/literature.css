@@ -129,6 +129,30 @@
 .lr-sel { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lr.narrow .lr-side { width: 100%; } .lr.narrow .lr-pdf { display: none; } .lr.narrow.side .lr-pdf { display: block; } .lr.narrow.side .lr-side { display: none; }
 .lr.narrow .lr-swap { display: inline-block; }
+/* 深读 › 笔记: the third column (lit-notes.js); on a narrow window it takes the side's place */
+.lr-notes { display: none; width: 340px; flex: none; min-width: 0; background: var(--body); border-left: 1px solid var(--edge); }
+.lr-split2 { display: none; } .lr.notes .lr-notes { display: flex; } .lr.notes .lr-split2 { display: block; }
+.lr.dragging .lr-notes { pointer-events: none; }
+.lr.narrow .lr-split2 { display: none !important; } .lr.narrow.notes .lr-side { display: none; } .lr.narrow .lr-notes { width: 100% !important; } .lr.narrow.side .lr-notes { display: none; }
+.lr-nb { margin-left: auto; } .lr-nb.on { background: var(--fill); color: var(--on-fill); } .lr.narrow .lr-swap { margin-left: auto; } .lr.narrow .lr-nb { margin-left: 4px; }
+.ln { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; }
+.ln-head { align-items: center; } .ln-head b { padding: 0 4px 0 8px; } .ln-n { color: var(--muted); font-size: 12px; } .ln-gap { flex: 1; }
+.ln-list { flex: 1; min-height: 80px; overflow-y: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 8px; }
+.ln-i { padding: 5px 8px; background: var(--surface); border: 1px solid var(--edge); } .ln-i.on { outline: 2px solid var(--pink); }
+.ln-meta { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11.5px; }
+.ln-pg { padding: 0 5px; border: 1px solid var(--edge); background: var(--body); color: var(--border); font-size: 11.5px; cursor: pointer; }
+.ln-td { color: var(--ok-text); }
+.ln-q { margin: 4px 0; padding: 2px 6px; border-left: 3px solid var(--edge); color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+.ln-img { display: block; max-width: 100%; height: auto; margin: 4px 0; background: #fff; border: 1px solid var(--edge); }
+.ln-ocr { font-size: 12.5px; } .ln-ocr > small { color: var(--muted); }
+.ln-acts { margin-top: 4px !important; } .lr .ln-acts .btn { padding: 0 8px; font-size: 12px; } .ln-msg.bad { color: var(--bad); }
+.ln-new { flex: none; border-top: 1px solid var(--edge); padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+.ln-sel { display: flex; align-items: center; gap: 4px; margin: 0; } .ln-sel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ln-x { flex: none; padding: 0 5px; border: none; background: none; cursor: pointer; color: var(--muted); }
+.ln-pad { display: flex; flex-direction: column; border: 1px solid var(--edge); resize: vertical; overflow: hidden; height: 210px; min-height: 140px; max-height: 70vh; }
+.ln-pad[hidden] { display: none; } .ln-pad .bd-surface { flex: 1; min-height: 0; }
+.ln-tools { display: flex; align-items: center; gap: 2px; padding: 2px; background: var(--body); border-bottom: 1px solid var(--edge); flex-wrap: wrap; } .ln-tools .btn.bd-ib { display: inline-flex; align-items: center; justify-content: center; padding: 1px 4px; min-width: 26px; } .ln-tools .btn.sel { background: var(--fill); color: var(--on-fill); } .ln-tools .bd-sw { width: 16px; height: 16px; } .ln-tools .bd-gap { width: 4px; }
+.lr.dragging .ln-pad { pointer-events: none; }
 .lr.narrow.side .lr-pdf::after { content: none; }
 html[data-theme="win98"] .lit-tab { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); }
 html[data-theme="win98"] .lit-tab.on { box-shadow: var(--pressed); background: #dcdcdc; }

@@ -49,8 +49,10 @@ function noteHtml(md) {
   return `<div data-schema-version="9">${out.join('')}</div>`;
 }
 
-// ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js)
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, writeNotes = true, log = () => {}, onChange = () => {} }) {
+// ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js);
+// myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
+  const marks = (key) => [...annotationLines(mirror, key), ...myNotes(key)];
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
 
@@ -143,7 +145,7 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const ft = await fulltext.forItem(key);
     // (a scan's thin text still helps a little: whatever text there is goes along)
     const pages = ft.pages && ft.chars > 0 ? pickPages(ft.pages, profile.words(), 20000, ft.labels).slice(0, 6) : [];
-    const a = await ask(quickPrompt(profile.get() || {}, item, pages, annotationLines(mirror, key)), QUICK_SCHEMA);
+    const a = await ask(quickPrompt(profile.get() || {}, item, pages, marks(key)), QUICK_SCHEMA);
     const r = store(item, 'quick', a, { pdf: !!ft.pages, getPdf: !ft.pages && a.getPdf && a.getPdf.worth ? (a.getPdf.why || '值得找全文') : undefined });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: !!ft.pages, missing: ft.missing || '', getPdf: a.getPdf };
@@ -160,7 +162,7 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const read = ft.vision && ft.vision.length ? formatRanges(ft.vision) : '';
     const long = !!(vi && vi.n && !vi.auto && (ft.vision || []).length < vi.n);
     const figs = figures ? await figures.ensure(key) : [];          // the paper's figures, cut out of its pages
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), annotationLines(mirror, key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }, figs), DEEP_SCHEMA);
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }, figs), DEEP_SCHEMA);
     // a long paper with pages worth reading as images: the request waits for the user's approval
     if (long && a.vision && a.vision.worth && String(a.vision.pages || '').trim()) vision.request(key, a.vision.pages, a.vision.why, 'model');
     const r = store(item, 'deep', a, { pdf: true, vision: read || undefined, figs });

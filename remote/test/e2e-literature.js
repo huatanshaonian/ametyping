@@ -8,7 +8,8 @@
 //   "worth getting the full text", then the PDF dropped in later -> the card again from the text); a review's answers
 //   into the card; 深读 (understanding + feedback, a chat with page references, 沉淀 -> proposals, accepted); a deep
 //   card keeping the user's sections, an edited card not overwritten (a proposal instead), a stale save refused;
-//   an action into 重要计划; a topic drafted from cards and a related-work paragraph; the output stats; no login = no.
+//   an action into 重要计划; 笔记 beside a paper (typed and by hand, 认字, into 重要计划 with the paper and page, into the
+//   knowledge base and the deep card's prompt); a topic drafted from cards and a related-work paragraph; the output stats; no login = no.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = path.resolve(__dirname, '..');
 const auth = require(R + '/server/auth');
@@ -257,6 +258,31 @@ const src = createFakeSources();
     ok('an action into 重要计划', (await P('/api/lit/action/todo', { key: 'AAAAAAA1', text: '用第 2 页的剖面重算 X 波段 RCS' })).ok &&
       ((await G('/api/todos')).items || []).some((t) => t.project === '文献' && /sun2018backward/.test(t.text)));
 
+    // ---- 笔记: typed, and by hand (the strokes and their picture) ----
+    const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+    const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), u32(13), Buffer.from('IHDR'), u32(120), u32(80), Buffer.from([8, 2, 0, 0, 0]), u32(0)]).toString('base64');
+    const strokes = { v: 1, strokes: [{ t: 'pencil', c: '#222222', w: 2.2, p: [10, 10, 0.5, 40, 30, 0.7, 80, 20, 0.6] }, { t: 'bad', c: 'x', w: 1, p: [1] }] };
+    const n1 = await P('/api/lit/notes/save', { key: 'AAAAAAA1', text: '碰撞频率取 $\\nu = 10^9$ 是否合适？', page: 2, sel: 'collision frequency model' });
+    const n2 = await P('/api/lit/notes/save', { key: 'AAAAAAA1', text: '', ink: strokes, png, page: 1 });
+    let nl = await G('/api/lit/notes?key=AAAAAAA1');
+    ok('笔记: a typed note with its page and the passage selected; one by hand -- the strokes checked (the broken one dropped), its picture kept', n1.ok && n2.ok && nl.items.length === 2 &&
+      nl.items[0].page === 2 && nl.items[0].sel === 'collision frequency model' && !nl.items[0].img && nl.items[1].img && nl.items[1].ink.strokes.length === 1 && nl.items[1].w === 120 &&
+      (await req('GET', `/api/lit/notes/img?key=AAAAAAA1&id=${n2.item.id}`, null, cookie)).body.length > 30, nl);
+    ok('笔记: an empty note, a picture that is not a PNG, a paper not in the library: refused', !(await P('/api/lit/notes/save', { key: 'AAAAAAA1', text: ' ' })).ok &&
+      !(await P('/api/lit/notes/save', { key: 'AAAAAAA1', ink: strokes, png: 'data:image/png;base64,AAAA' })).ok && !(await P('/api/lit/notes/save', { key: 'ZZZZZZZZ', text: 'x' })).ok);
+    const nmd = () => { try { return fs.readFileSync(path.join(KB, 'notes', 'sun2018backward.md'), 'utf8'); } catch { return ''; } };
+    ok('笔记 in the knowledge base beside the card: by page, the passage quoted, the picture beside it, a link to the card', /\[\[sun2018backward\]\]/.test(nmd()) && /## p\.1 [\s\S]*!\[手写\]\(sun2018backward\/[0-9a-f]{12}\.png\)[\s\S]*## p\.2 [\s\S]*> collision frequency model\n\n碰撞频率/.test(nmd()) &&
+      fs.existsSync(path.join(KB, 'notes', 'sun2018backward', n2.item.id + '.png')), nmd());
+    // into 重要计划: the one by hand is read first (认字), the todo remembers the paper and the page
+    const nt = await P('/api/lit/notes/todo', { key: 'AAAAAAA1', id: n2.item.id });
+    nl = await G('/api/lit/notes?key=AAAAAAA1');
+    ok('笔记 by hand into 重要计划: read into type first (the picture to the model), the todo with the paper and the page, the note knows its todo', nt.ok && /手写：鞘套厚度 \\delta 和 RCS 的关系/.test(nt.todo.text) && /（sun2018backward p\.1）$/.test(nt.todo.text) &&
+      nt.todo.lit.key === 'AAAAAAA1' && nt.todo.lit.page === 1 && nt.todo.project === '文献' && nl.items[1].todo === nt.todo.id && /鞘套厚度/.test(nl.items[1].ocr) &&
+      !(await P('/api/lit/notes/todo', { key: 'AAAAAAA1', id: n2.item.id })).ok && /（认字）手写：鞘套厚度/.test(nmd()), nt);
+    ok('redrawn: what was read of the old strokes is dropped; deleted: gone with its picture', (await P('/api/lit/notes/save', { key: 'AAAAAAA1', id: n2.item.id, text: '补一句', ink: { v: 1, strokes: [strokes.strokes[0], { ...strokes.strokes[0], c: '#d93025' }] }, png })).item.ocr === '' &&
+      (await P('/api/lit/notes/delete', { key: 'AAAAAAA1', id: n2.item.id })).ok && (await G('/api/lit/notes?key=AAAAAAA1')).items.length === 1 && !fs.existsSync(path.join(KB, 'notes', 'sun2018backward', n2.item.id + '.png')) &&
+      (await req('GET', `/api/lit/notes/img?key=AAAAAAA1&id=${n2.item.id}`, null, cookie)).status === 404);
+
     // ---- 读图: pages read as images ----
     const { parseRanges, formatRanges } = require(R + '/server/literature/vision');
     ok('page ranges read and written', parseRanges('3-5, 8，10～9 x', 9).join() === '3,4,5,8,9' && parseRanges('全部', 3).join() === '1,2,3' && formatRanges([8, 3, 4, 5, 10]) === '3-5, 8, 10');
@@ -271,6 +297,7 @@ const src = createFakeSources();
     const after = nLog().slice(before), vcall = after.find((x) => x.kind === 'pages'), dcall = after.find((x) => /actions/.test(x.kind));
     ok('the deep card waited for the paper to be read as images: both pages drawn (PNG) and sent at once, the text layer along for spelling', vcall && vcall.images === 2 && vcall.png &&
       /第 1、2 页/.test(vcall.prompt) && /collision frequency model page two/.test(vcall.prompt), vcall && { images: vcall.images, png: vcall.png });
+    ok('the deep card\'s model reads the user\'s notes with the annotations', dcall && /我的笔记（p\.2）：针对“collision frequency model” 碰撞频率取/.test(dcall.prompt));
     ok('the deep card was written from the transcription, and told so', dcall && /读图第 2 页/.test(dcall.prompt) && !/collision frequency model page two/.test(dcall.prompt) && /第 1-2 页是看原图逐页转写的/.test(dcall.prompt) && !/其余是 PDF 的文字层/.test(dcall.prompt));
     vi = await G('/api/lit/vision?key=AAAAAAA1');
     ok('what was read: both pages, one unclear symbol', vi.done === 2 && vi.ranges === '1-2' && vi.unsure === 1 && !vi.job.running && !vi.job.error, vi);
@@ -314,7 +341,7 @@ const src = createFakeSources();
 
     // ---- what reading turned into ----
     const s7 = await G('/api/lit/stats?days=7');
-    ok('the output stats', s7.understanding >= 1 && s7.kept >= 2 && s7.cards.verified === 1 && s7.actions.added === 1 && s7.feed.kept === 2 && s7.feed.reviewed === 1 && /产出/.test(s7.verdict), s7);
+    ok('the output stats', s7.understanding >= 1 && s7.kept >= 2 && s7.cards.verified === 1 && s7.actions.added === 2 /* the action and the note put into 重要计划 */ && s7.feed.kept === 2 && s7.feed.reviewed === 1 && /产出/.test(s7.verdict), s7);
     ok('the morning note counts what is still open', (await G('/api/lit')).morning.new === (await G('/api/lit/feed')).items.filter((e) => e.status === 'new' && e.kind === 'new').length);
 
     // ---- 调研工作: the new papers the questions rest on go into Zotero ----

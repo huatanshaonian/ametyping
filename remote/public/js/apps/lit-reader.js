@@ -5,47 +5,89 @@
 //   对话  questions about the paper, answered from its pages; 沉淀到卡片 turns what the talk found into proposed card
 //         additions (知识库 › 待确认)
 //   卡片  the card; 深读卡 from the full text
+// and, opened by 「笔记」, a third column with the user's own notes on the paper, typed or by hand (lit-notes.js).
 // server/literature/reader.js; answers arrive by the server's 'lit' event (read:<key>).
 import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
 import { get, post, onLit, readerId } from './lit-api.js';
 import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
+import { notesPanel } from './lit-notes.js';
 
 export function openReader(key, page) {
   const id = readerId(key);
   if (wm.has(id)) { wm.open({ id }); if (page && readers.get(key)) readers.get(key).goto(page); return; }
   const r = mountReader(key, page);
   readers.set(key, r);
-  wm.open({ id, title: '深读', icon: icon('help_book_big', true), content: r.root, width: 1100, height: 700, onClose: () => { r.destroy(); readers.delete(key); } });
+  wm.open({ id, title: '深读', icon: icon('help_book_big', true), content: r.root, width: notesOn() ? 1420 : 1100, height: 700, onClose: () => { r.destroy(); readers.delete(key); } });
   r.setTitle = (t) => { const w = wm.get(id); if (w) w.handle.setTitle('深读：' + t); };
 }
 const readers = new Map();
 const SIDE_KEY = 'lit.reader.side';                           // the side's width as the user left it
+const NOTES_KEY = 'lit.reader.notes', NOTES_W = 'lit.reader.notesW';   // 笔记 open or not, and its width
+const notesOn = () => { try { return localStorage.getItem(NOTES_KEY) === '1'; } catch { return false; } };
 
 function mountReader(key, firstPage) {
   const pdfBox = h('div', { class: 'pdf-wrap lr-pdf' }, h('div', { class: 'vnote', text: '读取 PDF…' }));
   const tabs = ['理解', '对话', '卡片'].map((t) => h('button', { class: 'lit-tab', type: 'button', text: t, dataset: { t } }));
   const pane = h('div', { class: 'lr-pane' });
   const swap = h('button', { class: 'btn lr-swap', type: 'button', text: '看 PDF / 看对话' });
+  const notesB = h('button', { class: 'btn lr-nb', type: 'button', text: '笔记', title: '在右边开一栏，记自己的笔记（打字或手写，能列入待办）' });
   // 读图: how much has been read as images, a request to approve, the transcription of the page shown
   const vbox = visionBox(key, { curPage: () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0) });
-  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap), vbox.el, pane);
+  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap, notesB), vbox.el, pane);
   // the bar between the PDF and the side: dragged to give either more room (kept for the next paper; a double click
   // puts it back)
   const split = h('div', { class: 'lr-split', title: '拖动调整左右两栏的宽度（双击还原）' });
-  const root = h('div', { class: 'lr' }, pdfBox, split, side);
-  const setSide = (w, keep) => { const max = Math.max(300, root.clientWidth - 320); const v = Math.round(Math.max(300, Math.min(max, w))); side.style.width = v + 'px'; if (keep) { try { localStorage.setItem(SIDE_KEY, String(v)); } catch {} } };
-  try { const w = +localStorage.getItem(SIDE_KEY); if (w > 0) side.style.width = w + 'px'; } catch {}
-  split.addEventListener('pointerdown', (e) => {
-    e.preventDefault(); try { split.setPointerCapture(e.pointerId); } catch {} root.classList.add('dragging');
-    // (the desktop may be shown enlarged: the pointer moves in screen pixels, the width is set in the page's own)
-    const x0 = e.clientX, w0 = side.offsetWidth, k = (side.getBoundingClientRect().width / w0) || 1;
-    const move = (ev) => setSide(w0 + (x0 - ev.clientX) / k, false);
-    const up = (ev) => { split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', up); root.classList.remove('dragging'); setSide(w0 + (x0 - ev.clientX) / k, true); };
-    split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', up);
-  });
-  split.addEventListener('dblclick', () => { side.style.width = ''; try { localStorage.removeItem(SIDE_KEY); } catch {} });
+  // 笔记: the third column, with its own bar to drag
+  const notes = notesPanel(key, { curPage: () => curPage(), selected: () => selected(), goto: (n) => goto(n) });
+  const split2 = h('div', { class: 'lr-split lr-split2', title: '拖动调整笔记栏的宽度（双击还原）' });
+  const notesCol = h('div', { class: 'lr-notes' }, notes.el);
+  const root = h('div', { class: 'lr' }, pdfBox, split, side, split2, notesCol);
+  // a column's width: within what leaves the PDF 320 px (and each column 260 / 300), kept for the next paper
+  const widthOf = (col, min, store) => (w, keep) => {
+    const other = col === side ? (root.classList.contains('notes') ? notesCol.offsetWidth : 0) : side.offsetWidth;
+    const v = Math.round(Math.max(min, Math.min(Math.max(min, root.clientWidth - 320 - other), w)));
+    col.style.width = v + 'px';
+    if (keep) { try { localStorage.setItem(store, String(v)); } catch {} }
+  };
+  for (const [col, store] of [[side, SIDE_KEY], [notesCol, NOTES_W]]) { try { const w = +localStorage.getItem(store); if (w > 0) col.style.width = w + 'px'; } catch {} }
+  const dragBar = (bar, col, set, store) => {
+    bar.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); try { bar.setPointerCapture(e.pointerId); } catch {} root.classList.add('dragging');
+      // (the desktop may be shown enlarged: the pointer moves in screen pixels, the width is set in the page's own)
+      const x0 = e.clientX, w0 = col.offsetWidth, k = (col.getBoundingClientRect().width / w0) || 1;
+      const move = (ev) => set(w0 + (x0 - ev.clientX) / k, false);
+      const up = (ev) => { bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up); root.classList.remove('dragging'); set(w0 + (x0 - ev.clientX) / k, true); };
+      bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
+    });
+    bar.addEventListener('dblclick', () => { col.style.width = ''; try { localStorage.removeItem(store); } catch {} });
+  };
+  dragBar(split, side, widthOf(side, 300, SIDE_KEY), SIDE_KEY);
+  dragBar(split2, notesCol, widthOf(notesCol, 260, NOTES_W), NOTES_W);
+  // the column opened beside a PDF left too narrow to read: the window grows (as far as the screen allows), then the
+  // side gives way, then the notes (neither below its least; the widths are not kept)
+  const PDF_MIN = 420;
+  const roomForPdf = () => {
+    let need = PDF_MIN - pdfBox.offsetWidth;
+    const win = root.closest('.win');
+    if (need <= 0 || !win || root.classList.contains('narrow')) return;
+    if (!win.classList.contains('max') && win.parentElement) {
+      const free = win.parentElement.clientWidth - win.offsetWidth, grow = Math.max(0, Math.min(need, free));
+      if (grow) { const w = win.offsetWidth + grow; win.style.width = w + 'px'; win.style.left = Math.max(0, Math.min(win.offsetLeft, win.parentElement.clientWidth - w)) + 'px'; need -= grow; }
+    }
+    if (need > 0) { const s = Math.min(need, side.offsetWidth - 300); if (s > 0) { side.style.width = side.offsetWidth - s + 'px'; need -= s; } }
+    if (need > 0) notesCol.style.width = Math.max(260, notesCol.offsetWidth - need) + 'px';
+  };
+  const showNotes = (on) => {
+    root.classList.toggle('notes', on); notesB.classList.toggle('on', on);
+    if (on) roomForPdf();
+    notesB.title = on ? '收起笔记栏' : '在右边开一栏，记自己的笔记（打字或手写，能列入待办）';
+    try { localStorage.setItem(NOTES_KEY, on ? '1' : '0'); } catch {}
+    if (on) { root.classList.remove('side'); notes.focus(); }
+  };
+  notesB.addEventListener('click', () => showNotes(!root.classList.contains('notes')));
+  if (notesOn()) { root.classList.add('notes'); notesB.classList.add('on'); }
   let item = null, st = { turns: [] }, tab = '理解', pdf = null, destroyed = false;
   const drafts = { chat: '', mine: null };                // (what is being typed survives a refresh)
 
@@ -148,5 +190,5 @@ function mountReader(key, firstPage) {
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 760));
   ro.observe(root);
   load().then(() => { show(mineText() || (st.feedback) ? '对话' : '理解'); loadPdf(); });
-  return { root, goto, destroy() { destroyed = true; off(); vbox.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
+  return { root, goto, destroy() { destroyed = true; off(); vbox.destroy(); notes.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
 }
