@@ -307,6 +307,10 @@ const src = createFakeSources();
     await P('/api/lit/chat', { key: 'AAAAAAA1', q: '式 (2) 怎么来的？', page: 2 });
     await until(async () => { const r = await G('/api/lit/read?key=AAAAAAA1'); return r.turns.length === 2 && !(r.job && r.job.running) && r; });
     ok('a question afterwards uses the transcription too', /读图第 2 页/.test(nLog().filter((x) => x.kind === 'answer').pop().prompt));
+    const c2 = nLog().filter((x) => x.kind === 'answer').pop().prompt;
+    ok('对话 as a conversation: the whole paper (both pages), the turn before whole with the selection and page it had, the page read now; no cache marks for Claude Code / Codex',
+      /全文（标了页码）：\n\[p\.1\]\n[\s\S]*\[p\.2\]\n/.test(c2) && /### 第 1 轮\n用户（当时在看第 2 页）：\[选中了原文：“collision frequency model”\] collision frequency 怎么取？\n\n你：原文第 1 页给出了剖面 \[p\.1\]。（背景知识）通常用指数分布。/.test(c2) &&
+      /用户现在在看第 2 页。/.test(c2) && c2.indexOf('全文（标了页码）') < c2.indexOf('### 第 1 轮') && c2.indexOf('### 第 1 轮') < c2.indexOf('用户的问题：式 (2)') && !c2.includes('\u0000'), c2.slice(-900));
     // a paper longer than the limit: the deep card's model asks for page 2, the user approves (or declines)
     ok('limit 1', (await P('/api/lit/settings', { visionMaxPages: 1 })).ok);
     vi = await G('/api/lit/vision?key=' + k2.key);

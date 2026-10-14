@@ -4,6 +4,7 @@
 // topic pages (a review of a subject built from cards, its gaps, a related-work paragraph with \cite{citekey}).
 'use strict';
 const { questionsBlock } = require('./feed');
+const { CACHE_BREAK } = require('../../ai/anthropic-api');
 
 const str = { type: 'string' }, strs = { type: 'array', items: str };
 const obj = (props) => ({ type: 'object', additionalProperties: false, properties: props, required: Object.keys(props) });
@@ -27,18 +28,28 @@ function feedbackPrompt(it, card, pages, mine) {
   ].filter((x) => x !== '').join('\n');
 }
 
-// turns: [{ q, a }] (oldest first); sel: text the user selected in the PDF
-function chatPrompt(profile, it, card, pages, turns, q, sel) {
-  return [
-    '你在陪一位博士生精读一篇文献。回答用中文，术语保留原文，公式用 LaTeX（行内 $...$，独立 $$...$$）。',
+// A conversation about one paper. The model keeps nothing between calls: every turn carries it all, laid out for the
+// API's cache (ai/anthropic-api.js) -- first what stays the same (what to do, the questions, the card, the whole text),
+// then the talk so far a turn a block (it only grows), last what is new (a long paper's pages for this question, the
+// page being read, the selection, the question).
+// text: { whole: [{ page, text }] } or { picked: [{ page, text }], n: the paper's pages }; turns: [{ q, a, sel, page }]
+// (oldest first); sel: text the user selected in the PDF now; page: the page the PDF shows
+function chatPrompt(profile, it, card, text, turns, q, sel, page = 0) {
+  const head = [
+    '你在陪一位博士生精读一篇文献，和用户像平常聊天一样连续地讨论这篇文献（下面有你们之前的对话，接着聊）。回答用中文，术语保留原文，公式用 LaTeX（行内 $...$，独立 $$...$$）。',
     '回答要依据原文，引用处标页码 [p.N]；原文里没有的要明说“原文没有写”，可以补充你的背景知识但要标明“（背景知识）”。',
     '用户的目标是把阅读变成产出：回答时尽量联系用户的问题，说明能怎么用。直接回答问题，不要反问用户。', '',
     '用户现在要解决的问题：', questionsBlock(profile), '',
-    `文献：${it.title}（${it.venue || ''} ${it.year || ''}）`, card ? '卡片：\n' + cut(card, 5000) : '', '',
-    '相关原文（标了页码）：', pagesBlock(pages), '',
-    turns.length ? '之前的对话：\n' + turns.map((t) => `用户：${cut(t.q, 1500)}\n你：${cut(t.a, 2500)}`).join('\n\n') : '',
+    `文献：${it.title}（${it.venue || ''} ${it.year || ''}）`, card ? '卡片：\n' + card : '', '',
+    text.whole ? '全文（标了页码）：\n' + pagesBlock(text.whole) : '',
+  ].filter((x) => x !== '').join('\n');
+  const talk = turns.map((t, i) => `${i ? '' : '之前的对话（按时间顺序）：\n\n'}### 第 ${i + 1} 轮\n用户${t.page ? `（当时在看第 ${t.page} 页）` : ''}：${t.sel ? `[选中了原文：“${cut(t.sel, 1500)}”] ` : ''}${t.q}\n\n你：${t.a}\n\n`);
+  const now = [
+    text.picked ? `这篇共 ${text.n} 页，太长，没有整篇给你；下面是和这次问题相关的原文（正在看的页、前面回答引用过的页、和问题有关的页，标了页码）：\n` + pagesBlock(text.picked) + '\n' : '',
+    page ? `用户现在在看第 ${page} 页。` : '',
     sel ? '用户在 PDF 里选中的文字：\n' + cut(sel, 3000) : '', '', '用户的问题：' + q,
   ].filter((x) => x !== '').join('\n');
+  return [head + '\n', ...talk, now].join(CACHE_BREAK);
 }
 
 function distillPrompt(it, card, turns) {
