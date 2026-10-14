@@ -316,14 +316,17 @@ const src = createFakeSources();
     const dlong = nLog().filter((x) => /actions/.test(x.kind)).pop();
     ok('the model was told the paper is long and asked for page 2: a request waits, nothing read yet', req2 && req2.ranges === '2' && /第 2 页有碰撞频率/.test(req2.why) && /vision：这篇有 2 页/.test(dlong.prompt) &&
       (await G('/api/lit/vision?key=' + k2.key)).done === 0 && (await G('/api/lit')).vision === 1, req2);
+    const deeps = () => nLog().filter((x) => /actions/.test(x.kind)).length, d0 = deeps();
     ok('approved (the range as given)', (await P('/api/lit/vision/approve', { key: k2.key, ranges: '2' })).ok);
     vi = await until(async () => { const v = await G('/api/lit/vision?key=' + k2.key); return v.job && !v.job.running && v; }, 60000);
     ok('only page 2 read; the request gone', vi.done === 1 && vi.ranges === '2' && !vi.request && !(await G('/api/lit/vision/pending')).items.length, vi);
-    await P('/api/lit/card', { key: k2.key, kind: 'deep' });
-    await until(async () => (await G('/api/lit/vision/pending')).items.find((x) => x.key === k2.key), 60000);
+    // the card asked for those pages: once they are read it is made again by itself, with them
+    const auto = await until(async () => { const d = await G('/api/lit/item?key=' + k2.key); return deeps() > d0 && d.job && !d.job.running && d; }, 60000);
     const dmix = nLog().filter((x) => /actions/.test(x.kind)).pop();
+    ok('the approved pages read: the deep card made again by itself; it asks for page 2 again, which is read already -- no new request', !!auto && auto.job.kind === 'deep' && !auto.job.error &&
+      !(await G('/api/lit/vision/pending')).items.length && auto.card.meta.vision === '2', auto && { job: auto.job, vision: auto.card.meta.vision });
     ok('the next deep card: page 2 from the image, page 1 from the text layer, and said so', /读图第 2 页/.test(dmix.prompt) && /attenuation versus altitude/.test(dmix.prompt) === false && /blackout telemetry measurements/.test(dmix.prompt) && /其余是 PDF 的文字层/.test(dmix.prompt));
-    ok('declined', (await P('/api/lit/vision/decline', { key: k2.key })).ok && !(await G('/api/lit/vision/pending')).items.length);
+    ok('declined (nothing waiting)', (await P('/api/lit/vision/decline', { key: k2.key })).ok && !(await G('/api/lit/vision/pending')).items.length);
     ok('the user picks pages of a long paper themselves', (await P('/api/lit/vision/start', { key: k2.key, ranges: '1' })).ok &&
       (await until(async () => { const v = await G('/api/lit/vision?key=' + k2.key); return v.done === 2 && !v.job.running && v; }, 60000)).ranges === '1-2');
 

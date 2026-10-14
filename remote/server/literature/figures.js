@@ -2,7 +2,8 @@
 // "图 5", or the "[图 n：…]" lines of the pages read as images; a scan without text: every page) are drawn
 // (render/pages.mjs) and shown to the model a few at a time (the litVision job), which says where each figure is, gives
 // its caption and what can be seen in it (prompts/figures.js); the figures are then cut out (render/crop.mjs). Done
-// once per file content:
+// once per file content -- and again for the pages read as images since (a long report's pages the user approved),
+// on those pages only:
 //   <dataDir>/literature/figures/<md5>/index.json   { n, at, figs: [{ id: "p4-1", page, label, caption, desc, w, h }] }
 //   <dataDir>/literature/figures/<md5>/<id>.png
 // The ones a card shows are copied into the knowledge base (figures/<citekey>/<id>.png, beside papers/ -- Obsidian
@@ -39,7 +40,8 @@ function createFigures({ dir, kbDir, mirror, fulltext, ask, log = () => {}, rend
   const load = (md5) => { try { return JSON.parse(fs.readFileSync(path.join(dirOf(md5), 'index.json'), 'utf8')); } catch { return null; } };
   const running = new Map();                           // md5 -> promise
 
-  async function find(key, f) {
+  // only: the pages to look at (else the ones that speak of a figure); prev: what was found before, kept
+  async function find(key, f, only = null, prev = null) {
     const it = mirror.item(key);
     // (the text as the cards read it -- with the pages read as images in their place -- and the PDF's own text layer:
     // a figure is spoken of in either)
@@ -54,8 +56,8 @@ function createFigures({ dir, kbDir, mirror, fulltext, ask, log = () => {}, rend
       const pdf = path.join(tmp, 'doc.pdf');
       fs.writeFileSync(pdf, f.buf);
       const n = (await renderFn(pdf, tmp, [])).n;
-      let pages = aligned ? texts.map((t, i) => (HAS_FIG.test(t || '') ? i + 1 : 0)).filter((p) => p && p <= n) : [];
-      if (!pages.length && (!aligned || ft.scanned)) pages = Array.from({ length: n }, (_, i) => i + 1);
+      let pages = only ? only.filter((p) => p >= 1 && p <= n) : aligned ? texts.map((t, i) => (HAS_FIG.test(t || '') ? i + 1 : 0)).filter((p) => p && p <= n) : [];
+      if (!only && !pages.length && (!aligned || ft.scanned)) pages = Array.from({ length: n }, (_, i) => i + 1);
       pages = pages.slice(0, MAX_PAGES);
       const found = [];
       const batches = []; for (let i = 0; i < pages.length; i += BATCH) batches.push(pages.slice(i, i + BATCH));
@@ -85,10 +87,10 @@ function createFigures({ dir, kbDir, mirror, fulltext, ask, log = () => {}, rend
       await Promise.all(Array.from({ length: Math.min(PARALLEL, batches.length) }, worker));
       // (every batch failed: nothing is kept, so that the next card tries again)
       if (batches.length && failed === batches.length) throw new Error('找图的模型调用都失败了');
-      const figs = found.sort((a, b) => a.page - b.page || a.id.localeCompare(b.id)).slice(0, MAX_FIGS);
-      const v = { n, at: Date.now(), pages, figs };
+      const figs = [...((prev && prev.figs) || []), ...found].sort((a, b) => a.page - b.page || a.id.localeCompare(b.id)).slice(0, MAX_FIGS);
+      const v = { n, at: Date.now(), pages: [...new Set([...((prev && prev.pages) || []), ...pages])].sort((a, b) => a - b), figs };
       fs.writeFileSync(path.join(out, 'index.json'), JSON.stringify(v));
-      log(`文献：${key} 找到 ${figs.length} 张图（看了 ${pages.length} 页）`);
+      log(prev ? `文献：${key} 在新读图的 ${pages.length} 页上又找到 ${found.length} 张图` : `文献：${key} 找到 ${figs.length} 张图（看了 ${pages.length} 页）`);
       return v;
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   }
@@ -99,8 +101,14 @@ function createFigures({ dir, kbDir, mirror, fulltext, ask, log = () => {}, rend
       const f = fulltext.fileOf(key);
       if (f.missing) return [];
       const got = load(f.md5);
-      if (got) return got.figs || [];
-      if (!running.has(f.md5)) running.set(f.md5, find(key, f).finally(() => running.delete(f.md5)));
+      let more = null;
+      if (got) {
+        // pages read as images since that speak of a figure, not looked at yet
+        const ft = await fulltext.forItem(key);
+        more = (ft.vision || []).filter((p) => !(got.pages || []).includes(p) && HAS_FIG.test((ft.pages || [])[ft.labels ? ft.labels.indexOf(p) : p - 1] || ''));
+        if (!more.length) return got.figs || [];
+      }
+      if (!running.has(f.md5)) running.set(f.md5, find(key, f, more, more && got).finally(() => running.delete(f.md5)));
       return (await running.get(f.md5)).figs || [];
     } catch (e) { log(`文献：${key} 提取图表失败：${e.message}`); return []; }
   }

@@ -38,8 +38,9 @@ function quickPrompt(profile, it, pages, notes) {
   ].filter((x) => x !== '').join('\n');
 }
 
-// pages: the text (fitPages); notes: annotations; mine: the user's own understanding (if written); others: [{ citekey, title }]
-// src: { n: the PDF's pages, read: the pages read as images ("1-12"), rest: other pages from the text layer, long: too long to read whole as images }
+// pages: the text, whole ([] when it is given as digest); notes: annotations; mine: the user's own understanding (if written); others: [{ citekey, title }]
+// src: { n: the PDF's pages, read: the pages read as images ("1-12"), rest: other pages from the text layer, long: too long to read whole as images,
+//        digest: a report too long to give whole -- its parts' notes [{ from, to, notes }] (digest.js) }
 // figs: the paper's figures as cut out of its pages [{ id, page, label, caption, desc }] (figures.js) -- the card shows
 // the ones the model picks, each with what the model says of it
 function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []) {
@@ -50,7 +51,9 @@ function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []
     notes.length ? '用户的批注（用户真正在意的地方，卡片要回应它们）：\n' + notes.map((n) => '- ' + cut(n, 400)).join('\n') : '',
     mine ? '用户读前写下的理解 / 想从中得到的：\n' + cut(mine, 2000) : '', '',
     src.read ? `正文里第 ${src.read} 页是看原图逐页转写的（公式可信，[?] 表示原图看不清的符号）${src.rest ? `，其余是 PDF 的文字层（公式常有乱码，引用公式时要小心）` : ''}。` : '',
-    '正文（标了页码）：', pagesBlock(pages), '',
+    ...(src.digest ? [`这篇正文太长，没有整篇给你：全文按顺序分成 ${src.digest.length} 段，每段先整理成了详细的阅读笔记（公式、数值、图、结论都保留了，[p.N] 是原文页码，可以直接照着引用）。下面是各段的笔记：`,
+      src.digest.map((d) => `### 第 ${d.from}～${d.to} 页的笔记\n${d.notes}`).join('\n\n'), '']
+      : ['正文（标了页码）：', pagesBlock(pages), '']),
     '字段：oneLine 一句话总结；problem 问题与动机；method 方法（模型、近似、数值方法、实验条件，具体）；assumptions 关键假设和适用条件（用户套用时最容易出错的地方）；',
     'results 主要结果，3～6 条，有数写数，每条句末标页码 [p.N]；relevance 对用户当前问题的意义（具体到哪个问题、能替代/验证/补充用户的什么）；question 最相关的问题编号（无关填 0）；',
     'actions 2～4 条用户可以马上做的事（如“用 Fig.5 的电子密度剖面重算 X 波段 RCS 并对比”、“复现式 (12) 的碰撞频率模型”），动词开头，具体可执行；',
@@ -61,7 +64,7 @@ function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []
     src.long ? `vision：这篇有 ${src.n} 页，太长，没有整篇看原图，你读到的大多是文字层。如果其中有值得看原图精读的部分（关键推导、公式密集的页、数据表、要读数的图），worth 填 true，pages 写页码范围（如 "12-18, 25"，只挑真正需要的，一般不超过 20 页），why 一句话说明读了能得到什么；没有必要就 worth 填 false、其余空字符串。` : 'vision：填 worth false、pages 和 why 空字符串。',
     figs.length ? '这篇的图已经从页面上裁出来了，卡片里会把图和你的解读放在一起（desc 是看图得到的描述，供你对照正文）：\n' + figs.map((g) => `- [F:${g.id}] ${g.label || '（无编号）'}，第 ${g.page} 页。图题：${cut(g.caption, 300) || '（无）'}\n  画面：${cut(g.desc, 500)}`).join('\n') : '',
     figs.length ? 'figures：从上面的图里挑出理解这篇最关键的，最多 8 张（方法 / 模型示意、关键结果、要读数的图优先；重复的、装饰性的不选），按在文中出现的顺序给出。每张：id 照抄方括号里 F: 后面的编号（如 p4-1）；title 中文短标题（不超过 20 字，说这张图是什么）；reading 解读，3～6 句：这张图说明了什么结论、怎么读它（看哪条曲线、哪个区域、哪个量级）、图上能读出的关键数值、对用户的问题意味着什么或能拿来做什么。不要复述图题，不要写图上看不出、正文里也没有的东西。' : 'figures：这篇没有裁出图，给空数组。',
-    '只依据正文；正文里没有的不要编造，不确定就写进 doubts。',
+    src.digest ? '只依据上面的笔记；笔记里没有的不要编造，不确定就写进 doubts。' : '只依据正文；正文里没有的不要编造，不确定就写进 doubts。',
   ].filter((x) => x !== '').join('\n');
 }
 

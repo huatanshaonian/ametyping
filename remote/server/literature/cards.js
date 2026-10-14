@@ -10,7 +10,7 @@
 const path = require('path');
 const { QUICK_SCHEMA, DEEP_SCHEMA, quickPrompt, deepPrompt } = require('./prompts/card');
 const { pickPages, fitPages } = require('./fulltext');
-const { formatRanges } = require('./vision');
+const { formatRanges, parseRanges } = require('./vision');
 
 const NOTE_TAG = 'Windose卡片';
 const USER_SECTIONS = new Set(['我的理解', '我的笔记']);
@@ -50,8 +50,9 @@ function noteHtml(md) {
 }
 
 // ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js);
-// myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
+// myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations;
+// digest: what a deep card reads of a report too long to give whole (digest.js; without it the start of every page)
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, digest = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
   const marks = (key) => [...annotationLines(mirror, key), ...myNotes(key)];
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
@@ -162,9 +163,13 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const read = ft.vision && ft.vision.length ? formatRanges(ft.vision) : '';
     const long = !!(vi && vi.n && !vi.auto && (ft.vision || []).length < vi.n);
     const figs = figures ? await figures.ensure(key) : [];          // the paper's figures, cut out of its pages
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }, figs), DEEP_SCHEMA);
+    // the whole text, or for a report too long for that, the notes made of it part by part
+    const body = digest ? await digest.forCard(item, ft) : { pages: fitPages(ft.pages, 90000, ft.labels) };
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, body.pages || [], marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long, digest: body.digest }, figs), DEEP_SCHEMA);
     // a long paper with pages worth reading as images: the request waits for the user's approval
-    if (long && a.vision && a.vision.worth && String(a.vision.pages || '').trim()) vision.request(key, a.vision.pages, a.vision.why, 'model');
+    // (only the pages not read yet: a card made again after some were read may name them again)
+    const ask4 = long && a.vision && a.vision.worth ? parseRanges(String(a.vision.pages || '').trim() || 'x', vi.n).filter((p) => !(ft.vision || []).includes(p)) : [];
+    if (ask4.length) vision.request(key, formatRanges(ask4), a.vision.why, 'model');
     const r = store(item, 'deep', a, { pdf: true, vision: read || undefined, figs });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: true };

@@ -71,6 +71,17 @@ const near = (a, b, tol = 0.012) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
     fs.existsSync(path.join(T, 'figures', 'abc123', 'p2-1.png')) && fs.existsSync(path.join(T, 'figures', 'abc123', 'p4-1.png')), figs);
   await figures.ensure(item.key);
   ok('once per file: not asked again', asked.length === 1);
+  // page 3 read as an image since (a long report's page the user approved): its transcription speaks of a figure --
+  // only that page is looked at, what was found before is kept
+  const ft3 = { ...fulltext, forItem: async (k, o) => (o && o.raw ? { pages: ['', '', '', ''] } : { pages: [texts[0], texts[1], '读图转写：[图 3：碰撞频率随高度的变化]', texts[3]], chars: 400, vision: [3] }) };
+  const asked3 = [];
+  const figures3 = createFigures({ dir: T, kbDir, mirror, fulltext: ft3, renderFn, log: () => {},
+    ask: async (prompt, schema, o) => { asked3.push({ prompt, images: o.images.length }); return { figs: [{ page: 3, label: 'Fig. 3', x0: 0.14, y0: 0.19, x1: 0.86, y1: 0.535, caption: 'Fig. 3  Collision frequency.', desc: '一条曲线。' }] }; } });
+  const figs3 = await figures3.ensure(item.key);
+  ok('a page read as an image since, speaking of a figure: only it is looked at; the figures before are kept, the new one among them', asked3.length === 1 && asked3[0].images === 1 && /第 3 页/.test(asked3[0].prompt) &&
+    figs3.map((g) => g.id).join() === 'p2-1,p3-1,p4-1' && JSON.parse(fs.readFileSync(path.join(T, 'figures', 'abc123', 'index.json'), 'utf8')).pages.join() === '2,3,4', [asked3, figs3.map((g) => g.id)]);
+  await figures3.ensure(item.key);
+  ok('and not again', asked3.length === 1);
 
   // ---- the deep card ----
   const kb = createKb({ dir: kbDir });

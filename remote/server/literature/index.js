@@ -43,6 +43,7 @@ const { createAbsJob } = require('./absjob');
 const { createCnJournals } = require('./sources/cnjournals');
 const { createPdfQueue } = require('./pdfqueue');
 const { createNotes } = require('./notes');
+const { createDigest } = require('./digest');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -67,7 +68,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
   const settings = createSettings({ dir, cfg });
   // 读图: pages read as images take the place of the text layer's wherever the paper's text is used
-  const vision = createVision({ dir, mirror, fulltext, ask: askVision, maxPages: () => settings.feed().visionMaxPages, log, onChange: (k) => changed('vision:' + k) });
+  // (pages of a deep card's paper read as images on the user's approval -- the card asked for them: it is made again
+  // with them, and the figures on them looked for)
+  const vision = createVision({ dir, mirror, fulltext, ask: askVision, maxPages: () => settings.feed().visionMaxPages, log, onChange: (k) => changed('vision:' + k),
+    onRead: (k, why) => { const c = why === 'approved' && cards.find(k); if (c && /deep|reviewed/.test(c.meta.status)) { log(`文献：${k} 批准的页读完了，重做深读卡`); cards.run(k, 'deep'); } } });
   fulltext.useOverlay(vision.apply);
   // 图表: the papers' figures, cut out of their pages for the deep cards
   const figures = createFigures({ dir, kbDir: kb.dir, mirror, fulltext, ask: askVision, log, ...(cfg.figuresOpts || {}) });
@@ -89,7 +93,9 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 笔记: what the user writes beside a paper in 深读 (typed or by hand), in the knowledge base beside its card
   const notes = createNotes({ dir, kbDir: kb.dir, mirror, ask: askVision, todos, log, onChange: (k) => changed('notes:' + k),
     citekeyOf: (it) => { const c = cards.find(it.key); return c ? path.basename(c.path, '.md') : kb.fileName(it.citekey); } });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  // 长报告: a text too long for the deep card is summed up part by part first
+  const digest = createDigest({ dir, ask: askFeed, log, ...(cfg.digestOpts || {}) });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, digest, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
