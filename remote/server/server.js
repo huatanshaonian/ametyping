@@ -152,7 +152,7 @@ function snapshot() {
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
         lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
     }
-    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
+    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
   }
   return out.sort((a, b) => a.machine.localeCompare(b.machine));
 }
@@ -263,7 +263,7 @@ const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
-    m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() });
+    m.control = d.control === true; m.files = d.files === true; m.upload = d.upload === true; broadcast({ t: 'sessions', data: snapshot() });
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
@@ -286,11 +286,12 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
-  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
+  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
+    if (typeof d.upload === 'boolean') m.upload = d.upload;
     // terminals parked on a background session of Claude Code's: windows, not sessions (their stored history stays)
     m.parked = new Set(Array.isArray(d.parked) ? d.parked.filter((x) => typeof x === 'string' && /^[\w:-]{1,64}$/.test(x)).slice(0, 50) : []);
     const keep = new Set();
@@ -580,7 +581,7 @@ async function apiStepUp(req, res, ip, sess) {
 }
 
 // ---------- websockets: /ws for the browser, /agent for machines ----------
-const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });   // (a piece of an upload: 256 KB in base64)
 const wssAgent = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
 const AGENT_SPLIT = !!(cfg.agent && cfg.agent.port);
 
@@ -620,7 +621,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
   clients.add(c);
   try { ws.send(JSON.stringify({ t: 'sessions', data: snapshot() })); } catch {}
   ws.on('message', (raw) => {
-    if (raw.length > 64000) return;
+    // (64 KB at most, but for a piece of an upload: the socket's maxPayload)
+    if (raw.length > 64000 && !raw.subarray(0, 16).toString().startsWith('{"t":"fs-up"')) return;
     let d; try { d = JSON.parse(raw); } catch { return; }
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
@@ -629,9 +631,9 @@ wssBrowser.on('connection', (ws, req, sid) => {
     else if (d.t === 'ping') { try { ws.send('{"t":"pong"}'); } catch {} }
     // this page on screen or not (its own push subscription): a device showing Windose gets no notifications meanwhile
     else if (d.t === 'push-here' && typeof d.endpoint === 'string' && d.endpoint.length < 1000) push.here(d.endpoint, d.on === true);
-    else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
+    else if ((d.t === 'fs' || d.t === 'fs-cancel' || d.t === 'fs-up' || d.t === 'fs-up-end') && typeof d.rid === 'string' && d.rid.length < 40) {
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
-      fsRelay.fromBrowser(c, d);                                       // read-only file explorer
+      fsRelay.fromBrowser(c, d);                                       // file explorer (and uploads where allowed)
     }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string' && d.rid.length < 40) {
       // the login may have expired or been logged out while the socket stayed open

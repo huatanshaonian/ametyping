@@ -40,7 +40,7 @@ fs.writeFileSync(path.join(SHARE, 'docs', 'huge.bin'), HUGE);
 const sha = (b) => require('crypto').createHash('sha256').update(b).digest('hex');
 const HUGE_SHA = sha(HUGE), ZERO_SHA = sha(Buffer.alloc(101 * 1024 * 1024));
 const ACFG = path.join(T, 'agent.json');
-fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
+fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE], upload: true } }));
 // a second computer with files of its own (我的电脑's computer switch)
 const tok2 = node([R + '/server/setup.js', 'add-agent', 'box2']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
 const SHARE2 = path.join(T, 'share2'); fs.mkdirSync(SHARE2); fs.writeFileSync(path.join(SHARE2, 'on-box2.txt'), 'box2\n');
@@ -201,6 +201,45 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
       cut && /^已保存 huge\.bin（120\.0 MB）/.test(ds.status) && [...statuses].some((s) => /接着下载/.test(s)) && hs === `${HUGE.length}:${HUGE_SHA}` && (await evalJs('__picked.join()')) === 'dir:readwrite,save:huge.bin',
       [cut, ds.status, [...statuses].filter((s) => /接着|断/.test(s)), String(hs).slice(0, 30)]);
     await shot('9d-download-disk.png');
+
+    // 上传: files from this device into the folder open (docs), through the real file input; the agent stopped halfway
+    // through the large one and started again: it carries on, and both arrive whole
+    const LOCAL = path.join(T, 'local'); fs.mkdirSync(LOCAL);
+    const UPBIG = Buffer.from(HUGE.subarray(0, 110 * 1024 * 1024)).reverse();
+    fs.writeFileSync(path.join(LOCAL, 'up-big.bin'), UPBIG); fs.writeFileSync(path.join(LOCAL, '上传说明.txt'), '第一版\n');
+    const waitFor = async (get, cond, ms) => { let s; for (let t = 0; t < ms; t += 100) { s = await get(); if (cond(s)) return s; await sleep(100); } return s; };
+    const upState = () => evalJs(`(() => { const e = ${ex}; const b = [...e.querySelectorAll('.xbar .btn')].find(x => /上传/.test(x.textContent)); return { text: b.textContent, disabled: b.disabled, status: e.querySelector('.xstatus').textContent, rows: [...e.querySelectorAll('.xlist tr')].map(x => x.textContent) }; })()`);
+    chk('上传: the button there in a folder of a computer that takes uploads', !(await upState()).disabled, await upState());
+    const setFiles = async (files) => {
+      const o = (await call('Runtime.evaluate', { expression: `${ex}.querySelector('input.xupin')` })).result.result;
+      return call('DOM.setFileInputFiles', { objectId: o.objectId, files });
+    };
+    await call('DOM.enable');
+    await setFiles([path.join(LOCAL, '上传说明.txt'), path.join(LOCAL, 'up-big.bin')]);
+    const upSeen = new Set();
+    let upCut = false, us = null;
+    for (let t = 0; t < 120000; t += 100) {
+      us = await upState(); upSeen.add(us.status);
+      if (/^已上传|没有上传|已取消/.test(us.status)) break;
+      const m = /up-big\.bin（2\/2）：([\d.]+) MB \//.exec(us.status);
+      if (!upCut && m && +m[1] >= 20) { upCut = true; a1.kill(); await sleep(1500); a1 = agent1(); }
+      await sleep(100);
+    }
+    const DOCS = path.join(SHARE, 'docs');
+    chk('上传: both files there, the large one whole after the cut, carried on',
+      upCut && /^已上传 2 个文件到 /.test(us.status) && [...upSeen].some((s) => /接着上传/.test(s)) && fs.readFileSync(path.join(DOCS, '上传说明.txt'), 'utf8') === '第一版\n' &&
+      sha(fs.readFileSync(path.join(DOCS, 'up-big.bin'))) === sha(UPBIG) && fs.readdirSync(DOCS).every((x) => !x.endsWith('.ame-upload')),
+      [upCut, us.status, [...upSeen].filter((s) => /接着|断/.test(s)), fs.readdirSync(DOCS)]);
+    chk('上传: the list shows them (read again, the status line kept)', us.rows.some((x) => x.includes('up-big.bin')) && us.rows.some((x) => x.includes('上传说明.txt')) && us.text === '上传', us.rows.length);
+    // the same name again: asked first; 替换 replaces it
+    fs.writeFileSync(path.join(LOCAL, '上传说明.txt'), '第二版\n');
+    await setFiles([path.join(LOCAL, '上传说明.txt')]);
+    let ask = '';
+    for (let t = 0; t < 8000 && !ask; t += 100) { await sleep(100); ask = await evalJs("(document.querySelector('.dlgmsg .dlgtx') || {}).textContent || ''"); }
+    await shot('9e-upload-replace.png');
+    await evalJs("[...document.querySelectorAll('.dlgmsg .btn')].find(b => b.textContent === '替换').click()");
+    us = await waitFor(upState, (s) => /^已上传 1 |没有上传/.test(s.status), 15000);
+    chk('上传 the same name: asked first, then replaced', /已经有了/.test(ask) && /^已上传 1 个文件/.test(us.status) && fs.readFileSync(path.join(DOCS, '上传说明.txt'), 'utf8') === '第二版\n', [ask, us.status]);
     // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
     let w = await wins();

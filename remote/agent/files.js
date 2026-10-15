@@ -11,6 +11,8 @@
 // path is on a drive not known yet (a USB stick put in since). Nothing watches or polls for drives.
 // Every path is resolved to its real location first (symlinks, "..", letter case) and must lie inside a root.
 // Secrets are never listed or read, wherever they are (keys, tokens, credentials, this agent's own config).
+//   "files": { ..., "upload": true }   files may also be uploaded into these folders (fs-upload.js); off unless set.
+//   Only where browsing may go, never under a secret's name or a hidden one.
 'use strict';
 const fs = require('fs');
 const fsp = fs.promises;
@@ -130,7 +132,23 @@ function createFiles(cfg) {
     return real;
   }
 
-  return { enabled, roots, list, open, folder };
+  // where an upload named name into the folder dir goes (fs-upload.js): { dir, path, exists } -- under the same rules
+  // as what may be seen (inside a root, nothing hidden or secret), and a plain file name, not a path
+  async function target(dir, name) {
+    if (!canUpload) throw new Error('这台电脑没开放上传（agent.json 的 "files" 里设 "upload": true）');
+    if (typeof name !== 'string' || !name || name.length > 255 || /[\\/\u0000]/.test(name) || name === '.' || name === '..' ||
+      (WIN && (/[<>:"|?*\u0001-\u001f]/.test(name) || /[. ]$/.test(name))) || /\.ame-upload$/.test(name)) throw new Error('文件名不能用');
+    const real = await folder(dir);
+    const at = await rootOf(real);
+    if (denied(name) || hidden(at.r, path.join(at.rel, name))) throw new Error('这个文件名受保护，不能上传');
+    const p = path.join(real, name);
+    let st = null; try { st = await fsp.stat(p); } catch {}
+    if (st && st.isDirectory()) throw new Error('那里已经有同名的文件夹');
+    return { dir: real, path: p, exists: !!st };
+  }
+
+  const canUpload = enabled && cfg.upload === true;
+  return { enabled, canUpload, roots, list, open, folder, target };
 }
 
 module.exports = { createFiles, denied, MAX };

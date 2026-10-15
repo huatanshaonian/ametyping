@@ -41,7 +41,8 @@ const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_MS = cfg.scanMs || 2000;
 const IDLE_DROP_MS = cfg.keepMs || 30 * 60e3;      // stop listing a session with no file changes for this long
 const CONTROL = cfg.control === true;
-// read-only file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured
+// file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured; uploads into those
+// folders only with "upload": true there (fs-upload.js)
 const browse = createFiles(cfg.files);
 const fsServe = createFsServe(browse, (o) => sendJSON(o));
 const PET_PORT = +cfg.petPort || 3940;
@@ -239,7 +240,7 @@ function connect() {
   ws.on('open', () => {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled }));
+    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
     lastConv.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
@@ -345,7 +346,7 @@ async function tick(force) {
     const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
-      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, sessions: list, parked: [...line.parked] });
+      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked] });
       for (const s of list) {
         if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
         const cs = `${s.last}|${tailT(s)}`;

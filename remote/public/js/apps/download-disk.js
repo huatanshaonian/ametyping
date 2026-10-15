@@ -4,24 +4,11 @@
 // agent -- the download waits for it to come back and carries on from the byte it had got to (the agent reads from
 // there: fs.js's from). A file changed on the computer meanwhile is not patched together: it fails.
 import * as fsc from '../fs.js';
-import * as net from '../net.js';
+import { CUT, WAIT, online, pause } from '../fs-retry.js';
 import { size as fmtSize } from '../filetypes.js';
 
 export const canSaveToDisk = () => typeof window.showSaveFilePicker === 'function' && typeof window.showDirectoryPicker === 'function';
 export const PICK = { id: 'ame-download', startIn: 'downloads' };          // (the picker remembers where it was last)
-
-// what the connection or the agent going away says (fs.js, server/fs-relay.js): worth trying again
-const CUT = /连接断了|没有回应|断开了|不在线|发送失败|太多/;
-const WAIT = [2000, 4000, 8000, 15000, 30000, 30000, 30000, 30000];      // ms before each new try
-
-const online = (isStopped) => new Promise((resolve) => {
-  if (net.state.online) return resolve();
-  const off = net.on('status', (up) => { if (up) { off(); clearInterval(t); resolve(); } });
-  const t = setInterval(() => { if (isStopped()) { off(); clearInterval(t); resolve(); } }, 500);
-});
-const pause = (ms, isStopped) => new Promise((resolve) => {
-  const t0 = Date.now(), t = setInterval(() => { if (isStopped() || Date.now() - t0 >= ms) { clearInterval(t); resolve(); } }, 200);
-});
 
 // one remote file into a FileSystemWritableFileStream (left open: the caller closes or aborts it).
 // progress(bytes so far, size); waiting(text) while it waits to carry on. -> { promise -> { ok, size } | { ok:false, msg }, cancel }

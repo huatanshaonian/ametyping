@@ -2,7 +2,8 @@
 // Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code or Codex
 // can be started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows). 下载
 // saves the file picked in the list to this device without opening it (download.js); a folder picked, all that is in
-// it, as one .zip (download-folder.js).
+// it, as one .zip (download-folder.js). 上传 (or files dropped on the window) puts files from this device into the
+// folder open, where that computer's agent allows it (upload.js).
 // Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
 // 网上邻居 does: main.js's setSwitch).
 import { h, icon, prefs, $ as $q } from '../util.js';
@@ -14,6 +15,7 @@ import { iconOf, size } from '../filetypes.js';
 import { openFile } from './viewer.js';
 import { download } from './download.js';
 import { downloadFolder } from './download-folder.js';
+import { uploadFiles } from './upload.js';
 
 const touch = matchMedia('(pointer: coarse)').matches;
 const views = new Map();                  // machine -> view
@@ -51,6 +53,8 @@ function create(machine, startPath) {
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
   const dlBtn = h('button', { class: 'btn', type: 'button', text: '下载', disabled: true, title: '把列表里选中的文件下载到这台设备（文件夹打包成 .zip）' });
+  const upBtn = h('button', { class: 'btn', type: 'button', text: '上传', disabled: true, title: '把这台设备上的文件上传到这个文件夹（也可以直接把文件拖进来）' });
+  const picker = h('input', { type: 'file', multiple: true, hidden: true, class: 'xupin' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
   const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
     h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
@@ -63,21 +67,28 @@ function create(machine, startPath) {
     h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
-  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, dlBtn, launchBtn), launchBar, body, status);
-  let cur = null, parent = null, seq = 0, picked = null, job = null;
+  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, dlBtn, upBtn, launchBtn, picker), launchBar, body, status);
+  let cur = null, parent = null, seq = 0, picked = null, job = null, upJob = null, quiet = false;
 
-  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; }
-  async function load(path) {
+  // (uploads: only into a folder, only where that computer's agent allows them)
+  const canUp = () => cur != null && !!(net.state.sessions.find((m) => m.machine === machine) || {}).upload;
+  const syncUp = () => { upBtn.disabled = !upJob && !canUp(); };
+  const offUp = net.on('sessions', syncUp);
+  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; syncUp(); }
+  // keep: the status line left as it is (the list read again after an upload, which is telling how it goes)
+  async function load(path, keep = false) {
     const my = ++seq;
-    status.textContent = '读取中…';
+    quiet = keep;
+    if (!keep) status.textContent = '读取中…';
     const r = path == null ? await fsc.roots(machine) : await fsc.list(machine, path);
     if (my !== seq) return;                               // a newer navigation won
-    if (!r.ok) { status.textContent = r.msg || '打不开'; return; }
+    if (!r.ok) { if (!keep) status.textContent = r.msg || '打不开'; return; }
     picked = null; dlBtn.disabled = !job;                 // (a download still running can still be stopped)
+    const top = body.scrollTop;
     if (path == null) { cur = null; parent = null; renderRoots(r.roots || []); }
     else { cur = r.path; parent = r.parent; renderList(r.entries || [], r.truncated); }
     setTitle();
-    body.scrollTop = 0;
+    body.scrollTop = keep ? top : 0;
   }
   function activate(el, fn, entry = null) {
     el.addEventListener('dblclick', fn);
@@ -97,7 +108,7 @@ function create(machine, startPath) {
       return el;
     }));
     body.replaceChildren(roots.length ? grid : h('div', { class: 'notice', text: '这台电脑没有可浏览的位置。' }));
-    status.textContent = `${roots.length} 个位置`;
+    if (!quiet) status.textContent = `${roots.length} 个位置`;
   }
   function renderList(entries, truncated) {
     const rows = entries.map((e) => {
@@ -111,7 +122,7 @@ function create(machine, startPath) {
     body.replaceChildren(h('table', { class: 'xlist' },
       h('thead', {}, h('tr', {}, h('th', { text: '名称' }), h('th', { class: 'xs', text: '大小' }), h('th', { class: 'xt', text: '修改时间' }))),
       h('tbody', {}, ...rows)));
-    status.textContent = `${entries.length} 个项目${truncated ? '（太多了，只显示前 5000 个）' : ''}`;
+    if (!quiet) status.textContent = `${entries.length} 个项目${truncated ? '（太多了，只显示前 5000 个）' : ''}`;
   }
 
   launchBtn.addEventListener('click', () => {
@@ -140,13 +151,36 @@ function create(machine, startPath) {
     dlBtn.textContent = '取消下载'; dlBtn.disabled = false;
     job.promise.then(() => { job = null; dlBtn.textContent = '下载'; dlBtn.disabled = !picked; });
   });
+  // 上传: files picked, or dropped on the window, into the folder open; one batch at a time, the button stops it
+  function startUpload(files) {
+    if (upJob || !canUp() || !files.length) return;
+    const dir = cur;
+    upJob = uploadFiles(machine, dir, files, (msg) => { status.textContent = msg; }, () => { if (cur === dir) load(cur, true); });
+    upBtn.textContent = '取消上传'; upBtn.disabled = false;
+    upJob.promise.then(() => { upJob = null; upBtn.textContent = '上传'; syncUp(); });
+  }
+  upBtn.addEventListener('click', () => { if (upJob) upJob.cancel(); else if (canUp()) picker.click(); });
+  picker.addEventListener('change', () => { const files = [...picker.files]; picker.value = ''; startUpload(files); });
+  const dragging = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  root.addEventListener('dragover', (e) => { if (!dragging(e) || !canUp() || upJob) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; root.classList.add('xdrop'); });
+  root.addEventListener('dragleave', (e) => { if (!root.contains(e.relatedTarget)) root.classList.remove('xdrop'); });
+  root.addEventListener('drop', (e) => {
+    root.classList.remove('xdrop');
+    if (!dragging(e) || !canUp() || upJob) return;
+    e.preventDefault();
+    // (a folder dropped comes as an entry that is a directory: files only)
+    const items = [...e.dataTransfer.items];
+    const files = [...e.dataTransfer.files].filter((f, i) => { const en = items[i] && items[i].webkitGetAsEntry && items[i].webkitGetAsEntry(); return !(en && en.isDirectory); });
+    if (files.length < e.dataTransfer.files.length) status.textContent = '文件夹不能上传，只上传了里面拖进来的文件';
+    startUpload(files);
+  });
   up.addEventListener('click', () => load(parent));      // the parent of a root is the root list (null)
   refresh.addEventListener('click', () => load(cur));
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = addr.value.trim(); load(p || null); } });
   body.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && cur != null) { e.preventDefault(); load(parent); } });
 
   const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), content: root, width: 720, height: 460,
-    onClose: () => { views.delete(machine); offPcs(); if (job) job.cancel(); } });
+    onClose: () => { views.delete(machine); offPcs(); offUp(); if (job) job.cancel(); if (upJob) upJob.cancel(); } });
   load(startPath);
   return { id, load };
 }
