@@ -1,7 +1,7 @@
 // Relays the file explorer between a browser and a machine's agent. Nothing is stored: every chunk of a file is
 // passed straight on. The agent keeps at most a few chunks in flight and the server acknowledges a chunk only once
 // the browser's socket has drained, so a slow phone never makes the server hold a whole file.
-//   browser -> {t:'fs', rid, machine, op:'roots'|'list'|'read', path}, {t:'fs-cancel', rid}
+//   browser -> {t:'fs', rid, machine, op:'roots'|'list'|'read', path, dl?, from?}, {t:'fs-cancel', rid}
 //   agent   -> {t:'fs-res'|'fs-chunk'|'fs-end', rid, ...}   (the server's rid; answered to the asking browser only)
 'use strict';
 const crypto = require('crypto');
@@ -37,7 +37,9 @@ function createFsRelay({ machines, audit }) {
     const srid = crypto.randomBytes(12).toString('hex');
     reqs.set(srid, { c, crid: d.rid, machine: d.machine, op: d.op, last: Date.now() });
     if (d.op === 'read') audit('fs-read', c.ip, d.machine, d.path.slice(0, 300));
-    if (!toAgent(d.machine, { t: 'fs', rid: srid, op: d.op, path: d.path })) end(srid, '发送失败');
+    // (a read may be a download to disk, dl, and carry on from a byte, from: the agent checks and says back where)
+    const more = d.op !== 'read' ? {} : { ...(d.dl === true ? { dl: true } : {}), ...(Number.isSafeInteger(d.from) && d.from > 0 ? { from: d.from } : {}) };
+    if (!toAgent(d.machine, { t: 'fs', rid: srid, op: d.op, path: d.path, ...more })) end(srid, '发送失败');
   }
 
   function fromAgent(m, d) {

@@ -131,7 +131,12 @@ function create(machine, startPath) {
     if (job) { job.cancel(); return; }
     if (!picked || cur == null) return;
     const e = picked;
-    job = (e.dir ? downloadFolder : download)(machine, rpath.join(cur, e.name), e, (msg) => { status.textContent = msg; });
+    // (a folder too large for a .zip asks, in the status line, for a place on this device to save it: a button there)
+    const say = (msg, act) => {
+      status.replaceChildren(msg);
+      if (act) status.append(' ', h('button', { class: 'btn xact', type: 'button', text: act.label, onclick: act.run }));
+    };
+    job = (e.dir ? downloadFolder : download)(machine, rpath.join(cur, e.name), e, say);
     dlBtn.textContent = '取消下载'; dlBtn.disabled = false;
     job.promise.then(() => { job = null; dlBtn.textContent = '下载'; dlBtn.disabled = !picked; });
   });

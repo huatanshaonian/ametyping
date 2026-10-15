@@ -52,14 +52,14 @@ function login() {
     await new Promise((r) => ws.on('open', r)); await sleep(300);
     let n = 0;
     const req = (op, p) => new Promise((resolve) => { const rid = 'q' + (++n); handlers.set(rid, (d) => { handlers.delete(rid); resolve(d); }); ws.send(JSON.stringify({ t: 'fs', rid, machine: 'box', op, path: p })); });
-    const read = (p, cancelAfter) => new Promise((resolve) => {
+    const read = (p, cancelAfter, more = {}) => new Promise((resolve) => {
       const rid = 'q' + (++n), parts = []; let head = null;
       handlers.set(rid, (d) => {
         if (d.t === 'fs-res') { if (!d.ok) { handlers.delete(rid); resolve({ ok: false, msg: d.msg }); } else head = d; }
         else if (d.t === 'fs-chunk') { parts.push(Buffer.from(d.data, 'base64')); if (cancelAfter && parts.length === cancelAfter) { ws.send(JSON.stringify({ t: 'fs-cancel', rid })); setTimeout(() => { handlers.delete(rid); resolve({ cancelled: true, chunks: parts.length }); }, 1500); } }
         else if (d.t === 'fs-end') { handlers.delete(rid); resolve({ ok: true, head, buf: Buffer.concat(parts), chunks: parts.length }); }
       });
-      ws.send(JSON.stringify({ t: 'fs', rid, machine: 'box', op: 'read', path: p }));
+      ws.send(JSON.stringify({ t: 'fs', rid, machine: 'box', op: 'read', path: p, ...more }));
     });
 
     const box = snap.find((m) => m.machine === 'box');
@@ -86,6 +86,15 @@ function login() {
     const sysp = process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd';
     const sy = await read(sysp); ok(`system file refused (${sy.msg})`, sy.ok === false, JSON.stringify(sy));
     const hg = await read(huge); ok(`101 MB refused (${hg.msg})`, hg.ok === false && /100 MB/.test(hg.msg || ''), JSON.stringify(hg));
+    // a download written to disk (dl): no 100 MB limit; carried on after a cut (from: the agent says where it starts)
+    const hd = await read(huge, 0, { dl: true });
+    ok('dl: 101 MB read whole', hd.ok && hd.buf.length === 101 * 1024 * 1024 && hd.head.size === hd.buf.length && hd.head.from === 0 && typeof hd.head.mtime === 'number', hd.msg || (hd.head && hd.head.size));
+    const fr = await read(path.join(rootReal, 'big.bin'), 0, { from: 1000003 });
+    ok('from: the rest of the file from that byte, said back', fr.ok && fr.head.from === 1000003 && fr.buf.equals(big.subarray(1000003)), JSON.stringify(fr.head));
+    const fx = await read(path.join(rootReal, 'big.bin'), 0, { from: big.length + 5 });
+    ok('from past the end: from the start', fx.ok && fx.head.from === 0 && fx.buf.equals(big), JSON.stringify(fx.head));
+    const sd = await read(path.join(rootReal, '.env'), 0, { dl: true });
+    ok(`dl: secrets still refused (${sd.msg})`, sd.ok === false && /受保护/.test(sd.msg || ''), JSON.stringify(sd));
     const rel = await req('list', 'relative/path'); ok(`relative path refused (${rel.msg})`, rel.ok === false);
     const c = await read(path.join(rootReal, 'big.bin'), 3);
     ok(`cancel stops the stream (got ${c.chunks} chunks of 60)`, c.cancelled && c.chunks < 45, JSON.stringify(c));   // (well before all 60, even on a busy machine)

@@ -18,24 +18,40 @@ export const roots = (machine) => request(machine, 'roots');
 export const list = (machine, path) => request(machine, 'list', path);
 
 // read a whole file: { promise -> { ok, blob, size, path } | { ok:false, msg }, cancel() }; onProgress(received, size)
-export function read(machine, path, onProgress, type = '') {
+// A download straight to disk (download-disk.js) passes { dl: true, from, start(info), sink(bytes) } instead: no
+// 100 MB limit, starting at byte from; start({ size, mtime, from }) when the agent has opened it (from: where it really
+// starts -- 0 from an agent that cannot resume), sink(bytes) for each piece in turn, nothing kept here; both may be
+// async (taken one after another) and throw to stop. Then the promise gives { ok, size: bytes received }.
+export function read(machine, path, onProgress, type = '', { dl = false, from = 0, start = null, sink = null } = {}) {
   const rid = 'r' + (++n) + '-' + Date.now().toString(36);
   const parts = [];
-  let size = 0, got = 0, done;
+  let size = 0, got = 0, done, chain = Promise.resolve();
   const promise = new Promise((resolve) => { done = resolve; });
-  const finish = (r) => { pending.delete(rid); done(r); };
+  // (to disk: over only once what came has been written, however it ends -- a resumed read starts after it; a write
+  // that failed is the reason, local: true)
+  const finish = (r) => {
+    if (!pending.has(rid)) return;
+    pending.delete(rid);
+    if (!sink) return done(r);
+    chain.then(() => done(r), (e) => done({ ok: false, msg: (e && e.message) || '写入失败', local: true }));
+  };
+  const then = (fn) => {
+    chain = chain.then(fn);
+    chain.catch(() => { if (pending.has(rid)) { net.send({ t: 'fs-cancel', rid }); finish({ ok: false }); } });
+  };
   pending.set(rid, (d) => {
     if (d.t === 'fs-res') {
       if (!d.ok) return finish({ ok: false, msg: d.msg || '读取失败' });
       size = d.size; onProgress && onProgress(0, size);
-      if (size === 0) { /* the end message follows */ }
+      if (start) then(() => start({ size: d.size, mtime: d.mtime, from: d.from || 0 }));
     } else if (d.t === 'fs-chunk') {
       const bin = atob(d.data), buf = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-      parts.push(buf); got += buf.length;
+      got += buf.length;
+      if (sink) then(() => sink(buf)); else parts.push(buf);
       onProgress && onProgress(got, size);
-    } else if (d.t === 'fs-end') finish({ ok: true, blob: new Blob(parts, { type }), size: got, path });
+    } else if (d.t === 'fs-end') finish(sink ? { ok: true, size: got, path } : { ok: true, blob: new Blob(parts, { type }), size: got, path });
   });
-  net.send({ t: 'fs', rid, machine, op: 'read', path });
+  net.send({ t: 'fs', rid, machine, op: 'read', path, ...(dl ? { dl: true } : {}), ...(from > 0 ? { from } : {}) });
   return { promise, cancel: () => { if (pending.has(rid)) { net.send({ t: 'fs-cancel', rid }); finish({ ok: false, msg: '已取消' }); } } };
 }

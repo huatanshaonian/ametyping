@@ -112,13 +112,15 @@ function createFiles(cfg) {
     return { path: real, parent: (await isRoot(real)) ? null : path.dirname(real), entries, truncated: ents.length > MAX_ENTRIES, sep: path.sep };
   }
 
-  // { path, size, stream } for reading a file in chunks
-  async function open(p, chunk) {
+  // { path, size, mtime, from, stream } for reading a file in chunks. big: for a download written straight to disk
+  // (no size limit: nothing holds the whole file); from: carry on at that byte (a download resumed after a cut)
+  async function open(p, chunk, { big = false, from = 0 } = {}) {
     const real = await resolve(p);
     const st = await fsp.stat(real);
     if (st.isDirectory()) throw new Error('这是文件夹');
-    if (st.size > MAX) throw new Error('文件过大（超过 100 MB），无法打开');
-    return { path: real, size: st.size, stream: fs.createReadStream(real, { highWaterMark: chunk }) };
+    if (!big && st.size > MAX) throw new Error('文件过大（超过 100 MB），无法打开');
+    const start = Number.isSafeInteger(from) && from > 0 && from <= st.size ? from : 0;
+    return { path: real, size: st.size, mtime: st.mtimeMs, from: start, stream: fs.createReadStream(real, { highWaterMark: chunk, start }) };
   }
 
   // the real path of a folder inside the roots (where the dashboard may start Claude Code)

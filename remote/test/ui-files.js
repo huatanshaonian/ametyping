@@ -34,6 +34,11 @@ const PACK = path.join(SHARE, 'docs', 'pack'); fs.mkdirSync(path.join(PACK, 'sub
 fs.writeFileSync(path.join(PACK, 'a.txt'), 'top\n'); fs.writeFileSync(path.join(PACK, 'sub', 'deep', '中文.txt'), '深处的文件\n');
 fs.writeFileSync(path.join(PACK, '.env'), 'TOKEN=x\n');
 fs.writeFileSync(path.join(PACK, 'big.bin'), ''); fs.truncateSync(path.join(PACK, 'big.bin'), 101 * 1024 * 1024);
+// a file over 100 MB on its own, every byte telling where it is (a download carried on from the wrong place shows)
+const HUGE = Buffer.alloc(120 * 1024 * 1024); for (let i = 0; i < HUGE.length; i++) HUGE[i] = (i * 31 + (i >>> 16)) % 251;
+fs.writeFileSync(path.join(SHARE, 'docs', 'huge.bin'), HUGE);
+const sha = (b) => require('crypto').createHash('sha256').update(b).digest('hex');
+const HUGE_SHA = sha(HUGE), ZERO_SHA = sha(Buffer.alloc(101 * 1024 * 1024));
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
 // a second computer with files of its own (我的电脑's computer switch)
@@ -69,7 +74,8 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
   let chrome;
   try {
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
-    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
+    const agent1 = () => spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
+    let a1 = agent1(); await sleep(2500);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME2, HOME: HOME2, AME_AGENT_CONFIG: ACFG2 }); await sleep(1500);
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
@@ -137,7 +143,9 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     for (let i = 0; i < 30 && !saved; i++) { await sleep(300); const f = path.join(DL, 'data.csv'); if (fs.existsSync(f) && fs.statSync(f).size === Buffer.byteLength(CSV)) saved = fs.readFileSync(f, 'utf8'); }
     const st = await dlState();
     chk('下载: the file saved under its name, as it is on the computer', saved === CSV && /^已下载 data.csv/.test(st.status) && st.text === '下载' && !st.disabled, [saved.length, st]);
-    // a folder: all of it as <name>.zip, what could not come along named in a file beside it
+    // a folder: all of it as <name>.zip, what could not come along named in a file beside it -- in a browser that
+    // cannot write to disk (Firefox, a phone), where a file over 100 MB has to stay behind
+    await evalJs('window.showSaveFilePicker = undefined; window.showDirectoryPicker = undefined;');
     await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('pack')).click(); })()`);
     chk('下载: a folder picked can be downloaded', !(await dlState()).disabled, await dlState());
     await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
@@ -155,6 +163,44 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('下载 a folder: the files as they are', rd('pack', 'a.txt') === 'top\n' && rd('pack', 'sub', 'deep', '中文.txt') === '深处的文件\n', [rd('pack', 'a.txt'), rd('pack', 'sub', 'deep', '中文.txt')]);
     chk('下载 a folder: what was left out, and why, in 未打包的文件.txt', /pack\/big\.bin —— 超过 100 MB/.test(rd('未打包的文件.txt') || '') && !/\.env/.test(rd('未打包的文件.txt') || ''), rd('未打包的文件.txt'));
     chk('下载 a folder: the status line says what came', /^已下载 pack\.zip（2 个文件，.*有 1 项没能打包/.test(zs.status) && zs.text === '下载', zs);
+
+    // Chrome / Edge on a computer: written to disk as it comes. (The pickers give folders of the page's own private
+    // file system here: a test cannot click in the system's dialog.)
+    await evalJs(`(async () => {
+      window.__picked = [];
+      const root = await navigator.storage.getDirectory();
+      window.showSaveFilePicker = async (o) => { __picked.push('save:' + o.suggestedName); return root.getFileHandle(o.suggestedName, { create: true }); };
+      window.showDirectoryPicker = async (o) => { __picked.push('dir:' + o.mode); return root; };
+    })()`);
+    // (what is in the private file system: names, "/" after a folder; the sha-256 of a file)
+    const opfsTree = () => evalJs(`(async () => { const out = []; const go = async (d, pre) => { for await (const [n, h] of d.entries()) { if (h.kind === 'directory') { out.push(pre + n + '/'); await go(h, pre + n + '/'); } else out.push(pre + n); } }; await go(await navigator.storage.getDirectory(), ''); return out.sort(); })()`);
+    const opfsFile = (p, hash) => evalJs(`(async () => { let d = await navigator.storage.getDirectory(); const s = ${JSON.stringify(p)}.split('/'); for (const n of s.slice(0, -1)) d = await d.getDirectoryHandle(n); const f = await (await d.getFileHandle(s.pop())).getFile();
+      if (!${hash}) return await f.text(); const h = await crypto.subtle.digest('SHA-256', await f.arrayBuffer()); return f.size + ':' + [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join(''); })().catch(e => 'error: ' + e.message)`);
+    const statuses = new Set();
+    const waitStatus = async (re, ms, during) => { for (let t = 0; t < ms; t += 100) { const s = await dlState(); statuses.add(s.status); if (re.test(s.status)) return s; if (during) await during(s); await sleep(100); } return dlState(); };
+    // a folder with a file over 100 MB: a button in the status line asks where; then folders and files as they were
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    let ds = await waitStatus(/选择保存位置/, 8000);
+    chk('下载 a folder to disk: too large for a zip, the status line asks where to save it', /有 1 个文件超过 100 MB.*选择保存位置…$/.test(ds.status) && ds.text === '取消下载', ds);
+    await evalJs(`(() => { const e = ${ex}; e.querySelector('.xstatus .xact').click(); })()`);
+    ds = await waitStatus(/^已下载到|^已取消|失败/, 60000);
+    const ot = await opfsTree();
+    chk('下载 a folder to disk: written into the folder picked, the empty folder and the file over 100 MB too',
+      /^已下载到「pack」（3 个文件，/.test(ds.status) && ot.join('|') === ['pack/', 'pack/a.txt', 'pack/big.bin', 'pack/sub/', 'pack/sub/deep/', 'pack/sub/deep/中文.txt', 'pack/空/'].sort().join('|') && (await evalJs('__picked.join()')) === 'dir:readwrite', [ds, ot]);
+    chk('下载 a folder to disk: the files as they are', (await opfsFile('pack/a.txt', false)) === 'top\n' && (await opfsFile('pack/sub/deep/中文.txt', false)) === '深处的文件\n' && (await opfsFile('pack/big.bin', true)) === `${101 * 1024 * 1024}:${ZERO_SHA}`, 0);
+    // a single file over 100 MB: 另存为, written as it comes; the computer's agent stopped halfway and started again:
+    // it carries on from where it was, and the file comes out whole
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('huge.bin')).click(); [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    let cut = false;
+    ds = await waitStatus(/^已保存|huge\.bin：/, 120000, async (s) => {
+      const m = /… ([\d.]+) MB \//.exec(s.status);
+      if (!cut && m && +m[1] >= 20) { cut = true; a1.kill(); await sleep(1500); a1 = agent1(); }
+    });
+    const hs = await opfsFile('huge.bin', true);
+    chk('下载 a large file: 另存为, the agent cut off halfway, carried on, the file whole',
+      cut && /^已保存 huge\.bin（120\.0 MB）/.test(ds.status) && [...statuses].some((s) => /接着下载/.test(s)) && hs === `${HUGE.length}:${HUGE_SHA}` && (await evalJs('__picked.join()')) === 'dir:readwrite,save:huge.bin',
+      [cut, ds.status, [...statuses].filter((s) => /接着|断/.test(s)), String(hs).slice(0, 30)]);
+    await shot('9d-download-disk.png');
     // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
     let w = await wins();
