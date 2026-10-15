@@ -160,6 +160,30 @@ function login() {
       }
     }
     ws.close();
+    // the files need a code entered within the hour, as acting on a machine does (here 2 s: AME_FRESH_MS)
+    {
+      for (const k of kids.splice(0, 1)) k.kill(); await sleep(500);
+      spawn([R + '/server/server.js'], { AME_FRESH_MS: '2000' }); await sleep(3000);
+      const cookie = await login();
+      const w2 = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Origin: `http://127.0.0.1:${PORT}`, Cookie: cookie } });
+      let on = false; const hs = new Map();
+      w2.on('message', (m) => { const d = JSON.parse(m); if (d.t === 'sessions') on = d.data.some((x) => x.machine === 'box' && x.online !== false); if (d.rid && hs.has(d.rid)) { hs.get(d.rid)(d); hs.delete(d.rid); } });
+      await new Promise((r) => w2.on('open', r));
+      for (let i = 0; i < 60 && !on; i++) await sleep(250);                   // (the agent comes back to the new server)
+      const q = (op, p, more = {}) => new Promise((resolve) => { const rid = 'z' + (++n); hs.set(rid, resolve); w2.send(JSON.stringify({ t: 'fs', rid, machine: 'box', op, path: p, ...more })); });
+      const stepup = (c) => new Promise((resolve) => {
+        const body = JSON.stringify({ code: c });
+        http.request({ host: '127.0.0.1', port: PORT, path: '/api/stepup', method: 'POST', headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${PORT}`, Cookie: cookie, 'Content-Length': Buffer.byteLength(body) } },
+          (res) => { res.resume(); resolve(res.statusCode); }).end(body);
+      });
+      await sleep(2200);
+      const stale = [await q('roots'), await q('list', ROOT), await q('read', path.join(ROOT, 'docs', 'readme.md')), await q('read', path.join(ROOT, 'big.bin'), { dl: true })];
+      ok('a stale code: roots, list, read and a download each ask for it, the agent is not asked', on && stale.every((d) => d.t === 'fs-res' && d.ok === false && d.need === 'totp'), JSON.stringify([on, stale]));
+      const st = await stepup(auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000) + 1));
+      const again = await q('list', ROOT);
+      ok('the code entered again: the same request goes through', st === 200 && again.ok === true && again.entries.some((e) => e.name === 'docs'), JSON.stringify([st, again.msg]));
+      w2.close();
+    }
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
     for (const k of kids) try { k.kill(); } catch {}

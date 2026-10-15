@@ -170,7 +170,7 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
-const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
+const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });

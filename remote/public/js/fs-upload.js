@@ -7,7 +7,7 @@
 // name and size into the same folder) carries on the same way.
 import * as net from './net.js';
 import { crc32 } from './apps/zip.js';
-import { CUT, WAIT, online, pause } from './fs-retry.js';
+import { CUT, WAIT, online, pause, stepUp } from './fs-retry.js';
 
 const CHUNK = 256 * 1024;                 // (base64 of it under the server's 512 KB a message)
 const WINDOW = 8;
@@ -50,7 +50,9 @@ function attempt(machine, dir, file, overwrite, progress, isStopped, onRid) {
         finish({ ok: false, msg: '读不了这台设备上的文件（' + ((e && e.message) || e) + '）', local: true });
       } finally { busy = false; }
     }
+    const open = { t: 'fs', rid, machine, op: 'up-open', path: dir, name: file.name, size: file.size, mtime: file.lastModified, overwrite };
     pending.set(rid, async (d) => {
+      if (stepUp(d, open, () => pending.has(rid) && !isStopped(), finish)) return;
       if (d.t === 'fs-res') {
         if (!d.ok) return finish({ ok: false, msg: d.msg || '上传失败', exists: d.exists === true });
         if (opened) return;
@@ -67,7 +69,7 @@ function attempt(machine, dir, file, overwrite, progress, isStopped, onRid) {
         pump();
       } else if (d.t === 'fs-up-done') finish(d.ok ? { ok: true, path: d.path } : { ok: false, msg: d.msg || '上传失败' });
     });
-    net.send({ t: 'fs', rid, machine, op: 'up-open', path: dir, name: file.name, size: file.size, mtime: file.lastModified, overwrite });
+    net.send(open);
   });
 }
 

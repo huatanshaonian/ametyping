@@ -1,5 +1,7 @@
 // File access on a remote computer through its agent (read-only): list roots and folders, read a file in chunks.
+// Each needs a code entered within the hour: asked for here when the server says so, then sent again.
 import * as net from './net.js';
+import { stepUp } from './fs-retry.js';
 
 const pending = new Map();                // rid -> handler(message)
 let n = 0;
@@ -9,9 +11,10 @@ net.on('status', (up) => { if (!up) for (const f of [...pending.values()]) f({ t
 
 function request(machine, op, path) {
   return new Promise((resolve) => {
-    const rid = 'f' + (++n) + '-' + Date.now().toString(36);
-    pending.set(rid, (d) => { pending.delete(rid); resolve(d.ok ? d : { ok: false, msg: d.msg || '失败' }); });
-    net.send({ t: 'fs', rid, machine, op, path });
+    const rid = 'f' + (++n) + '-' + Date.now().toString(36), open = { t: 'fs', rid, machine, op, path };
+    const done = (d) => { pending.delete(rid); resolve(d.ok ? d : { ok: false, msg: d.msg || '失败' }); };
+    pending.set(rid, (d) => { if (!stepUp(d, open, () => pending.has(rid), done)) done(d); });
+    net.send(open);
   });
 }
 export const roots = (machine) => request(machine, 'roots');
@@ -39,7 +42,9 @@ export function read(machine, path, onProgress, type = '', { dl = false, from = 
     chain = chain.then(fn);
     chain.catch(() => { if (pending.has(rid)) { net.send({ t: 'fs-cancel', rid }); finish({ ok: false }); } });
   };
+  const open = { t: 'fs', rid, machine, op: 'read', path, ...(dl ? { dl: true } : {}), ...(from > 0 ? { from } : {}) };
   pending.set(rid, (d) => {
+    if (stepUp(d, open, () => pending.has(rid), finish)) return;
     if (d.t === 'fs-res') {
       if (!d.ok) return finish({ ok: false, msg: d.msg || '读取失败' });
       size = d.size; onProgress && onProgress(0, size);
@@ -52,6 +57,6 @@ export function read(machine, path, onProgress, type = '', { dl = false, from = 
       onProgress && onProgress(got, size);
     } else if (d.t === 'fs-end') finish(sink ? { ok: true, size: got, path } : { ok: true, blob: new Blob(parts, { type }), size: got, path });
   });
-  net.send({ t: 'fs', rid, machine, op: 'read', path, ...(dl ? { dl: true } : {}), ...(from > 0 ? { from } : {}) });
+  net.send(open);
   return { promise, cancel: () => { if (pending.has(rid)) { net.send({ t: 'fs-cancel', rid }); finish({ ok: false, msg: '已取消' }); } } };
 }

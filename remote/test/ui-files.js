@@ -250,6 +250,26 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('box2\'s files shown', await evalJs("[...document.querySelectorAll('.explorer')].some(e => e.querySelector('.xpc').value === 'box2' && e.textContent.includes('share2'))"), 0);
     chk('the desktop follows (as picking box2 in 网上邻居)', (await evalJs('localStorage.getItem("ame.machine")')) === '"box2"', await evalJs('localStorage.getItem("ame.machine")'));
     await shot('9b-explorer-switch.png');
+    // the files need a code entered within the hour (server/fs-relay.js): on a server where it lasts 4 s, opening a
+    // folder asks for the code, and once it is in the folder opens (the same request sent again)
+    const nErr = errors.length;
+    for (const k of kids.splice(0, 1)) k.kill(); await sleep(500);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300', AME_FRESH_MS: '4000' }); await sleep(3000);
+    const [c2n, c2v] = await login();
+    await call('Network.setCookie', { name: c2n, value: c2v, url: `http://127.0.0.1:${PORT}/` });
+    errors.splice(nErr);                                // (the page's socket while the server was away, then its old login)
+    await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` }); await sleep(5500);
+    const gateOpen = () => evalJs("!document.querySelector('#gate').hidden");
+    const box2Text = () => evalJs("[...document.querySelectorAll('.explorer')].filter(e => e.querySelector('.xpc').value === 'box2').map(e => e.textContent).join('|')");
+    if (!(await evalJs("!!document.querySelector('.explorer')"))) await dbl({ q: '.dicon', t: '我的电脑' });
+    let g = await waitFor(gateOpen, (x) => x, 4000), want = 'share2';
+    if (!g) { await dbl({ q: '.xroot', t: 'share2' }); g = await waitFor(gateOpen, (x) => x, 4000); want = 'on-box2.txt'; }
+    const before = await box2Text();
+    await shot('9f-files-code.png');
+    const code2 = auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000) + 1);
+    await evalJs(`(() => { document.querySelector('#gate input').value = '${code2}'; document.querySelector('#gate form').requestSubmit(); })()`);
+    const after = await waitFor(box2Text, (s) => s.includes(want), 6000);
+    chk('a stale code: opening a folder asks for it, then opens it', g && !before.includes(want) && after.includes(want) && !(await gateOpen()), [g, want, before.slice(0, 120), after.slice(0, 120)]);
     console.log(res.join('\n'));
     ws.close();
   } catch (e) { errors.push('script: ' + e.stack); }

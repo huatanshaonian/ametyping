@@ -1,6 +1,7 @@
 // Relays the file explorer between a browser and a machine's agent. Nothing is stored: every chunk of a file is
 // passed straight on. The agent keeps at most a few chunks in flight and the server acknowledges a chunk only once
 // the browser's socket has drained, so a slow phone never makes the server hold a whole file.
+// Every request needs a code entered within the hour, as acting on a machine does (else {ok:false, need:'totp'}).
 //   browser -> {t:'fs', rid, machine, op:'roots'|'list'|'read', path, dl?, from?}, {t:'fs-cancel', rid}
 //   agent   -> {t:'fs-res'|'fs-chunk'|'fs-end', rid, ...}   (the server's rid; answered to the asking browser only)
 // Uploads, to a machine whose agent allows them (agent/fs-upload.js), the other way round: the browser keeps a few
@@ -17,7 +18,8 @@ const DRAIN = 4 * 1024 * 1024;            // browser socket backlog before chunk
 const MAX_READS = 4;                      // files one browser reads at a time
 const MAX_UPS = 2;                        // ... and uploads
 
-function createFsRelay({ machines, audit }) {
+// fresh(c): that browser's login entered a code lately
+function createFsRelay({ machines, audit, fresh }) {
   const reqs = new Map();                 // srid -> { c, crid, machine, op, last }
 
   const toBrowser = (r, o) => { try { r.c.ws.send(JSON.stringify({ ...o, rid: r.crid })); } catch {} };
@@ -44,13 +46,16 @@ function createFsRelay({ machines, audit }) {
       }
       return;
     }
-    const reply = (msg) => { try { c.ws.send(JSON.stringify({ t: 'fs-res', rid: d.rid, ok: false, msg })); } catch {} };
+    const reply = (msg, need) => { try { c.ws.send(JSON.stringify({ t: 'fs-res', rid: d.rid, ok: false, msg, need })); } catch {} };
     if (!OPS.has(d.op) || typeof d.machine !== 'string' || (d.op !== 'roots' && (typeof d.path !== 'string' || d.path.length > 4096))) return reply('无效请求');
     if (d.op === 'up-open' && (typeof d.name !== 'string' || !d.name || d.name.length > 255 || !Number.isSafeInteger(d.size) || d.size < 0)) return reply('无效请求');
     const m = machines.get(d.machine);
     if (!m || !agentSock(d.machine)) return reply('这台电脑不在线');
     if (!m.files) return reply('这台电脑没开放文件浏览');
     if (d.op === 'up-open' && !m.upload) return reply('这台电脑没开放上传');
+    // like acting on a machine, its files need a code entered within the hour (auth.FRESH_MS): asked for and the same
+    // request sent again (nothing of it is kept here). Checked as each one starts: one already going runs on.
+    if (!fresh(c)) return reply('需要再输一次验证码', 'totp');
     const mine = (op) => [...reqs.values()].filter((r) => r.c === c && r.op === op).length;
     if (d.op === 'read' && mine('read') >= MAX_READS) return reply('同时打开的文件太多，稍后再试');
     if (d.op === 'up-open' && mine('up-open') >= MAX_UPS) return reply('同时上传的文件太多，稍后再试');
