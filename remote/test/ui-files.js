@@ -28,6 +28,12 @@ const CSV = ['名称,数值,备注', '"网格, 粗",1.5,"第一行' + String.fro
   .concat(Array.from({ length: 2500 }, (_, i) => `r${i},${i},`)).join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
 fs.writeFileSync(path.join(SHARE, 'docs', 'data.csv'), CSV);
 const DL = path.join(T, 'downloads'); fs.mkdirSync(DL);
+// a folder to download as a .zip: folders in folders, an empty one, a file over 100 MB (left out, and named in the
+// zip), a secret (never listed, so never in it)
+const PACK = path.join(SHARE, 'docs', 'pack'); fs.mkdirSync(path.join(PACK, 'sub', 'deep'), { recursive: true }); fs.mkdirSync(path.join(PACK, '空'));
+fs.writeFileSync(path.join(PACK, 'a.txt'), 'top\n'); fs.writeFileSync(path.join(PACK, 'sub', 'deep', '中文.txt'), '深处的文件\n');
+fs.writeFileSync(path.join(PACK, '.env'), 'TOKEN=x\n');
+fs.writeFileSync(path.join(PACK, 'big.bin'), ''); fs.truncateSync(path.join(PACK, 'big.bin'), 101 * 1024 * 1024);
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
 // a second computer with files of its own (我的电脑's computer switch)
@@ -131,8 +137,24 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     for (let i = 0; i < 30 && !saved; i++) { await sleep(300); const f = path.join(DL, 'data.csv'); if (fs.existsSync(f) && fs.statSync(f).size === Buffer.byteLength(CSV)) saved = fs.readFileSync(f, 'utf8'); }
     const st = await dlState();
     chk('下载: the file saved under its name, as it is on the computer', saved === CSV && /^已下载 data.csv/.test(st.status) && st.text === '下载' && !st.disabled, [saved.length, st]);
-    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('img')).click(); })()`);
-    chk('下载: a folder picked, nothing to download', (await dlState()).disabled, await dlState());
+    // a folder: all of it as <name>.zip, what could not come along named in a file beside it
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('pack')).click(); })()`);
+    chk('下载: a folder picked can be downloaded', !(await dlState()).disabled, await dlState());
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    const ZIP = path.join(DL, 'pack.zip');
+    for (let i = 0; i < 40 && !(fs.existsSync(ZIP) && /^已下载/.test((await dlState()).status)); i++) await sleep(300);
+    const zs = await dlState();
+    const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), X = path.join(T, 'unzip');
+    // (unpacked by Windows' own tar, the folders read back: the names as a zip program sees them)
+    const tree = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? [pre + e.name + '/', ...tree(path.join(d, e.name), pre + e.name + '/')] : [pre + e.name]);
+    let names = [];
+    try { fs.mkdirSync(X); cp.execFileSync(TAR, ['-xf', ZIP, '-C', X]); names = tree(X).sort(); } catch (e) { names = ['tar: ' + e.message]; }
+    const rd = (...p) => { try { return fs.readFileSync(path.join(X, ...p), 'utf8'); } catch { return null; } };
+    chk('下载 a folder: pack.zip with its folders, the empty one too; no secret, no file over 100 MB',
+      names.join('|') === ['pack/', 'pack/a.txt', 'pack/sub/', 'pack/sub/deep/', 'pack/sub/deep/中文.txt', 'pack/空/', '未打包的文件.txt'].sort().join('|'), names);
+    chk('下载 a folder: the files as they are', rd('pack', 'a.txt') === 'top\n' && rd('pack', 'sub', 'deep', '中文.txt') === '深处的文件\n', [rd('pack', 'a.txt'), rd('pack', 'sub', 'deep', '中文.txt')]);
+    chk('下载 a folder: what was left out, and why, in 未打包的文件.txt', /pack\/big\.bin —— 超过 100 MB/.test(rd('未打包的文件.txt') || '') && !/\.env/.test(rd('未打包的文件.txt') || ''), rd('未打包的文件.txt'));
+    chk('下载 a folder: the status line says what came', /^已下载 pack\.zip（2 个文件，.*有 1 项没能打包/.test(zs.status) && zs.text === '下载', zs);
     // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
     let w = await wins();

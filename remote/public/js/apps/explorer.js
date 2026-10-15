@@ -1,7 +1,8 @@
 // 我的电脑 / 资源管理器 for one remote computer: its roots (drives or allowed folders), then folder listings.
 // Double-click (a tap on touch screens) opens a folder, or a file in a viewer window. In a folder, Claude Code or Codex
 // can be started there (a new session on that computer: tmux on Linux, a Windows Terminal window on Windows). 下载
-// saves the file picked in the list to this device without opening it (download.js).
+// saves the file picked in the list to this device without opening it (download.js); a folder picked, all that is in
+// it, as one .zip (download-folder.js).
 // Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
 // 网上邻居 does: main.js's setSwitch).
 import { h, icon, prefs, $ as $q } from '../util.js';
@@ -12,6 +13,7 @@ import * as rpath from '../rpath.js';
 import { iconOf, size } from '../filetypes.js';
 import { openFile } from './viewer.js';
 import { download } from './download.js';
+import { downloadFolder } from './download-folder.js';
 
 const touch = matchMedia('(pointer: coarse)').matches;
 const views = new Map();                  // machine -> view
@@ -48,7 +50,7 @@ function create(machine, startPath) {
   renderPcs();
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
-  const dlBtn = h('button', { class: 'btn', type: 'button', text: '下载', disabled: true, title: '把列表里选中的文件下载到这台设备' });
+  const dlBtn = h('button', { class: 'btn', type: 'button', text: '下载', disabled: true, title: '把列表里选中的文件下载到这台设备（文件夹打包成 .zip）' });
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
   const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
     h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
@@ -82,7 +84,7 @@ function create(machine, startPath) {
     el.addEventListener('click', () => {
       for (const x of body.querySelectorAll('.sel')) x.classList.remove('sel');
       el.classList.add('sel');
-      picked = entry && !entry.dir ? entry : null;
+      picked = entry;
       if (!job) dlBtn.disabled = !picked;
       if (touch) fn();
     });
@@ -129,7 +131,7 @@ function create(machine, startPath) {
     if (job) { job.cancel(); return; }
     if (!picked || cur == null) return;
     const e = picked;
-    job = download(machine, rpath.join(cur, e.name), e, (msg) => { status.textContent = msg; });
+    job = (e.dir ? downloadFolder : download)(machine, rpath.join(cur, e.name), e, (msg) => { status.textContent = msg; });
     dlBtn.textContent = '取消下载'; dlBtn.disabled = false;
     job.promise.then(() => { job = null; dlBtn.textContent = '下载'; dlBtn.disabled = !picked; });
   });
