@@ -9,7 +9,7 @@
 const path = require('path');
 const { runCodex } = require('../summary/codex');
 const { runClaude } = require('../summary/claude');
-const { runApi } = require('./anthropic-api');
+const { runApi, plain } = require('./anthropic-api');
 
 const REST_MS = 15 * 60e3;
 const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com' };
@@ -24,7 +24,9 @@ function createAsk({ codex, claude, api = null, egress = null, pick, log = () =>
   async function once(use, prompt, schema, images, task) {
     if (use.provider === 'claude' && api && api.key() && !(apiDown && now() - apiDown.at < REST_MS)) {
       try {
-        const v = await runApi({ key: api.key(), model: use.model, effort: use.effort, prompt, schema, images, egress, base: api.base, timeoutMs: api.timeoutMs || codex.timeoutMs });
+        // (a prompt marked for the cache: what it took, so that the log shows the cache at work)
+        const onUsage = prompt.includes('\u0000') ? (u) => log(`AI：${task} 输入 ${u.input + u.cacheRead + u.cacheWrite} token（缓存读 ${u.cacheRead}、写 ${u.cacheWrite}），输出 ${u.output}`) : null;
+        const v = await runApi({ key: api.key(), model: use.model, effort: use.effort, prompt, schema, images, egress, base: api.base, timeoutMs: api.timeoutMs || codex.timeoutMs, onUsage });
         apiDown = null;
         return v;
       } catch (e) {
@@ -42,7 +44,7 @@ function createAsk({ codex, claude, api = null, egress = null, pick, log = () =>
     }
     if (cli.pathPrefix) env.PATH = cli.pathPrefix + path.delimiter + (env.PATH || '');
     const run = use.provider === 'claude' ? runClaude : runCodex;
-    try { return await run({ bin: cli.bin, model: use.model, effort: use.effort, prompt, schema, env, timeoutMs: cli.timeoutMs, images }); }
+    try { return await run({ bin: cli.bin, model: use.model, effort: use.effort, prompt: plain(prompt), schema, env, timeoutMs: cli.timeoutMs, images }); }
     catch (e) { if (egress) egress.forget(HOST[use.provider]); throw e; }
   }
 

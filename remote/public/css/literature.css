@@ -34,6 +34,9 @@
 .lf-one { margin: 4px 0; padding: 4px 8px; background: var(--tint); color: var(--ink); }
 .lf-full { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--edge); }
 .lit.narrow .lf-ct { flex-direction: column; } .lit.narrow .lf-cover { width: 100%; height: 150px; }
+/* a card's flowchart (lit-flow.js): on white like the figures, a click shows it larger */
+.md-flow { margin: 6px 0; padding: 8px; background: #fff; border: 1px solid var(--edge); text-align: center; cursor: zoom-in; overflow-x: auto; }
+.md-flow svg { max-width: 100%; height: auto; max-height: 520px; } .md-flow.big { cursor: zoom-out; } .md-flow.big svg { max-width: none; max-height: none; }
 .lf-pool { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 12.5px; color: var(--muted); }
 .lp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .lp-bar .field { flex: 1 1 180px; min-width: 0; }
 /* a card's figures: the picture with what is said of it */
@@ -124,7 +127,6 @@
 .lr-me { align-self: flex-end; max-width: 88%; padding: 5px 9px; background: var(--fill); color: var(--on-fill); white-space: pre-wrap; }
 .lr-me blockquote { margin: 0 0 4px; padding-left: 6px; border-left: 2px solid rgba(255, 255, 255, .6); font-size: 12px; opacity: .85; }
 .lr-ai { align-self: stretch; padding: 5px 9px; background: var(--surface); border: 1px solid var(--edge); }
-.lr-ask { padding: 4px 9px; border-left: 3px solid var(--pink); background: var(--quote-bg); font-size: 12.5px; } .lr-ask .md { font-size: 12.5px; }
 .lr-box { flex: none; border-top: 1px solid var(--edge); padding-top: 6px; }
 .lr-sel { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lr.narrow .lr-side { width: 100%; } .lr.narrow .lr-pdf { display: none; } .lr.narrow.side .lr-pdf { display: block; } .lr.narrow.side .lr-side { display: none; }

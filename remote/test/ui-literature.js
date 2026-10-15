@@ -134,6 +134,11 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('展开卡片: the whole card in place -- sections, the figures with their readings, page links', await waitFor("(() => { const f = document.querySelector('.lf-c .lf-full'); const i = f && f.querySelector('img.md-fig'); return !!f && !f.hidden && !!i && i.complete && i.naturalWidth > 100 && !!f.querySelector('.plink') && !f.querySelector('h1'); })()", 15000) &&
       /与我的关系/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")) && /峰值在 60 km 附近/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")),
       await evalJs("(document.querySelector('.lf-c .lf-full')||{}).textContent"));
+    chk('展开卡片: 科学问题, and 方法 drawn as a flowchart (Mermaid, under the page\'s own rules: no eval, no outside scripts)', await waitFor("(() => { const f = document.querySelector('.lf-c .lf-full .md-flow svg'); return !!f && /分层计算反射系数/.test(f.textContent) && /不收敛/.test(f.textContent) && f.querySelectorAll('.node').length === 4; })()", 20000) &&
+      /科学问题[\s\S]*问：\s*碰撞频率随高度变化时/.test(await evalJs("document.querySelector('.lf-c .lf-full').textContent")) && !(await evalJs("!!document.querySelector('.lf-c .lf-full pre code.language-mermaid')")),
+      await evalJs("(document.querySelector('.lf-c .lf-full .md-flow, .lf-c .lf-full pre')||{}).outerHTML"));
+    await evalJs("document.querySelector('.lf-c .lf-full .md-flow').scrollIntoView()");
+    await shot('81c-lit-card-flow.png');
     await evalJs("document.querySelector('.lf-c .lf-full img.md-fig').scrollIntoView()");
     await shot('81b-lit-card-open.png');
     await evalJs("[...document.querySelectorAll('.lf-c .btn')].find(b => b.textContent === '读完了').click()");
@@ -174,7 +179,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
       await evalJs("document.querySelector('.lr-side .lit-tab.on').textContent === '理解'"), await evalJs("(document.querySelector('.lr')||{}).textContent"));
     await evalJs("(() => { const t = document.querySelector('.lr-pane textarea'); t.value = '它测了鞘套电子密度'; t.dispatchEvent(new Event('input')); })()");
     await evalJs("[...document.querySelectorAll('.lr-pane .btn.go')].find(b => b.textContent.includes('对照原文')).click()");
-    chk('理解 -> the comparison with the paper and a question back', await waitFor("!!document.querySelector('.lr-fb') && document.querySelector('.lr-fb').textContent.includes('反问')", 25000), await evalJs("document.querySelector('.lr-pane').textContent"));
+    chk('理解 -> the comparison with the paper and what was missed, no question back', await waitFor("!!document.querySelector('.lr-fb') && document.querySelector('.lr-fb').textContent.includes('你可能漏了') && !document.querySelector('.lr-fb').textContent.includes('反问')", 25000), await evalJs("document.querySelector('.lr-pane').textContent"));
     chk('深读: the first question had the paper read as images; the box shows it done', await waitFor("/已看原图转写 全部 2 页/.test((document.querySelector('.lr-side .lv') || {}).textContent || '')", 40000), await evalJs("(document.querySelector('.lr-side .lv')||{}).textContent"));
     await evalJs("[...document.querySelectorAll('.lr-side .lv .btn')].find(b => b.textContent === '看这一页的转写').click()");
     chk('深读: the transcription of the page shown, with its equation drawn', await waitFor("/第 1 页的转写/.test((document.querySelector('.lr-side .lv-md') || {}).textContent || '') && !!document.querySelector('.lr-side .lv-md .katex')"), await evalJs("(document.querySelector('.lr-side .lv-md')||{}).innerHTML"));

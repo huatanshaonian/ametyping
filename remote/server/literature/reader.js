@@ -1,18 +1,23 @@
 // 深读: one paper read together with the model.
 //   understand  the user writes what they understood (or want from it) first -- kept in the card's 我的理解 -- and the
-//               model compares it with the paper: what is right, what was missed, one question back
-//   chat        questions about the paper; every turn is sent with the card, the pages that matter (by the question's
-//               words, the selected text, a page asked for) and the talk so far -- nothing relies on the model's memory
+//               model compares it with the paper: what is right, what was missed
+//   chat        questions about the paper, as a conversation: the model keeps nothing between calls, so every turn is
+//               sent with the card, the paper's whole text (a paper longer than CHAT_WHOLE: the pages that matter -- the
+//               one being read, the ones the last answers cited, the ones about this question and the last ones) and the
+//               talk so far (the last CHAT_TURNS turns, whole, within CHAT_TALK). The prompt is laid out to be cached
+//               (prompts/reader.js): from the second turn on, the text and the talk before are read from the cache.
 //   distill     沉淀: what the talk found worth keeping becomes proposed additions to the card (accepted one by one)
 // Topics (专题): a review page built from cards, and a related-work paragraph with \cite{citekey} for a thesis.
-//   <dataDir>/literature/chats/<key>.json  { turns: [{ q, a, askBack, sel, page, at }], feedback }
+//   <dataDir>/literature/chats/<key>.json  { turns: [{ q, a, sel, page, at }], feedback }   (older turns may carry an askBack: not shown)
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { FEEDBACK_SCHEMA, CHAT_SCHEMA, DISTILL_SCHEMA, TOPIC_SCHEMA, RELATED_SCHEMA, CARD_SECTIONS, feedbackPrompt, chatPrompt, distillPrompt, topicPrompt, relatedPrompt } = require('./prompts/reader');
 const { pickPages, fitPages } = require('./fulltext');
+const { size } = require('./digest');
 
 const KEY = /^[A-Z0-9]{8}$/;
+const CHAT_WHOLE = 200000, CHAT_PICK = 120000, CHAT_TURNS = 40, CHAT_TALK = 150000;     // (sizes counted as digest.js counts them)
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };   // (local date)
 
 function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision = null, log = () => {}, onChange = () => {} }) {
@@ -52,7 +57,7 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision =
       const it = mirror.item(key);
       const a = await ask(feedbackPrompt(it, cardText(key), pickPages(ft.pages, text.split(/[\s，。,.;；]+/), 50000, ft.labels), text), FEEDBACK_SCHEMA);
       const c = load(key);
-      c.feedback = { mine: text, feedback: a.feedback || '', missed: a.missed || [], askBack: a.askBack || '', at: Date.now() };
+      c.feedback = { mine: text, feedback: a.feedback || '', missed: a.missed || [], at: Date.now() };
       save(key, c);
     });
   }
@@ -62,15 +67,27 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision =
     q = String(q || '').trim().slice(0, 3000);
     if (!q) return { ok: false, msg: '问题是空的' };
     return job(key, 'chat', async () => {
-      const ft = await textOf(key), pages = ft.pages;
+      const ft = await textOf(key), pages = ft.pages, label = (i) => (ft.labels ? ft.labels[i] : i + 1);
       const c = load(key);
-      const words = [...q.split(/[\s，。,.;；？?！!、（）()]+/), ...String(sel).split(/\s+/).slice(0, 40)];
-      let picked = pickPages(pages, words, 45000, ft.labels);
-      const at = ft.labels ? ft.labels.indexOf(page) : page - 1;                 // (the page the user is looking at)
-      if (page > 0 && at >= 0 && at < pages.length && !picked.some((p) => p.page === page)) picked = [...picked, { page, text: pages[at] }];
+      // the talk so far: the last turns whole, the oldest left out past the limit
+      let talk = c.turns.slice(-CHAT_TURNS);
+      while (talk.length > 1 && talk.reduce((n, t) => n + size(t.q) + size(t.a) + size(t.sel), 0) > CHAT_TALK) talk = talk.slice(1);
       const it = mirror.item(key);
-      const a = await ask(chatPrompt(profile.get() || {}, it, cardText(key), picked, c.turns.slice(-8), q, sel), CHAT_SCHEMA);
-      c.turns.push({ q, a: a.answer || '', askBack: a.askBack || '', sel: String(sel).slice(0, 2000), page: page || 0, at: Date.now() });
+      let text;
+      if (pages.reduce((n, t) => n + size(t), 0) <= CHAT_WHOLE) text = { whole: pages.map((t, i) => ({ page: label(i), text: t })) };
+      else {
+        // too long to send whole: the page being read, the pages the last two answers cited, then the pages about this
+        // question and the two before it
+        const idx = (p) => (ft.labels ? ft.labels.indexOf(p) : p - 1);
+        const must = [...new Set([page, ...c.turns.slice(-2).flatMap((t) => [...String(t.a).matchAll(/\[p\.(\d+)\]/g)].map((m) => +m[1]))])].filter((p) => p > 0 && idx(p) >= 0 && idx(p) < pages.length);
+        let used = must.reduce((n, p) => n + size(pages[idx(p)]), 0);
+        const words = [...q.split(/[\s，。,.;；？?！!、（）()]+/), ...String(sel).split(/\s+/).slice(0, 40), ...c.turns.slice(-2).flatMap((t) => t.q.split(/[\s，。,.;；？?！!、（）()]+/))];
+        const more = pickPages(pages, words, Math.max(0, CHAT_PICK - used), ft.labels).filter((p) => !must.includes(p.page));
+        const picked = [...must.map((p) => ({ page: p, text: pages[idx(p)] })), ...more];
+        text = { picked: picked.sort((x, y) => idx(x.page) - idx(y.page)), n: pages.length };
+      }
+      const a = await ask(chatPrompt(profile.get() || {}, it, cardText(key), text, talk, q, sel, page), CHAT_SCHEMA);
+      c.turns.push({ q, a: a.answer || '', sel: String(sel).slice(0, 2000), page: page || 0, at: Date.now() });
       c.turns = c.turns.slice(-200);
       save(key, c);
     });

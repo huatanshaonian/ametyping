@@ -53,8 +53,9 @@ function formatRanges(pages) {
   return out.join(', ');
 }
 
-// ask(prompt, schema, { images }): the litVision job's model; maxPages(): the page limit for reading a paper whole
-function createVision({ dir, mirror, fulltext, ask, maxPages = () => 30, log = () => {}, onChange = () => {} }) {
+// ask(prompt, schema, { images }): the litVision job's model; maxPages(): the page limit for reading a paper whole;
+// onRead(key, why, pages): a run read `pages` (why: 'auto' / 'approved')
+function createVision({ dir, mirror, fulltext, ask, maxPages = () => 30, log = () => {}, onChange = () => {}, onRead = () => {} }) {
   const vdir = path.join(dir, 'vision');
   fs.mkdirSync(vdir, { recursive: true });
   const fileOf = (md5) => path.join(vdir, md5 + '.json');
@@ -148,6 +149,7 @@ function createVision({ dir, mirror, fulltext, ask, maxPages = () => 30, log = (
       } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
       if (failed.length) job.error = `第 ${formatRanges(failed)} 页没读出来`;
       log(`文献：${key} 读图 ${job.done}/${job.total} 页${failed.length ? '（' + job.error + '）' : ''}`);
+      if (job.done) try { onRead(key, why, want.filter((p) => !failed.includes(p))); } catch {}
     })().catch((e) => { job.error = e.message; log(`文献：${key} 读图失败：${e.message}`); })
       .finally(() => { job.running = false; changed(key); });
     return { ok: true, wait: job.wait };

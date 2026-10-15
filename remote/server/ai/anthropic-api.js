@@ -6,6 +6,13 @@
 //   key: the API key (api-key.js); model: Claude's own name for it ("claude-opus-5-5"); effort: '' = the model's default
 //   images: PNG / JPEG files the model looks at along with the prompt (文献's page images)
 //   egress: the proxies (null: direct); base: another address than api.anthropic.com (tests: a fake on http://127.0.0.1)
+// Prompt caching: a prompt cut by CACHE_BREAK into blocks -- what stays the same from one call to the next first (a
+// paper's text), then what only grows (a conversation, a block a turn), the new question last -- is sent as those
+// blocks, the first and the one before the last marked to be cached (an hour). The next call that starts the same
+// reads them from the cache (about a tenth of the price) instead of paying for them again. The API being stateless,
+// this is how a long conversation stays cheap (as in Claude Code). A model or an account that refuses the marks: asked
+// again without them. Everyone else (Codex, Claude Code) gets the prompt with the marks taken out (plain).
+//   onUsage({ input, cacheRead, cacheWrite, output }): the tokens the call took
 'use strict';
 const fs = require('fs');
 const http = require('http');
@@ -16,6 +23,8 @@ const { SYSTEM } = require('../summary/claude');
 const HOST = 'api.anthropic.com', VERSION = '2023-06-01';
 const MAX_TOKENS = 32000;                     // (thinking and the answer together; every current model writes this much)
 const IDLE_MS = 3 * 60e3;                     // (the API sends "ping" while the model thinks: this long silent = the line is dead)
+const CACHE_BREAK = '\u0000<cache>\u0000';
+const plain = (prompt) => String(prompt).split(CACHE_BREAK).join('');
 
 // structured outputs take a subset of JSON Schema: sizes and ranges are refused (a 400), and every object must say
 // "nothing else". The limits the jobs wrote for Codex are left out here; the prompt states them anyway.
@@ -86,35 +95,48 @@ async function post({ key, path, body, egress, base, timeoutMs, onEvent }) {
   });
 }
 
-async function runApi({ key, model, effort = '', prompt, schema, images = [], egress = null, base = '', timeoutMs = 20 * 60e3 }) {
+// the prompt as the message's content: text (and the images before it), in blocks to be cached when it has the marks
+function contentOf(prompt, images, cache) {
+  const parts = String(prompt).split(CACHE_BREAK).filter((p, i, all) => p || i === all.length - 1);
+  let pics = [];
+  try { pics = images.map((f) => ({ type: 'image', source: { type: 'base64', media_type: /\.jpe?g$/i.test(f) ? 'image/jpeg' : 'image/png', data: fs.readFileSync(f).toString('base64') } })); }
+  catch (e) { throw new Error('读不到要给 Claude 看的图片：' + e.message); }
+  if (parts.length < 2 || !cache) return pics.length ? [...pics, { type: 'text', text: parts.join('') }] : parts.join('');
+  const mark = { type: 'ephemeral', ttl: '1h' };
+  return [...pics, ...parts.map((text, i) => ({ type: 'text', text, ...((i === 0 || i === parts.length - 2) && i < parts.length - 1 ? { cache_control: mark } : {}) }))];
+}
+
+async function runApi({ key, model, effort = '', prompt, schema, images = [], egress = null, base = '', timeoutMs = 20 * 60e3, onUsage = null }) {
   if (!key) throw new Error('还没有填 Claude API 的 key（控制面板 → AI 模型 → Claude API）');
-  let content = prompt;
-  if (images.length) {
-    try {
-      content = [...images.map((f) => ({ type: 'image', source: { type: 'base64', media_type: /\.jpe?g$/i.test(f) ? 'image/jpeg' : 'image/png', data: fs.readFileSync(f).toString('base64') } })),
-        { type: 'text', text: prompt }];
-    } catch (e) { throw new Error('读不到要给 Claude 看的图片：' + e.message); }
-  }
   const think = /^[a-z]{2,10}$/.test(effort);
-  const ask = async (withEffort) => {
+  const ask = async (withEffort, cache = true) => {
     let text = '', stop = '';
+    const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+    const content = contentOf(prompt, images, cache);
     const body = { model, max_tokens: MAX_TOKENS, stream: true, system: SYSTEM, messages: [{ role: 'user', content }],
       ...(withEffort ? { thinking: { type: 'adaptive' } } : {}),
       output_config: { ...(withEffort ? { effort } : {}), format: { type: 'json_schema', schema: forApi(schema) } } };
     await post({ key, path: '/v1/messages', body, egress, base, timeoutMs, onEvent(name, d) {
       if (name === 'content_block_delta' && d.delta && d.delta.type === 'text_delta') text += d.delta.text || '';
-      else if (name === 'message_delta' && d.delta && d.delta.stop_reason) stop = d.delta.stop_reason;
+      else if (name === 'message_start' && d.message && d.message.usage) { const u = d.message.usage; Object.assign(usage, { input: u.input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0 }); }
+      else if (name === 'message_delta' && d.delta && d.delta.stop_reason) { stop = d.delta.stop_reason; if (d.usage) usage.output = d.usage.output_tokens || 0; }
       else if (name === 'error') throw new Error(explain((d.error && d.error.type) || '中途', JSON.stringify(d)));
     } });
+    if (onUsage) try { onUsage(usage); } catch {}
     if (stop === 'refusal') throw new Error('Claude 拒绝回答这个问题');
     if (stop === 'max_tokens') throw new Error('Claude 的回答太长，没写完（超过 ' + MAX_TOKENS + ' 个 token）');
     try { const v = JSON.parse(text); if (v && typeof v === 'object') return v; } catch {}
     throw new Error('Claude API 的回答不是 JSON：' + text.slice(0, 200));
   };
-  try { return await ask(think); }
+  const again = (withEffort, cache) => ask(withEffort, cache).catch((e) => {
+    // the marks for the cache refused (an hour not offered here, say): asked once more without them
+    if (cache && e.status === 400 && /cache|ttl/i.test(e.said || '')) return ask(withEffort, false);
+    throw e;
+  });
+  try { return await again(think, true); }
   catch (e) {
     // a model that does not take an effort (the catalog said it did): asked once more as it is by itself
-    if (think && e.status === 400 && /effort|thinking/i.test(e.said || '')) return ask(false);
+    if (think && e.status === 400 && /effort|thinking/i.test(e.said || '')) return again(false, true);
     throw e;
   }
 }
@@ -136,4 +158,4 @@ async function checkKey({ key, egress = null, base = '' }) {
   });
 }
 
-module.exports = { runApi, checkKey, forApi };
+module.exports = { runApi, checkKey, forApi, contentOf, CACHE_BREAK, plain };

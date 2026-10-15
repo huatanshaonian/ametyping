@@ -10,7 +10,8 @@
 const path = require('path');
 const { QUICK_SCHEMA, DEEP_SCHEMA, quickPrompt, deepPrompt } = require('./prompts/card');
 const { pickPages, fitPages } = require('./fulltext');
-const { formatRanges } = require('./vision');
+const { formatRanges, parseRanges } = require('./vision');
+const { flowMermaid } = require('./flow');
 
 const NOTE_TAG = 'Windose卡片';
 const USER_SECTIONS = new Set(['我的理解', '我的笔记']);
@@ -34,8 +35,11 @@ function annotationLines(mirror, key) {
 function noteHtml(md) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const inl = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[\[([^\]]+)\]\]/g, '$1');
-  const out = []; let inList = false;
+  const out = []; let inList = false, fence = false;
   for (const line of md.split('\n')) {
+    // (a flowchart: the note cannot draw it -- the method's text is there anyway)
+    if (/^```/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
     const li = /^\s*-\s+(\[[ x]\]\s+)?(.*)$/.exec(line);
     if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${li[1] ? (li[1].includes('x') ? '☑ ' : '☐ ') : ''}${inl(li[2])}</li>`); continue; }
     if (inList) { out.push('</ul>'); inList = false; }
@@ -50,8 +54,9 @@ function noteHtml(md) {
 }
 
 // ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js);
-// myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
+// myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations;
+// digest: what a deep card reads of a report too long to give whole (digest.js; without it the start of every page)
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, digest = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
   const marks = (key) => [...annotationLines(mirror, key), ...myNotes(key)];
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
@@ -78,7 +83,11 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
   function aiSections(kind, a, item, shown = []) {
     const s = [];
     s.push({ title: '', text: `# ${item.title}\n\n> ${a.oneLine || ''}` });
-    s.push({ title: '问题', text: a.problem || '' }, { title: '方法', text: a.method || '' });
+    s.push({ title: '问题', text: a.problem || '' });
+    if (kind === 'deep') s.push({ title: '科学问题', text: (a.science || []).filter((x) => x && String(x.question || '').trim()).map((x, i) => `${i + 1}. **问：** ${String(x.question).trim()}\n   **答：** ${String(x.answer || '').trim() || '（文中没有回答）'}`).join('\n') });
+    // (the deep card's method begins with its flowchart)
+    const chart = kind === 'deep' ? flowMermaid(a.flow) : '';
+    s.push({ title: '方法', text: [chart, a.method || ''].filter(Boolean).join('\n\n') });
     if (kind === 'deep') s.push({ title: '关键假设', text: list(a.assumptions) });
     s.push({ title: '主要结果', text: list(a.results) });
     if (shown.length) s.push({ title: '图表', text: figureSection(shown) });
@@ -162,9 +171,13 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const read = ft.vision && ft.vision.length ? formatRanges(ft.vision) : '';
     const long = !!(vi && vi.n && !vi.auto && (ft.vision || []).length < vi.n);
     const figs = figures ? await figures.ensure(key) : [];          // the paper's figures, cut out of its pages
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, fitPages(ft.pages, 90000, ft.labels), marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long }, figs), DEEP_SCHEMA);
+    // the whole text, or for a report too long for that, the notes made of it part by part
+    const body = digest ? await digest.forCard(item, ft) : { pages: fitPages(ft.pages, 90000, ft.labels) };
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, body.pages || [], marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long, digest: body.digest }, figs), DEEP_SCHEMA);
     // a long paper with pages worth reading as images: the request waits for the user's approval
-    if (long && a.vision && a.vision.worth && String(a.vision.pages || '').trim()) vision.request(key, a.vision.pages, a.vision.why, 'model');
+    // (only the pages not read yet: a card made again after some were read may name them again)
+    const ask4 = long && a.vision && a.vision.worth ? parseRanges(String(a.vision.pages || '').trim() || 'x', vi.n).filter((p) => !(ft.vision || []).includes(p)) : [];
+    if (ask4.length) vision.request(key, formatRanges(ask4), a.vision.why, 'model');
     const r = store(item, 'deep', a, { pdf: true, vision: read || undefined, figs });
     if (r.text) toZotero(item, r.text);
     return { ...r, pdf: true };

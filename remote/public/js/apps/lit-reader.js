@@ -1,7 +1,7 @@
 // 深读: one paper, the PDF on the left (pdfview.js; select text to ask about it, [p.N] in answers jumps there), and on
 // the right:
 //   理解  write what you understood / want from it first; the model compares it with the paper (what is right, what
-//         was missed) and asks one question back -- reading as practice, not outsourcing
+//         was missed) -- reading as practice, not outsourcing
 //   对话  questions about the paper, answered from its pages; 沉淀到卡片 turns what the talk found into proposed card
 //         additions (知识库 › 待确认)
 //   卡片  the card; 深读卡 from the full text
@@ -138,14 +138,12 @@ function mountReader(key, firstPage) {
         const r = await post('/api/lit/understand', { key, text: ta.value }); if (r.ok) { drafts.mine = null; st.job = { running: true, what: 'feedback' }; render(); } } })),
       st.job && st.job.error && st.job.what === 'feedback' ? h('p', { class: 'lit-empty bad', text: st.job.error }) : null,
       fb ? h('div', { class: 'lr-fb' }, h('h4', { text: 'AI 的对照' }), md(fb.feedback),
-        (fb.missed || []).length ? h('div', {}, h('b', { text: '你可能漏了：' }), h('ul', {}, ...fb.missed.map((x) => h('li', {}, md(x))))) : null,
-        fb.askBack ? h('div', { class: 'lr-ask' }, h('b', { text: '反问：' }), md(fb.askBack), h('button', { class: 'btn', type: 'button', text: '去对话里回答', onclick: () => { show('对话'); const i = pane.querySelector('.lr-q'); if (i) { i.value = '关于「' + fb.askBack.slice(0, 60) + '」，我的回答是：'; i.focus(); } } })) : null) : null));
+        (fb.missed || []).length ? h('div', {}, h('b', { text: '你可能漏了：' }), h('ul', {}, ...fb.missed.map((x) => h('li', {}, md(x))))) : null) : null));
   }
   function renderChat() {
     const list = h('div', { class: 'lr-chat' });
     for (const t of st.turns || []) {
-      list.append(...[h('div', { class: 'lr-me' }, t.sel ? h('blockquote', { text: t.sel.slice(0, 300) + (t.sel.length > 300 ? '…' : '') }) : null, h('span', { text: t.q })), h('div', { class: 'lr-ai' }, md(t.a)),
-        t.askBack ? h('div', { class: 'lr-ask' }, h('b', { text: '反问：' }), md(t.askBack)) : null].filter(Boolean));
+      list.append(h('div', { class: 'lr-me' }, t.sel ? h('blockquote', { text: t.sel.slice(0, 300) + (t.sel.length > 300 ? '…' : '') }) : null, h('span', { text: t.q })), h('div', { class: 'lr-ai' }, md(t.a)));
     }
     if (busy() && st.job.what === 'chat') list.append(h('div', { class: 'lr-ai lit-empty', text: '在读原文、组织回答…（一般半分钟到两分钟；还在读图的页先用文字层）' }));
     if (st.job && st.job.error && st.job.what === 'chat') list.append(h('div', { class: 'lit-empty bad', text: '没回答出来：' + st.job.error }));
