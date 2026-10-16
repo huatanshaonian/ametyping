@@ -798,6 +798,12 @@ async function onControl(req, res, body) {
   if (req.method === 'POST' && req.url === '/control/report') return out(200, { ok: morning.setNote(d) });
   // ... and a new mail that needs you: a bubble at once (information only, too)
   if (req.method === 'POST' && req.url === '/control/mail') return out(200, { ok: mailNotice.add(d) });
+  // a session renamed with /rename (no hook says so; the NAS heard it from the agent's records): its new name now
+  if (req.method === 'POST' && req.url === '/control/title') {
+    const s = typeof d.id === 'string' && sessions.get(d.id), t = typeof d.title === 'string' ? d.title.trim().slice(0, 60) : '';
+    if (s && t && t !== s.title) { s.title = t; pushBubble(null); }
+    return out(200, { ok: !!s });
+  }
   if (!settings.remoteControl) return out(200, { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' });
   if (req.method === 'POST' && req.url === '/control/send') {
     const text = typeof d.text === 'string' ? d.text : '';
@@ -900,19 +906,6 @@ function pushChat(force) {
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
 }
 setInterval(() => pushChat(false), 1000);
-// a /rename in a session's terminal: the new name shown at once (the hook would say it only with the next message)
-setInterval(() => {
-  let changed = false;
-  for (const s of sessions.values()) {
-    if (s.provider === 'codex' || !s.transcript) continue;
-    try {
-      const r = transcript.renamedSince(s.transcript, s.renameAt);
-      s.renameAt = r.to;
-      if (r.title && r.title.slice(0, 60) !== s.title) { s.title = r.title.slice(0, 60); changed = true; }
-    } catch {}
-  }
-  if (changed) pushBubble(null);
-}, 3000);
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
 // replies and navigation keys into a session's terminal (or a background resume): remote-control.js

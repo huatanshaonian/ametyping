@@ -245,20 +245,4 @@ function poll(cache, records = recordsOf) {
   return true;
 }
 
-// a name given with /rename since byte `from` of a transcript (/rename runs no hook: without this the pet would learn
-// the name only with the session's next message). -> { title: the latest one written there, or '', to: where to look
-// from next time }. The first look (from == null) or a file written anew: nothing, from its end on.
-function renamedSince(file, from) {
-  const size = fs.statSync(file).size;
-  if (from == null || size <= from) return { title: '', to: size };
-  const n = Math.min(size - from, 4e6), fd = fs.openSync(file, 'r'), buf = Buffer.alloc(n);
-  try { fs.readSync(fd, buf, 0, n, size - n); } finally { fs.closeSync(fd); }
-  let title = '';
-  for (const l of buf.toString('utf8').split('\n')) {
-    if (!l.includes('"custom-title"')) continue;
-    try { const o = JSON.parse(l); if (o.type === 'custom-title' && o.customTitle) title = String(o.customTitle); } catch {}   // (a line cut at either end)
-  }
-  return { title, to: size };
-}
-
-module.exports = { poll, recordsOf, mergeRecords, forkLookup, renamedSince };
+module.exports = { poll, recordsOf, mergeRecords, forkLookup };

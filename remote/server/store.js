@@ -78,6 +78,7 @@ function createStore(dir) {
     if (d.from !== e.off) return { resync: e.off };
     const recs = (Array.isArray(d.recs) ? d.recs : []).map(clean).filter(Boolean);
     let modeChanged = false;
+    const named = e.title;
     for (const r of recs) {
       // how full the context is ("used/window", app/transcript.js): only the latest is kept, in the state, not the log;
       // a change of a whole percent is worth showing
@@ -120,7 +121,8 @@ function createStore(dir) {
     dirty = true;
     const tail = tails.get(`${m}|${d.id}`);
     if (tail) merge(tail.msgs, recs);
-    return { ok: true, changed: recs.length > 0, modeChanged };
+    // title: its new name, when this batch renamed it (a /rename, or the name Claude Code made up arriving)
+    return { ok: true, changed: recs.length > 0, modeChanged, title: e.title && e.title !== named ? e.title : undefined };
   }
 
   // told of every file appended to (the search index reads on from where it stood: server/search-index.js)

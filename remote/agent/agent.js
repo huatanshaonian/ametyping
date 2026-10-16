@@ -278,6 +278,8 @@ function connect() {
     else if (d.t === 'report-note' && typeof d.date === 'string') petCall('POST', '/control/report', d);
     // a new mail the NAS found something in: the pet's bubble (information too)
     else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
+    // a session renamed (the server tells every machine): this one's pet shows the new name at once
+    else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));

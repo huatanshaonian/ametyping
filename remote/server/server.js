@@ -276,6 +276,17 @@ function onAgentMessage(m, raw, ws) {
     // (and a new permission mode / context fill is shown in the list's session details)
     if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
     if (r.modeChanged) { const i = store.info(m.name, d.id); if (i) pushEvents.ctx(m.name, d.id, i.ctx, (m.sessions.get(d.id) || {}).label || i.title); }
+    // a session renamed (/rename in its terminal): every page's list at once, and every machine's agent -- the one
+    // it runs on tells its pet (/rename runs no hook there). Not for the history an agent streams in (not running).
+    if (r.title) {
+      broadcastSoon();
+      const s = m.sessions.get(d.id);
+      if (s) {
+        s.label = r.title;
+        const msg = JSON.stringify({ t: 'title', machine: m.name, id: d.id, title: r.title });
+        for (const a of machines.values()) if (a.online && a.sockets) for (const sock of a.sockets) { try { sock.send(msg); } catch {} }
+      }
+    }
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }

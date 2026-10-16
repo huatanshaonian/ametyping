@@ -1,6 +1,7 @@
 // A conversation's name after /rename (app/transcript.js): the given name beats the made-up one wherever it is read --
 // the panel's poll, the agent's records to the server, the server's store -- although Claude Code writes the made-up
-// one again right after it around every message. And the pet hearing of a /rename at once (renamedSince).
+// one again right after it around every message. And the store saying when a name changed (for the server to tell
+// the pages and the pets: e2e-launch.js follows that through).
 const fs = require('fs'), os = require('os'), path = require('path');
 const R = path.resolve(__dirname, '..');
 const transcript = require(path.resolve(R, '..', 'app', 'transcript.js'));
@@ -56,19 +57,18 @@ store.accept('pc', { id: SID, from: 0, to: size, recs: all.all.concat(again.all)
 const listed = (store.sessions().pc || []).find((e) => e.id === SID);
 chk('the server lists it under the given name', listed && listed.title === '又改了', listed);
 
-// the pet: a /rename seen at once, without a hook
+// the store says when a batch renamed it (the server then tells every page and every machine), and only then
+const s2 = createStore(path.join(T, 'store2'));
 const G = path.join(T, 'g.jsonl');
 fs.writeFileSync(G, user('a') + meta());
-let at = transcript.renamedSince(G).to;
-chk('pet: the first look starts at the end', at === fs.statSync(G).size, at);
+const g1 = titles(G), a1 = s2.accept('pc', { id: 'g', from: 0, to: fs.statSync(G).size, recs: g1.all });
+const at1 = fs.statSync(G).size;
 fs.appendFileSync(G, asst('b') + meta());
-let rn = transcript.renamedSince(G, at); at = rn.to;
-chk('pet: messages without a /rename say nothing', rn.title === '', rn);
-fs.appendFileSync(G, L({ type: 'custom-title', customTitle: '新名字' }) + L({ type: 'agent-name', agentName: '新名字' }));
-rn = transcript.renamedSince(G, at); at = rn.to;
-chk('pet: a /rename since the last look: its name', rn.title === '新名字', rn);
-rn = transcript.renamedSince(G, at);
-chk('pet: nothing new: nothing', rn.title === '' && rn.to === at, rn);
+const a2 = s2.accept('pc', { id: 'g', from: at1, to: fs.statSync(G).size, recs: titles(G, at1).all });
+const at2 = fs.statSync(G).size;
+fs.appendFileSync(G, L({ type: 'custom-title', customTitle: '新名字' }) + L({ type: 'agent-name', agentName: '新名字' }) + user('c') + meta('新名字'));
+const a3 = s2.accept('pc', { id: 'g', from: at2, to: fs.statSync(G).size, recs: titles(G, at2).all });
+chk('store: the first name, then nothing while it stays, then the new one after /rename', a1.title === '自动起的名字' && a2.title === undefined && a3.title === '新名字', [a1.title, a2.title, a3.title]);
 
 store.flush && store.flush();
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}

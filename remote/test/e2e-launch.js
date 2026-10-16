@@ -44,13 +44,14 @@ fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, 
 // fake pet: control token file + the endpoints the agent uses
 const petToken = 'x'.repeat(64);
 fs.writeFileSync(path.join(HOME, '.ametyping', `control-token-${PET}`), petToken);
-const launches = [];
+const launches = [], titles = [];
 http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => b += c); req.on('end', () => {
     res.setHeader('Content-Type', 'application/json');
     if (req.headers['x-ame-control'] !== petToken) { res.statusCode = 403; return res.end('{}'); }
     if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: [] }));
     if (req.url === '/control/launch') { launches.push(JSON.parse(b)); return res.end(JSON.stringify({ ok: true, msg: 'fake launched' })); }
+    if (req.url === '/control/title') { titles.push(JSON.parse(b)); return res.end(JSON.stringify({ ok: true })); }
     res.statusCode = 404; res.end('{}');
   });
 }).listen(PET, '127.0.0.1');
@@ -115,6 +116,14 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     const audit = fs.readFileSync(path.join(T, 'srv', 'audit.log'), 'utf8');
     ok('written to the audit log', new RegExp('control-resume .* box ' + RID).test(audit));
     ok('launch written to the audit log', /control-launch .* box /.test(audit));
+    // /rename in a session's terminal: Claude Code writes the name in the transcript (no hook runs). The agent's records
+    // bring it to the server, which tells every page (the list) and every machine -- this one's pet gets it
+    let label = '';
+    ws2.on('message', (m) => { const d = JSON.parse(m); if (d.t === 'sessions') { const s = (d.data.find((x) => x.machine === 'box') || { sessions: [] }); const e = (s.sessions || s.list || []).find((x) => x.id === RID); if (e) label = e.label; } });
+    const n1 = titles.length;
+    fs.appendFileSync(path.join(HOME, '.claude', 'projects', '-work', RID + '.jsonl'), JSON.stringify({ type: 'custom-title', customTitle: '改过的名字', sessionId: RID }) + '\n' + JSON.stringify({ type: 'agent-name', agentName: '改过的名字', sessionId: RID }) + '\n');
+    for (let i = 0; i < 60 && !(titles.length > n1 && label === '改过的名字'); i++) await sleep(250);
+    ok('/rename: the pet told the new name, the pages\' list shows it', titles.length === n1 + 1 && titles[n1].id === RID && titles[n1].title === '改过的名字' && label === '改过的名字', JSON.stringify([titles, label]));
     ws.close(); ws2.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
