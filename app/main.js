@@ -900,6 +900,19 @@ function pushChat(force) {
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
 }
 setInterval(() => pushChat(false), 1000);
+// a /rename in a session's terminal: the new name shown at once (the hook would say it only with the next message)
+setInterval(() => {
+  let changed = false;
+  for (const s of sessions.values()) {
+    if (s.provider === 'codex' || !s.transcript) continue;
+    try {
+      const r = transcript.renamedSince(s.transcript, s.renameAt);
+      s.renameAt = r.to;
+      if (r.title && r.title.slice(0, 60) !== s.title) { s.title = r.title.slice(0, 60); changed = true; }
+    } catch {}
+  }
+  if (changed) pushBubble(null);
+}, 3000);
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
 // replies and navigation keys into a session's terminal (or a background resume): remote-control.js

@@ -187,8 +187,13 @@ function recordsOf(o, st) {
       if (used > 0) out.push({ role: 'ctx', text: used + '/' + (/haiku/i.test(String(m.model || '')) ? 200000 : 0), t });
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
-    const title = o.aiTitle || o.customTitle || o.title;
-    if (title) out.push({ role: 'title', text: String(title), t });
+    // the name: one given with /rename beats the one Claude Code made up, as in Claude Code itself. Both are written
+    // again around every message, the made-up one right after the given one -- so once a given name has been seen,
+    // the made-up one is left out (st: kept as long as the file is read on: the reader, the panel's message list)
+    const given = o.type === 'custom-title';
+    if (given && st) st.named = true;
+    const title = given ? o.customTitle : o.aiTitle || o.title;
+    if (title && (given || !(st && st.named))) out.push({ role: 'title', text: String(title), t });
   } else if (o.type === 'permission-mode' && typeof o.permissionMode === 'string' && o.permissionMode) {
     // the permission mode (auto / manual / acceptEdits / plan ...): written when the session starts, around every
     // message and on exit -- not on each Shift+Tab. A metadata record like the title (the line has no timestamp).
@@ -240,4 +245,20 @@ function poll(cache, records = recordsOf) {
   return true;
 }
 
-module.exports = { poll, recordsOf, mergeRecords, forkLookup };
+// a name given with /rename since byte `from` of a transcript (/rename runs no hook: without this the pet would learn
+// the name only with the session's next message). -> { title: the latest one written there, or '', to: where to look
+// from next time }. The first look (from == null) or a file written anew: nothing, from its end on.
+function renamedSince(file, from) {
+  const size = fs.statSync(file).size;
+  if (from == null || size <= from) return { title: '', to: size };
+  const n = Math.min(size - from, 4e6), fd = fs.openSync(file, 'r'), buf = Buffer.alloc(n);
+  try { fs.readSync(fd, buf, 0, n, size - n); } finally { fs.closeSync(fd); }
+  let title = '';
+  for (const l of buf.toString('utf8').split('\n')) {
+    if (!l.includes('"custom-title"')) continue;
+    try { const o = JSON.parse(l); if (o.type === 'custom-title' && o.customTitle) title = String(o.customTitle); } catch {}   // (a line cut at either end)
+  }
+  return { title, to: size };
+}
+
+module.exports = { poll, recordsOf, mergeRecords, forkLookup, renamedSince };
