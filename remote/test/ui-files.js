@@ -73,6 +73,9 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
   const errors = [];
   let chrome;
   try {
+    // a Word document (docx-fixture.js), and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '报告.docx'), await require('./docx-fixture.js').makeDocx(fs.readFileSync(R + '/public/icons/document.png')));
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧报告.doc'), Buffer.from('d0cf11e0a1b11ae1000000000000000000000000', 'hex'));
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     const agent1 = () => spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     let a1 = agent1(); await sleep(2500);
@@ -133,6 +136,30 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("[...document.querySelectorAll('.viewer .vtools .btn')].pop().click()"); await sleep(300);
     tb = await tbl();
     chk('CSV: 原文 shows the text as it is (and the button says 表格 to go back)', tb.as === '表格' && tb.raw.startsWith('名称,数值,备注') && !tb.heads, [tb.as, tb.raw.slice(0, 30)]);
+    // a Word document: drawn page by page -- heading, table, picture; a web link opens in a new tab, a javascript:
+    // one is no link at all
+    console.log('open 报告.docx', await dbl({ q: '.xlist tr', t: '报告.docx' }));
+    const wv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('报告.docx'))";
+    const wd = async () => evalJs(`(() => { const v = ${wv}; if (!v) return null; const w = v.querySelector('.docx-wrap'); const img = w && w.querySelector('section.docx img'); const links = w ? [...w.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href'), a.target]) : [];
+      return { pages: w ? w.querySelectorAll('section.docx').length : 0, info: (v.querySelector('.vinfo') || {}).textContent, text: w ? w.textContent : (v.querySelector('.vbody') || {}).textContent, cells: w ? [...w.querySelectorAll('td')].map(t => t.textContent) : [],
+        img: img ? img.naturalWidth : -1, links, fonts: w ? w.querySelectorAll('style').length : 0, zoom: w ? w.querySelector('.docx-pages').style.zoom : '' }; })()`);
+    let wdoc = null;
+    for (let i = 0; i < 40 && !(wdoc && wdoc.pages); i++) { await sleep(250); wdoc = await wd(); }
+    await sleep(500); wdoc = await wd();
+    await shot('9d-word.png');
+    chk('Word: two pages drawn, counted in the bar', wdoc && wdoc.pages === 2 && wdoc.info === '2 页', wdoc);
+    chk('Word: the heading, the text, the table, the picture', /网格加密报告/.test(wdoc.text) && /界面两侧各加密 5 层/.test(wdoc.text) && /第二页的内容/.test(wdoc.text) && wdoc.cells.join('|') === '参数|值|dx|1e-3' && wdoc.img === 32, wdoc);
+    const web = wdoc.links.find((l) => l[0] === '外部链接'), bad = wdoc.links.find((l) => l[0] === '坏链接');
+    chk('Word: a web link opens in a new tab; a javascript: link is no link', web && web[1] === 'https://example.com/report' && web[2] === '_blank' && (!bad || bad[1] == null), wdoc.links);
+    // on a phone the page is scaled to the width
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true }); await sleep(800);
+    const narrow = await wd();
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }); await sleep(500);
+    chk('Word: a narrow window shows the whole page width (scaled down)', narrow && +narrow.zoom > 0 && +narrow.zoom < 1, narrow && narrow.zoom);
+    await evalJs(`(${wv}).closest('.win').querySelector('.tb-close, .close, [data-act=close]') && (${wv}).closest('.win').querySelector('.tb-close, .close, [data-act=close]').click()`);
+    console.log('open 旧报告.doc', await dbl({ q: '.xlist tr', t: '旧报告.doc' })); await sleep(1500);
+    const old = await evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧报告.doc')); return v ? v.querySelector('.vbody').textContent : ''; })()");
+    chk('Word, the old .doc: says it cannot be drawn and how to see it', /老版 Word 格式/.test(old) && /另存为 \.docx/.test(old), old);
     // 下载 in 我的电脑: the file picked in the list, saved under its own name, byte for byte
     await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
     const ex = "[...document.querySelectorAll('.explorer')].find(e => e.querySelector('.xpc').value === 'dell97')";
@@ -230,7 +257,7 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
       upCut && /^已上传 2 个文件到 /.test(us.status) && [...upSeen].some((s) => /接着上传/.test(s)) && fs.readFileSync(path.join(DOCS, '上传说明.txt'), 'utf8') === '第一版\n' &&
       sha(fs.readFileSync(path.join(DOCS, 'up-big.bin'))) === sha(UPBIG) && fs.readdirSync(DOCS).every((x) => !x.endsWith('.ame-upload')),
       [upCut, us.status, [...upSeen].filter((s) => /接着|断/.test(s)), fs.readdirSync(DOCS)]);
-    chk('上传: the list shows them (read again, the status line kept)', us.rows.some((x) => x.includes('up-big.bin')) && us.rows.some((x) => x.includes('上传说明.txt')) && us.text === '上传', us.rows.length);
+    chk('上传: the list shows them (read again, the status line kept)', us.rows.some((x) => x.includes('up-big.bin')) && us.rows.some((x) => x.includes('上传说明.txt')) && us.text === '上传', [us.text, us.rows]);
     // the same name again: asked first; 替换 replaces it
     fs.writeFileSync(path.join(LOCAL, '上传说明.txt'), '第二版\n');
     await setFiles([path.join(LOCAL, '上传说明.txt')]);

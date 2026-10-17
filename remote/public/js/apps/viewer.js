@@ -1,4 +1,4 @@
-// Viewer windows: pictures, PDF (pdfview.js), Markdown (with the pictures it references), CSV / TSV as a table
+// Viewer windows: pictures, PDF (pdfview.js), Word .docx (docx-view.js), Markdown (with the pictures it references), CSV / TSV as a table
 // (csv-view.js), text; anything else can be downloaded. Two sources: a remote file, in chunks through the agent
 // (openFile; fs.js), or a URL on this server (openUrl -- a mail attachment fetched from the mailbox). A progress line
 // shows while it loads.
@@ -11,7 +11,7 @@ const MAX = 100 * 1024 * 1024;
 const SNIFF_MAX = 2 * 1024 * 1024;        // an unknown file this small is shown as text if it looks like text
 const TABLE_MAX = 20 * 1024 * 1024;       // a CSV larger than this is shown as text (a table of it would not fit the page)
 const isTable = (name) => /\.(csv|tsv)$/i.test(name);
-const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', text: 'notepad_file', other: 'notepad_file' };
+const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', text: 'notepad_file', other: 'notepad_file' };
 
 async function decodeText(blob) {
   const buf = await blob.arrayBuffer();
@@ -35,7 +35,7 @@ function frame({ id, title, name, where, kind, onClose }) {
   const root = h('div', { class: 'viewer' }, h('div', { class: 'vbar' }, h('span', { class: 'vpath', text: where, title: where }), tools, dl), body);
   const v = { urls, bar, note, body, dl, tools, cleanup: [] };
   wm.open({ id, title, icon: icon(ICONS[kind] || 'notepad_file', true), content: root,
-    width: kind === 'image' ? 640 : kind === 'pdf' ? 860 : 760, height: kind === 'pdf' ? 640 : 520,
+    width: kind === 'image' ? 640 : kind === 'pdf' || kind === 'word' ? 860 : 760, height: kind === 'pdf' || kind === 'word' ? 640 : 520,
     onClose: () => { if (onClose) onClose(); for (const f of v.cleanup) f(); for (const u of urls) URL.revokeObjectURL(u); } });
   v.progress = (got, total) => {
     bar.firstChild.style.width = total ? Math.round((got / total) * 100) + '%' : '100%';
@@ -64,6 +64,18 @@ async function show(v, blob, name, kind, ctx = {}) {
       const doc = await renderPdf(wrap, await blob.arrayBuffer());
       v.cleanup.push(() => doc.destroy());
     } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 PDF 打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用别的程序看。')); }
+  } else if (k === 'word') {
+    const wrap = h('div', { class: 'docx-wrap' });
+    v.body.replaceChildren(wrap);
+    try {
+      const { renderDocx } = await import('./docx-view.js');
+      const d = await renderDocx(wrap, await blob.arrayBuffer());
+      v.tools.replaceChildren(h('span', { class: 'vinfo', text: `${d.pages} 页`, title: '按 Word 的版式在网页里画出来，个别复杂排版（公式、文本框、艺术字）可能和 Word 里不完全一样' }));
+      const ro = new ResizeObserver(() => d.fit()); ro.observe(wrap);
+      v.cleanup.push(() => ro.disconnect());
+    } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 Word 文档打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用 Word 看。')); }
+  } else if (k === 'other' && /\.doc$/i.test(name)) {
+    v.body.replaceChildren(h('div', { class: 'notice' }, `${name}（${fmtSize(blob.size)}）是老版 Word 格式（.doc），网页里画不出来。`, h('br'), '可以点右上角「下载」用 Word 打开；在 Word 里另存为 .docx 后就能在这里预览。'));
   } else if (k === 'text' && isTable(name) && blob.size <= TABLE_MAX) {
     const text = await decodeText(blob);
     const { csvTable } = await import('./csv-view.js');
