@@ -3,12 +3,14 @@ const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg',
 const MD = new Set(['md', 'markdown', 'mdown', 'mkd']);
 const PDF = new Set(['pdf']);
 const WORD = new Set(['docx', 'docm', 'dotx', 'dotm']);          // (the old binary .doc is not one: it cannot be drawn here)
+const SHEET = new Set(['xlsx', 'xlsm', 'xlsb', 'xls', 'xltx', 'xltm', 'ods']);   // (the old binary .xls can be read)
 const TEXT = new Set(['txt', 'log', 'json', 'jsonl', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'ipynb', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'java',
   'kt', 'go', 'rs', 'rb', 'php', 'lua', 'r', 'm', 'jl', 'f', 'f90', 'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1', 'psm1', 'yaml', 'yml', 'toml', 'ini',
   'cfg', 'conf', 'env.example', 'csv', 'tsv', 'xml', 'html', 'htm', 'css', 'scss', 'less', 'sql', 'tex', 'bib', 'rst', 'org', 'gitignore',
   'gitattributes', 'dockerfile', 'makefile', 'cmake', 'gradle', 'properties', 'service', 'vue', 'svelte', 'diff', 'patch', 'srt', 'vtt']);
 const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
-  ico: 'image/x-icon', svg: 'image/svg+xml', avif: 'image/avif', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+  ico: 'image/x-icon', svg: 'image/svg+xml', avif: 'image/avif', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
 
 const ext = (name) => { const n = name.toLowerCase(); const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1) : n; };
 export function kindOf(name) {
@@ -17,13 +19,14 @@ export function kindOf(name) {
   if (MD.has(e)) return 'md';
   if (PDF.has(e)) return 'pdf';
   if (WORD.has(e)) return 'word';
+  if (SHEET.has(e)) return 'sheet';
   if (TEXT.has(e)) return 'text';
   return 'other';
 }
 export const mimeOf = (name) => MIME[ext(name)] || '';
 export function iconOf(entry) {
   if (entry.dir) return 'directory_closed';
-  return { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', text: 'notepad_file', other: 'notepad_file' }[kindOf(entry.name)];
+  return { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', sheet: 'document', text: 'notepad_file', other: 'notepad_file' }[kindOf(entry.name)];
 }
 export function size(n) {
   if (n < 1024) return n + ' B';

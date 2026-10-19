@@ -76,6 +76,9 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     // a Word document (docx-fixture.js), and one in the old binary format
     fs.writeFileSync(path.join(SHARE, 'docs', '报告.docx'), await require('./docx-fixture.js').makeDocx(fs.readFileSync(R + '/public/icons/document.png')));
     fs.writeFileSync(path.join(SHARE, 'docs', '旧报告.doc'), Buffer.from('d0cf11e0a1b11ae1000000000000000000000000', 'hex'));
+    // Excel workbooks (xlsx-fixture.js): a new one and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '报表.xlsx'), require('./xlsx-fixture.js').makeXlsx());
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧报表.xls'), require('./xlsx-fixture.js').makeXls());
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     const agent1 = () => spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     let a1 = agent1(); await sleep(2500);
@@ -160,6 +163,35 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     console.log('open 旧报告.doc', await dbl({ q: '.xlist tr', t: '旧报告.doc' })); await sleep(1500);
     const old = await evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧报告.doc')); return v ? v.querySelector('.vbody').textContent : ''; })()");
     chk('Word, the old .doc: says it cannot be drawn and how to see it', /老版 Word 格式/.test(old) && /另存为 \.docx/.test(old), old);
+    // an Excel workbook: its sheets as tabs (a hidden one dimmed, a very hidden one not there), values as Excel formats
+    // them, the title merged, the hidden column left out, HTML in a cell only text; a long sheet a page at a time
+    console.log('open 报表.xlsx', await dbl({ q: '.xlist tr', t: '报表.xlsx' }));
+    const xv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('报表.xlsx') && !x.querySelector('.vpath').textContent.endsWith('旧报表.xlsx'))";
+    const xd = async () => evalJs(`(() => { const v = ${xv}; if (!v) return null; const t = v.querySelector('table.xls');
+      return { info: (v.querySelector('.vinfo') || {}).textContent, tabs: [...v.querySelectorAll('.xls-tab')].map(b => [b.textContent, b.classList.contains('on'), b.classList.contains('hid')]),
+        heads: t ? [...t.querySelectorAll('thead th')].map(x => x.textContent) : [], rows: t ? [...t.querySelectorAll('tbody tr')].map(r => [...r.children].map(c => c.textContent)) : [],
+        merged: t ? [...t.querySelectorAll('td')].filter(c => c.colSpan > 1).map(c => [c.textContent, c.colSpan]) : [], imgs: v.querySelectorAll('.xls-body img').length,
+        num: t ? [...t.querySelectorAll('td.num')].map(c => c.textContent) : [], more: (v.querySelector('.csvmore:not([hidden]) .btn') || {}).textContent || '', body: (v.querySelector('.vbody') || {}).textContent.slice(0, 200) }; })()`);
+    let xs = null;
+    for (let i = 0; i < 40 && !(xs && xs.rows.length); i++) { await sleep(250); xs = await xd(); }
+    await shot('9e-excel.png');
+    chk('Excel: the sheets as tabs -- the first one shown, a hidden one dimmed, a very hidden one not listed', xs && JSON.stringify(xs.tabs) === JSON.stringify([['数据', true, false], ['长表', false, false], ['隐藏表', false, true]]), xs && [xs.tabs, xs.body]);
+    chk('Excel: column letters, row numbers; the hidden column F left out', xs && xs.heads.join('|') === '|A|B|C|D|E|G' && xs.rows.map((r) => r[0]).join(',') === '1,2,3,4,5', xs && [xs.heads, xs.rows.map((r) => r[0])]);
+    chk('Excel: values as Excel shows them (thousands, decimals, dates, percent), the formula\'s value', xs && xs.rows[2].join('|') === '3|网格A|1,200|3.50|2026-10-19|25%|4200' && xs.rows[3].slice(1, 6).join('|') === '网格B|34,567|12.00|2026-01-02|75.5%', xs && xs.rows);
+    chk('Excel: the merged title spans its five columns; numbers right-aligned', xs && JSON.stringify(xs.merged) === JSON.stringify([['季度报表', 5]]) && xs.num.includes('1,200') && !xs.num.includes('网格A'), xs && [xs.merged, xs.num]);
+    chk('Excel: HTML in a cell is shown as text', xs && xs.rows[4][1] === '<img src=x onerror=alert(1)>' && xs.imgs === 0, xs && xs.rows[4]);
+    chk('Excel: the bar says how big the sheet is', xs && /^5 行 × 6 列 · 3 个工作表$/.test(xs.info), xs && xs.info);
+    await evalJs(`[...(${xv}).querySelectorAll('.xls-tab')].find(b => b.textContent === '长表').click()`); await sleep(400);
+    xs = await xd();
+    chk('Excel: another tab -- 1000 rows at first, the rest on asking', xs && xs.rows.length === 1000 && /再显示 1000 行（还有 1501 行）/.test(xs.more) && /^2501 行 × 2 列/.test(xs.info) && xs.tabs[1][1], xs && [xs.rows.length, xs.more, xs.info]);
+    await evalJs(`(${xv}).querySelector('.csvmore .btn').click()`); await sleep(300);
+    xs = await xd();
+    chk('Excel: 再显示 adds the next 1000', xs && xs.rows.length === 2000 && xs.rows[1999][1] === '1999', xs && [xs.rows.length, xs.rows[1999]]);
+    console.log('open 旧报表.xls', await dbl({ q: '.xlist tr', t: '旧报表.xls' }));
+    const ov = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧报表.xls'))";
+    let oldx = null;
+    for (let i = 0; i < 40 && !(oldx && oldx.length); i++) { await sleep(250); oldx = await evalJs(`(() => { const v = ${ov}; return v ? [...v.querySelectorAll('table.xls tbody tr')].map(r => [...r.children].map(c => c.textContent).join('|')) : null; })()`); }
+    chk('Excel, the old .xls: read too, Chinese and all', oldx && oldx.join(';') === '1|老格式|数值;2|第一行|1.5;3|第二行|2.5', oldx);
     // 下载 in 我的电脑: the file picked in the list, saved under its own name, byte for byte
     await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
     const ex = "[...document.querySelectorAll('.explorer')].find(e => e.querySelector('.xpc').value === 'dell97')";
