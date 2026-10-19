@@ -175,7 +175,7 @@ async function control(d) {
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
-  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
+  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
     r = await petCall('POST', '/control/key', { id: d.id, key: d.key, screen: d.screen === true, hl: d.hl === true });
   } else if (d.t === 'screen' && typeof d.id === 'string') {
     r = await petCall('POST', '/control/screen', { id: d.id, hl: d.hl === true });
@@ -242,7 +242,7 @@ function connect() {
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
-    lastConv.clear();
+    lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     tick(true);
   });
@@ -322,6 +322,27 @@ function pushRecords() {
 }
 function sendConv(id) { sendJSON({ t: 'conv', id, msgs: convOf(id) }); }
 
+// /btw asked from the dashboard or the panel: Claude Code shows the answer only on its screen, where the pet reads it
+// (app/btw-panel.js) and lists it with the session. The question, then the answer, go to the server once each
+// (again after a reconnect: the server keeps each once).
+const btwSent = new Set();
+function forwardBtw() {
+  if (!ws || ws.readyState !== 1) return;
+  const live = new Set();
+  for (const [id, p] of pet) {
+    if (!Array.isArray(p.btw)) continue;
+    for (const b of p.btw) {
+      if (!b || typeof b.k !== 'string' || typeof b.q !== 'string' || !Number.isFinite(b.t)) continue;
+      const k = `${id}|${b.k}`, ka = k + '|a';
+      live.add(k); live.add(ka);
+      const q = b.q.slice(0, 2000), a = typeof b.a === 'string' ? b.a.slice(0, 100e3) : null;
+      if (!btwSent.has(k)) { btwSent.add(k); sendJSON({ t: 'btw', id, k: b.k.slice(0, 40), q, at: b.t }); }
+      if (a && !btwSent.has(ka)) { btwSent.add(ka); sendJSON({ t: 'btw', id, k: b.k.slice(0, 40), q, at: b.t, a, ta: Number.isFinite(b.ta) ? b.ta : Date.now() }); }
+    }
+  }
+  for (const k of btwSent) if (!live.has(k)) btwSent.delete(k);
+}
+
 // this machine's own slash commands, skills and plugin commands (commands.js) for the dashboard's suggestions:
 // on connecting, then whenever a look every 10 minutes finds them changed
 let cmdsSig = '';
@@ -343,6 +364,7 @@ async function tick(force) {
   ticking = true;
   try {
     await pollPet();
+    forwardBtw();
     scan();
     const list = stateList();
     const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);

@@ -140,6 +140,11 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('/btw: the answer has its own room (covers neither the conversation nor the reply box)', lay.pop >= lay.conv - 1 && lay.popB <= lay.compose + 1, lay);
     const cardLine = await evalJs("[...document.querySelectorAll('.dash .card')].find(c => c.textContent.includes('demo 会话')).querySelector('.sm').textContent");
     chk('card line: no Markdown marks', !cardLine.includes('**'), cardLine);
+    // 转成后台任务: "f" in the terminal's /btw overlay -- the key goes to the session's machine as "btwfork"
+    chk('/btw: a fresh answer offers 转成后台任务', await evalJs("(() => { const b = [...document.querySelectorAll('.dash .btwpop .btn')].find(b => b.textContent === '转成后台任务'); return !!b && !b.hidden; })()"), 0);
+    await evalJs("[...document.querySelectorAll('.dash .btwpop .btn')].find(b => b.textContent === '转成后台任务').click()");
+    for (let i = 0; i < 20 && !keys.includes('btwfork'); i++) await sleep(200);
+    chk('/btw: 转成后台任务 sends "btwfork" to that session', keys.includes('btwfork'), keys);
     await evalJs("[...document.querySelectorAll('.dash .btwpop .btn')].find(b => b.textContent === '关闭').click()"); await sleep(200);
     chk('/btw: closed', await evalJs("document.querySelector('.dash .btwpop').hidden"), 0);
     await evalJs("document.querySelector('.dash .m.btw').click()"); await sleep(200);

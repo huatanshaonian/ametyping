@@ -784,7 +784,7 @@ function controlOk(req) {
 function controlState() {
   return listed().sort((x, y) => x.born - y.born).map((s) => ({
     id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
-    t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8),
+    t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8), btw: btwList(s),
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
@@ -906,6 +906,18 @@ function pushChat(force) {
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
 }
 setInterval(() => pushChat(false), 1000);
+// a /btw read off the terminal (Claude Code writes neither question nor answer to the transcript): into the panel's
+// conversation as the transcript reader would put it -- each once (btwAsked: the question the fork line brings again)
+function btwToChat(s, it) {
+  const c = chats.get(s.id);
+  if (!c || !c.msgs) return;
+  const add = [];
+  if (!it.shownQ) { it.shownQ = true; add.push({ role: 'user', text: '/btw ' + it.q, t: it.t }); (c.msgs.btwAsked = c.msgs.btwAsked || new Set()).add('/btw ' + it.q); }
+  if (it.a && !it.shownA) { it.shownA = true; add.push({ role: 'btw', text: it.a, t: it.ta }); }
+  if (!add.length) return;
+  transcript.mergeRecords(c.msgs, add);
+  if (chatSel === s.id && bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
+}
 ipcMain.on('chat-select', (_e, id) => { chatSel = id; pushChat(true); });
 
 // replies and navigation keys into a session's terminal (or a background resume): remote-control.js
@@ -913,7 +925,7 @@ const morning = createMorning({ app, BrowserWindow, ipcMain, screen, anchor: () 
   enabled: () => settings.morningBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const mailNotice = createMailNotice({ BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
   enabled: () => settings.mailBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
-const { chatSend, chatKey, chatScreen, launch } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home') });
+const { chatSend, chatKey, chatScreen, launch, btwList } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home'), onBtw: btwToChat });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.

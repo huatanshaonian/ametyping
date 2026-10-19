@@ -106,7 +106,10 @@ function btwRecords(o, st, t) {
     const f = FORK.exec(String(o.content || ''));
     if (!f) return [];                                             // (no question: just the usage line)
     if (st) (st.btw = st.btw || new Map()).set(f[1] + '|' + f[2], 1);
-    return [{ role: 'user', text: ('/btw ' + String(o.commandRun.args || '')).trim(), t }];
+    const q = ('/btw ' + String(o.commandRun.args || '')).trim();
+    // (already shown, read off the screen: the panel's own list -- app/main.js btwToChat)
+    if (st && st.btwAsked && st.btwAsked.delete(q)) return [];
+    return [{ role: 'user', text: q, t }];
   }
   if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && (st.btw || st.forkLookup) && /^<task-notification>/.test(String(o.content || ''))) {
     const c = String(o.content), id = (/<task-id>([^<]+)<\/task-id>/.exec(c) || [])[1] || '';

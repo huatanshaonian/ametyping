@@ -97,9 +97,14 @@ function mount(current) {
   const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), onFill: () => say.dispatchEvent(new Event('input')) });
   const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn, slash.el);
   // /btw answers pop up over the conversation (dash-btw.js); a click on one in the conversation opens it again
-  const btw = createBtw({ md: (t) => md(t) });
-  const btwText = new WeakMap();                     // answer element -> its text
-  convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); if (b) btw.show(b.dataset.q || '', btwText.get(b)); });
+  // (转成后台任务 there: "f" in the terminal's /btw overlay, which the pet presses only while it is open)
+  const btw = createBtw({ md: (t) => md(t), fork: async () => {
+    const s = find(sel); if (!s) return;
+    const r = await net.act({ t: 'key', machine: s.machine, id: s.id, key: 'btwfork' });
+    showNote(r.msg || (r.ok ? '已转成后台任务' : '没转成'), !r.ok);
+  } });
+  const btwText = new WeakMap();                     // answer element -> { text, t }
+  convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); const a = b && btwText.get(b); if (a) btw.show(b.dataset.q || '', a.text, a.t); });
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
     resume, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
@@ -369,7 +374,7 @@ function mount(current) {
     convEl.replaceChildren(...msgs.map(msgEl));
     // a /btw answer remembers its question (shown with it when clicked)
     let q = '';
-    msgs.forEach((m, i) => { if (m.role === 'user' && /^\/btw(\s|$)/.test(m.text || '')) q = m.text; if (m.role === 'btw') { convEl.children[i].dataset.q = q; btwText.set(convEl.children[i], m.text); } });
+    msgs.forEach((m, i) => { if (m.role === 'user' && /^\/btw(\s|$)/.test(m.text || '')) q = m.text; if (m.role === 'btw') { convEl.children[i].dataset.q = q; btwText.set(convEl.children[i], { text: m.text, t: m.t }); } });
     if (atBottom || convEl.dataset.for !== sel) convEl.scrollTop = convEl.scrollHeight;
     convEl.dataset.for = sel;
   }

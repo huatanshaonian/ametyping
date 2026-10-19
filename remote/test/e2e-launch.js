@@ -44,12 +44,14 @@ fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, 
 // fake pet: control token file + the endpoints the agent uses
 const petToken = 'x'.repeat(64);
 fs.writeFileSync(path.join(HOME, '.ametyping', `control-token-${PET}`), petToken);
-const launches = [], titles = [];
+const launches = [], titles = [], keys = [];
+let petSessions = [];                                // what the fake pet lists (a /btw read off the screen goes with it)
 http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => b += c); req.on('end', () => {
     res.setHeader('Content-Type', 'application/json');
     if (req.headers['x-ame-control'] !== petToken) { res.statusCode = 403; return res.end('{}'); }
-    if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: [] }));
+    if (req.url === '/control/state') return res.end(JSON.stringify({ control: true, sessions: petSessions }));
+    if (req.url === '/control/key') { const d = JSON.parse(b); keys.push(d); return res.end(JSON.stringify(d.key === 'btwfork' ? { ok: true, msg: '已转成后台任务' } : { ok: true })); }
     if (req.url === '/control/launch') { launches.push(JSON.parse(b)); return res.end(JSON.stringify({ ok: true, msg: 'fake launched' })); }
     if (req.url === '/control/title') { titles.push(JSON.parse(b)); return res.end(JSON.stringify({ ok: true })); }
     res.statusCode = 404; res.end('{}');
@@ -124,6 +126,25 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     fs.appendFileSync(path.join(HOME, '.claude', 'projects', '-work', RID + '.jsonl'), JSON.stringify({ type: 'custom-title', customTitle: '改过的名字', sessionId: RID }) + '\n' + JSON.stringify({ type: 'agent-name', agentName: '改过的名字', sessionId: RID }) + '\n');
     for (let i = 0; i < 60 && !(titles.length > n1 && label === '改过的名字'); i++) await sleep(250);
     ok('/rename: the pet told the new name, the pages\' list shows it', titles.length === n1 + 1 && titles[n1].id === RID && titles[n1].title === '改过的名字' && label === '改过的名字', JSON.stringify([titles, label]));
+    // /btw: Claude Code shows the answer only on its screen; the pet reads it there (app/btw-panel.js) and lists it with
+    // the session -- the question first, the answer when it is there. They reach the conversation once each.
+    let conv = [];
+    ws2.on('message', (m) => { const d = JSON.parse(m); if (d.t === 'conv' && d.machine === 'box' && d.id === RID) conv = d.msgs; });
+    ws2.send(JSON.stringify({ t: 'watch', machine: 'box', id: RID }));
+    const sess = (btw) => [{ id: RID, label: '改过的名字', project: 'work', state: 'idle', t0: Date.now() - 9000, last: Date.now(), lines: [], via: 'terminal', perms: [], btw }];
+    const bt = Date.now();
+    petSessions = sess([{ k: 'k1', q: '要几层？', t: bt }]);
+    for (let i = 0; i < 60 && !conv.some((x) => x.text === '/btw 要几层？'); i++) await sleep(250);
+    ok('/btw: the question in the conversation as soon as it was asked', conv.some((x) => x.role === 'user' && x.text === '/btw 要几层？'), JSON.stringify(conv.slice(-3)));
+    const ANSWER = '五层。\n\n地基只够五层。';
+    petSessions = sess([{ k: 'k1', q: '要几层？', t: bt, a: ANSWER, ta: bt + 5000 }]);
+    for (let i = 0; i < 60 && !conv.some((x) => x.role === 'btw'); i++) await sleep(250);
+    await sleep(2500);                                                 // (more ticks of the agent: nothing twice)
+    const bq = conv.filter((x) => x.text === '/btw 要几层？').length, ba = conv.filter((x) => x.role === 'btw');
+    ok('/btw: the answer read off the screen comes after it, each once', bq === 1 && ba.length === 1 && ba[0].text === ANSWER && conv.indexOf(ba[0]) > conv.findIndex((x) => x.text === '/btw 要几层？'), JSON.stringify(conv.slice(-4)));
+    const fk = await act2({ t: 'key', machine: 'box', id: RID, key: 'btwfork' });
+    ok('/btw 转成后台任务: the key goes to the pet as it is, its word comes back', fk.ok && keys.length && keys[keys.length - 1].key === 'btwfork' && keys[keys.length - 1].id === RID && fk.msg === '已转成后台任务', JSON.stringify([fk, keys]));
+    petSessions = [];
     ws.close(); ws2.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {

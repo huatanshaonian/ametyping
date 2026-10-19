@@ -258,6 +258,7 @@ function pushConvTo(c) {
 // state  {control, sessions:[{id,label,project,state,steps,t0,last,lines,via,perms}]}   full session list
 // conv   {id, msgs:[{role,text,items,t}]}                            a session's conversation (tail)
 // result {rid, ok, msg}                                              outcome of a send / decide
+// btw    {id, k, q, at, a?, ta?}                                    a /btw question / its answer read off the screen
 const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
@@ -290,6 +291,17 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  // a /btw question and, later, its answer as the terminal showed it (Claude Code writes neither to the transcript; the
+  // pet read it off the screen: app/btw-panel.js) -- into the conversation like the rest of it
+  if (d.t === 'btw' && typeof d.id === 'string' && typeof d.k === 'string' && typeof d.q === 'string' && Number.isFinite(d.at)) {
+    const k = d.k.slice(0, 40), recs = [{ u: 'btwq-' + k, role: 'user', text: '/btw ' + d.q.slice(0, 2000), t: d.at }];
+    if (typeof d.a === 'string' && d.a) recs.push({ u: 'btwa-' + k, role: 'btw', text: d.a.slice(0, 100e3), t: Number.isFinite(d.ta) ? d.ta : Date.now() });
+    if (store.extra(m.name, d.id, recs)) {
+      for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
+      if (!m.sessions.has(d.id)) broadcastSoon();
+    }
+    return;
+  }
   // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
   if (d.t === 'cmds' && Array.isArray(d.list)) {
     m.cmds = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
@@ -393,7 +405,7 @@ function onBrowserAction(c, d) {
   } else if (d.t === 'key') {
     // a key by name, Ctrl+letter (not C / D / Z: they interrupt or end the session), or "c:" and text typed as it is,
     // without Enter (a menu's search box, a path, the letter a menu takes)
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
     out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true, hl: d.hl === true };
     audit('control-key', c.ip, m.name, s.id, d.key.length > 3 && d.key.startsWith('c:') ? `c:(len=${d.key.length - 2})` : d.key);
   } else if (d.t === 'screen') {

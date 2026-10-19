@@ -79,7 +79,11 @@ function createStore(dir) {
     const recs = (Array.isArray(d.recs) ? d.recs : []).map(clean).filter(Boolean);
     let modeChanged = false;
     const named = e.title;
-    for (const r of recs) {
+    for (let n = 0; n < recs.length; n++) {
+      const r = recs[n];
+      // a /btw question already stored from the screen (extra below) that the transcript brings once more -- the line
+      // Claude Code writes when the answer is turned into a background agent ("f"): the question once
+      if (r.role === 'user' && e.btwq && e.btwq.includes(r.text)) { e.btwq.splice(e.btwq.indexOf(r.text), 1); recs.splice(n--, 1); continue; }
       // how full the context is ("used/window", app/transcript.js): only the latest is kept, in the state, not the log;
       // a change of a whole percent is worth showing
       if (r.role === 'ctx') {
@@ -123,6 +127,32 @@ function createStore(dir) {
     if (tail) merge(tail.msgs, recs);
     // title: its new name, when this batch renamed it (a /rename, or the name Claude Code made up arriving)
     return { ok: true, changed: recs.length > 0, modeChanged, title: e.title && e.title !== named ? e.title : undefined };
+  }
+
+  // records that are in no transcript, outside the byte stream above: a /btw question and the answer read off the
+  // terminal's screen (agent "btw", app/btw-panel.js). Each kept once (by its u); true when something was added.
+  function extra(m, id, list) {
+    if (typeof id !== 'string' || !id) return false;
+    const e = entry(m, id);
+    e.extra = e.extra || [];
+    const recs = list.map(clean).filter((r) => r && r.u && !e.extra.includes(r.u));
+    for (const r of recs) {
+      e.extra.push(r.u); if (e.extra.length > 60) e.extra.shift();
+      if (r.role === 'user') { e.btwq = (e.btwq || []).concat(r.text).slice(-10); }
+      if (r.role === 'btw') { const sig = (r.text || '').length + ':' + (r.text || '').slice(0, 120); e.btw = (e.btw || []).concat(sig).slice(-30); }
+      const day = dayOf(r.t);
+      if (!e.days.includes(day)) { e.days.push(day); e.days.sort(); }
+      const f = fileOf(day, m, id);
+      if (!pending.has(f)) pending.set(f, []);
+      pending.get(f).push(JSON.stringify(r));
+      e.last = Math.max(e.last, r.t);
+      if (!e.first || r.t < e.first) e.first = r.t;
+    }
+    if (!recs.length) return false;
+    dirty = true;
+    const tail = tails.get(`${m}|${id}`);
+    if (tail) merge(tail.msgs, recs);
+    return true;
   }
 
   // told of every file appended to (the search index reads on from where it stood: server/search-index.js)
@@ -220,7 +250,7 @@ function createStore(dir) {
   const has = (m, id) => !!(state[m] && state[m][id]);
   // a session's context fill and name (the phone notification about a nearly full context)
   const info = (m, id) => { const e = state[m] && state[m][id]; return e ? { ctx: e.ctx || null, title: e.title || e.project || '' } : null; };
-  return { accept, meta, flush, tail, offsets, has, info, sessions, records, lastActivity, onAppend };
+  return { accept, extra, meta, flush, tail, offsets, has, info, sessions, records, lastActivity, onAppend };
 }
 
 module.exports = { createStore };
