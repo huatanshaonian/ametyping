@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FOOT = /(^|\s)Esc to close\s*$/;
 const QLINE = /^\s{0,6}\/btw (.*)$/;
 const KEEP_MS = 15 * 60e3;                 // an item stays on the session this long (the agent takes it within seconds)
-const WAIT_MS = 180e3;                     // how long an answer is waited for
+const WAIT_MS = 10 * 60e3;                 // how long an answer is waited for (after that it is still read before the next message)
 const APPEAR_MS = 12e3;                    // the overlay not there by then: not this kind of /btw (an older Claude Code)
 
 // The overlay on a screen, or null: { q, lines, answering, scroll, fork }
@@ -87,8 +87,8 @@ function createBtw({ onChange = () => {} } = {}) {
     return true;
   }
 
-  // a /btw was just typed into the session: wait for the overlay's answer (the screen looked at every 1.5 s, for this
-  // one question only -- Claude Code says nothing else when it is there)
+  // a /btw was just typed into the session: wait for the overlay's answer (the screen looked at every 1.5 s for the first
+  // minute, then every 5 s, for this one question only -- Claude Code says nothing else when it is there)
   function sent(s, io, question) {
     const it = { k: Date.now().toString(36) + '-' + (++seq), q: String(question).trim().slice(0, 2000), t: Date.now() };
     items(s).push(it);
@@ -102,7 +102,7 @@ function createBtw({ onChange = () => {} } = {}) {
       if (p && !p.answering) { await readOpen(s, io); return true; }
       if (!p && (seen || Date.now() - t0 > APPEAR_MS)) return true;         // closed (read before that), or never came
       return Date.now() - t0 > WAIT_MS;
-    }).then((done) => { if (!done) setTimeout(step, 1500); }, () => {});
+    }).then((done) => { if (!done) setTimeout(step, Date.now() - t0 < 60e3 ? 1500 : 5000); }, () => {});
     setTimeout(step, 900);
     return it;
   }
