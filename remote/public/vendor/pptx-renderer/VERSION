@@ -1,0 +1,3 @@
+@aiden0z/pptx-renderer 1.3.0 (Apache-2.0, bundles JSZip and the ECharts chart types it draws (no Lines series) -- see THIRD_PARTY_NOTICES.md and licenses/): npm package, dist/aiden0z-pptx-renderer.browser.es.js copied as is.
+npm integrity sha512-VEXSn2vmdgTwWaw96bhsEyZiSxlrhF5O5dONI+dSBXmg1WH2XM9O1eyY2LFQ68J1SY+iZnE5BVgFGGX6iox9Og==
+sha256 46b61afa1435de0c194f93324c9467ca392c891c6e07517727c8ffb5e51c376b

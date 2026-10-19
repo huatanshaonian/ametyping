@@ -79,6 +79,9 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     // Excel workbooks (xlsx-fixture.js): a new one and one in the old binary format
     fs.writeFileSync(path.join(SHARE, 'docs', '报表.xlsx'), require('./xlsx-fixture.js').makeXlsx());
     fs.writeFileSync(path.join(SHARE, 'docs', '旧报表.xls'), require('./xlsx-fixture.js').makeXls());
+    // a PowerPoint deck (ppt-fixture.js), and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '汇报.pptx'), await require('./ppt-fixture.js').makePptx(fs.readFileSync(R + '/public/icons/document.png')));
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧汇报.ppt'), Buffer.from('d0cf11e0a1b11ae1000000000000000000000000', 'hex'));
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
     const agent1 = () => spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     let a1 = agent1(); await sleep(2500);
@@ -192,6 +195,26 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     let oldx = null;
     for (let i = 0; i < 40 && !(oldx && oldx.length); i++) { await sleep(250); oldx = await evalJs(`(() => { const v = ${ov}; return v ? [...v.querySelectorAll('table.xls tbody tr')].map(r => [...r.children].map(c => c.textContent).join('|')) : null; })()`); }
     chk('Excel, the old .xls: read too, Chinese and all', oldx && oldx.join(';') === '1|老格式|数值;2|第一行|1.5;3|第二行|2.5', oldx);
+    // a PowerPoint deck: the slides drawn one under another, fitted to the window -- the title, the table, the picture;
+    // a web link opens in a new tab, a javascript: one goes nowhere; text that looks like HTML is only text
+    console.log('open 汇报.pptx', await dbl({ q: '.xlist tr', t: '汇报.pptx' }));
+    const pv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('汇报.pptx') && !x.querySelector('.vpath').textContent.endsWith('旧汇报.pptx'))";
+    const pd = async () => evalJs(`(() => { const v = ${pv}; if (!v) return null; const w = v.querySelector('.ppt-wrap'); const imgs = w ? [...w.querySelectorAll('img')] : [];
+      const links = w ? [...w.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href'), a.target]) : [];
+      return { info: (v.querySelector('.vinfo') || {}).textContent, text: w ? w.textContent : (v.querySelector('.vbody') || {}).textContent.slice(0, 300), cells: w ? [...w.querySelectorAll('td')].map(t => t.textContent.trim()) : [],
+        imgs: imgs.map(i => i.naturalWidth), links, box: w && w.firstChild ? w.firstChild.clientWidth : 0, kids: w && w.firstChild ? [...w.firstChild.children].slice(0, 3).map(c => c.tagName + ' ' + c.offsetWidth) : [], have: w ? w.clientWidth : 0 }; })()`);
+    let pp = null;
+    for (let i = 0; i < 40 && !(pp && /汇报/.test(pp.text) && pp.cells.length); i++) { await sleep(250); pp = await pd(); }
+    await sleep(500); pp = await pd();
+    await shot('9f-ppt.png');
+    chk('PPT: the slides drawn -- the title, the shape\'s text, the table, the picture -- counted in the bar', pp && /网格加密汇报/.test(pp.text) && /界面两侧各加密 5 层/.test(pp.text) && pp.cells.join('|') === '参数|值|dx|1e-3' && pp.imgs.length === 1 && pp.imgs[0] > 0 && /^第 1 \/ 3 张$/.test(pp.info), pp);
+    chk('PPT: HTML in a slide\'s text is only text', pp && pp.text.includes('<img src=x onerror=alert(1)>') && pp.imgs.length === 1, pp && [pp.imgs]);
+    const pweb = pp && pp.links.find((l) => l[0] === '外部链接'), pbad = pp && pp.links.find((l) => l[0] === '坏链接');
+    chk('PPT: a web link opens in a new tab; a javascript: link is no link', pweb && pweb[1] === 'https://example.com/report' && pweb[2] === '_blank' && (!pbad || !/^javascript:/i.test(pbad[1] || '')), pp && pp.links);
+    chk('PPT: a slide fits the window\'s width', pp && pp.box > 300 && pp.box <= pp.have && pp.kids.length && pp.kids.every((k) => +k.split(' ').pop() <= pp.box + 1), pp && [pp.box, pp.have, pp.kids]);
+    console.log('open 旧汇报.ppt', await dbl({ q: '.xlist tr', t: '旧汇报.ppt' })); await sleep(1500);
+    const oldp = await evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧汇报.ppt')); return v ? v.querySelector('.vbody').textContent : ''; })()");
+    chk('PPT, the old .ppt: says it cannot be drawn and how to see it', /老版 PowerPoint 格式/.test(oldp) && /另存为 \.pptx/.test(oldp), oldp);
     // 下载 in 我的电脑: the file picked in the list, saved under its own name, byte for byte
     await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
     const ex = "[...document.querySelectorAll('.explorer')].find(e => e.querySelector('.xpc').value === 'dell97')";

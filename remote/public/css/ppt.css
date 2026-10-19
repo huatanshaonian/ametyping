@@ -1,0 +1,7 @@
+/* PowerPoint viewer (js/apps/ppt-view.js): the slides pptx-renderer draws, one under another on grey as in the PDF and
+   Word viewers; slides keep their own colours whatever the dashboard's theme. The margin is the scrolling box's: the
+   renderer fits a slide to the whole width of the box it draws in */
+.ppt-wrap { position: absolute; inset: 0; overflow: auto; padding: 12px; background: #8a8a96; }
+.ppt-slides { color-scheme: only light;
+  /* where the deck names a font the computer lacks: Office's defaults, not the dashboard's pixel font */
+  font-family: Calibri, DengXian, "等线", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
