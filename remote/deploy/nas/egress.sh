@@ -15,7 +15,7 @@ BIN=/volume2/@appstore/Tailscale/bin
 SOCK=$DIR/tailscaled.sock
 SUP=$DIR/supervisor.pid
 AWS=${AME_EGRESS_HOST:-ubuntu@100.120.53.46}
-KEY=$HOME/.ssh/ame_egress
+KEY=${HOME:-$(eval echo ~"$(id -un)")}/.ssh/ame_egress   # DSM boot tasks run without $HOME
 NODE=/var/packages/Node.js_v22/target/usr/local/bin/node
 ts() { "$BIN/tailscale" --socket="$SOCK" "$@"; }
 
