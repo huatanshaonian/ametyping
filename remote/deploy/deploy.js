@@ -7,7 +7,8 @@
 //    (git archive of remote/, never config.json / data / node_modules), npm install when package.json changed,
 //    the restart, and the log checked
 // 3. each agent machine: the same check, its files updated (remote/agent, headless, app/*.js), the agent restarted;
-//    the Linux headless service only when its code changed (a restart drops permission prompts waiting there);
+//    the Linux headless service only when its code changed (a restart drops permission prompts waiting there), and
+//    only once its unit is sure to stop just its own process (KillMode=process -- never tmux and the sessions in it);
 //    this PC's agent (it runs from this working tree) when the tree is at that commit
 // 4. deployed.json on the NAS records what was deployed; a change to the pet (app/) since then is pointed out
 // Machines: remote/deploy/deploy.local.json (not in git; see deploy.example.json). --dry-run: checks only.
@@ -45,6 +46,20 @@ function depsOf(ref, roots) {
   };
   for (const [p] of treeOf(ref, roots)) { deps.add(p); if (p.endsWith('.js')) visit(p); }
   return deps;
+}
+
+// a Linux machine's installed headless unit (filled in from headless/deploy/ame-headless.service when it was set up)
+// made to stop only its own node process on a restart: the default, control-group, killed tmux and every Claude
+// session in it with each update. Added in place when missing (daemon-reload takes it up for the running service too),
+// before anything is restarted; a machine without the unit is left alone.
+function killModeProcess(host) {
+  const out = String(ssh(host, 'U=~/.config/systemd/user/ame-headless.service; [ -f "$U" ] || { echo none; exit 0; }; ' +
+    'grep -q "^KillMode=process" "$U" && { echo ok; exit 0; }; ' +
+    'sed -i "/^KillMode=/d; /^\\[Service\\]/a # restarting the service stops only its own node process: tmux and the Claude sessions in it stay\\nKillMode=process" "$U" && ' +
+    'systemctl --user daemon-reload && echo "set $(systemctl --user show ame-headless -p KillMode --value)"', { allowFail: true })).trim();
+  if (out.startsWith('set')) say(`  无头服务改成重启时只停它自己（KillMode=${out.slice(4)}）：tmux 和里面的会话不会再跟着被杀`);
+  else if (out !== 'ok' && out !== 'none') say(`  ⚠ 没能确认无头服务的 KillMode（${out.slice(0, 120) || '没有输出'}）：重启它可能会连带杀掉 tmux 里的会话`);
+  return out;
 }
 
 function checkMachine(name, local, extraOk) {
@@ -119,12 +134,14 @@ function checkMachine(name, local, extraOk) {
       checkMachine(a.name, cmp.local, []);
       const headless = cmp.changed.filter((p) => hdeps.has(p));
       say(`  要更新 ${cmp.changed.length} 个文件${headless.length ? `（其中 ${headless.length} 个是无头服务的代码）` : ''}`);
+      const km = DRY ? 'ok' : killModeProcess(a.ssh);
       if (DRY || !cmp.changed.length) { if (!cmp.changed.length) say('  已经是这个版本'); continue; }
       await upload(commit, cmp.changed, a.ssh, a.dir);
       ssh(a.ssh, 'systemctl --user restart ame-agent');
       say(`  已更新，agent 已重启：${String(ssh(a.ssh, 'sleep 2; systemctl --user is-active ame-agent', { allowFail: true })).trim()}`);
       if (headless.length) {
         if (flag('--no-headless')) say('  无头服务的代码变了，但按 --no-headless 没重启（下次重启时生效）');
+        else if (!/^(ok|set|none)/.test(km)) say('  无头服务的代码变了，但它的 KillMode 没确认，怕连带杀掉 tmux 里的会话，这次没重启（弄好后手动 systemctl --user restart ame-headless）');
         else { ssh(a.ssh, 'systemctl --user restart ame-headless'); say(`  无头服务已重启（那台电脑上正在等待的权限确认会回到终端里问）：${String(ssh(a.ssh, 'sleep 2; systemctl --user is-active ame-headless', { allowFail: true })).trim()}`); }
       }
     }

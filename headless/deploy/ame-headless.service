@@ -6,6 +6,10 @@
 Description=AmeTyping headless service (hooks + control API on 127.0.0.1:3940)
 
 [Service]
+# restarting the service stops only its own node process: tmux and the Claude sessions in it stay (the default,
+# control-group, killed every process the service ever started -- a tmux server started from the dashboard and all
+# the sessions in it -- on each update). launch.js also starts tmux in a scope of its own, outside this service.
+KillMode=process
 ExecStart=@NODE@ @ROOT@/headless/ame-headless.js
 Restart=on-failure
 RestartSec=3

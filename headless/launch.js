@@ -1,5 +1,6 @@
 // Starts Claude Code in a folder, in a new detached tmux session (the same tmux server you use: `tmux attach -t <name>`
-// takes it over), so it shows up on the dashboard and can be replied to like any other session.
+// takes it over), so it shows up on the dashboard and can be replied to like any other session. On Linux tmux is started
+// in a systemd scope of its own, so an update restarting the service leaves the sessions running (newSession).
 // The service's own environment usually lacks what your shell sets up (a proxy, API settings), so those variables
 // are carried over from a Claude session you started yourself -- through a private temp file the new shell reads and
 // deletes, never on a command line where other users could see them. ~/.ametyping/launch.sh, if present, is sourced
@@ -48,11 +49,25 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude' }) {
     try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { return resolve({ ok: false, msg: '写临时文件失败' }); }
     const pre = path.join(os.homedir(), '.ametyping', 'launch.sh');
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
-    execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, cmd], { timeout: 8000 }, (err, _o, stderr) => {
+    newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
       answerTrust(name, codex);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
+  });
+}
+
+// `tmux new-session`, in a systemd scope of its own (ame-tmux-<tag>.scope) on Linux: when it starts the tmux server,
+// the server and every session in it then live outside ame-headless.service, so restarting or stopping the service
+// (each update) does not take them down with it. (When a server is already running, the session goes to it and the
+// scope is gone as soon as the client exits.) No systemd for this user (no user bus, not Linux): tmux directly.
+const NO_SCOPE = /Failed to (connect|start|create|allocate)|Unknown (operation|option)|System has not been booted with systemd|ENOENT/i;
+function newSession(args, tag, done) {
+  const plain = () => execFile('tmux', args, { timeout: 8000 }, done);
+  if (process.platform !== 'linux') return plain();
+  execFile('systemd-run', ['--user', '--scope', '--quiet', '--collect', `--unit=ame-tmux-${tag}`, '--', 'tmux', ...args], { timeout: 8000 }, (err, o, stderr) => {
+    if (err && (err.code === 'ENOENT' || NO_SCOPE.test(String(stderr || '')))) return plain();
+    done(err, o, stderr);
   });
 }
 
@@ -84,4 +99,4 @@ function answerTrust(name, codex = false) {
   setTimeout(tick, 700);
 }
 
-module.exports = { launch };
+module.exports = { launch, newSession };
