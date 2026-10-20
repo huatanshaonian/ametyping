@@ -29,6 +29,7 @@ const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
 const { createArtifacts } = require('./artifacts');
+const { agentsOf } = require('./subagents');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -209,7 +210,7 @@ function stateList() {
     return { id, label: c.title || (p && p.label) || c.project || 'Claude', project: c.project || '',
       state: p ? p.state : deriveState(c),
       steps: 0, t0: msgs[0] ? msgs[0].t : c.mtime, last: c.mtime, lines: msgs.slice(-8).map(lineOf).filter((l) => l.text),
-      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id) };
+      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id), agents: safeAgents(c.file) };
   });
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
@@ -219,6 +220,8 @@ function stateList() {
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
+// the subagents this session started (subagents.js), for the dashboard
+function safeAgents(file) { try { return agentsOf(file); } catch { return []; } }
 function convOf(id) {
   const c = sess.get(id);
   if (!c) {                                          // pet-only session: its progress lines are all there is
@@ -367,7 +370,7 @@ async function tick(force) {
     forwardBtw();
     scan();
     const list = stateList();
-    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
+    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
       sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked] });

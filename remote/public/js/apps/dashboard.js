@@ -6,6 +6,7 @@ import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { createList } from './dash-list.js';
 import { createNotes } from './dash-notes.js';
+import { createAgents } from './dash-agents.js';
 import { createBtw } from './dash-btw.js';
 import { createSlash } from './dash-slash.js';
 import { createTerm, opensMenu } from './dash-term.js';
@@ -67,6 +68,7 @@ function mount(current) {
   const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume }), reopen);
   // 对话摘要 (dash-notes.js): the conversation's daily notes, above it while the 摘要 button is on
   const notes = createNotes();
+  const agents = createAgents();                    // the session's subagents (dash-agents.js)
   let showNotes = prefs.get('dash.notes', false);
   const notesBtn = h('button', { class: 'btn snbtn', type: 'button', text: '摘要', title: '这个对话每天的摘要（来自工作日报）', hidden: true });
   notesBtn.addEventListener('click', () => { showNotes = !showNotes; prefs.set('dash.notes', showNotes); renderNotes(); });
@@ -106,7 +108,7 @@ function mount(current) {
   const btwText = new WeakMap();                     // answer element -> { text, t }
   convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); const a = b && btwText.get(b); if (a) btw.show(b.dataset.q || '', a.text, a.t); });
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
-    resume, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
+    resume, agents.el, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
   const root = h('div', { class: 'dash' }, side, right);
 
@@ -172,6 +174,7 @@ function mount(current) {
     resume.hidden = !(s && s.resume);
     reopen.hidden = !(s && s.online && s.via !== 'terminal');
     if (s && s.resume && rcmd.textContent !== s.resume) rcmd.textContent = s.resume;
+    agents.render(s);
   }
   async function copyResume() {
     try { await navigator.clipboard.writeText(rcmd.textContent); showNote('已复制继续命令'); }

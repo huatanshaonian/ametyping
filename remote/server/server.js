@@ -133,6 +133,14 @@ function resumeCmd(cwd, id) {
   const q = `'${cwd.replace(/'/g, "''")}'`;
   return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; ${cmd}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${cmd}`;
 }
+// subagents of a session as an agent reports them: only these fields, bounded
+const AGENT_STATES = ['run', 'done', 'stop'];
+function agentRows(a) {
+  if (!Array.isArray(a)) return [];
+  return a.filter((x) => x && typeof x.id === 'string' && AGENT_STATES.includes(x.state)).slice(0, 12).map((x) => ({
+    id: str(x.id, 64), type: str(x.type, 40), name: x.name ? str(x.name, 40) : undefined, desc: str(x.desc, 120), bg: x.bg === true || undefined,
+    state: x.state, act: x.act ? str(x.act, 120) : undefined, t0: +x.t0 || 0, last: +x.last || 0, end: +x.end || undefined }));
+}
 // what the browser gets: no pids -- what to display, plus the working directory in the resume command.
 // Every session ever stored is listed (newest activity first); the ones the agent no longer reports are 'history'.
 function snapshot() {
@@ -146,7 +154,8 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
+        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null,
+        agents: s.agents && s.agents.length ? s.agents : undefined };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
@@ -335,6 +344,7 @@ function onAgentMessage(m, raw, ws) {
       cur.lines = Array.isArray(s.lines) ? s.lines.slice(-8).map((l) => ({ text: String(l.text || '').slice(0, 300), t: +l.t || 0, type: String(l.type || '').slice(0, 16) })) : [];
       cur.via = VIA.includes(s.via) ? s.via : 'off';
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
+      cur.agents = agentRows(s.agents);              // the subagents it started (the agent's subagents.js)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
         cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000), ask: p.ask === true || undefined })) : [];
