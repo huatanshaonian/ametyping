@@ -1,6 +1,6 @@
 // Viewer windows: pictures, PDF (pdfview.js), Word .docx (docx-view.js), Excel workbooks (xlsx-view.js), PowerPoint .pptx
 // (ppt-view.js), Markdown (with the pictures it references), CSV / TSV as a table (csv-view.js), text; anything else
-// can be downloaded. Two sources: a remote file, in chunks through the agent
+// can be downloaded; a Word / Excel / PowerPoint file of a computer can also be edited (编辑: office.js). Two sources: a remote file, in chunks through the agent
 // (openFile; fs.js), or a URL on this server (openUrl -- a mail attachment fetched from the mailbox). A progress line
 // shows while it loads.
 import { h, icon } from '../util.js';
@@ -12,6 +12,7 @@ const MAX = 100 * 1024 * 1024;
 const SNIFF_MAX = 2 * 1024 * 1024;        // an unknown file this small is shown as text if it looks like text
 const TABLE_MAX = 20 * 1024 * 1024;       // a CSV larger than this is shown as text (a table of it would not fit the page)
 const isTable = (name) => /\.(csv|tsv)$/i.test(name);
+const EDITABLE = /\.(docx|xlsx|pptx)$/i;    // what office.js can edit (kept here: that module loads only when needed)
 const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', sheet: 'document', slides: 'document', text: 'notepad_file', other: 'notepad_file' };
 
 async function decodeText(blob) {
@@ -138,7 +139,19 @@ export function openFile(machine, path, entry, openPath) {
     job = null;
     if (!r.ok) return v.fail(r.msg);
     await show(v, r.blob, name, kind, { machine, path, openPath });
+    if (EDITABLE.test(name)) editButton(v, { machine, path, name, blob: r.blob });
   });
+}
+
+// 编辑 (office.js), where the server has the document service set up: what is saved there is written back here
+async function editButton(v, file) {
+  const office = await import('./office.js');
+  const s = await office.available();
+  if (!s.on || !v.dl.isConnected) return;
+  const b = h('button', { class: 'btn', type: 'button', text: '编辑', disabled: !s.up,
+    title: s.up ? `在线编辑，保存后写回 ${file.machine} 上的这个文件` : '文档服务现在没有运行' });
+  b.addEventListener('click', () => office.editFile(file));
+  v.dl.before(b);
 }
 
 // open what a URL on this server gives (a mail attachment): { id, title, name, where, url, download (URL for 下载) }

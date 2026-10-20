@@ -41,6 +41,7 @@ const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
 const { createPushEvents } = require('./push/events');
+const { createOffice } = require('./office');
 const googleHttp = require('./google/http');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
@@ -213,6 +214,9 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
   audit: (...a) => audit(...a), ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, reports: () => summary && summary.reports, todos,
   onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
+// 在线编辑 Word / Excel / PPT (office/): OnlyOffice on the NAS behind /office, when configured (config "office")
+const office = createOffice({ conf: cfg.office, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, user: cfg.user,
+  audit: (...a) => audit(...a), broadcast: (o) => broadcast(o) });
 // the search index built in the background: the conversations, then the documents (reports, notes, artifacts, mail);
 // new mail is indexed a few seconds after it arrives, so a search finds little left to do
 if (searchIndex && summary) {
@@ -469,6 +473,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(req, res, 'index.html');
+  // the document editor's own pages and files (office/proxy.js): its headers, not this site's
+  if (office && p.startsWith(office.PREFIX + '/')) return office.web(req, res, url);
+  if (office && /^\/api\/office(\/|$)/.test(p) && await office.handle(req, res, url, ip, json, send)) return;
+  if (!office && req.method === 'GET' && p === '/api/office') return json(res, 200, { on: false });   // (not set up: no 编辑)
   if (req.method === 'GET' && p === '/manifest.webmanifest') return serveFile(req, res, 'manifest.webmanifest', 'no-cache');
   if (req.method === 'GET' && STATIC.test(p)) return serveFile(req, res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
@@ -619,6 +627,11 @@ server.on('upgrade', (req, socket, head) => {
     const sid = cookies(req)[SID];
     if (!auth.checkSession(sid)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
     wssBrowser.handleUpgrade(req, socket, head, (ws) => wssBrowser.emit('connection', ws, req, sid));
+  } else if (office && url.pathname.startsWith(office.PREFIX + '/')) {
+    // the document editor's socket: a logged-in page of this site only
+    const sid = cookies(req)[SID];
+    if (!sameOrigin(req) || !auth.checkSession(sid)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
+    office.upgrade(req, socket, head, url, () => !!auth.checkSessionQuiet(sid));
   } else if (url.pathname === '/agent' && !AGENT_SPLIT) {
     agentUpgrade(req, socket, head);
   } else {
