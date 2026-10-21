@@ -104,6 +104,19 @@ if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME
     WriteUtf8 $agentFile ($old | ConvertTo-Json -Depth 6)
     Info '已把 Claude 的临时文件夹（只读）加进 agent.json 的 files.roots'
   }
+  # the command from 控制面板 → 电脑 carries a new token (adding a machine again voids its old one): kept config or
+  # not, that token is the one that works now
+  if ($env:AME_TOKEN) {
+    $t = $env:AME_TOKEN.Trim()
+    if ($t.Length -lt 30) { throw '令牌不对（太短）' }
+    $old = (Get-Content $agentFile -Raw -Encoding UTF8) | ConvertFrom-Json
+    if ($old.token -ne $t -or ($env:AME_NAME -and $old.name -ne $env:AME_NAME)) {
+      $old.token = $t
+      if ($env:AME_NAME) { $old.name = $env:AME_NAME }
+      WriteUtf8 $agentFile ($old | ConvertTo-Json -Depth 6)
+      Info '已把 agent.json 里的令牌换成这次给的新令牌'
+    }
+  }
 } else {
   $server = Ask '看板服务器（群晖的 agent 入口）' $Server
   $name = Ask '这台电脑在看板上的名字' $env:COMPUTERNAME.ToLower() 'AME_NAME'

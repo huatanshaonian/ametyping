@@ -63,6 +63,18 @@ if [ -f "$AGENT" ] && yes '已有 agent.json，保留它？' y AME_KEEP; then
       fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n", { mode: 0o600 });' "$AGENT"
     info '已把 Claude 的临时文件夹（只读）加进 agent.json 的 files.roots'
   fi
+  # the command from 控制面板 → 电脑 carries a new token (adding a machine again voids its old one): kept config or
+  # not, that token is the one that works now
+  if [ -n "${AME_TOKEN:-}" ]; then
+    [ ${#AME_TOKEN} -ge 30 ] || { warn '令牌不对（太短）'; exit 1; }
+    if AME_T="$AME_TOKEN" AME_N="${AME_NAME:-}" "$NODE" -e 'const fs = require("fs"), f = process.argv[1], j = JSON.parse(fs.readFileSync(f, "utf8"));
+      const t = process.env.AME_T.trim(), n = process.env.AME_N;
+      if (j.token === t && (!n || j.name === n)) process.exit(1);
+      j.token = t; if (n) j.name = n;
+      fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n", { mode: 0o600 });' "$AGENT"; then
+      info '已把 agent.json 里的令牌换成这次给的新令牌'
+    fi
+  fi
 else
   server=$(ask '看板服务器（群晖的 agent 入口）' "$SERVER" AME_SERVER)
   name=$(ask '这台机器在看板上的名字' "$(hostname | tr '[:upper:]' '[:lower:]')" AME_NAME)
