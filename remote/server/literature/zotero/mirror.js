@@ -9,6 +9,8 @@ const fs = require('fs');
 const path = require('path');
 
 const TOP_SKIP = new Set(['attachment', 'note', 'annotation']);
+// what the copy keeps changed (2: every annotation's position): a copy made before is read again once
+const FMT = 2;
 const strip = (html) => String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h\d|li)>/gi, '\n').replace(/<[^>]+>/g, '')
   .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim();
 const normDoi = (d) => String(d || '').trim().toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '').replace(/^doi:\s*/, '');
@@ -68,7 +70,7 @@ function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () 
         const v = await api.version();
         // Zotero answered: an earlier failure (e.g. it was still starting after a reboot) is over, changed or not
         lastError = '';
-        if (!force && v === st.version && st.at) return false;
+        if (!force && v === st.version && st.at && st.fmt === FMT) return false;
         const [itemsR, colR] = await Promise.all([api.get('items?format=json'), api.get('collections?format=json')]);
         const items = {}, attachments = {}, notes = {}, annotations = {}, collections = {};
         const raw = Array.isArray(itemsR.data) ? itemsR.data : [];
@@ -90,7 +92,7 @@ function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () 
           while (used.has(k)) k = b + String.fromCharCode(97 + i++);
           it.citekey = k; it.autoKey = true; used.add(k);
         }
-        st = { serverId: api.serverId(), version: itemsR.version || v, at: Date.now(), items, collections, attachments, notes, annotations };
+        st = { fmt: FMT, serverId: api.serverId(), version: itemsR.version || v, at: Date.now(), items, collections, attachments, notes, annotations };
         save(); reindex(); lastError = '';
         log(`文献：Zotero 库已同步（${Object.keys(items).length} 篇，${Object.keys(attachments).length} 个附件，${Object.keys(annotations).length} 条批注）`);
         onChange();

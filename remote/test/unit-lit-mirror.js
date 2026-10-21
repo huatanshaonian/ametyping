@@ -34,6 +34,13 @@ const ok = (name, c, extra) => { if (c) { pass++; console.log('  ok  ' + name); 
   ok('Zotero back, library unchanged: nothing re-read', await m2.refresh() === false && reads === 0);
   ok('...and the old error is cleared', m2.status().error === '', m2.status().error);
 
+  // a copy made before the copy kept more (no fmt): read again once, though the library has not changed
+  const f = path.join(dir, 'zotero.json'), old = JSON.parse(fs.readFileSync(f, 'utf8'));
+  delete old.fmt; fs.writeFileSync(f, JSON.stringify(old));
+  const m3 = createMirror({ api, dir, everyMs: 0 });
+  reads = 0;
+  ok('an older copy is read again once, then not', await m3.refresh() === true && reads === 2 && await m3.refresh() === false && reads === 2, reads);
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
