@@ -8,8 +8,19 @@
 # 需要：Node.js 18+（nvm 装的也行）、git、tmux（从看板回复要求 claude 跑在 tmux 里），这台机器已加入 Tailscale。
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 环境变量可改默认值：AME_DIR（安装目录，默认 ~/ametyping）、AME_BRANCH、AME_SERVER。
-# 无人值守：设了下面这些就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
-#   AME_CONTROL（y/n）、AME_FILES（home / 文件夹逗号分隔 / none）、AME_LAUNCH（启动前命令，空=跳过）、AME_LINGER（y/n）。
+# 无人值守：每个问题都有对应的环境变量，设了就不再问。要完全不提问，下面这些都要设上（设成空字符串也算设了）：
+#   AME_KEEP      已有 agent.json 时是否保留（y/n；保留时若给了 AME_TOKEN / AME_NAME，仍会换上）
+#   AME_SERVER    看板服务器的 agent 入口         AME_NAME     这台机器在看板上的名字
+#   AME_TOKEN     令牌                              AME_CONTROL  允许远程控制（y/n）
+#   AME_FILES     home / 文件夹逗号分隔 / none      AME_CLAUDE_TEMP  保留旧配置时，补上 Claude 的临时文件夹（y/n）
+#   AME_LAUNCH    启动 claude 前执行的命令；不需要就写 AME_LAUNCH=（空字符串才算已设置，不设则会提问）
+#   AME_LINGER    开启 linger（y/n；y 仍要 sudo 密码，没有终端时跳过）
+# 完整的无人值守示例：
+#   curl -fsSL https://raw.githubusercontent.com/huatanshaonian/ametyping/main/install/install-linux.sh |
+#     AME_KEEP=n AME_SERVER=ws://100.65.10.90:8788/agent AME_NAME=mybox AME_TOKEN='粘贴令牌' \
+#     AME_CONTROL=y AME_FILES=home AME_LAUNCH= AME_LINGER=n bash
+# 没有终端（例如 setsid bash install-linux.sh </dev/null）时，没设的问题直接用默认值，不会卡住；只有令牌没有默认值，
+# 必须用 AME_TOKEN 给出。
 set -euo pipefail
 REPO=https://github.com/huatanshaonian/ametyping.git
 DIR=${AME_DIR:-$HOME/ametyping}
@@ -20,13 +31,17 @@ step() { printf '\n\033[35m== %s\033[0m\n' "$1"; }
 info() { printf '   %s\n' "$1"; }
 warn() { printf '   \033[33m! %s\033[0m\n' "$1"; }
 # questions come from the terminal even when the script itself arrives through a pipe
-# (a third argument names an environment variable that answers instead, for unattended installs)
+# (a third argument names an environment variable that answers instead, for unattended installs; set but empty counts)
+# The question is written to the terminal itself: ask runs inside $(...), so its stdout is the answer, and read -p
+# would print to stderr, which is silenced here to keep "no terminal" quiet. No terminal: the default.
 ask() {
   if [ -n "${3:-}" ] && [ -n "${!3+x}" ]; then printf '%s' "${!3}"; return; fi
-  local a=''; { read -r -p "   $1${2:+ [$2]}: " a </dev/tty; } 2>/dev/null || true   # no terminal: the default
+  local a=''
+  { printf '   %s: ' "$1${2:+ [$2]}" >/dev/tty; read -r a </dev/tty; } 2>/dev/null || true
   printf '%s' "${a:-${2:-}}"
 }
 yes() { [[ "$(ask "$1 (y/n)" "${2:-y}" "${3:-}")" =~ ^[yY] ]]; }
+has_tty() { { : </dev/tty; } 2>/dev/null; }
 
 # ---------------------------------------------------------------------------------------------------------------
 step '检查环境'
@@ -80,7 +95,12 @@ else
   name=$(ask '这台机器在看板上的名字' "$(hostname | tr '[:upper:]' '[:lower:]')" AME_NAME)
   info '在群晖上生成这台机器的令牌（ssh 到群晖后运行）：'
   printf '     \033[36m/var/packages/Node.js_v22/target/usr/local/bin/node /volume2/docker/ame-remote/remote/server/setup.js add-agent %s\033[0m\n' "$name"
-  if [ -n "${AME_TOKEN:-}" ]; then token=$AME_TOKEN; else read -r -s -p '   把打印出来的令牌粘贴到这里（不显示）: ' token </dev/tty; echo; fi
+  if [ -n "${AME_TOKEN:-}" ]; then token=$AME_TOKEN
+  else
+    token=''
+    { printf '   把打印出来的令牌粘贴到这里（不显示）: ' >/dev/tty; read -r -s token </dev/tty; printf '\n' >/dev/tty; } 2>/dev/null ||
+      { warn '没有终端可以粘贴令牌：用 AME_TOKEN=... 给出'; exit 1; }
+  fi
   [ ${#token} -ge 30 ] || { warn '令牌不对（太短）'; exit 1; }
   if yes '允许从看板远程控制（回复、审批、在文件夹启动 Claude）？' y AME_CONTROL; then control=true; else control=false; fi
   # the default is your home folder without what starts with "." (tools keep logins and histories there); folders you
@@ -126,7 +146,9 @@ systemctl --user restart ame-headless ame-agent
 sleep 2
 if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != yes ]; then
   warn '还没开启 linger：你所有登录（包括 ssh）都断开后，服务会被系统停掉'
-  if yes '现在用 sudo 开启（需要输入 sudo 密码）？' y AME_LINGER; then sudo loginctl enable-linger "$USER" </dev/tty && info 'linger 已开启'; else info "稍后手动运行：sudo loginctl enable-linger $USER"; fi
+  # (sudo asks for its password on the terminal: without one, not tried)
+  if yes '现在用 sudo 开启（需要输入 sudo 密码）？' y AME_LINGER && has_tty && sudo loginctl enable-linger "$USER" </dev/tty; then info 'linger 已开启'
+  else info "稍后手动运行：sudo loginctl enable-linger $USER"; fi
 fi
 
 step '完成'
