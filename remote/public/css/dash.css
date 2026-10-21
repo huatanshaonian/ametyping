@@ -258,3 +258,7 @@
 .dash .slash .sl i { flex: none; font-style: normal; font-size: 10.5px; color: var(--faint); }
 .dash .slash .sl.on { background: var(--fill); }
 .dash .slash .sl.on b, .dash .slash .sl.on span, .dash .slash .sl.on i { color: var(--on-fill); }
+/* a file path in what was said (js/apps/dash-paths.js): opens the file on that computer */
+.dash a.fp { color: var(--border); text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.dash a.fp:hover { text-decoration-style: solid; }
+.dash a.fp code { color: inherit; }

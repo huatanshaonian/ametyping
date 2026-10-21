@@ -54,7 +54,15 @@ step '安装依赖'
 # ---------------------------------------------------------------------------------------------------------------
 step '配置 agent'
 AGENT="$DIR/remote/agent/agent.json"
-if [ -f "$AGENT" ] && yes '已有 agent.json，保留它？' y AME_KEEP; then :
+if [ -f "$AGENT" ] && yes '已有 agent.json，保留它？' y AME_KEEP; then
+  # a config from before Claude Code's temporary folder could be opened: offered once (read-only; written by node)
+  if "$NODE" -e 'const j = require(process.argv[1]); process.exit(j.files && Array.isArray(j.files.roots) && !j.files.roots.some((r) => r && r.path === "@claude-temp") ? 0 : 1)' "$AGENT" &&
+    yes '文件浏览：把 Claude 的临时文件夹（它放截图、临时脚本的地方，只读）也开放？' y AME_CLAUDE_TEMP; then
+    "$NODE" -e 'const fs = require("fs"), f = process.argv[1], j = JSON.parse(fs.readFileSync(f, "utf8"));
+      j.files.roots.push({ path: "@claude-temp", readOnly: true });
+      fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n", { mode: 0o600 });' "$AGENT"
+    info '已把 Claude 的临时文件夹（只读）加进 agent.json 的 files.roots'
+  fi
 else
   server=$(ask '看板服务器（群晖的 agent 入口）' "$SERVER" AME_SERVER)
   name=$(ask '这台机器在看板上的名字' "$(hostname | tr '[:upper:]' '[:lower:]')" AME_NAME)
@@ -65,11 +73,12 @@ else
   if yes '允许从看板远程控制（回复、审批、在文件夹启动 Claude）？' y AME_CONTROL; then control=true; else control=false; fi
   # the default is your home folder without what starts with "." (tools keep logins and histories there); folders you
   # name yourself are opened as they are
-  files=$(ask '文件浏览：home=你的主目录（不含 . 开头的），或写文件夹（逗号分隔），none=不开放' home AME_FILES)
+  files=$(ask '文件浏览：home=你的主目录（不含 . 开头的）+ Claude 的临时文件夹（只读），或写文件夹（逗号分隔），none=不开放' home AME_FILES)
   # written by node: proper JSON escaping, readable by this user only
   AME_S="$server" AME_T="$token" AME_N="$name" AME_C="$control" AME_F="$files" "$NODE" -e '
     const e = process.env, j = { server: e.AME_S, token: e.AME_T.trim(), name: e.AME_N, control: e.AME_C === "true" };
-    if (e.AME_F === "home") j.files = { roots: [{ path: "~", hideDot: true }] };
+    // (and the temporary folder of Claude Code, read-only: the screenshots and scripts it names in its answers)
+    if (e.AME_F === "home") j.files = { roots: [{ path: "~", hideDot: true }, { path: "@claude-temp", readOnly: true }] };
     else if (e.AME_F !== "none") j.files = { roots: e.AME_F.split(",").map((s) => s.trim()).filter(Boolean) };
     require("fs").writeFileSync(process.argv[1], JSON.stringify(j, null, 2) + "\n", { mode: 0o600 });' "$AGENT"
   chmod 600 "$AGENT"

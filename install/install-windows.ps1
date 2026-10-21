@@ -82,6 +82,9 @@ $control = $true
 # your own folder (C:\Users\<you>) as a root of the file explorer: "~" is whoever the agent runs as; nothing in it whose
 # name starts with "." (tools keep logins and histories there), and not AppData (browsers' passwords, programs' tokens)
 $homeRoot = [ordered]@{ path = '~'; hideDot = $true; deny = @('AppData') }
+# Claude Code's temporary folder (%TEMP%\claude, inside AppData): the screenshots and scripts it names in its answers;
+# read-only, and nothing else of AppData
+$tempRoot = [ordered]@{ path = '@claude-temp'; readOnly = $true }
 if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME_KEEP')) {
   $old = (Get-Content $agentFile -Raw -Encoding UTF8) | ConvertFrom-Json
   $control = $old.control -eq $true
@@ -92,6 +95,14 @@ if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME
     $old.files.roots = @($roots) + $homeRoot
     WriteUtf8 $agentFile ($old | ConvertTo-Json -Depth 6)
     Info '已把用户文件夹加进 agent.json 的 files.roots'
+  }
+  # a config from before Claude Code's temporary folder could be opened: offered once
+  $roots = @(); if ($old.files -and $old.files.roots) { $roots = @($old.files.roots) }
+  $hasTemp = @($roots | Where-Object { $_ -isnot [string] -and $_.path -eq '@claude-temp' }).Count -gt 0
+  if ($roots.Count -and -not $hasTemp -and (Yes '文件浏览：把 Claude 的临时文件夹（它放截图、临时脚本的地方，只读）也开放？' 'y' 'AME_CLAUDE_TEMP')) {
+    $old.files.roots = @($roots) + $tempRoot
+    WriteUtf8 $agentFile ($old | ConvertTo-Json -Depth 6)
+    Info '已把 Claude 的临时文件夹（只读）加进 agent.json 的 files.roots'
   }
 } else {
   $server = Ask '看板服务器（群晖的 agent 入口）' $Server
@@ -104,9 +115,9 @@ if ((Test-Path $agentFile) -and (Yes '已有 agent.json，保留它？' 'y' 'AME
   }
   if ($token.Trim().Length -lt 30) { throw '令牌不对（太短）' }
   $control = Yes '允许从看板远程控制（回复、审批、在文件夹启动 Claude）？' 'y' 'AME_CONTROL'
-  $f = Ask '文件浏览：all=除 C 盘外所有盘 + 你的用户文件夹（不含 . 开头的和 AppData），none=不开放，或写文件夹（逗号分隔）' 'all' 'AME_FILES'
+  $f = Ask '文件浏览：all=除 C 盘外所有盘 + 你的用户文件夹（不含 . 开头的和 AppData）+ Claude 的临时文件夹（只读），none=不开放，或写文件夹（逗号分隔）' 'all' 'AME_FILES'
   $cfg = [ordered]@{ server = $server; token = $token.Trim(); name = $name; control = $control }
-  if ($f -eq 'all') { $cfg.files = [ordered]@{ roots = @('*', $homeRoot); exclude = @('C:') } }
+  if ($f -eq 'all') { $cfg.files = [ordered]@{ roots = @('*', $homeRoot, $tempRoot); exclude = @('C:') } }
   elseif ($f -ne 'none') { $cfg.files = [ordered]@{ roots = @($f.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } }
   WriteUtf8 $agentFile ($cfg | ConvertTo-Json -Depth 6)
   Info "已写入 $agentFile"

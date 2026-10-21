@@ -9,9 +9,9 @@ net.on('fs', (d) => { const f = pending.get(d.rid); if (f) f(d); });
 // a lost connection ends every request
 net.on('status', (up) => { if (!up) for (const f of [...pending.values()]) f({ t: 'fs-res', ok: false, msg: '连接断了' }); });
 
-function request(machine, op, path) {
+function request(machine, op, path, more = {}) {
   return new Promise((resolve) => {
-    const rid = 'f' + (++n) + '-' + Date.now().toString(36), open = { t: 'fs', rid, machine, op, path };
+    const rid = 'f' + (++n) + '-' + Date.now().toString(36), open = { t: 'fs', rid, machine, op, path, ...more };
     const done = (d) => { pending.delete(rid); resolve(d.ok ? d : { ok: false, msg: d.msg || '失败' }); };
     pending.set(rid, (d) => { if (!stepUp(d, open, () => pending.has(rid), done)) done(d); });
     net.send(open);
@@ -19,6 +19,8 @@ function request(machine, op, path) {
 }
 export const roots = (machine) => request(machine, 'roots');
 export const list = (machine, path) => request(machine, 'list', path);
+// where a path named in a session's conversation is (agent/locate.js): -> { ok, found: [{ path, how }] } | { ok:false, msg }
+export const locate = (machine, path, session, at) => request(machine, 'locate', path, { session, at });
 
 // read a whole file: { promise -> { ok, blob, size, path } | { ok:false, msg }, cancel() }; onProgress(received, size)
 // A download straight to disk (download-disk.js) passes { dl: true, from, start(info), sink(bytes) } instead: no

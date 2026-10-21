@@ -115,7 +115,11 @@ async function show(v, blob, name, kind, ctx = {}) {
     v.tools.replaceChildren(h('span', { class: 'vinfo', text: `${t.rows} 行 × ${t.cols} 列 · ${t.sep}分隔` }), as);
     v.body.replaceChildren(t.el);
   } else if (k === 'text') {
-    v.body.replaceChildren(h('pre', { class: 'vtext', text: await decodeText(blob) }));
+    const text = await decodeText(blob), pre = h('pre', { class: 'vtext', text });
+    v.body.replaceChildren(pre);
+    // a link to a line ("a.js:120", from the dashboard's dash-paths.js): that line marked and in view
+    v.jump = (at) => markLines(v, pre, text, at);
+    if (ctx.at) v.jump(ctx.at);
   } else if (k === 'md') {
     const { renderMd } = await import('./md.js');
     const doc = h('div', { class: 'md' });
@@ -126,19 +130,32 @@ async function show(v, blob, name, kind, ctx = {}) {
   }
 }
 
-// open a remote file; openPath(machine, path) follows relative links found in Markdown
-export function openFile(machine, path, entry, openPath) {
+// lines line..to of a text file marked (the rest as it was), the first of them in the middle of the view
+function markLines(v, pre, text, { line, to }) {
+  const lines = text.split('\n');
+  if (line > lines.length) { v.tools.replaceChildren(h('span', { class: 'vinfo bad', text: `文件只有 ${lines.length} 行，没有第 ${line} 行` })); return; }
+  const end = Math.min(Math.max(to || line, line), lines.length);
+  const mark = h('mark', { class: 'vline', text: lines.slice(line - 1, end).join('\n') });
+  pre.replaceChildren(lines.slice(0, line - 1).map((l) => l + '\n').join(''), mark, end < lines.length ? '\n' + lines.slice(end).join('\n') : '');
+  v.tools.replaceChildren(h('span', { class: 'vinfo', text: end > line ? `第 ${line}–${end} 行` : `第 ${line} 行` }));
+  requestAnimationFrame(() => mark.scrollIntoView({ block: 'center' }));
+}
+
+const views = new Map();                  // window id -> its parts (v), while open: a second link to a line moves there
+// open a remote file; openPath(machine, path) follows relative links found in Markdown; at: { line, to } in a text file
+export function openFile(machine, path, entry, openPath, at) {
   const id = 'view:' + machine + ':' + path;
-  if (wm.has(id)) { wm.open({ id }); return; }
+  if (wm.has(id)) { wm.open({ id }); const o = views.get(id); if (at && o && o.jump) o.jump(at); return; }
   const name = entry.name, kind = kindOf(name);
   let job = null;
-  const v = frame({ id, title: `${name} — ${machine}`, name, where: path, kind, onClose: () => { if (job) job.cancel(); } });
+  const v = frame({ id, title: `${name} — ${machine}`, name, where: path, kind, onClose: () => { views.delete(id); if (job) job.cancel(); } });
+  views.set(id, v);
   if (entry.size > MAX) { v.fail('文件过大（超过 100 MB），无法打开'); return; }
   job = fsc.read(machine, path, v.progress, mimeOf(name));
   job.promise.then(async (r) => {
     job = null;
     if (!r.ok) return v.fail(r.msg);
-    await show(v, r.blob, name, kind, { machine, path, openPath });
+    await show(v, r.blob, name, kind, { machine, path, openPath, at });
     if (EDITABLE.test(name)) editButton(v, { machine, path, name, blob: r.blob });
   });
 }

@@ -24,11 +24,11 @@ export function setSwitch(fn) { switchTo = fn; }
 
 const when = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 
-// open the explorer of a machine (at a folder, or at its roots)
-export function open(machine, path = null) {
+// open the explorer of a machine (at a folder, or at its roots); pick: the name of an entry there to select and show
+export function open(machine, path = null, pick = null) {
   const v = views.get(machine);
-  if (v) { wm.open({ id: v.id }); if (path) v.load(path); return; }
-  views.set(machine, create(machine, path));
+  if (v) { wm.open({ id: v.id }); if (path) v.load(path, false, pick); return; }
+  views.set(machine, create(machine, path, pick));
 }
 
 // something to open from a link: a folder (no extension) in the explorer, anything else in a viewer
@@ -37,7 +37,7 @@ export function openPath(machine, path) {
   else open(machine, path);
 }
 
-function create(machine, startPath) {
+function create(machine, startPath, startPick) {
   const id = 'explorer:' + machine;
   // the computers (网上邻居's): this one shown; another one picked opens its own 我的电脑
   const pcs = h('select', { class: 'field xpc', title: '切换到网上邻居里的另一台电脑' });
@@ -76,7 +76,8 @@ function create(machine, startPath) {
   const offUp = net.on('sessions', syncUp);
   function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; syncUp(); }
   // keep: the status line left as it is (the list read again after an upload, which is telling how it goes)
-  async function load(path, keep = false) {
+  // pick: the name of an entry to select and scroll to once listed (a file shown in its folder)
+  async function load(path, keep = false, pick = null) {
     const my = ++seq;
     quiet = keep;
     if (!keep) status.textContent = '读取中…';
@@ -89,16 +90,21 @@ function create(machine, startPath) {
     else { cur = r.path; parent = r.parent; renderList(r.entries || [], r.truncated); }
     setTitle();
     body.scrollTop = keep ? top : 0;
+    if (pick && cur != null) {
+      const tr = [...body.querySelectorAll('.xlist tbody tr')].find((x) => x.entry && x.entry.name === pick);
+      if (tr) { choose(tr, tr.entry); tr.scrollIntoView({ block: 'center' }); tr.focus({ preventScroll: true }); }
+    }
+  }
+  function choose(el, entry) {
+    for (const x of body.querySelectorAll('.sel')) x.classList.remove('sel');
+    el.classList.add('sel');
+    picked = entry;
+    if (!job) dlBtn.disabled = !picked;
   }
   function activate(el, fn, entry = null) {
+    el.entry = entry;
     el.addEventListener('dblclick', fn);
-    el.addEventListener('click', () => {
-      for (const x of body.querySelectorAll('.sel')) x.classList.remove('sel');
-      el.classList.add('sel');
-      picked = entry;
-      if (!job) dlBtn.disabled = !picked;
-      if (touch) fn();
-    });
+    el.addEventListener('click', () => { choose(el, entry); if (touch) fn(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') fn(); });
   }
   function renderRoots(roots) {
@@ -181,6 +187,6 @@ function create(machine, startPath) {
 
   const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), content: root, width: 720, height: 460,
     onClose: () => { views.delete(machine); offPcs(); offUp(); if (job) job.cancel(); if (upJob) upJob.cancel(); } });
-  load(startPath);
+  load(startPath, false, startPick);
   return { id, load };
 }

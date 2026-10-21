@@ -79,3 +79,6 @@
 .md hr { border: 0; border-top: 2px dashed var(--edge); }
 .mdimg-note { display: inline-block; padding: 2px 6px; font-size: 12px; color: var(--muted); background: var(--head-bg); border: 1px dashed var(--edge); }
 .md .mathblock { overflow-x: auto; overflow-y: hidden; margin: .6em 0; text-align: center; } .md .mathph[title] { cursor: help; }   /* LaTeX formulas (md-math.js) */
+/* the lines a link pointed at (a.js:120 from the dashboard) */
+.vtext mark.vline { background: rgba(255, 210, 0, .38); color: inherit; }
+.vinfo.bad { color: var(--bad); }
