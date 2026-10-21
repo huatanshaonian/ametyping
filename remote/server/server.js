@@ -41,6 +41,7 @@ const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
 const { createPushEvents } = require('./push/events');
+const { createOffice } = require('./office');
 const googleHttp = require('./google/http');
 
 const CONFIG = process.env.AME_REMOTE_CONFIG || path.join(__dirname, 'config.json');
@@ -132,6 +133,14 @@ function resumeCmd(cwd, id) {
   const q = `'${cwd.replace(/'/g, "''")}'`;
   return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; ${cmd}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${cmd}`;
 }
+// subagents of a session as an agent reports them: only these fields, bounded
+const AGENT_STATES = ['run', 'done', 'stop'];
+function agentRows(a) {
+  if (!Array.isArray(a)) return [];
+  return a.filter((x) => x && typeof x.id === 'string' && AGENT_STATES.includes(x.state)).slice(0, 12).map((x) => ({
+    id: str(x.id, 64), type: str(x.type, 40), name: x.name ? str(x.name, 40) : undefined, desc: str(x.desc, 120), bg: x.bg === true || undefined,
+    state: x.state, act: x.act ? str(x.act, 120) : undefined, t0: +x.t0 || 0, last: +x.last || 0, end: +x.end || undefined }));
+}
 // what the browser gets: no pids -- what to display, plus the working directory in the resume command.
 // Every session ever stored is listed (newest activity first); the ones the agent no longer reports are 'history'.
 function snapshot() {
@@ -145,14 +154,15 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null };
+        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null,
+        agents: s.agents && s.agents.length ? s.agents : undefined };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
         lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
     }
-    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, sessions: list.sort((a, b) => b.last - a.last) });
+    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
   }
   return out.sort((a, b) => a.machine.localeCompare(b.machine));
 }
@@ -170,7 +180,7 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
-const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a) });
+const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
@@ -213,6 +223,9 @@ const calendarView = createCalendarView({ reports: summary && summary.reports, t
 const mail = createMail({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: (what) => broadcast({ t: 'mail', what }),
   audit: (...a) => audit(...a), ask: summary ? (p, sch, task) => summary.ask(p, sch, task) : null, reports: () => summary && summary.reports, todos,
   onAlert: mailAlert, triageWaitMs: +process.env.AME_MAIL_TRIAGE_MS || undefined });
+// 在线编辑 Word / Excel / PPT (office/): OnlyOffice on the NAS behind /office, when configured (config "office")
+const office = createOffice({ conf: cfg.office, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, user: cfg.user,
+  audit: (...a) => audit(...a), broadcast: (o) => broadcast(o) });
 // the search index built in the background: the conversations, then the documents (reports, notes, artifacts, mail);
 // new mail is indexed a few seconds after it arrives, so a search finds little left to do
 if (searchIndex && summary) {
@@ -258,12 +271,13 @@ function pushConvTo(c) {
 // state  {control, sessions:[{id,label,project,state,steps,t0,last,lines,via,perms}]}   full session list
 // conv   {id, msgs:[{role,text,items,t}]}                            a session's conversation (tail)
 // result {rid, ok, msg}                                              outcome of a send / decide
+// btw    {id, k, q, at, a?, ta?}                                    a /btw question / its answer read off the screen
 const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
-    m.control = d.control === true; m.files = d.files === true; broadcast({ t: 'sessions', data: snapshot() });
+    m.control = d.control === true; m.files = d.files === true; m.upload = d.upload === true; broadcast({ t: 'sessions', data: snapshot() });
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
@@ -276,9 +290,31 @@ function onAgentMessage(m, raw, ws) {
     // (and a new permission mode / context fill is shown in the list's session details)
     if ((r.changed && !m.sessions.has(d.id)) || r.modeChanged) broadcastSoon();
     if (r.modeChanged) { const i = store.info(m.name, d.id); if (i) pushEvents.ctx(m.name, d.id, i.ctx, (m.sessions.get(d.id) || {}).label || i.title); }
+    // a session renamed (/rename in its terminal): every page's list at once, and every machine's agent -- the one
+    // it runs on tells its pet (/rename runs no hook there). Not for the history an agent streams in (not running).
+    if (r.title) {
+      broadcastSoon();
+      const s = m.sessions.get(d.id);
+      if (s) {
+        s.label = r.title;
+        const msg = JSON.stringify({ t: 'title', machine: m.name, id: d.id, title: r.title });
+        for (const a of machines.values()) if (a.online && a.sockets) for (const sock of a.sockets) { try { sock.send(msg); } catch {} }
+      }
+    }
     return;
   }
   if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  // a /btw question and, later, its answer as the terminal showed it (Claude Code writes neither to the transcript; the
+  // pet read it off the screen: app/btw-panel.js) -- into the conversation like the rest of it
+  if (d.t === 'btw' && typeof d.id === 'string' && typeof d.k === 'string' && typeof d.q === 'string' && Number.isFinite(d.at)) {
+    const k = d.k.slice(0, 40), recs = [{ u: 'btwq-' + k, role: 'user', text: '/btw ' + d.q.slice(0, 2000), t: d.at }];
+    if (typeof d.a === 'string' && d.a) recs.push({ u: 'btwa-' + k, role: 'btw', text: d.a.slice(0, 100e3), t: Number.isFinite(d.ta) ? d.ta : Date.now() });
+    if (store.extra(m.name, d.id, recs)) {
+      for (const c of clients) if (c.sub && c.sub.machine === m.name && c.sub.id === d.id) pushConvTo(c);
+      if (!m.sessions.has(d.id)) broadcastSoon();
+    }
+    return;
+  }
   // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
   if (d.t === 'cmds' && Array.isArray(d.list)) {
     m.cmds = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
@@ -286,11 +322,12 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
-  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
+  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
+    if (typeof d.upload === 'boolean') m.upload = d.upload;
     // terminals parked on a background session of Claude Code's: windows, not sessions (their stored history stays)
     m.parked = new Set(Array.isArray(d.parked) ? d.parked.filter((x) => typeof x === 'string' && /^[\w:-]{1,64}$/.test(x)).slice(0, 50) : []);
     const keep = new Set();
@@ -307,6 +344,7 @@ function onAgentMessage(m, raw, ws) {
       cur.lines = Array.isArray(s.lines) ? s.lines.slice(-8).map((l) => ({ text: String(l.text || '').slice(0, 300), t: +l.t || 0, type: String(l.type || '').slice(0, 16) })) : [];
       cur.via = VIA.includes(s.via) ? s.via : 'off';
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
+      cur.agents = agentRows(s.agents);              // the subagents it started (the agent's subagents.js)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
         id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : 'claude', tool: str(p.tool, 80),
         cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000), ask: p.ask === true || undefined })) : [];
@@ -381,7 +419,7 @@ function onBrowserAction(c, d) {
   } else if (d.t === 'key') {
     // a key by name, Ctrl+letter (not C / D / Z: they interrupt or end the session), or "c:" and text typed as it is,
     // without Enter (a menu's search box, a path, the letter a menu takes)
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
+    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
     out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true, hl: d.hl === true };
     audit('control-key', c.ip, m.name, s.id, d.key.length > 3 && d.key.startsWith('c:') ? `c:(len=${d.key.length - 2})` : d.key);
   } else if (d.t === 'screen') {
@@ -445,6 +483,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(req, res, 'index.html');
+  // the document editor's own pages and files (office/proxy.js): its headers, not this site's
+  if (office && p.startsWith(office.PREFIX + '/')) return office.web(req, res, url);
+  if (office && /^\/api\/office(\/|$)/.test(p) && await office.handle(req, res, url, ip, json, send)) return;
+  if (!office && req.method === 'GET' && p === '/api/office') return json(res, 200, { on: false });   // (not set up: no 编辑)
   if (req.method === 'GET' && p === '/manifest.webmanifest') return serveFile(req, res, 'manifest.webmanifest', 'no-cache');
   if (req.method === 'GET' && STATIC.test(p)) return serveFile(req, res, p.slice(1), /^\/(icons|img|wall|sounds)\//.test(p) ? 'max-age=86400' : 'no-cache');
   if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
@@ -580,7 +622,7 @@ async function apiStepUp(req, res, ip, sess) {
 }
 
 // ---------- websockets: /ws for the browser, /agent for machines ----------
-const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const wssBrowser = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });   // (a piece of an upload: 256 KB in base64)
 const wssAgent = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
 const AGENT_SPLIT = !!(cfg.agent && cfg.agent.port);
 
@@ -595,6 +637,11 @@ server.on('upgrade', (req, socket, head) => {
     const sid = cookies(req)[SID];
     if (!auth.checkSession(sid)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
     wssBrowser.handleUpgrade(req, socket, head, (ws) => wssBrowser.emit('connection', ws, req, sid));
+  } else if (office && url.pathname.startsWith(office.PREFIX + '/')) {
+    // the document editor's socket: a logged-in page of this site only
+    const sid = cookies(req)[SID];
+    if (!sameOrigin(req) || !auth.checkSession(sid)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
+    office.upgrade(req, socket, head, url, () => !!auth.checkSessionQuiet(sid));
   } else if (url.pathname === '/agent' && !AGENT_SPLIT) {
     agentUpgrade(req, socket, head);
   } else {
@@ -620,7 +667,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
   clients.add(c);
   try { ws.send(JSON.stringify({ t: 'sessions', data: snapshot() })); } catch {}
   ws.on('message', (raw) => {
-    if (raw.length > 64000) return;
+    // (64 KB at most, but for a piece of an upload: the socket's maxPayload)
+    if (raw.length > 64000 && !raw.subarray(0, 16).toString().startsWith('{"t":"fs-up"')) return;
     let d; try { d = JSON.parse(raw); } catch { return; }
     if (d.t === 'watch' && typeof d.machine === 'string' && typeof d.id === 'string') {
       c.sub = { machine: d.machine, id: d.id }; pushConvTo(c);
@@ -629,9 +677,9 @@ wssBrowser.on('connection', (ws, req, sid) => {
     else if (d.t === 'ping') { try { ws.send('{"t":"pong"}'); } catch {} }
     // this page on screen or not (its own push subscription): a device showing Windose gets no notifications meanwhile
     else if (d.t === 'push-here' && typeof d.endpoint === 'string' && d.endpoint.length < 1000) push.here(d.endpoint, d.on === true);
-    else if ((d.t === 'fs' || d.t === 'fs-cancel') && typeof d.rid === 'string' && d.rid.length < 40) {
+    else if ((d.t === 'fs' || d.t === 'fs-cancel' || d.t === 'fs-up' || d.t === 'fs-up-end') && typeof d.rid === 'string' && d.rid.length < 40) {
       if (!auth.checkSession(c.sid)) { try { ws.close(4401, 'logged out'); } catch {} return; }
-      fsRelay.fromBrowser(c, d);                                       // read-only file explorer
+      fsRelay.fromBrowser(c, d);                                       // file explorer (and uploads where allowed)
     }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string' && d.rid.length < 40) {
       // the login may have expired or been logged out while the socket stayed open

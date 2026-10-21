@@ -29,6 +29,7 @@ const { createFiles } = require('./files');
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
 const { createArtifacts } = require('./artifacts');
+const { agentsOf } = require('./subagents');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -41,7 +42,8 @@ const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_MS = cfg.scanMs || 2000;
 const IDLE_DROP_MS = cfg.keepMs || 30 * 60e3;      // stop listing a session with no file changes for this long
 const CONTROL = cfg.control === true;
-// read-only file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured
+// file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured; uploads into those
+// folders only with "upload": true there (fs-upload.js)
 const browse = createFiles(cfg.files);
 const fsServe = createFsServe(browse, (o) => sendJSON(o));
 const PET_PORT = +cfg.petPort || 3940;
@@ -174,7 +176,7 @@ async function control(d) {
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
-  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
+  } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
     r = await petCall('POST', '/control/key', { id: d.id, key: d.key, screen: d.screen === true, hl: d.hl === true });
   } else if (d.t === 'screen' && typeof d.id === 'string') {
     r = await petCall('POST', '/control/screen', { id: d.id, hl: d.hl === true });
@@ -208,7 +210,7 @@ function stateList() {
     return { id, label: c.title || (p && p.label) || c.project || 'Claude', project: c.project || '',
       state: p ? p.state : deriveState(c),
       steps: 0, t0: msgs[0] ? msgs[0].t : c.mtime, last: c.mtime, lines: msgs.slice(-8).map(lineOf).filter((l) => l.text),
-      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id) };
+      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id), agents: safeAgents(c.file) };
   });
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
@@ -218,6 +220,8 @@ function stateList() {
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
+// the subagents this session started (subagents.js), for the dashboard
+function safeAgents(file) { try { return agentsOf(file); } catch { return []; } }
 function convOf(id) {
   const c = sess.get(id);
   if (!c) {                                          // pet-only session: its progress lines are all there is
@@ -239,9 +243,9 @@ function connect() {
   ws.on('open', () => {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled }));
+    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
-    lastConv.clear();
+    lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     tick(true);
   });
@@ -277,6 +281,8 @@ function connect() {
     else if (d.t === 'report-note' && typeof d.date === 'string') petCall('POST', '/control/report', d);
     // a new mail the NAS found something in: the pet's bubble (information too)
     else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
+    // a session renamed (the server tells every machine): this one's pet shows the new name at once
+    else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));
@@ -319,6 +325,27 @@ function pushRecords() {
 }
 function sendConv(id) { sendJSON({ t: 'conv', id, msgs: convOf(id) }); }
 
+// /btw asked from the dashboard or the panel: Claude Code shows the answer only on its screen, where the pet reads it
+// (app/btw-panel.js) and lists it with the session. The question, then the answer, go to the server once each
+// (again after a reconnect: the server keeps each once).
+const btwSent = new Set();
+function forwardBtw() {
+  if (!ws || ws.readyState !== 1) return;
+  const live = new Set();
+  for (const [id, p] of pet) {
+    if (!Array.isArray(p.btw)) continue;
+    for (const b of p.btw) {
+      if (!b || typeof b.k !== 'string' || typeof b.q !== 'string' || !Number.isFinite(b.t)) continue;
+      const k = `${id}|${b.k}`, ka = k + '|a';
+      live.add(k); live.add(ka);
+      const q = b.q.slice(0, 2000), a = typeof b.a === 'string' ? b.a.slice(0, 100e3) : null;
+      if (!btwSent.has(k)) { btwSent.add(k); sendJSON({ t: 'btw', id, k: b.k.slice(0, 40), q, at: b.t }); }
+      if (a && !btwSent.has(ka)) { btwSent.add(ka); sendJSON({ t: 'btw', id, k: b.k.slice(0, 40), q, at: b.t, a, ta: Number.isFinite(b.ta) ? b.ta : Date.now() }); }
+    }
+  }
+  for (const k of btwSent) if (!live.has(k)) btwSent.delete(k);
+}
+
 // this machine's own slash commands, skills and plugin commands (commands.js) for the dashboard's suggestions:
 // on connecting, then whenever a look every 10 minutes finds them changed
 let cmdsSig = '';
@@ -340,12 +367,13 @@ async function tick(force) {
   ticking = true;
   try {
     await pollPet();
+    forwardBtw();
     scan();
     const list = stateList();
-    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s)])]);
+    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
-      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, sessions: list, parked: [...line.parked] });
+      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked] });
       for (const s of list) {
         if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
         const cs = `${s.last}|${tailT(s)}`;

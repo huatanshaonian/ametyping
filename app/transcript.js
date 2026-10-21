@@ -106,7 +106,10 @@ function btwRecords(o, st, t) {
     const f = FORK.exec(String(o.content || ''));
     if (!f) return [];                                             // (no question: just the usage line)
     if (st) (st.btw = st.btw || new Map()).set(f[1] + '|' + f[2], 1);
-    return [{ role: 'user', text: ('/btw ' + String(o.commandRun.args || '')).trim(), t }];
+    const q = ('/btw ' + String(o.commandRun.args || '')).trim();
+    // (already shown, read off the screen: the panel's own list -- app/main.js btwToChat)
+    if (st && st.btwAsked && st.btwAsked.delete(q)) return [];
+    return [{ role: 'user', text: q, t }];
   }
   if (o.type === 'queue-operation' && o.operation === 'enqueue' && st && (st.btw || st.forkLookup) && /^<task-notification>/.test(String(o.content || ''))) {
     const c = String(o.content), id = (/<task-id>([^<]+)<\/task-id>/.exec(c) || [])[1] || '';
@@ -187,8 +190,13 @@ function recordsOf(o, st) {
       if (used > 0) out.push({ role: 'ctx', text: used + '/' + (/haiku/i.test(String(m.model || '')) ? 200000 : 0), t });
     }
   } else if (o.type === 'ai-title' || o.type === 'custom-title') {
-    const title = o.aiTitle || o.customTitle || o.title;
-    if (title) out.push({ role: 'title', text: String(title), t });
+    // the name: one given with /rename beats the one Claude Code made up, as in Claude Code itself. Both are written
+    // again around every message, the made-up one right after the given one -- so once a given name has been seen,
+    // the made-up one is left out (st: kept as long as the file is read on: the reader, the panel's message list)
+    const given = o.type === 'custom-title';
+    if (given && st) st.named = true;
+    const title = given ? o.customTitle : o.aiTitle || o.title;
+    if (title && (given || !(st && st.named))) out.push({ role: 'title', text: String(title), t });
   } else if (o.type === 'permission-mode' && typeof o.permissionMode === 'string' && o.permissionMode) {
     // the permission mode (auto / manual / acceptEdits / plan ...): written when the session starts, around every
     // message and on exit -- not on each Shift+Tab. A metadata record like the title (the line has no timestamp).

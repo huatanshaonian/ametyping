@@ -1,0 +1,20 @@
+/* the subagents of a session (js/apps/dash-agents.js): a tag on its card, a foldable list over its conversation */
+.dash .card .agb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--ok-text); border: 1px solid var(--ok-text); }
+.dash .agents { border-bottom: 1px dotted var(--edge); font-size: 11.5px; flex: none; }
+.dash .agents .ag-sum { display: block; width: 100%; padding: 4px 12px; text-align: left; background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; }
+.dash .agents .ag-sum:hover { background: var(--hover); }
+.dash .agents .ag-sum.busy { color: var(--ok-text); }
+.dash .agents .ag-rows { max-height: 32vh; overflow-y: auto; padding: 0 12px 4px; }
+.dash .agents .ag { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; border-top: 1px dotted var(--edge); }
+.dash .agents .ag-dot { flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--faint); }
+.dash .agents .ag.run .ag-dot { background: var(--ok); animation: ag-pulse 1.6s ease-in-out infinite; }
+.dash .agents .ag.stop .ag-dot { background: var(--warn); }
+.dash .agents .ag-main { min-width: 0; flex: 1; }
+.dash .agents .ag-l1 { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.dash .agents .ag-l1 b { font-weight: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dash .agents .ag.done .ag-l1 b { color: var(--muted); }
+.dash .agents .ag-bg { flex: none; padding: 0 3px; font-size: 10px; color: var(--muted); border: 1px dotted var(--muted); }
+.dash .agents .ag-l2 { color: var(--faint); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dash .agents .ag.run .ag-l2 { color: var(--muted); }
+@keyframes ag-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dash .agents .ag.run .ag-dot { animation: none; } }

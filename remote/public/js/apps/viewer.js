@@ -1,5 +1,6 @@
-// Viewer windows: pictures, PDF (pdfview.js), Markdown (with the pictures it references), CSV / TSV as a table
-// (csv-view.js), text; anything else can be downloaded. Two sources: a remote file, in chunks through the agent
+// Viewer windows: pictures, PDF (pdfview.js), Word .docx (docx-view.js), Excel workbooks (xlsx-view.js), PowerPoint .pptx
+// (ppt-view.js), Markdown (with the pictures it references), CSV / TSV as a table (csv-view.js), text; anything else
+// can be downloaded; a Word / Excel / PowerPoint file of a computer can also be edited (编辑: office.js). Two sources: a remote file, in chunks through the agent
 // (openFile; fs.js), or a URL on this server (openUrl -- a mail attachment fetched from the mailbox). A progress line
 // shows while it loads.
 import { h, icon } from '../util.js';
@@ -11,7 +12,8 @@ const MAX = 100 * 1024 * 1024;
 const SNIFF_MAX = 2 * 1024 * 1024;        // an unknown file this small is shown as text if it looks like text
 const TABLE_MAX = 20 * 1024 * 1024;       // a CSV larger than this is shown as text (a table of it would not fit the page)
 const isTable = (name) => /\.(csv|tsv)$/i.test(name);
-const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', text: 'notepad_file', other: 'notepad_file' };
+const EDITABLE = /\.(docx|xlsx|pptx)$/i;    // what office.js can edit (kept here: that module loads only when needed)
+const ICONS = { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', sheet: 'document', slides: 'document', text: 'notepad_file', other: 'notepad_file' };
 
 async function decodeText(blob) {
   const buf = await blob.arrayBuffer();
@@ -35,7 +37,7 @@ function frame({ id, title, name, where, kind, onClose }) {
   const root = h('div', { class: 'viewer' }, h('div', { class: 'vbar' }, h('span', { class: 'vpath', text: where, title: where }), tools, dl), body);
   const v = { urls, bar, note, body, dl, tools, cleanup: [] };
   wm.open({ id, title, icon: icon(ICONS[kind] || 'notepad_file', true), content: root,
-    width: kind === 'image' ? 640 : kind === 'pdf' ? 860 : 760, height: kind === 'pdf' ? 640 : 520,
+    width: kind === 'image' ? 640 : kind === 'pdf' || kind === 'word' || kind === 'sheet' || kind === 'slides' ? 860 : 760, height: kind === 'pdf' || kind === 'word' || kind === 'sheet' || kind === 'slides' ? 640 : 520,
     onClose: () => { if (onClose) onClose(); for (const f of v.cleanup) f(); for (const u of urls) URL.revokeObjectURL(u); } });
   v.progress = (got, total) => {
     bar.firstChild.style.width = total ? Math.round((got / total) * 100) + '%' : '100%';
@@ -64,6 +66,44 @@ async function show(v, blob, name, kind, ctx = {}) {
       const doc = await renderPdf(wrap, await blob.arrayBuffer());
       v.cleanup.push(() => doc.destroy());
     } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 PDF 打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用别的程序看。')); }
+  } else if (k === 'word') {
+    const wrap = h('div', { class: 'docx-wrap' });
+    v.body.replaceChildren(wrap);
+    try {
+      const { renderDocx } = await import('./docx-view.js');
+      const d = await renderDocx(wrap, await blob.arrayBuffer());
+      v.tools.replaceChildren(h('span', { class: 'vinfo', text: `${d.pages} 页`, title: '按 Word 的版式在网页里画出来，个别复杂排版（公式、文本框、艺术字）可能和 Word 里不完全一样' }));
+      const ro = new ResizeObserver(() => d.fit()); ro.observe(wrap);
+      v.cleanup.push(() => ro.disconnect());
+    } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 Word 文档打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用 Word 看。')); }
+  } else if (k === 'sheet') {
+    const wrap = h('div', { class: 'xls-holder' });
+    v.body.replaceChildren(wrap);
+    try {
+      const { renderWorkbook } = await import('./xlsx-view.js');
+      const wb = await renderWorkbook(await blob.arrayBuffer());
+      const info = h('span', { class: 'vinfo', title: '数值按 Excel 的格式显示；图表、图片、颜色和条件格式不显示' });
+      const say = () => { info.textContent = wb.info(); };
+      wb.onInfo.push(say); say();
+      v.tools.replaceChildren(info);
+      v.body.replaceChildren(wb.el);
+    } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个表格打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用 Excel 看。')); }
+  } else if (k === 'slides') {
+    const wrap = h('div', { class: 'ppt-wrap' });
+    v.body.replaceChildren(wrap);
+    try {
+      const { renderDeck } = await import('./ppt-view.js');
+      const d = await renderDeck(wrap, await blob.arrayBuffer());
+      v.cleanup.push(() => d.destroy());
+      const info = h('span', { class: 'vinfo', title: '按 PowerPoint 的版式在网页里画出来；动画、视频和声音不播放，个别特效可能和 PowerPoint 里不完全一样' });
+      const say = () => { info.textContent = d.info(); };
+      d.onInfo.push(say); say();
+      v.tools.replaceChildren(info);
+    } catch (e) { v.body.replaceChildren(h('div', { class: 'notice' }, `这个 PPT 打不开（${e.message || e}）。`, h('br'), '可以点右上角「下载」用 PowerPoint 看。')); }
+  } else if (k === 'other' && /\.ppt$/i.test(name)) {
+    v.body.replaceChildren(h('div', { class: 'notice' }, `${name}（${fmtSize(blob.size)}）是老版 PowerPoint 格式（.ppt），网页里画不出来。`, h('br'), '可以点右上角「下载」用 PowerPoint 打开；在 PowerPoint 里另存为 .pptx 后就能在这里预览。'));
+  } else if (k === 'other' && /\.doc$/i.test(name)) {
+    v.body.replaceChildren(h('div', { class: 'notice' }, `${name}（${fmtSize(blob.size)}）是老版 Word 格式（.doc），网页里画不出来。`, h('br'), '可以点右上角「下载」用 Word 打开；在 Word 里另存为 .docx 后就能在这里预览。'));
   } else if (k === 'text' && isTable(name) && blob.size <= TABLE_MAX) {
     const text = await decodeText(blob);
     const { csvTable } = await import('./csv-view.js');
@@ -99,7 +139,19 @@ export function openFile(machine, path, entry, openPath) {
     job = null;
     if (!r.ok) return v.fail(r.msg);
     await show(v, r.blob, name, kind, { machine, path, openPath });
+    if (EDITABLE.test(name)) editButton(v, { machine, path, name, blob: r.blob });
   });
+}
+
+// 编辑 (office.js), where the server has the document service set up: what is saved there is written back here
+async function editButton(v, file) {
+  const office = await import('./office.js');
+  const s = await office.available();
+  if (!s.on || !v.dl.isConnected) return;
+  const b = h('button', { class: 'btn', type: 'button', text: '编辑', disabled: !s.up,
+    title: s.up ? `在线编辑，保存后写回 ${file.machine} 上的这个文件` : '文档服务现在没有运行' });
+  b.addEventListener('click', () => office.editFile(file));
+  v.dl.before(b);
 }
 
 // open what a URL on this server gives (a mail attachment): { id, title, name, where, url, download (URL for 下载) }

@@ -1,0 +1,10 @@
+/* 编辑 a document in OnlyOffice (js/apps/office.js): its frame fills the window under the bar; a word in the corner
+   when a version is written back after the window was closed */
+.office-body { overflow: hidden; background: #fff; }
+.office-body > iframe, .office-body > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.office .vbar .vpath { flex: 1 1 30%; }
+.office-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.office-state.bad { color: var(--bad); white-space: normal; }
+.office-toast { position: fixed; right: 16px; bottom: 56px; z-index: 9000; max-width: min(420px, calc(100vw - 32px)); padding: 8px 12px;
+  background: var(--panel); color: var(--ink); border: 1px solid var(--border); box-shadow: 2px 2px 0 rgba(0, 0, 0, .25); font-size: 12.5px; }
+.office-toast.bad { color: var(--bad); }

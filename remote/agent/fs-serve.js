@@ -1,10 +1,13 @@
 // Answers the server's file requests for the dashboard's explorer (files.js does the access checks):
 //   {t:'fs', rid, op:'roots'|'list'}      -> {t:'fs-res', rid, ok, ...}
-//   {t:'fs', rid, op:'read', path}         -> {t:'fs-res', rid, ok, size, path}, then {t:'fs-chunk', rid, i, data(base64)}...,
+//   {t:'fs', rid, op:'read', path}         -> {t:'fs-res', rid, ok, size, mtime, from, path}, then {t:'fs-chunk', rid, i, data(base64)}...,
 //                                             then {t:'fs-end', rid}
+//      dl:true   a download to disk: no 100 MB limit;   from:n   start at byte n (said back in from)
 //   {t:'fs-ack', rid, i}                   the server passed chunk i on: at most WINDOW chunks travel unacknowledged
 //   {t:'fs-cancel', rid}                   stop reading
+// (uploads into a folder here: fs-upload.js)
 'use strict';
+const { createFsUpload } = require('./fs-upload');
 const CHUNK = 512 * 1024;
 const WINDOW = 8;
 const STALL_MS = 60e3;
@@ -19,13 +22,13 @@ function createFsServe(files, send) {
   }
   const fail = (rid, e) => send({ t: 'fs-res', rid, ok: false, msg: String(e && e.message || e || '失败').slice(0, 200) });
 
-  async function read(rid, p) {
+  async function read(rid, p, opts) {
     let f;
-    try { f = await files.open(p, CHUNK); } catch (e) { return fail(rid, e); }
+    try { f = await files.open(p, CHUNK, opts); } catch (e) { return fail(rid, e); }
     const r = { stream: f.stream, sent: 0, acked: -1, timer: null };
     reads.set(rid, r);
     const stall = () => { clearTimeout(r.timer); r.timer = setTimeout(() => stop(rid), STALL_MS); };   // nobody is taking it
-    send({ t: 'fs-res', rid, ok: true, size: f.size, path: f.path });
+    send({ t: 'fs-res', rid, ok: true, size: f.size, mtime: f.mtime, from: f.from, path: f.path });
     stall();
     f.stream.on('data', (buf) => {
       send({ t: 'fs-chunk', rid, i: r.sent++, data: buf.toString('base64') });
@@ -38,17 +41,20 @@ function createFsServe(files, send) {
 
   async function handle(d) {
     if (d.t === 'fs-ack') { const r = reads.get(d.rid); if (r && r.ack && Number.isInteger(d.i)) r.ack(d.i); return; }
-    if (d.t === 'fs-cancel') return stop(d.rid);
+    if (d.t === 'fs-cancel') { stop(d.rid); return upload.handle(d); }
+    if (d.t === 'fs-up' || d.t === 'fs-up-end') return upload.handle(d);
     if (d.t !== 'fs' || typeof d.rid !== 'string') return;
     if (!files.enabled) return fail(d.rid, '这台电脑没开放文件浏览（agent.json 里设 "files"）');
+    if (d.op === 'up-open') return upload.handle(d);
     try {
       if (d.op === 'roots') send({ t: 'fs-res', rid: d.rid, ok: true, roots: await files.roots(true) });   // (looked up now: a drive put in since is there)
       else if (d.op === 'list') send({ t: 'fs-res', rid: d.rid, ok: true, ...(await files.list(d.path)) });
-      else if (d.op === 'read') await read(d.rid, d.path);
+      else if (d.op === 'read') await read(d.rid, d.path, { big: d.dl === true, from: d.from });
       else fail(d.rid, '无效请求');
     } catch (e) { fail(d.rid, e); }
   }
-  const stopAll = () => { for (const rid of [...reads.keys()]) stop(rid); };
+  const upload = createFsUpload(files, send);
+  const stopAll = () => { for (const rid of [...reads.keys()]) stop(rid); upload.stopAll(); };
   return { handle, stopAll };
 }
 

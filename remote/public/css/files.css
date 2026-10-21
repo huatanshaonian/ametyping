@@ -13,6 +13,8 @@
 .xlaunch .xtool { flex: none; }
 @media (max-width: 700px) { .xbar .addr { flex-basis: 100%; order: 5; } .xbar { flex-wrap: wrap; } }
 .xstatus { flex: none; padding: 3px 10px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--edge); background: var(--gamepink); }
+.xstatus .xact { font-size: 11.5px; padding: 1px 8px; margin: 1px 0; }
+.explorer.xdrop .xbody { outline: 2px dashed var(--accent, #c06); outline-offset: -6px; }   /* files dragged over: 上传 here */
 .xroots { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; }
 .xroot { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border: 1px dotted transparent; cursor: default; outline: none; }
 .xroot img { width: 32px; height: 32px; }

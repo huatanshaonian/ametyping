@@ -23,10 +23,14 @@ const { tidyScreen, plainScreen } = require('../app/screen-text');
 const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
 const { resume } = require('./resume');
 const { launch } = require('./launch');
+const btwPanel = require('../app/btw-panel');
 
 const PORT = +process.env.AME_PORT || 3940;
 const sessions = createSessions();
 const permissions = createPermissions(() => {});
+// /btw answers read off the pane (app/btw-panel.js); the agent takes them with /control/state
+const btw = btwPanel.createBtw();
+const paneIo = (s) => ({ screen: () => tmux.screen(s.target), key: (k) => tmux.key(s.target, k === 'f' ? 'c:f' : k) });
 
 // ---- where does a session live: its Claude process and tmux pane (looked up from the hook's parent pid) ----
 function locate(s, pid) {
@@ -60,7 +64,10 @@ async function chatSend(id, text) {
   if (s.claudePid && proc.alive(s.claudePid, s.claudeComm)) {
     if (!s.target) return { ok: false, msg: `这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 ${s.provider === 'codex' ? 'codex' : 'claude'} 就可以）` };
     if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
+    const claude = s.provider !== 'codex';
+    if (claude) await btw.beforeSend(s, paneIo(s));                  // (an open /btw overlay would swallow the message)
     const r = await tmux.send(s.target, text);
+    if (r.ok && claude && btwPanel.isBtw(text)) btw.sent(s, paneIo(s), btwPanel.questionOf(text));
     return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
   }
   if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
@@ -75,11 +82,12 @@ async function chatSend(id, text) {
 
 // one navigation key into the session's tmux pane (menus and prompts are what it is for)
 async function chatKey(id, key, wantScreen = false, hl = false) {
-  if (!tmux.KEYS[key] && !tmux.CHAR.test(key)) return { ok: false, msg: '不支持的按键' };
+  if (!tmux.KEYS[key] && !tmux.CHAR.test(key) && key !== 'btwfork') return { ok: false, msg: '不支持的按键' };
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
   if (!s.claudePid || !proc.alive(s.claudePid, s.claudeComm)) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
   if (!s.target) return { ok: false, msg: '这个会话不在 tmux 里，没法从这里操作' };
+  if (key === 'btwfork') return btw.fork(s, paneIo(s));            // "f" in the /btw overlay, only while it is open
   const r = await tmux.key(s.target, key);
   if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
   if (key !== 'btab' && !wantScreen) return { ok: true };
@@ -115,7 +123,7 @@ function controlOk(req) {
 function controlState() {
   return sessions.list().map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s),
-    t0: s.t0, last: s.last, lines: s.lines.slice(-8),
+    t0: s.t0, last: s.last, lines: s.lines.slice(-8), btw: s.btw && s.btw.length ? btw.list(s) : undefined,
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));

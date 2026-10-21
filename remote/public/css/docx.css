@@ -1,0 +1,7 @@
+/* Word viewer (js/apps/docx-view.js): the pages docx-preview draws, one under another on grey as in the PDF viewer
+   (its own rules for the pages come with them, scoped to .docx) */
+.docx-wrap { position: absolute; inset: 0; overflow: auto; background: #8a8a96; }
+.docx-wrap .docx-wrapper { background: transparent; padding: 12px; }
+.docx-wrap .docx-wrapper > section.docx { margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); color-scheme: only light;
+  /* where the document names no font: Word's own defaults, not the dashboard's pixel font (a font it names wins) */
+  font-family: Calibri, DengXian, "等线", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; }

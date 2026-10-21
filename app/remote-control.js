@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const { modeFromScreen } = require('./permission-mode');
 const { tidyScreen, plainScreen } = require('./screen-text');
 const codexCli = require('./codex-cli');
+const btwPanel = require('./btw-panel');
 
 // (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
 // ctrl<letter>: the Ctrl combinations its menus name, e.g. Ctrl+A in /resume -- never C, D or Z, which interrupt or
@@ -19,8 +20,12 @@ const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'bta
 const CTRL = /^ctrl[abe-y]$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// deps: { sessions, permissions, bridge, procAlive, pushBubble, home }
-function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home }) {
+// deps: { sessions, permissions, bridge, procAlive, pushBubble, home, onBtw }
+function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home, onBtw = () => {} }) {
+  // /btw answers read off the console (btw-panel.js): kept on the session for the agent (/control/state), and
+  // onBtw(s, item) for the panel's own conversation
+  const btw = btwPanel.createBtw({ onChange: onBtw });
+  const consoleIo = (pid) => ({ screen: async () => plainScreen(await bridge.screen(pid)), key: (k) => (k === 'f' ? bridge.type(pid, 'f') : bridge.key(pid, k)) });
   function claudeExe() {
     for (const dir of (process.env.PATH || '').split(path.delimiter)) {
       const f = path.join(dir, 'claude.exe'); if (dir && fs.existsSync(f)) return f;
@@ -75,11 +80,14 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     if (t.msg) return { ok: false, msg: t.msg };
     if (t.pid) {
       if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（面板卡片或终端里）' };
+      const claude = s.provider !== 'codex';
+      if (claude) await btw.beforeSend(s, consoleIo(t.pid));       // (an open /btw overlay would swallow the message)
       // whatever was typed in the terminal's own input box first: out of the way (Ctrl+Y there brings it back), so the
       // reply goes as it is and not glued to half a sentence
       await bridge.key(t.pid, 'clear');
       await new Promise((res) => setTimeout(res, 150));
-      const r = s.provider === 'codex' ? await codexCli.send(bridge, t.pid, text) : await bridge.send(t.pid, text);
+      const r = claude ? await bridge.send(t.pid, text) : await codexCli.send(bridge, t.pid, text);
+      if (r.ok && claude && btwPanel.isBtw(text)) btw.sent(s, consoleIo(t.pid), btwPanel.questionOf(text));
       return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
     }
     if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
@@ -92,10 +100,11 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // second), what goes into a menu's search box, a path
   async function chatKey(id, key, wantScreen = false, hl = false) {
     const ch = /^c:([^\x00-\x1f\x7f]{1,200})$/.exec(key);
-    if (!KEYS.has(key) && !CTRL.test(key) && !ch) return { ok: false, msg: '不支持的按键' };
+    if (!KEYS.has(key) && !CTRL.test(key) && !ch && key !== 'btwfork') return { ok: false, msg: '不支持的按键' };
     const t = await terminalOf(sessions.get(id));
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，按键没有对象' };
+    if (key === 'btwfork') return btw.fork(sessions.get(id), consoleIo(t.pid));   // "f" in the /btw overlay, while it is open
     const r = ch ? await bridge.type(t.pid, ch[1]) : await bridge.key(t.pid, key);
     if (!r.ok) return { ok: false, msg: '按键失败：' + r.err };
     if (key !== 'btab' && !wantScreen) return { ok: true };
@@ -183,7 +192,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 
-  return { chatSend, chatKey, chatScreen, launch, KEYS };
+  return { chatSend, chatKey, chatScreen, launch, KEYS, btwList: (s) => (s && s.btw && s.btw.length ? btw.list(s) : undefined) };
 }
 
 module.exports = { createRemoteControl };

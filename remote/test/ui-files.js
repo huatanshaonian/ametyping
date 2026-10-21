@@ -28,8 +28,19 @@ const CSV = ['名称,数值,备注', '"网格, 粗",1.5,"第一行' + String.fro
   .concat(Array.from({ length: 2500 }, (_, i) => `r${i},${i},`)).join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
 fs.writeFileSync(path.join(SHARE, 'docs', 'data.csv'), CSV);
 const DL = path.join(T, 'downloads'); fs.mkdirSync(DL);
+// a folder to download as a .zip: folders in folders, an empty one, a file over 100 MB (left out, and named in the
+// zip), a secret (never listed, so never in it)
+const PACK = path.join(SHARE, 'docs', 'pack'); fs.mkdirSync(path.join(PACK, 'sub', 'deep'), { recursive: true }); fs.mkdirSync(path.join(PACK, '空'));
+fs.writeFileSync(path.join(PACK, 'a.txt'), 'top\n'); fs.writeFileSync(path.join(PACK, 'sub', 'deep', '中文.txt'), '深处的文件\n');
+fs.writeFileSync(path.join(PACK, '.env'), 'TOKEN=x\n');
+fs.writeFileSync(path.join(PACK, 'big.bin'), ''); fs.truncateSync(path.join(PACK, 'big.bin'), 101 * 1024 * 1024);
+// a file over 100 MB on its own, every byte telling where it is (a download carried on from the wrong place shows)
+const HUGE = Buffer.alloc(120 * 1024 * 1024); for (let i = 0; i < HUGE.length; i++) HUGE[i] = (i * 31 + (i >>> 16)) % 251;
+fs.writeFileSync(path.join(SHARE, 'docs', 'huge.bin'), HUGE);
+const sha = (b) => require('crypto').createHash('sha256').update(b).digest('hex');
+const HUGE_SHA = sha(HUGE), ZERO_SHA = sha(Buffer.alloc(101 * 1024 * 1024));
 const ACFG = path.join(T, 'agent.json');
-fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE] } }));
+fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'dell97', control: false, scanMs: 500, files: { roots: [SHARE], upload: true } }));
 // a second computer with files of its own (我的电脑's computer switch)
 const tok2 = node([R + '/server/setup.js', 'add-agent', 'box2']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
 const SHARE2 = path.join(T, 'share2'); fs.mkdirSync(SHARE2); fs.writeFileSync(path.join(SHARE2, 'on-box2.txt'), 'box2\n');
@@ -62,8 +73,18 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
   const errors = [];
   let chrome;
   try {
+    // a Word document (docx-fixture.js), and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '报告.docx'), await require('./docx-fixture.js').makeDocx(fs.readFileSync(R + '/public/icons/document.png')));
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧报告.doc'), Buffer.from('d0cf11e0a1b11ae1000000000000000000000000', 'hex'));
+    // Excel workbooks (xlsx-fixture.js): a new one and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '报表.xlsx'), require('./xlsx-fixture.js').makeXlsx());
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧报表.xls'), require('./xlsx-fixture.js').makeXls());
+    // a PowerPoint deck (ppt-fixture.js), and one in the old binary format
+    fs.writeFileSync(path.join(SHARE, 'docs', '汇报.pptx'), await require('./ppt-fixture.js').makePptx(fs.readFileSync(R + '/public/icons/document.png')));
+    fs.writeFileSync(path.join(SHARE, 'docs', '旧汇报.ppt'), Buffer.from('d0cf11e0a1b11ae1000000000000000000000000', 'hex'));
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
-    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(2500);
+    const agent1 = () => spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
+    let a1 = agent1(); await sleep(2500);
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME2, HOME: HOME2, AME_AGENT_CONFIG: ACFG2 }); await sleep(1500);
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
@@ -121,6 +142,79 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await evalJs("[...document.querySelectorAll('.viewer .vtools .btn')].pop().click()"); await sleep(300);
     tb = await tbl();
     chk('CSV: 原文 shows the text as it is (and the button says 表格 to go back)', tb.as === '表格' && tb.raw.startsWith('名称,数值,备注') && !tb.heads, [tb.as, tb.raw.slice(0, 30)]);
+    // a Word document: drawn page by page -- heading, table, picture; a web link opens in a new tab, a javascript:
+    // one is no link at all
+    console.log('open 报告.docx', await dbl({ q: '.xlist tr', t: '报告.docx' }));
+    const wv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('报告.docx'))";
+    const wd = async () => evalJs(`(() => { const v = ${wv}; if (!v) return null; const w = v.querySelector('.docx-wrap'); const img = w && w.querySelector('section.docx img'); const links = w ? [...w.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href'), a.target]) : [];
+      return { pages: w ? w.querySelectorAll('section.docx').length : 0, info: (v.querySelector('.vinfo') || {}).textContent, text: w ? w.textContent : (v.querySelector('.vbody') || {}).textContent, cells: w ? [...w.querySelectorAll('td')].map(t => t.textContent) : [],
+        img: img ? img.naturalWidth : -1, links, fonts: w ? w.querySelectorAll('style').length : 0, zoom: w ? w.querySelector('.docx-pages').style.zoom : '' }; })()`);
+    let wdoc = null;
+    for (let i = 0; i < 40 && !(wdoc && wdoc.pages); i++) { await sleep(250); wdoc = await wd(); }
+    await sleep(500); wdoc = await wd();
+    await shot('9d-word.png');
+    chk('Word: two pages drawn, counted in the bar', wdoc && wdoc.pages === 2 && wdoc.info === '2 页', wdoc);
+    chk('Word: the heading, the text, the table, the picture', /网格加密报告/.test(wdoc.text) && /界面两侧各加密 5 层/.test(wdoc.text) && /第二页的内容/.test(wdoc.text) && wdoc.cells.join('|') === '参数|值|dx|1e-3' && wdoc.img === 32, wdoc);
+    const web = wdoc.links.find((l) => l[0] === '外部链接'), bad = wdoc.links.find((l) => l[0] === '坏链接');
+    chk('Word: a web link opens in a new tab; a javascript: link is no link', web && web[1] === 'https://example.com/report' && web[2] === '_blank' && (!bad || bad[1] == null), wdoc.links);
+    // on a phone the page is scaled to the width
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true }); await sleep(800);
+    const narrow = await wd();
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }); await sleep(500);
+    chk('Word: a narrow window shows the whole page width (scaled down)', narrow && +narrow.zoom > 0 && +narrow.zoom < 1, narrow && narrow.zoom);
+    await evalJs(`(${wv}).closest('.win').querySelector('.tb-close, .close, [data-act=close]') && (${wv}).closest('.win').querySelector('.tb-close, .close, [data-act=close]').click()`);
+    console.log('open 旧报告.doc', await dbl({ q: '.xlist tr', t: '旧报告.doc' })); await sleep(1500);
+    const old = await evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧报告.doc')); return v ? v.querySelector('.vbody').textContent : ''; })()");
+    chk('Word, the old .doc: says it cannot be drawn and how to see it', /老版 Word 格式/.test(old) && /另存为 \.docx/.test(old), old);
+    // an Excel workbook: its sheets as tabs (a hidden one dimmed, a very hidden one not there), values as Excel formats
+    // them, the title merged, the hidden column left out, HTML in a cell only text; a long sheet a page at a time
+    console.log('open 报表.xlsx', await dbl({ q: '.xlist tr', t: '报表.xlsx' }));
+    const xv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('报表.xlsx') && !x.querySelector('.vpath').textContent.endsWith('旧报表.xlsx'))";
+    const xd = async () => evalJs(`(() => { const v = ${xv}; if (!v) return null; const t = v.querySelector('table.xls');
+      return { info: (v.querySelector('.vinfo') || {}).textContent, tabs: [...v.querySelectorAll('.xls-tab')].map(b => [b.textContent, b.classList.contains('on'), b.classList.contains('hid')]),
+        heads: t ? [...t.querySelectorAll('thead th')].map(x => x.textContent) : [], rows: t ? [...t.querySelectorAll('tbody tr')].map(r => [...r.children].map(c => c.textContent)) : [],
+        merged: t ? [...t.querySelectorAll('td')].filter(c => c.colSpan > 1).map(c => [c.textContent, c.colSpan]) : [], imgs: v.querySelectorAll('.xls-body img').length,
+        num: t ? [...t.querySelectorAll('td.num')].map(c => c.textContent) : [], more: (v.querySelector('.csvmore:not([hidden]) .btn') || {}).textContent || '', body: (v.querySelector('.vbody') || {}).textContent.slice(0, 200) }; })()`);
+    let xs = null;
+    for (let i = 0; i < 40 && !(xs && xs.rows.length); i++) { await sleep(250); xs = await xd(); }
+    await shot('9e-excel.png');
+    chk('Excel: the sheets as tabs -- the first one shown, a hidden one dimmed, a very hidden one not listed', xs && JSON.stringify(xs.tabs) === JSON.stringify([['数据', true, false], ['长表', false, false], ['隐藏表', false, true]]), xs && [xs.tabs, xs.body]);
+    chk('Excel: column letters, row numbers; the hidden column F left out', xs && xs.heads.join('|') === '|A|B|C|D|E|G' && xs.rows.map((r) => r[0]).join(',') === '1,2,3,4,5', xs && [xs.heads, xs.rows.map((r) => r[0])]);
+    chk('Excel: values as Excel shows them (thousands, decimals, dates, percent), the formula\'s value', xs && xs.rows[2].join('|') === '3|网格A|1,200|3.50|2026-10-19|25%|4200' && xs.rows[3].slice(1, 6).join('|') === '网格B|34,567|12.00|2026-01-02|75.5%', xs && xs.rows);
+    chk('Excel: the merged title spans its five columns; numbers right-aligned', xs && JSON.stringify(xs.merged) === JSON.stringify([['季度报表', 5]]) && xs.num.includes('1,200') && !xs.num.includes('网格A'), xs && [xs.merged, xs.num]);
+    chk('Excel: HTML in a cell is shown as text', xs && xs.rows[4][1] === '<img src=x onerror=alert(1)>' && xs.imgs === 0, xs && xs.rows[4]);
+    chk('Excel: the bar says how big the sheet is', xs && /^5 行 × 6 列 · 3 个工作表$/.test(xs.info), xs && xs.info);
+    await evalJs(`[...(${xv}).querySelectorAll('.xls-tab')].find(b => b.textContent === '长表').click()`); await sleep(400);
+    xs = await xd();
+    chk('Excel: another tab -- 1000 rows at first, the rest on asking', xs && xs.rows.length === 1000 && /再显示 1000 行（还有 1501 行）/.test(xs.more) && /^2501 行 × 2 列/.test(xs.info) && xs.tabs[1][1], xs && [xs.rows.length, xs.more, xs.info]);
+    await evalJs(`(${xv}).querySelector('.csvmore .btn').click()`); await sleep(300);
+    xs = await xd();
+    chk('Excel: 再显示 adds the next 1000', xs && xs.rows.length === 2000 && xs.rows[1999][1] === '1999', xs && [xs.rows.length, xs.rows[1999]]);
+    console.log('open 旧报表.xls', await dbl({ q: '.xlist tr', t: '旧报表.xls' }));
+    const ov = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧报表.xls'))";
+    let oldx = null;
+    for (let i = 0; i < 40 && !(oldx && oldx.length); i++) { await sleep(250); oldx = await evalJs(`(() => { const v = ${ov}; return v ? [...v.querySelectorAll('table.xls tbody tr')].map(r => [...r.children].map(c => c.textContent).join('|')) : null; })()`); }
+    chk('Excel, the old .xls: read too, Chinese and all', oldx && oldx.join(';') === '1|老格式|数值;2|第一行|1.5;3|第二行|2.5', oldx);
+    // a PowerPoint deck: the slides drawn one under another, fitted to the window -- the title, the table, the picture;
+    // a web link opens in a new tab, a javascript: one goes nowhere; text that looks like HTML is only text
+    console.log('open 汇报.pptx', await dbl({ q: '.xlist tr', t: '汇报.pptx' }));
+    const pv = "[...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('汇报.pptx') && !x.querySelector('.vpath').textContent.endsWith('旧汇报.pptx'))";
+    const pd = async () => evalJs(`(() => { const v = ${pv}; if (!v) return null; const w = v.querySelector('.ppt-wrap'); const imgs = w ? [...w.querySelectorAll('img')] : [];
+      const links = w ? [...w.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href'), a.target]) : [];
+      return { info: (v.querySelector('.vinfo') || {}).textContent, text: w ? w.textContent : (v.querySelector('.vbody') || {}).textContent.slice(0, 300), cells: w ? [...w.querySelectorAll('td')].map(t => t.textContent.trim()) : [],
+        imgs: imgs.map(i => i.naturalWidth), links, box: w && w.firstChild ? w.firstChild.clientWidth : 0, kids: w && w.firstChild ? [...w.firstChild.children].slice(0, 3).map(c => c.tagName + ' ' + c.offsetWidth) : [], have: w ? w.clientWidth : 0 }; })()`);
+    let pp = null;
+    for (let i = 0; i < 40 && !(pp && /汇报/.test(pp.text) && pp.cells.length); i++) { await sleep(250); pp = await pd(); }
+    await sleep(500); pp = await pd();
+    await shot('9f-ppt.png');
+    chk('PPT: the slides drawn -- the title, the shape\'s text, the table, the picture -- counted in the bar', pp && /网格加密汇报/.test(pp.text) && /界面两侧各加密 5 层/.test(pp.text) && pp.cells.join('|') === '参数|值|dx|1e-3' && pp.imgs.length === 1 && pp.imgs[0] > 0 && /^第 1 \/ 3 张$/.test(pp.info), pp);
+    chk('PPT: HTML in a slide\'s text is only text', pp && pp.text.includes('<img src=x onerror=alert(1)>') && pp.imgs.length === 1, pp && [pp.imgs]);
+    const pweb = pp && pp.links.find((l) => l[0] === '外部链接'), pbad = pp && pp.links.find((l) => l[0] === '坏链接');
+    chk('PPT: a web link opens in a new tab; a javascript: link is no link', pweb && pweb[1] === 'https://example.com/report' && pweb[2] === '_blank' && (!pbad || !/^javascript:/i.test(pbad[1] || '')), pp && pp.links);
+    chk('PPT: a slide fits the window\'s width', pp && pp.box > 300 && pp.box <= pp.have && pp.kids.length && pp.kids.every((k) => +k.split(' ').pop() <= pp.box + 1), pp && [pp.box, pp.have, pp.kids]);
+    console.log('open 旧汇报.ppt', await dbl({ q: '.xlist tr', t: '旧汇报.ppt' })); await sleep(1500);
+    const oldp = await evalJs("(() => { const v = [...document.querySelectorAll('.viewer')].find(x => x.querySelector('.vpath').textContent.endsWith('旧汇报.ppt')); return v ? v.querySelector('.vbody').textContent : ''; })()");
+    chk('PPT, the old .ppt: says it cannot be drawn and how to see it', /老版 PowerPoint 格式/.test(oldp) && /另存为 \.pptx/.test(oldp), oldp);
     // 下载 in 我的电脑: the file picked in the list, saved under its own name, byte for byte
     await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
     const ex = "[...document.querySelectorAll('.explorer')].find(e => e.querySelector('.xpc').value === 'dell97')";
@@ -131,8 +225,103 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     for (let i = 0; i < 30 && !saved; i++) { await sleep(300); const f = path.join(DL, 'data.csv'); if (fs.existsSync(f) && fs.statSync(f).size === Buffer.byteLength(CSV)) saved = fs.readFileSync(f, 'utf8'); }
     const st = await dlState();
     chk('下载: the file saved under its name, as it is on the computer', saved === CSV && /^已下载 data.csv/.test(st.status) && st.text === '下载' && !st.disabled, [saved.length, st]);
-    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('img')).click(); })()`);
-    chk('下载: a folder picked, nothing to download', (await dlState()).disabled, await dlState());
+    // a folder: all of it as <name>.zip, what could not come along named in a file beside it -- in a browser that
+    // cannot write to disk (Firefox, a phone), where a file over 100 MB has to stay behind
+    await evalJs('window.showSaveFilePicker = undefined; window.showDirectoryPicker = undefined;');
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('pack')).click(); })()`);
+    chk('下载: a folder picked can be downloaded', !(await dlState()).disabled, await dlState());
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    const ZIP = path.join(DL, 'pack.zip');
+    for (let i = 0; i < 40 && !(fs.existsSync(ZIP) && /^已下载/.test((await dlState()).status)); i++) await sleep(300);
+    const zs = await dlState();
+    const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), X = path.join(T, 'unzip');
+    // (unpacked by Windows' own tar, the folders read back: the names as a zip program sees them)
+    const tree = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? [pre + e.name + '/', ...tree(path.join(d, e.name), pre + e.name + '/')] : [pre + e.name]);
+    let names = [];
+    try { fs.mkdirSync(X); cp.execFileSync(TAR, ['-xf', ZIP, '-C', X]); names = tree(X).sort(); } catch (e) { names = ['tar: ' + e.message]; }
+    const rd = (...p) => { try { return fs.readFileSync(path.join(X, ...p), 'utf8'); } catch { return null; } };
+    chk('下载 a folder: pack.zip with its folders, the empty one too; no secret, no file over 100 MB',
+      names.join('|') === ['pack/', 'pack/a.txt', 'pack/sub/', 'pack/sub/deep/', 'pack/sub/deep/中文.txt', 'pack/空/', '未打包的文件.txt'].sort().join('|'), names);
+    chk('下载 a folder: the files as they are', rd('pack', 'a.txt') === 'top\n' && rd('pack', 'sub', 'deep', '中文.txt') === '深处的文件\n', [rd('pack', 'a.txt'), rd('pack', 'sub', 'deep', '中文.txt')]);
+    chk('下载 a folder: what was left out, and why, in 未打包的文件.txt', /pack\/big\.bin —— 超过 100 MB/.test(rd('未打包的文件.txt') || '') && !/\.env/.test(rd('未打包的文件.txt') || ''), rd('未打包的文件.txt'));
+    chk('下载 a folder: the status line says what came', /^已下载 pack\.zip（2 个文件，.*有 1 项没能打包/.test(zs.status) && zs.text === '下载', zs);
+
+    // Chrome / Edge on a computer: written to disk as it comes. (The pickers give folders of the page's own private
+    // file system here: a test cannot click in the system's dialog.)
+    await evalJs(`(async () => {
+      window.__picked = [];
+      const root = await navigator.storage.getDirectory();
+      window.showSaveFilePicker = async (o) => { __picked.push('save:' + o.suggestedName); return root.getFileHandle(o.suggestedName, { create: true }); };
+      window.showDirectoryPicker = async (o) => { __picked.push('dir:' + o.mode); return root; };
+    })()`);
+    // (what is in the private file system: names, "/" after a folder; the sha-256 of a file)
+    const opfsTree = () => evalJs(`(async () => { const out = []; const go = async (d, pre) => { for await (const [n, h] of d.entries()) { if (h.kind === 'directory') { out.push(pre + n + '/'); await go(h, pre + n + '/'); } else out.push(pre + n); } }; await go(await navigator.storage.getDirectory(), ''); return out.sort(); })()`);
+    const opfsFile = (p, hash) => evalJs(`(async () => { let d = await navigator.storage.getDirectory(); const s = ${JSON.stringify(p)}.split('/'); for (const n of s.slice(0, -1)) d = await d.getDirectoryHandle(n); const f = await (await d.getFileHandle(s.pop())).getFile();
+      if (!${hash}) return await f.text(); const h = await crypto.subtle.digest('SHA-256', await f.arrayBuffer()); return f.size + ':' + [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join(''); })().catch(e => 'error: ' + e.message)`);
+    const statuses = new Set();
+    const waitStatus = async (re, ms, during) => { for (let t = 0; t < ms; t += 100) { const s = await dlState(); statuses.add(s.status); if (re.test(s.status)) return s; if (during) await during(s); await sleep(100); } return dlState(); };
+    // a folder with a file over 100 MB: a button in the status line asks where; then folders and files as they were
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    let ds = await waitStatus(/选择保存位置/, 8000);
+    chk('下载 a folder to disk: too large for a zip, the status line asks where to save it', /有 1 个文件超过 100 MB.*选择保存位置…$/.test(ds.status) && ds.text === '取消下载', ds);
+    await evalJs(`(() => { const e = ${ex}; e.querySelector('.xstatus .xact').click(); })()`);
+    ds = await waitStatus(/^已下载到|^已取消|失败/, 60000);
+    const ot = await opfsTree();
+    chk('下载 a folder to disk: written into the folder picked, the empty folder and the file over 100 MB too',
+      /^已下载到「pack」（3 个文件，/.test(ds.status) && ot.join('|') === ['pack/', 'pack/a.txt', 'pack/big.bin', 'pack/sub/', 'pack/sub/deep/', 'pack/sub/deep/中文.txt', 'pack/空/'].sort().join('|') && (await evalJs('__picked.join()')) === 'dir:readwrite', [ds, ot]);
+    chk('下载 a folder to disk: the files as they are', (await opfsFile('pack/a.txt', false)) === 'top\n' && (await opfsFile('pack/sub/deep/中文.txt', false)) === '深处的文件\n' && (await opfsFile('pack/big.bin', true)) === `${101 * 1024 * 1024}:${ZERO_SHA}`, 0);
+    // a single file over 100 MB: 另存为, written as it comes; the computer's agent stopped halfway and started again:
+    // it carries on from where it was, and the file comes out whole
+    await evalJs(`(() => { const e = ${ex}; [...e.querySelectorAll('.xlist tr')].find(x => x.textContent.includes('huge.bin')).click(); [...e.querySelectorAll('.xbar .btn')].find(x => x.textContent === '下载').click(); })()`);
+    let cut = false;
+    ds = await waitStatus(/^已保存|huge\.bin：/, 120000, async (s) => {
+      const m = /… ([\d.]+) MB \//.exec(s.status);
+      if (!cut && m && +m[1] >= 20) { cut = true; a1.kill(); await sleep(1500); a1 = agent1(); }
+    });
+    const hs = await opfsFile('huge.bin', true);
+    chk('下载 a large file: 另存为, the agent cut off halfway, carried on, the file whole',
+      cut && /^已保存 huge\.bin（120\.0 MB）/.test(ds.status) && [...statuses].some((s) => /接着下载/.test(s)) && hs === `${HUGE.length}:${HUGE_SHA}` && (await evalJs('__picked.join()')) === 'dir:readwrite,save:huge.bin',
+      [cut, ds.status, [...statuses].filter((s) => /接着|断/.test(s)), String(hs).slice(0, 30)]);
+    await shot('9d-download-disk.png');
+
+    // 上传: files from this device into the folder open (docs), through the real file input; the agent stopped halfway
+    // through the large one and started again: it carries on, and both arrive whole
+    const LOCAL = path.join(T, 'local'); fs.mkdirSync(LOCAL);
+    const UPBIG = Buffer.from(HUGE.subarray(0, 110 * 1024 * 1024)).reverse();
+    fs.writeFileSync(path.join(LOCAL, 'up-big.bin'), UPBIG); fs.writeFileSync(path.join(LOCAL, '上传说明.txt'), '第一版\n');
+    const waitFor = async (get, cond, ms) => { let s; for (let t = 0; t < ms; t += 100) { s = await get(); if (cond(s)) return s; await sleep(100); } return s; };
+    const upState = () => evalJs(`(() => { const e = ${ex}; const b = [...e.querySelectorAll('.xbar .btn')].find(x => /上传/.test(x.textContent)); return { text: b.textContent, disabled: b.disabled, status: e.querySelector('.xstatus').textContent, rows: [...e.querySelectorAll('.xlist tr')].map(x => x.textContent) }; })()`);
+    chk('上传: the button there in a folder of a computer that takes uploads', !(await upState()).disabled, await upState());
+    const setFiles = async (files) => {
+      const o = (await call('Runtime.evaluate', { expression: `${ex}.querySelector('input.xupin')` })).result.result;
+      return call('DOM.setFileInputFiles', { objectId: o.objectId, files });
+    };
+    await call('DOM.enable');
+    await setFiles([path.join(LOCAL, '上传说明.txt'), path.join(LOCAL, 'up-big.bin')]);
+    const upSeen = new Set();
+    let upCut = false, us = null;
+    for (let t = 0; t < 120000; t += 100) {
+      us = await upState(); upSeen.add(us.status);
+      if (/^已上传|没有上传|已取消/.test(us.status)) break;
+      const m = /up-big\.bin（2\/2）：([\d.]+) MB \//.exec(us.status);
+      if (!upCut && m && +m[1] >= 20) { upCut = true; a1.kill(); await sleep(1500); a1 = agent1(); }
+      await sleep(100);
+    }
+    const DOCS = path.join(SHARE, 'docs');
+    chk('上传: both files there, the large one whole after the cut, carried on',
+      upCut && /^已上传 2 个文件到 /.test(us.status) && [...upSeen].some((s) => /接着上传/.test(s)) && fs.readFileSync(path.join(DOCS, '上传说明.txt'), 'utf8') === '第一版\n' &&
+      sha(fs.readFileSync(path.join(DOCS, 'up-big.bin'))) === sha(UPBIG) && fs.readdirSync(DOCS).every((x) => !x.endsWith('.ame-upload')),
+      [upCut, us.status, [...upSeen].filter((s) => /接着|断/.test(s)), fs.readdirSync(DOCS)]);
+    chk('上传: the list shows them (read again, the status line kept)', us.rows.some((x) => x.includes('up-big.bin')) && us.rows.some((x) => x.includes('上传说明.txt')) && us.text === '上传', [us.text, us.rows]);
+    // the same name again: asked first; 替换 replaces it
+    fs.writeFileSync(path.join(LOCAL, '上传说明.txt'), '第二版\n');
+    await setFiles([path.join(LOCAL, '上传说明.txt')]);
+    let ask = '';
+    for (let t = 0; t < 8000 && !ask; t += 100) { await sleep(100); ask = await evalJs("(document.querySelector('.dlgmsg .dlgtx') || {}).textContent || ''"); }
+    await shot('9e-upload-replace.png');
+    await evalJs("[...document.querySelectorAll('.dlgmsg .btn')].find(b => b.textContent === '替换').click()");
+    us = await waitFor(upState, (s) => /^已上传 1 |没有上传/.test(s.status), 15000);
+    chk('上传 the same name: asked first, then replaced', /已经有了/.test(ask) && /^已上传 1 个文件/.test(us.status) && fs.readFileSync(path.join(DOCS, '上传说明.txt'), 'utf8') === '第二版\n', [ask, us.status]);
     // 我的电脑's computer switch: the list of computers, this one shown; another one picked: its own window, the desktop follows
     const wins = () => evalJs("[...document.querySelectorAll('.win')].filter(w => w.querySelector('.explorer')).map(w => ({ title: w.querySelector('.ttl, .title, .wt') ? w.querySelector('.ttl, .title, .wt').textContent : w.textContent.slice(0, 40), pc: w.querySelector('.xpc').value, opts: [...w.querySelectorAll('.xpc option')].map(o => o.value) }))");
     let w = await wins();
@@ -143,6 +332,26 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     chk('box2\'s files shown', await evalJs("[...document.querySelectorAll('.explorer')].some(e => e.querySelector('.xpc').value === 'box2' && e.textContent.includes('share2'))"), 0);
     chk('the desktop follows (as picking box2 in 网上邻居)', (await evalJs('localStorage.getItem("ame.machine")')) === '"box2"', await evalJs('localStorage.getItem("ame.machine")'));
     await shot('9b-explorer-switch.png');
+    // the files need a code entered within the hour (server/fs-relay.js): on a server where it lasts 4 s, opening a
+    // folder asks for the code, and once it is in the folder opens (the same request sent again)
+    const nErr = errors.length;
+    for (const k of kids.splice(0, 1)) k.kill(); await sleep(500);
+    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300', AME_FRESH_MS: '4000' }); await sleep(3000);
+    const [c2n, c2v] = await login();
+    await call('Network.setCookie', { name: c2n, value: c2v, url: `http://127.0.0.1:${PORT}/` });
+    errors.splice(nErr);                                // (the page's socket while the server was away, then its old login)
+    await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` }); await sleep(5500);
+    const gateOpen = () => evalJs("!document.querySelector('#gate').hidden");
+    const box2Text = () => evalJs("[...document.querySelectorAll('.explorer')].filter(e => e.querySelector('.xpc').value === 'box2').map(e => e.textContent).join('|')");
+    if (!(await evalJs("!!document.querySelector('.explorer')"))) await dbl({ q: '.dicon', t: '我的电脑' });
+    let g = await waitFor(gateOpen, (x) => x, 4000), want = 'share2';
+    if (!g) { await dbl({ q: '.xroot', t: 'share2' }); g = await waitFor(gateOpen, (x) => x, 4000); want = 'on-box2.txt'; }
+    const before = await box2Text();
+    await shot('9f-files-code.png');
+    const code2 = auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000) + 1);
+    await evalJs(`(() => { document.querySelector('#gate input').value = '${code2}'; document.querySelector('#gate form').requestSubmit(); })()`);
+    const after = await waitFor(box2Text, (s) => s.includes(want), 6000);
+    chk('a stale code: opening a folder asks for it, then opens it', g && !before.includes(want) && after.includes(want) && !(await gateOpen()), [g, want, before.slice(0, 120), after.slice(0, 120)]);
     console.log(res.join('\n'));
     ws.close();
   } catch (e) { errors.push('script: ' + e.stack); }
