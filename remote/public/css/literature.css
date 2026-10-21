@@ -136,6 +136,10 @@
 .lr-split2 { display: none; } .lr.notes .lr-notes { display: flex; } .lr.notes .lr-split2 { display: block; }
 .lr.dragging .lr-notes { pointer-events: none; }
 .lr.narrow .lr-split2 { display: none !important; } .lr.narrow.notes .lr-side { display: none; } .lr.narrow .lr-notes { width: 100% !important; } .lr.narrow.side .lr-notes { display: none; }
+.lr-dl[hidden] { display: none; }
+/* 拆分: the PDF in a browser window of its own -- here only the side (and the notes), as wide as the window */
+.lr.split .lr-pdf, .lr.split .lr-split, .lr.split .lr-swap { display: none !important; } .lr.split .lr-side { display: flex !important; flex: 1; width: auto !important; }
+.lr-sb.on { background: var(--fill); color: var(--on-fill); } .lr.narrow:not(.split) .lr-sb { display: none; }
 .lr-nb { margin-left: auto; } .lr-nb.on { background: var(--fill); color: var(--on-fill); } .lr.narrow .lr-swap { margin-left: auto; } .lr.narrow .lr-nb { margin-left: 4px; }
 .ln { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; }
 .ln-head { align-items: center; } .ln-head b { padding: 0 4px 0 8px; } .ln-n { color: var(--muted); font-size: 12px; } .ln-gap { flex: 1; }

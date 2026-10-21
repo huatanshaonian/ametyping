@@ -2,7 +2,8 @@
 // under another at the window's width (－ / ＋ / 适合宽度), the page number to jump to, only the pages near the view
 // drawn (a long paper stays quick), and a text layer so the words can be selected and copied. Chinese PDFs without
 // their fonts use the character maps and standard fonts that come with it; images in JPX / JBIG2 are decoded in
-// plain JS (WebAssembly would need the page's CSP loosened).
+// plain JS (WebAssembly would need the page's CSP loosened). Until －/＋ is pressed the pages keep to the width as the
+// window is resized (适合宽度 goes back to that).
 //   renderPdf(container, data: ArrayBuffer) -> { destroy() }
 import { h } from '../util.js';
 
@@ -27,15 +28,15 @@ export async function renderPdf(container, data) {
   const pagesEl = h('div', { class: 'pdf-pages' });
   const bar = h('div', { class: 'pdf-bar' },
     h('span', {}, '第 ', pageNo, ` / ${n} 页`),
-    h('button', { class: 'btn', type: 'button', text: '－', title: '缩小', onclick: () => zoom(scale / 1.2) }), zoomTxt,
-    h('button', { class: 'btn', type: 'button', text: '＋', title: '放大', onclick: () => zoom(scale * 1.2) }),
-    h('button', { class: 'btn', type: 'button', text: '适合宽度', onclick: () => zoom(fitScale()) }));
+    h('button', { class: 'btn', type: 'button', text: '－', title: '缩小', onclick: () => { fit = false; zoom(scale / 1.2); } }), zoomTxt,
+    h('button', { class: 'btn', type: 'button', text: '＋', title: '放大', onclick: () => { fit = false; zoom(scale * 1.2); } }),
+    h('button', { class: 'btn', type: 'button', text: '适合宽度', onclick: () => { fit = true; zoom(fitScale()); } }));
   container.replaceChildren(bar, pagesEl);
 
   const first = await doc.getPage(1);
   const base = first.getViewport({ scale: 1 });                // (pages are sized like the first until drawn)
   const fitScale = () => Math.max(0.3, Math.min(4, (pagesEl.clientWidth - 24 - 18) / base.width));    // (room for the scrollbar to come)
-  let scale = fitScale(), slots = [], io = null, destroyed = false;
+  let scale = fitScale(), slots = [], io = null, destroyed = false, fit = true, refit = 0;
   const drawn = new Map();                                       // page number -> its render task
 
   function layout() {
@@ -82,5 +83,8 @@ export async function renderPdf(container, data) {
   });
   pageNo.addEventListener('change', () => { const s = slots[Math.min(n, Math.max(1, +pageNo.value || 1)) - 1]; if (s) pagesEl.scrollTop = s.offsetTop - 8; });
   layout();
-  return { pages: n, destroy() { destroyed = true; if (io) io.disconnect(); loading.destroy(); } };      // (the worker too)
+  // the window resized (or the PDF given more room): the width again, unless zoomed by hand
+  const ro = new ResizeObserver(() => { clearTimeout(refit); refit = setTimeout(() => { if (!destroyed && fit && pagesEl.clientWidth > 50 && Math.abs(fitScale() - scale) > 0.01) zoom(fitScale()); }, 150); });
+  ro.observe(pagesEl);
+  return { pages: n, destroy() { destroyed = true; clearTimeout(refit); ro.disconnect(); if (io) io.disconnect(); loading.destroy(); } };      // (the worker too)
 }

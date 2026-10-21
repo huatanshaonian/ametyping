@@ -29,7 +29,7 @@ const req = (method, p, body, cookie, raw) => new Promise((resolve) => {
   const r = http.request({ host: '127.0.0.1', port: PORT, path: p, method, headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${PORT}`,
     'Content-Length': Buffer.byteLength(data), ...(cookie ? { Cookie: cookie } : {}) } }, (res) => {
     const cs = []; res.on('data', (c) => cs.push(c));
-    res.on('end', () => { const b = Buffer.concat(cs); let j = null; try { j = JSON.parse(b.toString('utf8')); } catch {} resolve({ status: res.statusCode, j, body: b, cookie: String(res.headers['set-cookie'] || '').split(';')[0] }); });
+    res.on('end', () => { const b = Buffer.concat(cs); let j = null; try { j = JSON.parse(b.toString('utf8')); } catch {} resolve({ status: res.statusCode, headers: res.headers, j, body: b, cookie: String(res.headers['set-cookie'] || '').split(';')[0] }); });
   });
   r.on('error', () => resolve({ status: 0, j: null, body: Buffer.alloc(0), cookie: '' }));
   r.end(data);
@@ -87,6 +87,11 @@ const src = createFakeSources();
     const pdf = await req('GET', '/api/lit/pdf?key=AAAAAAA1', null, cookie);
     ok('the PDF comes out of the WebDAV zip', pdf.status === 200 && pdf.body.slice(0, 5).toString() === '%PDF-' && pdf.body.length === PDF1.length);
     ok('no PDF: 404', (await req('GET', '/api/lit/pdf?key=AAAAAAA2', null, cookie)).status === 404);
+    const solo = await req('GET', '/lit-pdf?key=AAAAAAA1', null, cookie), soloOut = await req('GET', '/lit-pdf?key=AAAAAAA1');
+    ok('拆分: the PDF window\'s page is there for a signed-in browser only', solo.status === 200 && /lit-pdf-page\.js/.test(solo.body.toString()) && soloOut.status === 302, [solo.status, soloOut.status]);
+    const dl = await req('GET', '/api/lit/pdf?dl=1&key=AAAAAAA1', null, cookie);
+    ok('下载: the same PDF as a file, named like Zotero names them (author, year, title; shown inline otherwise)', dl.status === 200 && dl.body.length === PDF1.length &&
+      decodeURIComponent(dl.headers['content-disposition']) === "attachment; filename*=UTF-8''Sun - 2018 - Backward scattering of a reentry vehicle in plasma sheath.pdf" && /^inline;/.test(pdf.headers['content-disposition']), [dl.headers['content-disposition'], pdf.headers['content-disposition']]);
 
     // ---- the profile ----
     ok('the push refuses without a profile', (await P('/api/lit/feed/run')).ok && (await until(async () => { const f = await G('/api/lit/feed'); const r = (f.status.runs || []).slice(-1)[0]; return r && r.error; })), '');

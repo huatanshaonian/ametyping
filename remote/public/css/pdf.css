@@ -1,6 +1,8 @@
 /* PDF viewer (js/apps/pdfview.js): a toolbar, the pages one under another; the text layer is pdf.js's own rules
    (web/pdf_viewer.css, trimmed): invisible text over the drawn page, for selecting and copying. */
 .pdf-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+/* 深读 › 拆分: the PDF alone in a browser window (lit-pdf.html) */
+.pdf-solo { background: #8a8a96; } .pdf-solo .notice { background: var(--body); height: 100%; overflow-y: auto; }
 .pdf-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); font-size: 12px; flex-wrap: wrap; }
 .pdf-bar .btn { padding: 0 8px; }
 .pdf-no { width: 52px; }

@@ -73,6 +73,7 @@ export function mount(el, ctx) {
     const acts = h('div', { class: 'gbtns lb-acts' },
       btn('深读', d.pdf ? '左边 PDF、右边卡片和对话' : '没有 PDF 时只能看卡片和摘要', () => ctx.openReader(key), 'btn go'),
       d.pdf ? btn('PDF', '在 Windose 里看 PDF', () => openUrl({ id: 'lit-pdf:' + key, title: d.title, name: d.citekey + '.pdf', where: d.citekey, url: '/api/lit/pdf?key=' + key })) : null,
+      d.pdf ? btn('下载 PDF', '把这篇的 PDF 存到电脑上', () => { const a = h('a', { href: '/api/lit/pdf?dl=1&key=' + encodeURIComponent(key), download: '' }); document.body.append(a); a.click(); a.remove(); }) : null,
       btn(d.card && d.card.meta.status === 'quick' ? '重做速读卡' : '速读卡', '按摘要和开头几页', async () => { await post('/api/lit/card', { key, kind: 'quick' }); show(key, true); }),
       btn(d.card && /deep|reviewed/.test(d.card.meta.status) ? '重做深读卡' : '深读卡', '按全文（需要 PDF）', async () => { await post('/api/lit/card', { key, kind: 'deep' }); show(key, true); }),
       d.card ? btn(meta.starred ? '★ 已星标' : '☆ 星标', '星标 = 进深读清单', async () => { await post('/api/lit/card/meta', { key, starred: !meta.starred }); show(key, true); loadList(); }) : null,
