@@ -43,9 +43,10 @@ export function inline(s) {
 const sameName = (a, b, win) => (win ? a.toLowerCase() === b.toLowerCase() : a === b);
 const absolute = (p) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/');
 
-// where the file is: the path as written if absolute; else from the session's folder, or one or two folders up.
-// -> { ok, path, entry } or { ok: false, msg }
-export async function locate(machine, cwd, p) {
+// the old way, for a computer whose agent cannot look for itself yet (no "locate"): the path as written if absolute;
+// else from the session's folder, or one or two folders up -- listing each folder from here.
+// -> { ok, found: [{ path }] } or { ok: false, msg }
+async function locateHere(machine, cwd, p) {
   let tries;
   if (absolute(p)) tries = [rpath.isWin(p) ? p.replace(/\//g, '\\') : p];
   else {
@@ -64,20 +65,39 @@ export async function locate(machine, cwd, p) {
     if (!r.ok) { lastMsg = r.msg || ''; continue; }
     const name = rpath.basename(full), win = rpath.isWin(full);
     const e = (r.entries || []).find((x) => !x.dir && sameName(x.name, name, win));
-    if (e) return { ok: true, path: rpath.join(r.path || rpath.dirname(full), e.name), entry: e };
+    if (e) return { ok: true, found: [{ path: rpath.join(r.path || rpath.dirname(full), e.name) }] };
   }
   return { ok: false, msg: `找不到 ${p}${lastMsg && /权限|允许|不在|没开放/.test(lastMsg) ? `（${lastMsg}）` : `（在 ${cwd || '这台电脑'} 和上两级里都没有）`}` };
 }
 
-// a link clicked or picked from its menu: open it (viewer.js), or show it in its folder (explorer.js)
-export async function follow(a, { machine, cwd, files, note, folder = false }) {
+// where the file is: the computer's agent looks (agent/locate.js: where the session was when it said it, the full
+// paths it used, its other folders, then a bounded search); an older agent: locateHere
+async function where(machine, session, cwd, p, at) {
+  const r = await fsc.locate(machine, p, session, at);
+  if (!r.ok && r.msg === '无效请求') return locateHere(machine, cwd, p);
+  return r.ok && !(r.found || []).length ? { ok: false, msg: `找不到 ${p}` } : r;
+}
+
+const HOW = { cwd: '它当时所在的文件夹', session: '会话里用过的路径', folder: '会话到过的文件夹', search: '搜到的', abs: '' };
+
+// a link clicked or picked from its menu: open it (viewer.js), or show it in its folder (explorer.js). Found in more
+// than one place (a search, a project with several copies): picked from a menu at the link.
+export async function follow(a, { machine, session, cwd, files, note, folder = false }) {
   if (!files) return note(`${machine} 没开放文件浏览，打不开`, true);
   const p = a.dataset.p, line = +a.dataset.l || 0, to = +a.dataset.l2 || 0;
+  const m = a.closest('[data-t]'), at = m ? +m.dataset.t || undefined : undefined;   // (when it was said)
   note(`正在找 ${p}…`);
-  const r = await locate(machine, cwd, p);
+  const r = await where(machine, session, cwd, p, at);
   if (!r.ok) return note(r.msg, true);
   note('');
-  if (folder) { const ex = await import('./explorer.js'); ex.open(machine, rpath.dirname(r.path), r.entry.name); return; }
-  const [{ openFile }, ex] = await Promise.all([import('./viewer.js'), import('./explorer.js')]);
-  openFile(machine, r.path, r.entry, ex.openPath, line ? { line, to: to >= line ? to : line } : undefined);
+  const go = async (full) => {
+    const name = rpath.basename(full);
+    if (folder) { const ex = await import('./explorer.js'); ex.open(machine, rpath.dirname(full), name); return; }
+    const [{ openFile }, ex] = await Promise.all([import('./viewer.js'), import('./explorer.js')]);
+    openFile(machine, full, { name, size: 0 }, ex.openPath, line ? { line, to: to >= line ? to : line } : undefined);
+  };
+  if (r.found.length === 1) return go(r.found[0].path);
+  const ctx = await import('../ctxmenu.js'), b = a.getBoundingClientRect();
+  ctx.show(b.left, b.bottom, [{ label: `找到 ${r.found.length} 个 ${rpath.basename(p)}，打开哪一个？`, disabled: true }, '-',
+    ...r.found.map((f) => ({ label: f.path + (HOW[f.how] ? `（${HOW[f.how]}）` : ''), onClick: () => go(f.path) }))]);
 }

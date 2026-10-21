@@ -5,14 +5,18 @@
 //      dl:true   a download to disk: no 100 MB limit;   from:n   start at byte n (said back in from)
 //   {t:'fs-ack', rid, i}                   the server passed chunk i on: at most WINDOW chunks travel unacknowledged
 //   {t:'fs-cancel', rid}                   stop reading
+//   {t:'fs', rid, op:'locate', path, session, at}   where a path named in a session's conversation (at time at) is
+//                                          (locate.js) -> {t:'fs-res', rid, ok, found:[{path, how}]}
 // (uploads into a folder here: fs-upload.js)
 'use strict';
 const { createFsUpload } = require('./fs-upload');
+const { locate } = require('./locate');
 const CHUNK = 512 * 1024;
 const WINDOW = 8;
 const STALL_MS = 60e3;
 
-function createFsServe(files, send) {
+// sessionFile(id): that session's transcript ({ file, cwd }), for locate
+function createFsServe(files, send, { sessionFile = () => null } = {}) {
   const reads = new Map();                 // rid -> { stream, sent, acked, timer }
 
   function stop(rid) {
@@ -50,6 +54,7 @@ function createFsServe(files, send) {
       if (d.op === 'roots') send({ t: 'fs-res', rid: d.rid, ok: true, roots: await files.roots(true) });   // (looked up now: a drive put in since is there)
       else if (d.op === 'list') send({ t: 'fs-res', rid: d.rid, ok: true, ...(await files.list(d.path)) });
       else if (d.op === 'read') await read(d.rid, d.path, { big: d.dl === true, from: d.from });
+      else if (d.op === 'locate') send({ t: 'fs-res', rid: d.rid, ...(await locate({ files, sessionFile }, { p: d.path, session: d.session, at: d.at })) });
       else fail(d.rid, '无效请求');
     } catch (e) { fail(d.rid, e); }
   }

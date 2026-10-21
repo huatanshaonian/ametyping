@@ -15,6 +15,8 @@ fs.writeFileSync(path.join(WORK, 'docs', 'figures', 'fdtd', 'vvd_plasma_position
   Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
 fs.writeFileSync(path.join(WORK, 'src', 'main.py'), Array.from({ length: 60 }, (_, i) => `print("line ${i + 1}")`).join('\n') + '\n');
 fs.writeFileSync(path.join(WORK, 'docs', '报告.md'), '# 报告\n');
+// the same figure in two branches of the project: found by the search below it, picked from a menu
+for (const b of ['b1', 'b2']) { fs.mkdirSync(path.join(WORK, b, 'figs'), { recursive: true }); fs.copyFileSync(path.join(WORK, 'docs', 'figures', 'fdtd', 'vvd_plasma_position.png'), path.join(WORK, b, 'figs', 'cmp.png')); }
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 const PORT = 18856, CDP = 9363, SID = 'abababab-1111-2222-3333-444444444444';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -26,6 +28,7 @@ const SAID = [
   '图在 docs/figures/fdtd/vvd_plasma_position.png 这样的，代码见 `src/main.py:30`。',
   `绝对路径 ${path.join(WORK, 'src', 'main.py')}:40-42，中文名 docs/报告.md，还有 docs/nope.png。`,
   '网址 https://example.com/a/b.png 不算。',
+  '两个分支的对比图 figs/cmp.png。',
 ].join('\n\n');
 fs.writeFileSync(path.join(PROJ, SID + '.jsonl'),
   J({ type: 'user', uuid: 'u1', cwd: CWD, timestamp: new Date(now - 60e3).toISOString(), message: { role: 'user', content: '图放哪了？' } }) +
@@ -85,7 +88,7 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await sleep(3500);
     await evalJs("(() => { const c = document.querySelector('.dash .card'); c && c.click(); })()");
     const links = await until("(() => { const l = [...document.querySelectorAll('.dash .conv a.fp')]; return l.length ? l.map(a => [a.dataset.p, a.dataset.l || '', a.dataset.l2 || '', a.textContent]) : null; })()");
-    chk('paths in the answer are links (with their lines); the URL is not', links && links.length === 5 &&
+    chk('paths in the answer are links (with their lines); the URL is not', links && links.length === 6 &&
       links[0][0] === 'docs/figures/fdtd/vvd_plasma_position.png' && links[1][0] === 'src/main.py' && links[1][1] === '30' &&
       links[2][1] === '40' && links[2][2] === '42' && links[3][0] === 'docs/报告.md' && links[4][0] === 'docs/nope.png' &&
       !(await evalJs("[...document.querySelectorAll('.dash .conv a.fp')].some(a => a.dataset.p.includes('example'))")), links);
@@ -110,6 +113,13 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await click(4);
     const nf = await until("(() => { const n = document.querySelector('.dash .note'); return n && /找不到/.test(n.textContent) ? n.textContent : null; })()");
     chk('a file that is not there: said so', nf && /docs\/nope\.png/.test(nf), nf);
+    // found in two places: a menu at the link to pick from
+    await click(5);
+    const pick = await until("(() => { const l = [...document.querySelectorAll('.ctxm .ctxi .lb')].map(x => x.textContent); return l.length ? l : null; })()");
+    chk('found in two places: a menu to pick from', pick && pick.length === 3 && /找到 2 个 cmp\.png/.test(pick[0]) && pick.slice(1).every((x) => /[\\/]b[12][\\/]figs[\\/]cmp\.png（搜到的）$/.test(x)), pick);
+    await evalJs("[...document.querySelectorAll('.ctxm .ctxi')].find(x => /b2/.test(x.textContent)).click()");
+    chk('the one picked opens', await until(`(() => { const w = ${win('cmp.png')}; return !!(w && w.querySelector('.vimg') && /b2/.test(w.querySelector('.vpath').textContent)); })()`), 0);
+    await shot('74-paths-pick.png');
     // right-click: 在文件夹中显示
     await evalJs("(() => { const a = document.querySelectorAll('.dash .conv a.fp')[0]; const r = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 5, clientY: r.top + 5 })); })()");
     await sleep(400);

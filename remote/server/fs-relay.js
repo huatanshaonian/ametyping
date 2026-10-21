@@ -4,6 +4,7 @@
 // Every request needs a code entered within the hour, as acting on a machine does (else {ok:false, need:'totp'}).
 //   browser -> {t:'fs', rid, machine, op:'roots'|'list'|'read', path, dl?, from?}, {t:'fs-cancel', rid}
 //   agent   -> {t:'fs-res'|'fs-chunk'|'fs-end', rid, ...}   (the server's rid; answered to the asking browser only)
+//   browser -> {t:'fs', rid, machine, op:'locate', path, session, at}   where a path named in a conversation is
 // Uploads, to a machine whose agent allows them (agent/fs-upload.js), the other way round: the browser keeps a few
 // pieces in flight and sends the next as the agent says it has written one, so here too nothing piles up.
 //   browser -> {t:'fs', rid, machine, op:'up-open', path, name, size, mtime, overwrite}, {t:'fs-up', rid, off, data},
@@ -12,7 +13,7 @@
 'use strict';
 const crypto = require('crypto');
 
-const OPS = new Set(['roots', 'list', 'read', 'up-open']);
+const OPS = new Set(['roots', 'list', 'read', 'up-open', 'locate']);
 const IDLE_MS = 60e3;                     // a request the agent stopped answering
 const DRAIN = 4 * 1024 * 1024;            // browser socket backlog before chunks are held back
 const MAX_READS = 4;                      // files one browser reads at a time
@@ -65,7 +66,8 @@ function createFsRelay({ machines, audit, fresh }) {
     if (d.op === 'up-open') audit('fs-upload', c.ip, d.machine, (d.path + ' ← ' + d.name).slice(0, 300), d.size);
     // (a read may be a download to disk, dl, and carry on from a byte, from: the agent checks and says back where)
     const more = d.op === 'read' ? { ...(d.dl === true ? { dl: true } : {}), ...(Number.isSafeInteger(d.from) && d.from > 0 ? { from: d.from } : {}) }
-      : d.op === 'up-open' ? { name: d.name, size: d.size, mtime: Number.isFinite(d.mtime) ? d.mtime : 0, overwrite: d.overwrite === true } : {};
+      : d.op === 'up-open' ? { name: d.name, size: d.size, mtime: Number.isFinite(d.mtime) ? d.mtime : 0, overwrite: d.overwrite === true }
+      : d.op === 'locate' ? { session: typeof d.session === 'string' && /^(codex:)?[\w-]{1,80}$/.test(d.session) ? d.session : undefined, at: Number.isFinite(d.at) ? d.at : undefined } : {};
     if (!toAgent(d.machine, { t: 'fs', rid: srid, op: d.op, path: d.path, ...more })) end(srid, '发送失败');
   }
 

@@ -45,7 +45,7 @@ const CONTROL = cfg.control === true;
 // file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured; uploads into those
 // folders only with "upload": true there (fs-upload.js)
 const browse = createFiles(cfg.files);
-const fsServe = createFsServe(browse, (o) => sendJSON(o));
+const fsServe = createFsServe(browse, (o) => sendJSON(o), { sessionFile: (id) => sessionFile(id) });
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
 

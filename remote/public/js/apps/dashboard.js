@@ -118,7 +118,7 @@ function mount(current) {
   const pathCtx = (folder) => {
     const s = find(sel); if (!s) return null;
     const m = net.state.sessions.find((x) => x.machine === s.machine);
-    return { machine: s.machine, cwd: s.cwd || '', files: !!(m && m.files), note: (msg, bad) => showNote(msg, bad), folder };
+    return { machine: s.machine, session: s.id, cwd: s.cwd || '', files: !!(m && m.files), note: (msg, bad) => showNote(msg, bad), folder };
   };
   right.addEventListener('click', (e) => {
     const a = e.target.closest('a.fp'); if (!a) return;
@@ -364,6 +364,7 @@ function mount(current) {
   }
   function msgEl(m) {
     const d = h('div', { class: 'm ' + m.role });
+    if (m.t) d.dataset.t = m.t;                     // (a path in it is looked for from where the session was then)
     const tm = `<span class="tm">${m.t ? hhmm(m.t) : ''}</span>`;
     if (m.role === 'assistant') d.innerHTML = md(m.text || '');
     else if (m.role === 'btw') { d.innerHTML = '<div class="btwh">顺带一问的回答 · 点开单独看</div>' + md(m.text || ''); d.title = '点开单独看'; }

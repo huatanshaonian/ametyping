@@ -6,7 +6,9 @@
 //   and histories there); deny: folders in it, by their path from the root, that are left out with all they hold
 //   (AppData: browsers' saved passwords and cookies, every program's tokens). Where roots overlap, the innermost one's
 //   rules count. A path may be "~" (or start with "~/"): the folder of the user the agent runs as, whatever its name
-//   on that machine -- the same line then works on every computer.
+//   on that machine -- the same line then works on every computer. "@claude-temp" is Claude Code's temporary folder
+//   (its sessions' scratchpads), inside AppData on Windows: { "path": "@claude-temp", "readOnly": true } opens just
+//   that, and, being the innermost root, its own rules count there. readOnly: nothing may be uploaded into it.
 // Which drives "*" stands for is looked up when it is asked: when the explorer asks for the list of roots, and when a
 // path is on a drive not known yet (a USB stick put in since). Nothing watches or polls for drives.
 // Every path is resolved to its real location first (symlinks, "..", letter case) and must lie inside a root.
@@ -27,8 +29,10 @@ const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.p
 
 const denied = (name) => DENY_DIRS.has(WIN ? name.toLowerCase() : name) || DENY_FILE.test(name);
 const norm = (p) => (WIN ? p.toLowerCase() : p);                // (Windows names: the case does not matter)
-// "~" and "~/x": in the home folder of the user the agent runs as
-const expand = (p) => (p === '~' ? os.homedir() : /^~[\\/]/.test(p) ? path.join(os.homedir(), p.slice(2)) : p);
+// "~" and "~/x": in the home folder of the user the agent runs as. "@claude-temp": Claude Code's temporary folder on
+// this computer, where it keeps each session's scratchpad (Windows %TEMP%\claude, elsewhere /tmp/claude-<uid>)
+const claudeTemp = () => path.join(os.tmpdir(), WIN || typeof process.getuid !== 'function' ? 'claude' : `claude-${process.getuid()}`);
+const expand = (p) => (p === '~' ? os.homedir() : /^~[\\/]/.test(p) ? path.join(os.homedir(), p.slice(2)) : p === '@claude-temp' ? claudeTemp() : p);
 
 function createFiles(cfg) {
   const enabled = !!(cfg && Array.isArray(cfg.roots) && cfg.roots.length);
@@ -41,6 +45,7 @@ function createFiles(cfg) {
     if (realRoots && !fresh) return realRoots;
     const out = [];
     for (let r of cfg.roots) {
+      const tmp = r && r.path === '@claude-temp';            // (shown under its own name in 我的电脑)
       if (typeof r === 'string') r = expand(r); else if (r && typeof r === 'object' && typeof r.path === 'string') r = { ...r, path: expand(r.path) };
       if (r === '*' && WIN) {              // every drive letter that exists, minus the excluded ones
         for (let c = 65; c <= 90; c++) {
@@ -52,7 +57,7 @@ function createFiles(cfg) {
         try { const p = await fsp.realpath(r); out.push({ name: p, path: p }); } catch {}
       } else if (r && typeof r === 'object' && typeof r.path === 'string' && path.isAbsolute(r.path)) {
         const deny = (Array.isArray(r.deny) ? r.deny : []).filter((x) => typeof x === 'string' && x).map((x) => norm(x.replace(/[\\/]+/g, path.sep).replace(/^[\\/]+|[\\/]+$/g, '')));
-        try { const p = await fsp.realpath(r.path); out.push({ name: p, path: p, hideDot: r.hideDot === true, deny }); } catch {}
+        try { const p = await fsp.realpath(r.path); out.push({ name: tmp ? 'Claude 临时文件夹' : p, path: p, hideDot: r.hideDot === true, deny, readOnly: r.readOnly === true || undefined }); } catch {}
       }
     }
     realRoots = out;
@@ -140,6 +145,7 @@ function createFiles(cfg) {
       (WIN && (/[<>:"|?*\u0001-\u001f]/.test(name) || /[. ]$/.test(name))) || /\.ame-upload$/.test(name)) throw new Error('文件名不能用');
     const real = await folder(dir);
     const at = await rootOf(real);
+    if (at.r.readOnly) throw new Error('这个位置只读，不能上传');
     if (denied(name) || hidden(at.r, path.join(at.rel, name))) throw new Error('这个文件名受保护，不能上传');
     const p = path.join(real, name);
     let st = null; try { st = await fsp.stat(p); } catch {}
@@ -148,7 +154,7 @@ function createFiles(cfg) {
   }
 
   const canUpload = enabled && cfg.upload === true;
-  return { enabled, canUpload, roots, list, open, folder, target };
+  return { enabled, canUpload, roots, list, open, folder, target, resolve };
 }
 
 module.exports = { createFiles, denied, MAX };
