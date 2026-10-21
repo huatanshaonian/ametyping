@@ -66,6 +66,8 @@ function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () 
     running = (async () => {
       try {
         const v = await api.version();
+        // Zotero answered: an earlier failure (e.g. it was still starting after a reboot) is over, changed or not
+        lastError = '';
         if (!force && v === st.version && st.at) return false;
         const [itemsR, colR] = await Promise.all([api.get('items?format=json'), api.get('collections?format=json')]);
         const items = {}, attachments = {}, notes = {}, annotations = {}, collections = {};
