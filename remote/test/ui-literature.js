@@ -75,7 +75,7 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await step('the day\'s push', async () => { const f = (await api('GET', '/api/lit/feed')).j; return !f.status.running && f.status.runs.length && f.items.length && f; });
 
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
-      `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
+      `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', '--disable-popup-blocking', 'about:blank'], { stdio: 'ignore' });
     await sleep(2000);
     const tab = await getJSON(`http://127.0.0.1:${CDP}/json/new?about:blank`, 'PUT');
     const ws = new WebSocket(tab.webSocketDebuggerUrl); await new Promise((r) => ws.on('open', r));
@@ -233,6 +233,37 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("[...document.querySelectorAll('.ln-new .btn')].find(b => b.textContent === '不改了').click()");
     await evalJs("document.querySelector('.lr-nb').click()");
     chk('the button closes the column again', await waitFor("!document.querySelector('.lr.notes') && document.querySelector('.lr-notes').offsetWidth === 0") && (await evalJs("localStorage.getItem('lit.reader.notes')")) === '0');
+    // 拆分: the PDF in a browser window of its own -- the page, the selection and the jumps go between the two
+    await evalJs("document.querySelector('.lr-sb').click()");
+    const pop = await until(async () => (await getJSON(`http://127.0.0.1:${CDP}/json/list`)).find((t) => t.type === 'page' && /\/lit-pdf\?key=AAAAAAA1/.test(t.url)), 10000);
+    chk('拆分: the PDF opens in a browser window of its own', !!pop);
+    if (pop) {
+      const pws = new WebSocket(pop.webSocketDebuggerUrl); await new Promise((r) => pws.on('open', r));
+      let pid = 0; const pend = new Map();
+      pws.on('message', (m) => { const o = JSON.parse(m); if (o.id && pend.has(o.id)) { pend.get(o.id)(o); pend.delete(o.id); } if (o.method === 'Runtime.exceptionThrown') errors.push('PDF window: ' + JSON.stringify(o.params.exceptionDetails.exception && o.params.exceptionDetails.exception.description || o.params.exceptionDetails.text).slice(0, 300)); });
+      const pcall = (method, params = {}) => new Promise((r) => { const i = ++pid; pend.set(i, r); pws.send(JSON.stringify({ id: i, method, params })); });
+      const pEval = async (expr) => ((await pcall('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.result || {}).value;
+      const pWait = async (expr, ms = 15000) => { for (let i = 0; i < ms / 300; i++) { if (await pEval(expr)) return true; await sleep(300); } return false; };
+      await pcall('Runtime.enable');
+      chk('拆分: the PDF drawn there (titled with the paper), here only the side -- as wide as the window', await pWait("!!document.querySelector('.pdf-page canvas') && /Backward scattering/.test(document.title)") &&
+        await waitFor("!!document.querySelector('.lr.split') && document.querySelector('.lr-pdf').offsetWidth === 0 && document.querySelector('.lr-sb').textContent === '收回 PDF' && document.querySelector('.lr-side').offsetWidth > 700"),
+        await evalJs("[document.querySelector('.lr').className, document.querySelector('.lr-side').offsetWidth]"));
+      await pWait("!!document.querySelector('.pdf-page[data-n=\"1\"] .textLayer span')");
+      await pEval("(() => { const s = document.querySelector('.pdf-page[data-n=\"1\"] .textLayer span'); const r = document.createRange(); r.selectNodeContents(s); getSelection().removeAllRanges(); getSelection().addRange(r); })()");
+      chk('拆分: text selected in the PDF window is what a question here goes with', await waitFor("/会带上选中的：plasma sheath/.test(document.querySelector('.lr-sel').textContent)"), await evalJs("document.querySelector('.lr-sel').textContent"));
+      await pEval("(() => { getSelection().removeAllRanges(); const i = document.querySelector('.pdf-no'); i.value = 2; i.dispatchEvent(new Event('change')); })()");
+      chk('拆分: the page turned there is the page here', await waitFor("/当前第 2 页/.test(document.querySelector('.lr-sel').textContent)"), await evalJs("document.querySelector('.lr-sel').textContent"));
+      chk('拆分: the PDF window keeps the pages to its width', await pWait("(() => { const p = document.querySelector('.pdf-pages'), g = document.querySelector('.pdf-page'); return g.offsetWidth <= p.clientWidth && g.offsetWidth > p.clientWidth * 0.8; })()", 5000),
+        await pEval("[document.querySelector('.pdf-page').offsetWidth, document.querySelector('.pdf-pages').clientWidth]"));
+      await shot('84c-lit-split.png');
+      const ps = await pcall('Page.captureScreenshot', { format: 'png' }); if (ps.result) fs.writeFileSync(path.join(OUT, '84d-lit-split-pdf.png'), Buffer.from(ps.result.data, 'base64'));
+      await evalJs("document.querySelector('.lr-ai .plink').click()");
+      chk('拆分: a page link here turns the page there', await pWait("document.querySelector('.pdf-no').value === '1'"), await pEval("document.querySelector('.pdf-no').value"));
+      await evalJs("document.querySelector('.lr-sb').click()");
+      chk('收回 PDF: that window closes, the PDF is back on the left', !!(await until(async () => !(await getJSON(`http://127.0.0.1:${CDP}/json/list`)).some((t) => /\/lit-pdf/.test(t.url)), 8000)) &&
+        await waitFor("!document.querySelector('.lr.split') && document.querySelector('.lr-pdf').offsetWidth > 300 && document.querySelector('.lr-sb').textContent === '拆分'"));
+      try { pws.close(); } catch {}
+    }
     await evalJs("[...document.querySelectorAll('.lr-box .btn')].find(b => b.textContent === '沉淀到卡片').click()");
     await sleep(2500);
 

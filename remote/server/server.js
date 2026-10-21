@@ -483,6 +483,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(req, res, 'index.html');
+  // 深读 › 拆分: a paper's PDF in a browser window of its own (js/apps/lit-pdf-page.js)
+  if (req.method === 'GET' && p === '/lit-pdf') return serveFile(req, res, 'lit-pdf.html', 'no-cache');
   // the document editor's own pages and files (office/proxy.js): its headers, not this site's
   if (office && p.startsWith(office.PREFIX + '/')) return office.web(req, res, url);
   if (office && /^\/api\/office(\/|$)/.test(p) && await office.handle(req, res, url, ip, json, send)) return;

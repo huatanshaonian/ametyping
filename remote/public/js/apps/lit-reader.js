@@ -6,6 +6,8 @@
 //         additions (知识库 › 待确认)
 //   卡片  the card; 深读卡 from the full text
 // and, opened by 「笔记」, a third column with the user's own notes on the paper, typed or by hand (lit-notes.js).
+// 拆分 puts the PDF in a browser window of its own (lit-split.js): the page it is on, the text selected in it and the
+// jumps to a page then go between the two windows.
 // server/literature/reader.js; answers arrive by the server's 'lit' event (read:<key>).
 import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
@@ -13,6 +15,7 @@ import { get, post, onLit, readerId } from './lit-api.js';
 import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
 import { notesPanel } from './lit-notes.js';
+import { splitChannel, pdfPageUrl, pdfWindowName } from './lit-split.js';
 
 export function openReader(key, page) {
   const id = readerId(key);
@@ -37,8 +40,9 @@ function mountReader(key, firstPage) {
   const dlB = h('button', { class: 'btn lr-dl', type: 'button', text: '下载', title: '把这篇的 PDF 存到电脑上', hidden: true, onclick: () => {
     const a = h('a', { href: '/api/lit/pdf?dl=1&key=' + encodeURIComponent(key), download: '' }); document.body.append(a); a.click(); a.remove(); } });
   // 读图: how much has been read as images, a request to approve, the transcription of the page shown
-  const vbox = visionBox(key, { curPage: () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0) });
-  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap, notesB, dlB), vbox.el, pane);
+  const vbox = visionBox(key, { curPage: () => curPage() });
+  const splitB = h('button', { class: 'btn lr-sb', type: 'button', text: '拆分', title: '把 PDF 放到单独的浏览器窗口（可以拖到另一块屏幕或另一个桌面），这里只留右边的栏目' });
+  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap, notesB, splitB, dlB), vbox.el, pane);
   // the bar between the PDF and the side: dragged to give either more room (kept for the next paper; a double click
   // puts it back)
   const split = h('div', { class: 'lr-split', title: '拖动调整左右两栏的宽度（双击还原）' });
@@ -74,7 +78,7 @@ function mountReader(key, firstPage) {
   const roomForPdf = () => {
     let need = PDF_MIN - pdfBox.offsetWidth;
     const win = root.closest('.win');
-    if (need <= 0 || !win || root.classList.contains('narrow')) return;
+    if (need <= 0 || !win || root.classList.contains('narrow') || apart) return;
     if (!win.classList.contains('max') && win.parentElement) {
       const free = win.parentElement.clientWidth - win.offsetWidth, grow = Math.max(0, Math.min(need, free));
       if (grow) { const w = win.offsetWidth + grow; win.style.width = w + 'px'; win.style.left = Math.max(0, Math.min(win.offsetLeft, win.parentElement.clientWidth - w)) + 'px'; need -= grow; }
@@ -94,9 +98,36 @@ function mountReader(key, firstPage) {
   let item = null, st = { turns: [] }, tab = '理解', pdf = null, destroyed = false;
   const drafts = { chat: '', mine: null };                // (what is being typed survives a refresh)
 
-  const goto = (n) => { const no = pdfBox.querySelector('.pdf-no'); if (!no) return; no.value = n; no.dispatchEvent(new Event('change')); root.classList.remove('side'); };
-  const curPage = () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0);
-  const selected = () => { const s = document.getSelection(); return s && s.rangeCount && pdfBox.contains(s.anchorNode) ? s.toString().trim() : ''; };
+  // 拆分: null, or what the PDF window last said { page, sel }
+  let apart = null;
+  const ch = splitChannel(key);
+  const localGoto = (n) => { const no = pdfBox.querySelector('.pdf-no'); if (!no) return; no.value = n; no.dispatchEvent(new Event('change')); };
+  const goto = (n) => { if (apart) ch.postMessage({ t: 'goto', n }); else { localGoto(n); root.classList.remove('side'); } };
+  const curPage = () => apart ? apart.page : +((pdfBox.querySelector('.pdf-no') || {}).value || 0);
+  const selected = () => { if (apart) return apart.sel; const s = document.getSelection(); return s && s.rangeCount && pdfBox.contains(s.anchorNode) ? s.toString().trim() : ''; };
+  const setSplit = (on) => {
+    root.classList.toggle('split', on); splitB.classList.toggle('on', on);
+    splitB.textContent = on ? '收回 PDF' : '拆分';
+    splitB.title = on ? 'PDF 回到这个窗口的左边（关掉那个浏览器窗口也一样）' : '把 PDF 放到单独的浏览器窗口（可以拖到另一块屏幕或另一个桌面），这里只留右边的栏目';
+    if (on) root.classList.remove('side');
+  };
+  const unsplit = (p) => { apart = null; setSplit(false); if (p > 1) setTimeout(() => localGoto(p), 50); };
+  ch.onmessage = ({ data: m }) => {
+    if (!m || destroyed) return;
+    if (m.t === 'here') { apart = { page: +m.page || 0, sel: String(m.sel || '') }; setSplit(true); }
+    else if (!apart) return;
+    else if (m.t === 'page') apart.page = +m.n || apart.page;
+    else if (m.t === 'sel') { apart.sel = String(m.s || ''); root.dispatchEvent(new Event('lr-sel')); }
+    else if (m.t === 'bye') unsplit(+m.page || apart.page);
+  };
+  splitB.addEventListener('click', () => {
+    if (apart) { ch.postMessage({ t: 'close' }); unsplit(apart.page); return; }
+    // the browser window: the screen's right half (dragged anywhere after); it says 'here' once its PDF is shown
+    const sw = screen.availWidth || 1600, sh = screen.availHeight || 900, w = Math.max(600, Math.round(sw / 2));
+    const win = window.open(pdfPageUrl(key, curPage()), pdfWindowName(key), `popup,width=${w},height=${sh},left=${(screen.availLeft || 0) + sw - w},top=${screen.availTop || 0}`);
+    if (!win) { splitB.textContent = '浏览器拦下了弹窗'; setTimeout(() => { if (!apart) splitB.textContent = '拆分'; }, 3000); }
+  });
+  ch.postMessage({ t: 'ping' });                          // (a PDF window still open from before: back to 拆分)
 
   async function loadPdf() {
     try {
@@ -160,6 +191,8 @@ function mountReader(key, firstPage) {
     let lastSel = '';
     document.addEventListener('selectionchange', onSel);
     function onSel() { const s = selected(); if (s) { lastSel = s; refreshSel(); } }
+    const onRemote = () => { const s = selected(); if (s) lastSel = s; refreshSel(); };   // (拆分: the PDF window's selection)
+    root.addEventListener('lr-sel', onRemote);
     const send = async () => {
       const text = q.value.trim(); if (!text || busy()) return;
       const r = await post('/api/lit/chat', { key, q: text, sel: selected() || lastSel, page: curPage() });
@@ -172,7 +205,7 @@ function mountReader(key, firstPage) {
       h('button', { class: 'btn', type: 'button', text: busy() && st.job.what === 'distill' ? '沉淀中…' : '沉淀到卡片', title: '把对话里值得留下的结论整理成对卡片的修改建议（在「知识库」里确认）', disabled: busy(),
         onclick: async () => { const r = await post('/api/lit/distill', { key }); if (r.ok) { st.job = { running: true, what: 'distill' }; render(); } } }),
       h('small', { class: 'lit-st', text: distilled }))));
-    pane._off = () => document.removeEventListener('selectionchange', onSel);
+    pane._off = () => { document.removeEventListener('selectionchange', onSel); root.removeEventListener('lr-sel', onRemote); };
     list.scrollTop = list.scrollHeight;
     refreshSel();
   }
@@ -192,5 +225,5 @@ function mountReader(key, firstPage) {
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 760));
   ro.observe(root);
   load().then(() => { show(mineText() || (st.feedback) ? '对话' : '理解'); loadPdf(); });
-  return { root, goto, destroy() { destroyed = true; off(); vbox.destroy(); notes.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
+  return { root, goto, destroy() { if (apart) ch.postMessage({ t: 'close' }); ch.close(); destroyed = true; off(); vbox.destroy(); notes.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
 }
