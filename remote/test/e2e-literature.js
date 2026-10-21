@@ -87,6 +87,9 @@ const src = createFakeSources();
     const pdf = await req('GET', '/api/lit/pdf?key=AAAAAAA1', null, cookie);
     ok('the PDF comes out of the WebDAV zip', pdf.status === 200 && pdf.body.slice(0, 5).toString() === '%PDF-' && pdf.body.length === PDF1.length);
     ok('no PDF: 404', (await req('GET', '/api/lit/pdf?key=AAAAAAA2', null, cookie)).status === 404);
+    const an0 = await G('/api/lit/annots?key=AAAAAAA1');
+    ok('批注: the paper\'s annotations listed (the one made in Zotero too); without write access an addition is refused, asking for it',
+      !an0.canWrite && an0.items.some((x) => x.id === 'ANNAAAA1' && x.type === 'highlight') && (await P('/api/lit/annots/add', { key: 'AAAAAAA1', text: 'x', pageIndex: 0, rects: [[1, 2, 3, 4]] })).need === 'authorize', an0);
     const solo = await req('GET', '/lit-pdf?key=AAAAAAA1', null, cookie), soloOut = await req('GET', '/lit-pdf?key=AAAAAAA1');
     ok('拆分: the PDF window\'s page is there for a signed-in browser only', solo.status === 200 && /lit-pdf-page\.js/.test(solo.body.toString()) && soloOut.status === 302, [solo.status, soloOut.status]);
     const dl = await req('GET', '/api/lit/pdf?dl=1&key=AAAAAAA1', null, cookie);
@@ -190,6 +193,29 @@ const src = createFakeSources();
     ok('收下 without write access: refused, asks for the authorization', !k0.ok && k0.need === 'authorize', k0);
     ok('authorization started', (await P('/api/lit/zotero/authorize')).ok);
     ok('granted (the key kept, private)', await until(async () => (await G('/api/lit')).zotero.canWrite) && fs.existsSync(path.join(T, 'srv', 'data', 'literature', 'zotero-key.json')));
+
+    // ---- 批注 (kept in Zotero) ----
+    const an1 = await P('/api/lit/annots/add', { key: 'AAAAAAA1', type: 'highlight', color: '#5fb236', text: ' plasma  sheath ', comment: '鞘套', pageIndex: 0, pageLabel: '1', rects: [[200, 712, 72, 700], [72, 686, 150, 698]], top: 80, offset: 12 });
+    const zn1 = an1.ok && zot.objs.get(an1.item.id);
+    ok('批注: a highlight goes into Zotero under the PDF as Zotero makes them (position in points, sort index, the text tidied)', !!zn1 && zn1.itemType === 'annotation' && zn1.parentItem === 'ATTAAAA1' && zn1.annotationType === 'highlight' &&
+      zn1.annotationColor === '#5fb236' && zn1.annotationText === 'plasma sheath' && zn1.annotationComment === '鞘套' && zn1.annotationSortIndex === '00000|000012|00080' && zn1.annotationPageLabel === '1' &&
+      JSON.stringify(JSON.parse(zn1.annotationPosition)) === '{"pageIndex":0,"rects":[[72,700,200,712],[72,686,150,698]]}', [an1, zn1]);
+    const ln1 = await G('/api/lit/annots?key=AAAAAAA1');
+    ok('...listed at once, with its place', ln1.canWrite && ln1.items.some((x) => x.id === an1.item.id && x.rects.length === 2 && x.pageIndex === 0 && x.comment === '鞘套'), ln1);
+    const un1 = await P('/api/lit/annots/update', { key: 'AAAAAAA1', id: an1.item.id, comment: '鞘套厚度', color: '#ff6666', type: 'underline' });
+    const zn1b = zot.objs.get(an1.item.id);
+    ok('...its comment, colour and kind changed in Zotero', un1.ok && zn1b.annotationComment === '鞘套厚度' && zn1b.annotationColor === '#ff6666' && zn1b.annotationType === 'underline' && un1.item.type === 'underline', un1);
+    ok('...a colour not in Zotero\'s palette, or one asked about from another paper: refused', !(await P('/api/lit/annots/update', { key: 'AAAAAAA1', id: an1.item.id, color: '#123456' })).ok &&
+      !(await P('/api/lit/annots/update', { key: 'AAAAAAA2', id: an1.item.id, comment: 'x' })).ok && zot.objs.get(an1.item.id).annotationComment === '鞘套厚度');
+    ok('...and the card reads it (the copy of the library caught up)', !!(await until(async () => (await G('/api/lit/item?key=AAAAAAA1')).annotations.some((x) => x.comment === '鞘套厚度' && x.type === 'underline'), 5000)));
+    const nn1 = await P('/api/lit/annots/add', { key: 'AAAAAAA1', type: 'note', color: '#2ea8e5', comment: '这里对比仿真', pageIndex: 1, rects: [[300, 400, 330, 430]], top: 392 });
+    ok('a note on the page: Zotero\'s 22-point square, no text', nn1.ok && JSON.stringify(JSON.parse(zot.objs.get(nn1.item.id).annotationPosition).rects) === '[[300,400,322,422]]' && zot.objs.get(nn1.item.id).annotationText === '', nn1);
+    ok('a highlight without text, or without a place: refused', !(await P('/api/lit/annots/add', { key: 'AAAAAAA1', type: 'highlight', text: ' ', pageIndex: 0, rects: [[1, 2, 3, 4]] })).ok &&
+      !(await P('/api/lit/annots/add', { key: 'AAAAAAA1', text: 'x', pageIndex: 0, rects: [] })).ok && !(await P('/api/lit/annots/add', { key: 'AAAAAAA2', text: 'x', pageIndex: 0, rects: [[1, 2, 3, 4]] })).ok);
+    const dn1 = await P('/api/lit/annots/delete', { key: 'AAAAAAA1', id: nn1.item.id }), dn2 = await P('/api/lit/annots/delete', { key: 'AAAAAAA1', id: an1.item.id });
+    ok('删除: gone from Zotero and from the list', dn1.ok && dn2.ok && !zot.objs.has(nn1.item.id) && !zot.objs.has(an1.item.id) &&
+      !(await G('/api/lit/annots?key=AAAAAAA1')).items.some((x) => x.id === nn1.item.id || x.id === an1.item.id), [dn1, dn2]);
+    await until(async () => !(await G('/api/lit/item?key=AAAAAAA1')).annotations.some((x) => x.comment === '鞘套厚度'), 5000);
     const k1 = await P('/api/lit/feed/keep', { id: ramc.id });
     ok('收下: a Zotero item', k1.ok && /^[A-Z0-9]{8}$/.test(k1.key), k1);
     const e1 = await until(async () => { const f = await G('/api/lit/feed'); const e = f.items.find((x) => x.id === ramc.id); return e && e.intake && /ready|error/.test(e.intake.stage) && e; }, 30000);

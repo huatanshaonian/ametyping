@@ -16,6 +16,7 @@ import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
 import { notesPanel } from './lit-notes.js';
 import { splitChannel, pdfPageUrl, pdfWindowName } from './lit-split.js';
+import { attachAnnots } from './pdf-annot.js';
 
 export function openReader(key, page) {
   const id = readerId(key);
@@ -95,7 +96,7 @@ function mountReader(key, firstPage) {
   };
   notesB.addEventListener('click', () => showNotes(!root.classList.contains('notes')));
   if (notesOn()) { root.classList.add('notes'); notesB.classList.add('on'); }
-  let item = null, st = { turns: [] }, tab = '理解', pdf = null, destroyed = false;
+  let item = null, st = { turns: [] }, tab = '理解', pdf = null, annots = null, destroyed = false;
   const drafts = { chat: '', mine: null };                // (what is being typed survives a refresh)
 
   // 拆分: null, or what the PDF window last said { page, sel }
@@ -137,6 +138,8 @@ function mountReader(key, firstPage) {
       const { renderPdf } = await import('./pdfview.js');
       if (destroyed) return;
       pdf = await renderPdf(pdfBox, await res.arrayBuffer());
+      if (destroyed) { pdf.destroy(); return; }
+      annots = attachAnnots(pdf, key);                    // 批注: highlights / underlines / notes, kept in Zotero
       if (firstPage) setTimeout(() => goto(firstPage), 400);
     } catch (e) { pdfBox.replaceChildren(h('div', { class: 'notice', text: 'PDF 打不开：' + (e.message || e) })); }
   }
@@ -221,9 +224,9 @@ function mountReader(key, firstPage) {
 
   for (const b of tabs) b.addEventListener('click', () => { if (pane._off) pane._off(); show(b.dataset.t); });
   swap.addEventListener('click', () => root.classList.toggle('side'));
-  const off = onLit((w) => { if (w === 'read:' + key || w === 'card:' + key || (w === 'kb' && tab === '卡片')) load(); });
+  const off = onLit((w) => { if (w === 'annots:' + key) { if (annots) annots.reload(); return; } if (w === 'read:' + key || w === 'card:' + key || (w === 'kb' && tab === '卡片')) load(); });
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 760));
   ro.observe(root);
   load().then(() => { show(mineText() || (st.feedback) ? '对话' : '理解'); loadPdf(); });
-  return { root, goto, destroy() { if (apart) ch.postMessage({ t: 'close' }); ch.close(); destroyed = true; off(); vbox.destroy(); notes.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (pdf) pdf.destroy(); } };
+  return { root, goto, destroy() { if (apart) ch.postMessage({ t: 'close' }); ch.close(); destroyed = true; off(); vbox.destroy(); notes.destroy(); ro.disconnect(); if (pane._off) pane._off(); if (annots) annots.destroy(); if (pdf) pdf.destroy(); } };
 }

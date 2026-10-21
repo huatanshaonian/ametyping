@@ -43,6 +43,7 @@ const { createAbsJob } = require('./absjob');
 const { createCnJournals } = require('./sources/cnjournals');
 const { createPdfQueue } = require('./pdfqueue');
 const { createNotes } = require('./notes');
+const { createAnnots } = require('./annots');
 const { createDigest } = require('./digest');
 
 const KEY = /^[A-Z0-9]{8}$/;
@@ -91,6 +92,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const profile = createProfile({ dir, mirror, ask: askFeed, openalex: sources.openalex, s2: sources.s2 || null, reports, log,
     onEdit: (before, after, by) => { if (!history.count()) history.seed({ ...before, organizedAt: Date.now() }); history.track(before, after, by); } });
   // 笔记: what the user writes beside a paper in 深读 (typed or by hand), in the knowledge base beside its card
+  // 批注: highlights / underlines / notes made on the 深读 PDF, kept in Zotero
+  const annots = createAnnots({ api, mirror, log, onChange: (k) => changed('annots:' + k) });
   const notes = createNotes({ dir, kbDir: kb.dir, mirror, ask: askVision, todos, log, onChange: (k) => changed('notes:' + k),
     citekeyOf: (it) => { const c = cards.find(it.key); return c ? path.basename(c.path, '.md') : kb.fileName(it.citekey); } });
   // 长报告: a text too long for the deep card is summed up part by part first
@@ -223,6 +226,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/pdfq') { json(res, 200, pdfq.status()); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (p.startsWith('/api/lit/notes')) return notes.handle(req, res, url, json, readBody);
+    if (p.startsWith('/api/lit/annots')) return annots.handle(req, res, url, json, readBody);
     if (req.method !== 'POST' || !p.startsWith('/api/lit/')) return false;
 
     // a PDF the user found themselves: the file is the body (upload.js)

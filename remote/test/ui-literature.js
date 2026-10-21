@@ -233,6 +233,46 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("[...document.querySelectorAll('.ln-new .btn')].find(b => b.textContent === '不改了').click()");
     await evalJs("document.querySelector('.lr-nb').click()");
     chk('the button closes the column again', await waitFor("!document.querySelector('.lr.notes') && document.querySelector('.lr-notes').offsetWidth === 0") && (await evalJs("localStorage.getItem('lit.reader.notes')")) === '0');
+    // 批注: select -> the bar -> a highlight in Zotero; a click on it -> comment, underline, delete; 便签; Ctrl + wheel zooms the PDF
+    await evalJs("(() => { const i = document.querySelector('.lr-pdf .pdf-no'); i.value = 1; i.dispatchEvent(new Event('change')); })()");
+    await waitFor("!!document.querySelector('.lr-pdf .pdf-page[data-n=\"1\"] .textLayer span')");
+    await evalJs(`(() => { const s = document.querySelector('.lr-pdf .pdf-page[data-n="1"] .textLayer span'); const r = document.createRange(); r.selectNodeContents(s); getSelection().removeAllRanges(); getSelection().addRange(r);
+      const b = s.getBoundingClientRect(); s.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: b.right, clientY: b.bottom })); })()`);
+    chk('批注: text selected in the PDF -> a bar with Zotero\'s colours, 下划线, 加评论', await waitFor("document.querySelectorAll('.pa-bar .pa-dot').length === 5 && /下划线/.test(document.querySelector('.pa-bar').textContent)"),
+      await evalJs("(document.querySelector('.pa-bar') || {}).outerHTML"));
+    await evalJs("document.querySelector('.pa-bar .pa-dot[title=\"绿色高亮\"]').click()");
+    const hl = await until(async () => [...zot.objs.values()].find((o) => o.itemType === 'annotation' && o.annotationType === 'highlight' && o.annotationColor === '#5fb236'), 8000);
+    chk('...a green highlight: in Zotero under the PDF with the text and its place, drawn on the page', !!hl && hl.parentItem === 'ATTAAAA1' && /plasma sheath/.test(hl.annotationText) && JSON.parse(hl.annotationPosition).rects.length >= 1 &&
+      await waitFor("!!document.querySelector('.lr-pdf .pdf-page[data-n=\"1\"] .pa-hl') && !document.querySelector('.pa-bar')"), hl);
+    await evalJs("getSelection().removeAllRanges()");
+    await evalJs("(() => { const e = document.querySelector('.lr-pdf .pa-hl'), b = e.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2; const p = document.querySelector('.lr-pdf .pdf-pages'); let t = document.elementFromPoint(x, y); if (!t || !p.contains(t)) t = e.closest('.pdf-page'); t.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: x, clientY: y })); })()");
+    chk('...a click on it: its box with the text', await waitFor("!!document.querySelector('.pa-pop .pa-q') && /plasma sheath/.test(document.querySelector('.pa-pop .pa-q').textContent)"));
+    await evalJs("(() => { const t = document.querySelector('.pa-pop textarea'); t.value = '对比我的仿真'; [...document.querySelectorAll('.pa-pop .btn')].find(b => b.textContent === '保存评论').click(); })()");
+    chk('...its comment kept in Zotero, marked on the page', !!(await until(async () => zot.objs.get(hl.key).annotationComment === '对比我的仿真', 5000)) && await waitFor("!!document.querySelector('.lr-pdf .pa-cm')"));
+    await evalJs("[...document.querySelectorAll('.pa-pop .btn')].find(b => b.textContent === '改成下划线').click()");
+    chk('...turned into an underline', !!(await until(async () => zot.objs.get(hl.key).annotationType === 'underline', 5000)) && await waitFor("!!document.querySelector('.lr-pdf .pa-ul') && !document.querySelector('.lr-pdf .pa-hl')"));
+    await evalJs("document.querySelector('.pa-pop .pa-x').click()");
+    await evalJs("[...document.querySelectorAll('.lr-pdf .pdf-bar .btn')].find(b => b.textContent === '便签').click()");
+    await evalJs(`(() => { const p = document.querySelector('.lr-pdf .pdf-page[data-n="1"]'), b = p.getBoundingClientRect(); p.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: b.left + b.width * 0.75, clientY: b.top + 40 })); })()`);
+    chk('便签: a click on the page asks for what to write', await waitFor("/新便签/.test((document.querySelector('.pa-pop') || {}).textContent || '')"));
+    await evalJs("(() => { const t = document.querySelector('.pa-pop textarea'); t.value = '这里和 RAM C 对比'; [...document.querySelectorAll('.pa-pop .btn')].find(b => b.textContent === '放上便签').click(); })()");
+    const nt = await until(async () => [...zot.objs.values()].find((o) => o.itemType === 'annotation' && o.annotationType === 'note'), 5000);
+    chk('...the note in Zotero (a 22-point square where it was clicked), shown on the page', !!nt && nt.annotationComment === '这里和 RAM C 对比' && (() => { const r = JSON.parse(nt.annotationPosition).rects[0]; return Math.round(r[2] - r[0]) === 22; })() &&
+      await waitFor("!!document.querySelector('.lr-pdf .pa-note') && !document.querySelector('.pa-pop')"), nt);
+    await shot('84e-lit-annots.png');
+    const pw0 = await evalJs("document.querySelector('.lr-pdf .pdf-page').offsetWidth");
+    const wheelHeld = await evalJs("(() => { const p = document.querySelector('.lr-pdf .pdf-pages'), b = p.getBoundingClientRect(); return !p.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -300, clientX: b.left + 120, clientY: b.top + 120 })); })()");
+    await sleep(700);
+    const pw1 = await evalJs("document.querySelector('.lr-pdf .pdf-page').offsetWidth");
+    chk('Ctrl + wheel over the PDF zooms the PDF, not the page (the annotations drawn again at that size)', wheelHeld && pw1 > pw0 * 1.5 && await waitFor("!!document.querySelector('.lr-pdf .pa-note') && !!document.querySelector('.lr-pdf .pa-ul')"), [wheelHeld, pw0, pw1]);
+    await evalJs("[...document.querySelectorAll('.lr-pdf .pdf-bar .btn')].find(b => b.textContent === '适合宽度').click()");
+    await waitFor("!!document.querySelector('.lr-pdf .pa-ul')");
+    await evalJs("(() => { const e = document.querySelector('.lr-pdf .pa-ul'), b = e.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2; const p = document.querySelector('.lr-pdf .pdf-pages'); let t = document.elementFromPoint(x, y); if (!t || !p.contains(t)) t = e.closest('.pdf-page'); t.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: x, clientY: y })); })()");
+    await waitFor("!!document.querySelector('.pa-pop .pa-del')");
+    await evalJs("document.querySelector('.pa-pop .pa-del').click()"); await evalJs("document.querySelector('.pa-pop .pa-del').click()");
+    chk('删除 (asked once more): gone from Zotero and the page', !!(await until(async () => !zot.objs.has(hl.key), 5000)) && await waitFor("!document.querySelector('.lr-pdf .pa-ul') && !document.querySelector('.pa-pop')"));
+    if (nt) await api('POST', '/api/lit/annots/delete', { key: 'AAAAAAA1', id: nt.key });
+
     // 拆分: the PDF in a browser window of its own -- the page, the selection and the jumps go between the two
     await evalJs("document.querySelector('.lr-sb').click()");
     const pop = await until(async () => (await getJSON(`http://127.0.0.1:${CDP}/json/list`)).find((t) => t.type === 'page' && /\/lit-pdf\?key=AAAAAAA1/.test(t.url)), 10000);

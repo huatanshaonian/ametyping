@@ -1,9 +1,10 @@
-// The PDF window of 拆分 (/lit-pdf?key=<key>&p=<page>, opened by the 深读 window -- see lit-split.js): only the PDF,
-// filling the browser window; the page it is on and the text selected in it go to the 深读 window, which can send it
-// to a page or close it.
+// The PDF window of 拆分 (/lit-pdf?key=<key>&p=<page>, opened by the 深读 window -- see lit-split.js): only the PDF and
+// its 批注 (pdf-annot.js), filling the browser window; the page it is on and the text selected in it go to the 深读
+// window, which can send it to a page or close it.
 import { h } from '../util.js';
 import { renderPdf } from './pdfview.js';
 import { splitChannel } from './lit-split.js';
+import { attachAnnots } from './pdf-annot.js';
 
 const q = new URLSearchParams(location.search);
 const key = q.get('key') || '', first = +q.get('p') || 0;
@@ -33,7 +34,7 @@ async function start() {
     if (it.ok) { const d = await it.json(); if (d && d.title) document.title = 'PDF：' + d.title; }
     const res = await fetch('/api/lit/pdf?key=' + key);
     if (!res.ok) { let m = ''; try { m = (await res.json()).error; } catch {} notice(m || '没有 PDF。'); return; }
-    await renderPdf(box, await res.arrayBuffer());
+    attachAnnots(await renderPdf(box, await res.arrayBuffer()), key);     // (批注, as in the 深读 window)
   } catch (e) { notice('PDF 打不开：' + (e.message || e)); return; }
 
   // the page shown follows the scrolling (pdfview.js keeps the number box up to date) or a number typed

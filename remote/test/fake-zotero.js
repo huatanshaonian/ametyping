@@ -73,6 +73,8 @@ function createFakeZotero({ webdavDir, items = [], collections = [] }) {
       if (req.method === 'GET') {
         if (rest === 'items/top') return send(res, 200, [...objs.values()].filter((d) => !d.parentItem && !['attachment', 'note', 'annotation'].includes(d.itemType)).slice(0, +u.searchParams.get('limit') || 1e9).map((d) => ({ key: d.key, version: d.version, data: d })));
         if (rest === 'items') return send(res, 200, [...objs.values()].map((d) => ({ key: d.key, version: d.version, data: d })));
+        const one = /^items\/([A-Z0-9]{8})$/.exec(rest);
+        if (one) { const d = objs.get(one[1]); return d ? send(res, 200, { key: d.key, version: d.version, data: d }) : send(res, 404, 'Not found'); }
         if (rest === 'collections') return send(res, 200, [...cols.values()].map((c) => ({ key: c.key, version: c.version, data: { key: c.key, name: c.name, parentCollection: c.parent || false } })));
         return send(res, 404, 'not found');
       }
@@ -113,7 +115,14 @@ function createFakeZotero({ webdavDir, items = [], collections = [] }) {
       const im = /^items\/([A-Z0-9]{8})$/.exec(rest);
       if (req.method === 'PATCH' && im) {
         const d = objs.get(im[1]); if (!d) return send(res, 404, 'not found');
+        if (req.headers['if-unmodified-since-version'] && +req.headers['if-unmodified-since-version'] !== d.version) return send(res, 412, 'Item has been modified since specified version');
         version++; Object.assign(d, JSON.parse(body.toString('utf8')), { version }); writes.push({ kind: 'patch', key: d.key });
+        return send(res, 204, '');
+      }
+      if (req.method === 'DELETE' && im) {
+        const d = objs.get(im[1]); if (!d) return send(res, 404, 'not found');
+        if (+req.headers['if-unmodified-since-version'] !== d.version) return send(res, 428, 'If-Unmodified-Since-Version');
+        version++; objs.delete(d.key); writes.push({ kind: 'delete', key: d.key });
         return send(res, 204, '');
       }
       return send(res, 405, 'Method not allowed');

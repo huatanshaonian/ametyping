@@ -78,7 +78,7 @@ function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () 
           if (d.itemType === 'attachment') attachments[d.key] = { key: d.key, parent: d.parentItem || '', linkMode: d.linkMode, contentType: d.contentType || '', filename: d.filename || '', title: d.title || '', url: d.url || '', added: Date.parse(d.dateAdded) || 0 };
           else if (d.itemType === 'note') notes[d.key] = { key: d.key, parent: d.parentItem || '', text: strip(d.note), tags: (d.tags || []).map((t) => t.tag), modified: Date.parse(d.dateModified) || 0, version: d.version || 0 };
           else if (d.itemType === 'annotation') annotations[d.key] = { key: d.key, parent: d.parentItem || '', type: d.annotationType, text: d.annotationText || '', comment: d.annotationComment || '',
-            color: d.annotationColor || '', page: d.annotationPageLabel || '', sort: d.annotationSortIndex || '', position: d.annotationType === 'ink' ? d.annotationPosition : undefined, modified: Date.parse(d.dateModified) || 0 };
+            color: d.annotationColor || '', page: d.annotationPageLabel || '', sort: d.annotationSortIndex || '', position: d.annotationPosition || '', modified: Date.parse(d.dateModified) || 0 };
           else if (!TOP_SKIP.has(d.itemType)) items[d.key] = slim(d);
         }
         for (const o of Array.isArray(colR.data) ? colR.data : []) { const d = o.data || o; collections[d.key] = { key: d.key, name: d.name, parent: d.parentCollection || '' }; }
