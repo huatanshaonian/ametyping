@@ -154,13 +154,13 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), mode: e ? e.mode : '', ctx: e ? e.ctx : null,
+        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), cwd: (e && e.cwd) || undefined, mode: e ? e.mode : '', ctx: e ? e.ctx : null,
         agents: s.agents && s.agents.length ? s.agents : undefined };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
   }

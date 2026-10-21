@@ -3,6 +3,8 @@
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
 import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW } from '../util.js';
 import * as net from '../net.js';
+import * as ctxmenu from '../ctxmenu.js';
+import { inline, follow } from './dash-paths.js';
 import * as wm from '../wm.js';
 import { createList } from './dash-list.js';
 import { createNotes } from './dash-notes.js';
@@ -106,11 +108,30 @@ function mount(current) {
     showNote(r.msg || (r.ok ? '已转成后台任务' : '没转成'), !r.ok);
   } });
   const btwText = new WeakMap();                     // answer element -> { text, t }
-  convEl.addEventListener('click', (e) => { const b = e.target.closest('.m.btw'); const a = b && btwText.get(b); if (a) btw.show(b.dataset.q || '', a.text, a.t); });
+  convEl.addEventListener('click', (e) => { if (e.target.closest('a.fp')) return; const b = e.target.closest('.m.btw'); const a = b && btwText.get(b); if (a) btw.show(b.dataset.q || '', a.text, a.t); });
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
     resume, agents.el, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
   const root = h('div', { class: 'dash' }, side, right);
+  // file paths in what was said (dash-paths.js): a click opens the file on that session's computer; the menu also
+  // shows it in its folder, or copies the path
+  const pathCtx = (folder) => {
+    const s = find(sel); if (!s) return null;
+    const m = net.state.sessions.find((x) => x.machine === s.machine);
+    return { machine: s.machine, cwd: s.cwd || '', files: !!(m && m.files), note: (msg, bad) => showNote(msg, bad), folder };
+  };
+  right.addEventListener('click', (e) => {
+    const a = e.target.closest('a.fp'); if (!a) return;
+    e.preventDefault();
+    const c = pathCtx(false); if (c) follow(a, c);
+  });
+  ctxmenu.attach(right, (e) => {
+    const a = e.target.closest && e.target.closest('a.fp'); if (!a) return null;
+    return [{ label: '打开', onClick: () => { const c = pathCtx(false); if (c) follow(a, c); } },
+      { label: '在文件夹中显示', onClick: () => { const c = pathCtx(true); if (c) follow(a, c); } },
+      '-',
+      { label: '复制路径', onClick: () => navigator.clipboard.writeText(a.dataset.p).then(() => showNote('已复制'), () => showNote('复制失败', true)) }];
+  });
 
   let sel = null;                                   // "machine|id"
   const permCards = new Map();
@@ -333,7 +354,6 @@ function mount(current) {
   document.addEventListener('keydown', onTermKey);
 
   // ---- conversation ----
-  const inline = (s) => esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
   function md(text) {
     const out = [];
     String(text).split(/```[^\n]*\n?/).forEach((part, i) => {
