@@ -201,6 +201,8 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     await evalJs("document.querySelector('.lr-split').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     chk('a double click puts it back', (await sideW()) === 440 && (await evalJs("localStorage.getItem('lit.reader.side')")) === null, await sideW());
 
+    chk('深读: 下载 shown once the PDF is there, pointing at the PDF as a file', await evalJs("(() => { const b = document.querySelector('.lr-dl'); return !!b && !b.hidden && b.offsetWidth > 0; })()"));
+
     // 笔记: the third column -- a typed note with the passage selected in the PDF, one written by hand, 认字, into 重要计划
     const pdfW0 = await evalJs("document.querySelector('.lr-pdf').offsetWidth");
     await evalJs("document.querySelector('.lr-nb').click()");

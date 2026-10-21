@@ -184,7 +184,16 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/pdf') {
       const f = KEY.test(qs('key')) ? fulltext.pdfBytes(qs('key')) : null;
       if (!f) { json(res, 404, { error: '这篇还没有 PDF（或还没同步到群晖）' }); return true; }
-      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': f.buf.length, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+      // dl=1: saved as a file (下载), named the way Zotero names them -- "Wang 等 - 2026 - Title.pdf" -- since the stored
+      // names are often the DOI or a report number, no use outside
+      const dl = qs('dl') === '1', it = mirror.item(qs('key'));
+      let name = f.name;
+      if (dl && it && it.title) {
+        const who = it.creators.length ? it.creators[0].split(',')[0].trim() + (it.creators.length > 1 ? ' 等' : '') : '';
+        const t = it.title.length > 100 ? it.title.slice(0, 100).trim() : it.title;
+        name = [who, it.year || '', t].filter(Boolean).join(' - ').replace(/[\\/:*?"<>|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() + '.pdf';
+      }
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': f.buf.length, 'Content-Disposition': `${dl ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`,
         'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Cache-Control': 'private, max-age=600' });
       res.end(f.buf); audit('lit-pdf', ip, qs('key'));
       return true;

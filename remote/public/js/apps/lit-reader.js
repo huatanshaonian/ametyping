@@ -33,9 +33,12 @@ function mountReader(key, firstPage) {
   const pane = h('div', { class: 'lr-pane' });
   const swap = h('button', { class: 'btn lr-swap', type: 'button', text: '看 PDF / 看对话' });
   const notesB = h('button', { class: 'btn lr-nb', type: 'button', text: '笔记', title: '在右边开一栏，记自己的笔记（打字或手写，能列入待办）' });
+  // 下载: the PDF saved as a file, to use it outside (hidden while there is none)
+  const dlB = h('button', { class: 'btn lr-dl', type: 'button', text: '下载', title: '把这篇的 PDF 存到电脑上', hidden: true, onclick: () => {
+    const a = h('a', { href: '/api/lit/pdf?dl=1&key=' + encodeURIComponent(key), download: '' }); document.body.append(a); a.click(); a.remove(); } });
   // 读图: how much has been read as images, a request to approve, the transcription of the page shown
   const vbox = visionBox(key, { curPage: () => +((pdfBox.querySelector('.pdf-no') || {}).value || 0) });
-  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap, notesB), vbox.el, pane);
+  const side = h('div', { class: 'lr-side' }, h('div', { class: 'lit-bar' }, ...tabs, swap, notesB, dlB), vbox.el, pane);
   // the bar between the PDF and the side: dragged to give either more room (kept for the next paper; a double click
   // puts it back)
   const split = h('div', { class: 'lr-split', title: '拖动调整左右两栏的宽度（双击还原）' });
@@ -99,6 +102,7 @@ function mountReader(key, firstPage) {
     try {
       const res = await fetch('/api/lit/pdf?key=' + encodeURIComponent(key));
       if (!res.ok) { let m = ''; try { m = (await res.json()).error; } catch {} pdfBox.replaceChildren(h('div', { class: 'notice' }, m || '没有 PDF。', h('br'), '拿到 PDF 后拖进 Zotero 里这篇下面，同步过来就能在这里读。', item && item.abstract ? h('p', { class: 'lr-abs', text: item.abstract }) : null)); return; }
+      dlB.hidden = false;
       const { renderPdf } = await import('./pdfview.js');
       if (destroyed) return;
       pdf = await renderPdf(pdfBox, await res.arrayBuffer());
