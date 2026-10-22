@@ -1,0 +1,91 @@
+/* 重要计划 as an app (js/apps/todo-app.js): lists on the left, the plans of one on the right, each opening to its
+   numbered steps. */
+.tda { position: absolute; inset: 0; display: flex; font-size: 13px; color: var(--ink); }
+.tda-sidebox { flex: none; width: 190px; display: flex; min-height: 0; }
+.tda-side { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 6px 4px; background: var(--panel); border-right: 2px solid var(--edge); }
+.tda-ls { list-style: none; margin: 0; padding: 0; }
+.tda-l { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; user-select: none; border-radius: 2px; }
+.tda-l:hover { background: var(--hover); }
+.tda-l.on { background: var(--fill); }
+.tda-l.on, .tda-l.on * { color: var(--on-fill); }
+.tda-lm { flex: none; width: 14px; text-align: center; color: var(--muted); }
+.tda-l.view:first-child .tda-lm { color: var(--warn); }
+.tda-ln { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tda-lc { flex: none; font-size: 11px; color: var(--muted); }
+.tda-sep { height: 0; margin: 6px 4px; border-top: 1px solid var(--edge); }
+.tda-new { margin: 8px 4px 0; padding: 3px 6px; border: 0; background: none; text-align: left; color: var(--accent-muted); cursor: pointer; font-size: 12px; }
+.tda-new:hover { text-decoration: underline; }
+
+.tda-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tda-title { flex: none; padding: 8px 12px 6px; font-size: 15px; border-bottom: 1px solid var(--edge); }
+.tda-title span { font-size: 12px; color: var(--muted); }
+.tda-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px 8px; }
+.tda-plans { list-style: none; margin: 0; padding: 0; }
+.tda-p { border-bottom: 1px dotted var(--edge); }
+.tda-ph { display: flex; align-items: flex-start; gap: 6px; padding: 5px 2px; cursor: default; }
+.tda-ph input[type=checkbox] { margin-top: 3px; flex: none; }
+.tda-ar { flex: none; width: 16px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 11px; line-height: 20px; }
+.tda-pc { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tda-pt { word-break: break-word; cursor: text; }
+.tda-pm { font-size: 11px; color: var(--muted); }
+.tda-prog { margin-right: 6px; font-weight: normal; color: var(--accent-muted); }
+.tda-ev { font-size: 11px; color: var(--muted); font-style: italic; }
+.tda-star { flex: none; padding: 0 3px; border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 20px; color: var(--faint); }
+.tda-star.on, .tda-star:hover { color: var(--warn); }
+.tda-p.late .tda-pm { color: var(--bad); }
+.tda-p.soon .tda-pm { color: var(--warn); }
+.tda-p.done .tda-pt { text-decoration: line-through; color: var(--faint); cursor: default; }
+.tda-p.open { background: var(--tint-soft); }
+
+/* the opened part */
+.tda-d { padding: 0 6px 8px 44px; }
+.tda-steps { list-style: none; margin: 0; padding: 0; }
+.tda-s { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+.tda-sn { flex: none; min-width: 20px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tda-st { flex: 1; min-width: 0; word-break: break-word; cursor: text; }
+.tda-s.done .tda-st { text-decoration: line-through; color: var(--faint); }
+.tda-sb { flex: none; display: flex; gap: 1px; visibility: hidden; }
+.tda-s:hover .tda-sb, .tda-s:focus-within .tda-sb { visibility: visible; }
+.tda-ib { width: 18px; height: 18px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.tda-ib:disabled { opacity: .3; cursor: default; }
+.tda-ib:not(:disabled):hover { color: var(--ink); background: var(--hover); }
+.tda-x:not(:disabled):hover { color: var(--bad); }
+.tda-sadd { display: flex; align-items: center; gap: 5px; margin-top: 3px; padding-left: 18px; }
+.tda-sadd .tda-sn { min-width: 20px; }
+.tda-sin { flex: 1; min-width: 0; font-size: 12px; }
+.tda-dl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.tda-dl .field { font-size: 12px; }
+.tda-del { margin-left: auto; }
+.tda-ed { width: 100%; }
+
+.tda-add { flex: none; display: flex; gap: 4px; padding: 6px 10px 8px; border-top: 1px solid var(--edge); }
+.tda-in { flex: 1; min-width: 0; }
+.tda-add .tda-due { width: 128px; flex: none; font-size: 12px; }
+
+/* the desktop panel's additions (css/todo.css has the rest) */
+#todowidget .td-name { cursor: pointer; }
+#todowidget .td-head img { cursor: pointer; }
+.td-prog { margin-right: 4px; padding: 0; border: 0; background: none; font-size: 11px; color: var(--accent-muted); cursor: pointer; }
+.td-prog:hover { text-decoration: underline; }
+
+/* a phone: the lists as a strip over the plans */
+@media (max-width: 700px) {
+  .tda { flex-direction: column; }
+  .tda-sidebox { width: auto; }
+  .tda-side { flex-direction: row; align-items: center; overflow-x: auto; overflow-y: hidden; padding: 4px; border-right: 0; border-bottom: 2px solid var(--edge); }
+  .tda-ls { display: flex; }
+  .tda-l { white-space: nowrap; }
+  .tda-sep { height: 18px; margin: 0 4px; border-top: 0; border-left: 1px solid var(--edge); }
+  .tda-new { margin: 0 4px; white-space: nowrap; }
+  .tda-d { padding-left: 24px; }
+  .tda-sb { visibility: visible; }
+}
+
+html[data-theme="win98"] .tda-side { background: var(--surface); box-shadow: var(--sunken); border-right: 0; margin: 3px 0 3px 3px; }
+html[data-theme="win98"] .tda-l { border-radius: 0; }
+html[data-theme="win98"] .tda-l.on { background: #000080; }
+html[data-theme="win98"] .tda-l.on, html[data-theme="win98"] .tda-l.on * { color: #fff; }
+html[data-theme="win98"] .tda-scroll { background: var(--surface); box-shadow: var(--sunken); margin: 0 3px; }
+html[data-theme="win98"] .tda-title { border-bottom: 0; }
+html[data-theme="win98"] .tda-add { border-top: 0; }
+html[data-theme="win98"] .tda-p.open { background: #f0f0f0; }
