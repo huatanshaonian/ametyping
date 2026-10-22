@@ -47,6 +47,7 @@ const APPS = [
   ...Object.entries(officeApps.APPS).map(([k, a]) => ({ id: k, label: a.label, icon: icon(k), open: () => officeApps.open(k, () => current), hint: a.hint })),
   { id: 'board', label: '画板', icon: icon('paint'), open: board.open, hint: '手写、画图（支持笔的压感），交给 AI 誊清成整齐的页面' },
   { id: 'calendar', label: '日历', icon: icon('calendar'), open: calendar.open, hint: '每天的日报、到期的重要计划、Google 日历' },
+  { id: 'todo', label: '重要计划', icon: icon('sched_task'), open: todo.open, hint: '计划分类，每个计划下面一条条具体条目' },
   { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
   { id: 'literature', label: '文献', icon: icon('help_book_big'), open: () => literature.open(), hint: '每日文献推送、卡片、深读和知识库（连着群晖上的 Zotero）' },
   { id: 'control', label: '控制面板', icon: icon('directory_control_panel'), open: () => control.open(), hint: '显示、声音、电脑、Google、邮箱、AI 模型等所有设置' },
@@ -54,7 +55,6 @@ const APPS = [
 desktop.setIcons(APPS);
 taskbar.setMenu([
   ...APPS.map((a) => ({ icon: a.icon, label: a.label, action: a.open })),
-  { icon: icon('sched_task'), label: '重要计划', action: todo.open },
   { icon: icon('network_normal_two_pcs'), label: '网上邻居', action: () => netpanel.toggle(true) },
   'sep',
   { icon: icon('key_win'), label: '注销', action: logout },
