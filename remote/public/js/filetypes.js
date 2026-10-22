@@ -29,7 +29,7 @@ export function kindOf(name) {
 export const mimeOf = (name) => MIME[ext(name)] || '';
 export function iconOf(entry) {
   if (entry.dir) return 'directory_closed';
-  return { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'document', sheet: 'document', slides: 'document', text: 'notepad_file', other: 'notepad_file' }[kindOf(entry.name)];
+  return { image: 'kodak_imaging_file', md: 'document', pdf: 'help_book_big', word: 'word-doc', sheet: 'excel-doc', slides: 'powerpoint-doc', text: 'notepad_file', other: 'notepad_file' }[kindOf(entry.name)];
 }
 export function size(n) {
   if (n < 1024) return n + ' B';

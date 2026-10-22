@@ -8,7 +8,11 @@ import { h, icon, hhmm } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
 import { upload } from '../fs-upload.js';
-import { mimeOf } from '../filetypes.js';
+import { mimeOf, kindOf } from '../filetypes.js';
+import * as recent from './office-recent.js';
+
+// the icon of each kind of document (Word / Excel / PowerPoint, office-apps.js)
+export const ICONS = { word: 'word', sheet: 'excel', slides: 'powerpoint' };
 
 const edits = new Map();                  // server id -> { machine, path, name, win, say, wrote, changed, open, chain }
 let status = null;                        // the server's answer to GET /api/office (asked again after a minute)
@@ -79,13 +83,14 @@ net.on('office', (d) => {
 export function editFile({ machine, path, name, blob }) {
   const win = 'office:' + machine + ':' + path;
   if (wm.has(win)) { wm.open({ id: win }); return; }
+  recent.add({ machine, path, name });
   const state = h('span', { class: 'vinfo office-state', text: '打开编辑器…' });
   const dl = h('a', { class: 'btn', text: '下载', hidden: true, title: '编辑器最后保存的这一版' });
   const holder = h('div', { id: 'oo-' + Math.random().toString(36).slice(2) });
   const body = h('div', { class: 'vbody office-body' }, holder);
   const root = h('div', { class: 'viewer office' }, h('div', { class: 'vbar' }, h('span', { class: 'vpath', text: path, title: path }), state, dl), body);
   let editor = null, e = null;
-  wm.open({ id: win, title: `编辑 ${name} — ${machine}`, icon: icon('document', true), content: root, width: 1000, height: 700,
+  wm.open({ id: win, title: `编辑 ${name} — ${machine}`, icon: icon(ICONS[kindOf(name)] || 'document', true), content: root, width: 1000, height: 700,
     onClose: () => {
       window.removeEventListener('blur', focusIn);
       try { if (editor) editor.destroyEditor(); } catch {}

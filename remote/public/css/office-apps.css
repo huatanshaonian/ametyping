@@ -1,0 +1,49 @@
+/* Word / Excel / PowerPoint's start box (js/apps/office-apps.js): the name, 新建 / 打开, 最近的文档; and the 打开 / 另存为
+   dialog it uses (js/apps/filedlg.js) */
+.office-app { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto; background: var(--body); }
+.oa-head { display: flex; align-items: center; gap: 10px; }
+.oa-head img { width: 32px; height: 32px; image-rendering: pixelated; }
+.oa-head b { display: block; font-size: 16px; }
+.oa-head small { color: var(--muted); font-size: 12px; }
+.oa-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.oa-big { display: grid; grid-template-columns: 32px 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; text-align: left;
+  padding: 10px; cursor: pointer; background: var(--panel); color: var(--ink); border: 1px solid var(--border); font: inherit; }
+.oa-big img { grid-row: 1 / 3; width: 32px; height: 32px; image-rendering: pixelated; }
+.oa-big b { font-size: 13.5px; }
+.oa-big small { font-size: 11.5px; color: var(--muted); }
+.oa-big:hover { background: var(--hover); }
+.oa-sub { font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--edge); padding-bottom: 3px; }
+.oa-recent { flex: 1; min-height: 80px; overflow-y: auto; background: var(--surface); border: 1px solid var(--edge); }
+.oa-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; border-bottom: 1px dotted var(--edge); }
+.oa-row:hover { background: var(--hover); }
+.oa-row.off { opacity: .55; }
+.oa-row img { width: 16px; height: 16px; flex: none; }
+.oa-n { flex: 1; min-width: 0; }
+.oa-n b, .oa-n small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.oa-n b { font-weight: normal; }
+.oa-n small, .oa-t { font-size: 11px; color: var(--muted); }
+.oa-t { flex: none; }
+.oa-x { flex: none; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 3px; visibility: hidden; }
+.oa-row:hover .oa-x { visibility: visible; }
+.oa-none { padding: 12px; font-size: 12px; color: var(--muted); }
+.oa-msg { font-size: 12px; color: var(--muted); min-height: 1.2em; }
+.oa-msg.bad, .fd-msg.bad { color: var(--bad); }
+@media (pointer: coarse) { .oa-x { visibility: visible; } }
+@media (max-width: 480px) { .oa-acts { grid-template-columns: 1fr; } }
+
+.filedlg { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--body); }
+.fd-bar, .fd-foot { display: flex; align-items: center; gap: 6px; }
+.fd-bar label, .fd-foot label { flex: none; width: 3.5em; font-size: 12px; }
+.fd-pc { flex: 1; min-width: 0; }
+.fd-where, .fd-name { flex: 1; min-width: 0; }
+.fd-list { flex: 1; min-height: 0; overflow-y: auto; background: var(--surface); border: 1px solid var(--edge); outline: none; }
+.fd-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 3px 6px; cursor: default; user-select: none; }
+.fd-row img { width: 16px; height: 16px; }
+.fd-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fd-s, .fd-t { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fd-row:hover { background: var(--hover); }
+.fd-row.sel { background: var(--fill); color: var(--on-fill); }
+.fd-row.sel .fd-s, .fd-row.sel .fd-t { color: var(--on-fill); }
+.fd-empty { padding: 10px; font-size: 12px; color: var(--muted); }
+.fd-msg { font-size: 12px; color: var(--muted); min-height: 1.2em; }
+@media (max-width: 480px) { .fd-t { display: none; } }
