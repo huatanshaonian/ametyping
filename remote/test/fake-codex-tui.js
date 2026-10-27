@@ -67,7 +67,8 @@ async function submit(text) {
       const ch = wire[0]; wire = wire.slice(1);
       // tmux paste-buffer maps LF to CR; terminal text editors normalize pasted CR back to a line break.
       if (pasted) { draft += ch === '\r' ? '\n' : ch; continue; }
-      if (ch === '\r' || ch === '\n') { const text = draft; draft = ''; queue = queue.then(() => submit(text)).catch((e) => { console.error(e); process.exit(1); }); }
+      if (ch === '\n' && process.platform === 'win32') draft += '\n'; // Codex on Windows: Ctrl+J inserts a newline.
+      else if (ch === '\r' || ch === '\n') { const text = draft; draft = ''; queue = queue.then(() => submit(text)).catch((e) => { console.error(e); process.exit(1); }); }
       else if (ch === '\x15') draft = '';
       else if (ch === '\b' || ch === '\x7f') draft = draft.slice(0, -1);
       else if (ch >= ' ') draft += ch;

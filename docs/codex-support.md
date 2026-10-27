@@ -46,8 +46,17 @@ node remote/test/e2e-session-terminal.js
 node remote/test/linux-codex-e2e.js
 # 另外验证原生 Codex：独立 HOME、回环 HTTP 测试端点、占位密钥
 AME_REAL_CODEX="$(command -v codex)" node remote/test/linux-codex-e2e.js
+# Windows：隐藏控制台、真实输入桥和独立服务（PowerShell）
+node remote/test/win-codex-e2e.js
+# 同时验证原生 Windows CLI；填入 codex.exe 的实际路径
+$env:AME_REAL_CODEX = 'C:\path\to\codex.exe'
+node remote/test/win-codex-e2e.js
 ```
 
 测试使用临时目录、模拟 CLI/进程和本地测试服务器，不调用付费模型，也不修改真实 Codex 或 Claude 配置。
 
-2026-10-28 已通过 SSH 别名 `dell97` 在 Linux 实机验收：Node 24.14.1、tmux 3.6、Codex CLI 0.162.1，24 项单元测试和 33 项集成检查通过。集成检查使用真实 `/proc`、私有 tmux socket、独立服务端口及临时 HOME，覆盖精确多行中文粘贴、三种审批结果、token 轮换、服务重启接回、后台恢复和远程恢复。原生 Codex 以 `--no-daemon` 运行，仅连接回环测试端点，验证实际 hooks、终端输入、画面和重启接回；首次新会话可等到第一条消息才产生 hooks。测试前后生产服务 PID 和原有 Claude tmux 会话保持不变。Windows 原生控制台全流程仍需另行验收。
+2026-10-28 已通过 SSH 别名 `dell97` 在 Linux 实机验收：Node 24.14.1、tmux 3.6、Codex CLI 0.162.1，24 项单元测试和 33 项集成检查通过。集成检查使用真实 `/proc`、私有 tmux socket、独立服务端口及临时 HOME，覆盖精确多行中文粘贴、三种审批结果、token 轮换、服务重启接回、后台恢复和远程恢复。原生 Codex 以 `--no-daemon` 运行，仅连接回环测试端点，验证实际 hooks、终端输入、画面和重启接回；首次新会话可等到第一条消息才产生 hooks。测试前后生产服务 PID 和原有 Claude tmux 会话保持不变。
+
+同日完成 Windows 实机验收：Node 22.18.0、原生 Codex CLI 0.164.0，33 项 Codex 集成检查、23 项 Claude 共用链路回归、24 项单元测试通过。覆盖真实 `WriteConsoleInput`、Ctrl+J 多行中文与空行、导航键、审批、npm cmd shim、后台恢复、远程新建/恢复、进程创建身份、重启接回和 token 轮换。原生 CLI 使用独立配置、`--no-daemon` 与回环测试端点，所有测试控制台保持隐藏。
+
+Windows 验收发现并修复了祖先进程遍历越界：查找会话时若跨过服务或终端边界，会把上层宿主 Codex 选成目标；桥接器新开的交互控制台也不能被归类为后台续聊。修复后限制查找边界，并增加对应回归用例。实机测试在输入前强制校验目标 PID 等于其自行创建的替身或原生子进程，否则终止测试，防止输入误投到用户会话。

@@ -25,6 +25,11 @@ test('the Codex process of a hook: in a terminal, from the desktop app, started 
   const nested = codexCli.findCodex([P(20, 'codex-command-runner.exe'), P(19, 'codex.exe'), P(18, 'node_repl.exe'), P(17, 'node.exe'), P(8, 'codex.exe'), P(7, 'node.exe'), P(6, 'powershell.exe'), P(5, 'WindowsTerminal.exe')], 1);
   assert.deepEqual(nested, { pid: 8, parent: P(6, 'powershell.exe'), own: false });
   assert.equal(codexCli.findCodex([P(19, 'codex.exe'), P(18, 'node_repl.exe'), P(8, 'codex.exe'), P(7, 'Codex.exe'), P(6, 'explorer.exe')], 1).parent.name, 'Codex.exe');
+  const launched = [P(30, 'powershell.exe'), P(29, 'codex.exe'), P(28, 'cmd.exe'), P(27, 'powershell.exe'), P(26, 'node.exe'), P(25, 'node.exe'), P(24, 'powershell.exe'), P(23, 'codex.exe')];
+  assert.deepEqual(codexCli.findCodex(launched, 26), { pid: 29, parent: P(28, 'cmd.exe'), own: false });
+  assert.equal(codexCli.findCodex([P(30, 'powershell.exe'), P(26, 'node.exe'), P(23, 'codex.exe')], 26), null);
+  assert.equal(codexCli.findCodex([P(29, 'codex.exe'), P(27, 'powershell.exe'), P(26, 'node.exe'), P(23, 'codex.exe')], 26).own, false);
+  assert.deepEqual(codexCli.findCodex([P(40, 'codex.exe'), P(39, 'powershell.exe'), P(38, 'node.exe'), P(37, 'codex.exe')], 99), { pid: 40, parent: P(39, 'powershell.exe'), own: false });
 });
 
 function fakeBridge() {

@@ -19,13 +19,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // nearest. Taken for the session, its ending would look like the session's own. (The desktop app's "Codex.exe", with
 // a capital, is not one of them: it is what started the session there.)
 function findCodex(chain, ownPid) {
+  // A CLI launched by our bridge is below our service. Never walk past that boundary and select a Codex host
+  // running Ame's test runner (or a parent automation session): its console belongs to a different conversation.
+  const boundary = chain.findIndex((p) => p.pid === ownPid);
+  const limit = boundary < 0 ? chain.length : boundary;
   let i = -1;
-  chain.forEach((p, n) => { if (p.name === 'codex.exe') i = n; });
-  if (i < 0) i = chain.findIndex((p) => CODEX_EXE.test(p.name));
+  for (let n = 0; n < limit; n++) {
+    const p = chain[n];
+    // Once a CLI is found, its shell/terminal is a boundary too. Another Codex above that shell owns a different
+    // terminal; selecting it would send this session's reply into that unrelated conversation.
+    if (i >= 0 && (/^(powershell|pwsh|cmd|bash|sh|zsh|fish|nu|WindowsTerminal|OpenConsole|conhost)\.exe$/i.test(p.name) || p.name === 'Codex.exe')) break;
+    if (p.name === 'codex.exe') i = n;
+  }
+  if (i < 0) i = chain.slice(0, limit).findIndex((p) => CODEX_EXE.test(p.name));
   if (i < 0) return null;
   let j = i + 1;
   if (chain[j] && SHIM.test(chain[j].name)) j++;
-  return { pid: chain[i].pid, parent: chain[j] || null, own: chain.slice(i + 1, i + 4).some((p) => p.pid === ownPid) };
+  const parents = chain.slice(i + 1, i + 4), owner = parents.findIndex((p) => p.pid === ownPid);
+  // Background resumes are direct children (optionally via npm's node/cmd shims). A PowerShell in between is our
+  // console bridge or its interactive launch shell, so it is a terminal session even though we started it.
+  const own = owner >= 0 && !parents.slice(0, owner).some((p) => /^(powershell|pwsh)\.exe$/i.test(p.name));
+  return { pid: chain[i].pid, parent: chain[j] || null, own };
 }
 
 // A reply into Codex's input box. Codex does not take a bracketed paste from the console's input buffer (it shows the
