@@ -10,7 +10,8 @@
 # 令牌在群晖上生成（脚本会给出命令），粘贴进来时不显示；可以重复运行（已有配置可保留）。
 # 无人值守：设了下面这些环境变量就不再提问——AME_KEEP（保留已有 agent.json，y/n）、AME_NAME、AME_TOKEN、
 #   AME_CONTROL（y/n）、AME_FILES（all / none / 文件夹逗号分隔）、AME_HOME（保留已有配置时，是否把用户文件夹补进去，y/n）、
-#   AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）。
+#   AME_INSTALL（缺 Node.js/git 时用 winget 装，y/n）、AME_MODE（pet = 糖糖桌宠；headless = 无头：不显示桌宠、
+#   不装 Electron，只在后台接 hooks 和看板的回复 / 审批 / 启动，省内存和显卡，见 headless/ame-headless-win.js）。
 #   另外 AME_DIR（装到哪）、AME_BRANCH（用哪个分支）、AME_SERVER（看板地址）可以覆盖下面三个默认值。
 # 不用 param()：用环境变量覆盖，跟上面 AME_* 那套约定一致（irm | iex 跑法下 param 也没法传参）。
 # 本文件是 UTF-8 无 BOM：带 BOM 的话 irm 会把它当普通字符留在字符串里，iex 拿它当命令名，报一行错。
@@ -59,10 +60,16 @@ if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot '..\app\main.js'))) {
 elseif (Test-Path (Join-Path $Dir '.git')) { Info "更新 $Dir"; git -C $Dir pull --ff-only }
 else { Info "克隆到 $Dir"; git clone -b $Branch $Repo $Dir }
 
-Step '安装依赖（糖糖的 Electron 约 100 MB）'
-# a running pet / agent from an earlier install holds these files: stop them first (the agent's node outlives its task)
-foreach ($t in 'AmeTyping Pet', 'AmeTyping Agent') { Stop-ScheduledTask $t -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*agent\agent.js*' | ForEach-Object { Stop-Process -Id $_.ProcessId -Confirm:$false -ErrorAction SilentlyContinue }
+# the pet, or the headless service in its place (one of the two: they share the hooks' port); a reinstall keeps the choice
+$defMode = if (Get-ScheduledTask -TaskName 'AmeTyping Headless' -ErrorAction SilentlyContinue) { 'headless' } else { 'pet' }
+$mode = (Ask '装哪种：pet = 糖糖桌宠（动画、进度面板）；headless = 无头（不显示桌宠，只在后台跑，省资源，用看板操作）' $defMode 'AME_MODE').ToLower()
+if ($mode -notin 'pet', 'headless') { throw "AME_MODE 只能是 pet 或 headless（给的是 $mode）" }
+$headless = $mode -eq 'headless'
+
+Step $(if ($headless) { '安装依赖（无头模式：不装糖糖的 Electron）' } else { '安装依赖（糖糖的 Electron 约 100 MB）' })
+# a running pet / headless service / agent from an earlier install holds these files: stop them first (node outlives its task)
+foreach ($t in 'AmeTyping Pet', 'AmeTyping Headless', 'AmeTyping Agent') { Stop-ScheduledTask $t -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*agent\agent.js*' -or $_.CommandLine -like '*headless\ame-headless-win.js*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Confirm:$false -ErrorAction SilentlyContinue }
 Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Dir\app\*" } | Stop-Process -Confirm:$false -ErrorAction SilentlyContinue
 Start-Sleep 2
 if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) {
@@ -72,8 +79,10 @@ if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) {
 }
 Push-Location (Join-Path $Dir 'remote'); npm ci --omit=dev --no-audit --no-fund; $e1 = $LASTEXITCODE; Pop-Location
 if ($e1) { throw 'remote 依赖安装失败' }
-Push-Location (Join-Path $Dir 'app'); npm ci --no-audit --no-fund; $e2 = $LASTEXITCODE; Pop-Location
-if ($e2) { throw '糖糖（app）依赖安装失败' }
+if (-not $headless) {                                                 # (the headless service needs nothing from app's npm)
+  Push-Location (Join-Path $Dir 'app'); npm ci --no-audit --no-fund; $e2 = $LASTEXITCODE; Pop-Location
+  if ($e2) { throw '糖糖（app）依赖安装失败' }
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 Step '配置 agent'
@@ -156,23 +165,36 @@ Step '开机自启（登录后在后台运行）'
 $user = "$env:USERDOMAIN\$env:USERNAME"
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-foreach ($t in 'AmeTyping Pet', 'AmeTyping Agent') {
+foreach ($t in 'AmeTyping Pet', 'AmeTyping Headless', 'AmeTyping Agent') {
   if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { Stop-ScheduledTask $t -ErrorAction SilentlyContinue; Unregister-ScheduledTask $t -Confirm:$false }
 }
 
 $t1 = New-ScheduledTaskTrigger -AtLogOn -User $user; $t1.Delay = 'PT15S'
-$petExe = Join-Path $Dir 'app\node_modules\electron\dist\electron.exe'
-Register-ScheduledTask -TaskName 'AmeTyping Pet' -Description '糖糖桌宠' -Principal $principal -Settings $settings -Trigger $t1 `
-  -Action (New-ScheduledTaskAction -Execute $petExe -Argument '.' -WorkingDirectory (Join-Path $Dir 'app')) | Out-Null
-$t2 = New-ScheduledTaskTrigger -AtLogOn -User $user; $t2.Delay = 'PT20S'
+# (agent and headless service: started again within a minute when they stop)
 $settings2 = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+if ($headless) {
+  $front = 'AmeTyping Headless'
+  Register-ScheduledTask -TaskName $front -Description 'Ame 无头服务（代替糖糖桌宠接 hooks）' -Principal $principal -Settings $settings2 -Trigger $t1 `
+    -Action (New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$node`" `"$(Join-Path $Dir 'headless\ame-headless-win.js')`"" -WorkingDirectory (Join-Path $Dir 'headless')) | Out-Null
+} else {
+  $front = 'AmeTyping Pet'
+  $petExe = Join-Path $Dir 'app\node_modules\electron\dist\electron.exe'
+  Register-ScheduledTask -TaskName $front -Description '糖糖桌宠' -Principal $principal -Settings $settings -Trigger $t1 `
+    -Action (New-ScheduledTaskAction -Execute $petExe -Argument '.' -WorkingDirectory (Join-Path $Dir 'app')) | Out-Null
+}
+$t2 = New-ScheduledTaskTrigger -AtLogOn -User $user; $t2.Delay = 'PT20S'
 Register-ScheduledTask -TaskName 'AmeTyping Agent' -Description 'Ame 看板 agent' -Principal $principal -Settings $settings2 -Trigger $t2 `
   -Action (New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$node`" `"$(Join-Path $Dir 'remote\agent\agent.js')`"" -WorkingDirectory (Join-Path $Dir 'remote')) | Out-Null
-Start-ScheduledTask 'AmeTyping Pet'; Start-Sleep 5; Start-ScheduledTask 'AmeTyping Agent'; Start-Sleep 4
+Start-ScheduledTask $front; Start-Sleep 5; Start-ScheduledTask 'AmeTyping Agent'; Start-Sleep 4
 
 $agentUp = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*agent\agent.js*'
 Step '完成'
-Info ('糖糖：' + $(if (Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Dir\app\*" }) { '已启动' } else { '没有启动，请看任务计划程序里的 AmeTyping Pet' }))
+if ($headless) {
+  $up = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*headless\ame-headless-win.js*'
+  Info ('无头服务：' + $(if ($up) { '已启动（后台，没有窗口；日志在 ~\.ametyping\headless.log）' } else { '没有启动，请看任务计划程序里的 AmeTyping Headless 和 ~\.ametyping\headless.log' }))
+} else {
+  Info ('糖糖：' + $(if (Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Dir\app\*" }) { '已启动' } else { '没有启动，请看任务计划程序里的 AmeTyping Pet' }))
+}
 Info ('agent：' + $(if ($agentUp) { '已启动（后台）' } else { '没有启动，请看任务计划程序里的 AmeTyping Agent' }))
 Info '以后每次登录 Windows 都会自动启动；打开 https://win98.huatan.org 应能在「网上邻居」里看到这台电脑。'
 Info '已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'

@@ -10,6 +10,8 @@
 //   win-manual-launch.js    Windows: REALLY starts Claude Code in D:\ame-launchtest through the running pet
 //                           (create the folder first; uses your Claude usage)
 //   linux-headless-e2e.js   copy to the Linux machine and run there: the headless service in an isolated tmux
+//   win-headless-e2e.js     Windows: the headless service (no pet) on its own port and home; opens a console window
+//                           for a stand-in Claude Code for up to a minute
 //   e2e-walls.js <walls.js> <https image URL>   with a URL also downloads a real picture (run it on the server)
 'use strict';
 const path = require('path');

@@ -60,6 +60,8 @@ export function panel() {
       copyRow('令牌', r.token),
       h('p', { text: '在新电脑上粘贴运行下面的命令即可装好（需要已加入 Tailscale）。命令里带着令牌，运行完可清掉终端历史。' }),
       copyRow('Windows（PowerShell）', `$env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; irm ${RAW}/install-windows.ps1 | iex`),
+      // no pet on screen, no Electron: only the hooks and the dashboard's replies / cards / launches (a work machine)
+      copyRow('Windows 无头（不显示糖糖，省资源）', `$env:AME_MODE='headless'; $env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; irm ${RAW}/install-windows.ps1 | iex`),
       copyRow('Linux', `curl -fsSL ${RAW}/install-linux.sh | AME_NAME='${r.name}' AME_TOKEN='${r.token}' bash`));
     refresh();
   });
