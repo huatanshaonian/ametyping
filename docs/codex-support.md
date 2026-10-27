@@ -42,6 +42,12 @@ Claude 专用的 `/btw` 浮层、后台守护会话和 Ctrl+B / Ctrl+X Ctrl+S / 
 node --test codex-hook.test.js app/codex-cli.test.js app/codex-support.test.js app/permissions.test.js
 node remote/test/e2e-codex.js
 node remote/test/e2e-session-terminal.js
+# Linux：真实 /proc、tmux、hook 进程、服务重启、后台续聊及远程恢复（离线 CLI 替身）
+node remote/test/linux-codex-e2e.js
+# 另外验证原生 Codex：独立 HOME、回环 HTTP 测试端点、占位密钥
+AME_REAL_CODEX="$(command -v codex)" node remote/test/linux-codex-e2e.js
 ```
 
-测试使用临时目录、模拟 CLI/进程和本地测试服务器，不调用付费模型，也不修改真实 Codex 或 Claude 配置。Windows 控制台和 Linux tmux 的真实交互仍需分别在对应系统验收。
+测试使用临时目录、模拟 CLI/进程和本地测试服务器，不调用付费模型，也不修改真实 Codex 或 Claude 配置。
+
+2026-10-28 已通过 SSH 别名 `dell97` 在 Linux 实机验收：Node 24.14.1、tmux 3.6、Codex CLI 0.162.1，24 项单元测试和 33 项集成检查通过。集成检查使用真实 `/proc`、私有 tmux socket、独立服务端口及临时 HOME，覆盖精确多行中文粘贴、三种审批结果、token 轮换、服务重启接回、后台恢复和远程恢复。原生 Codex 以 `--no-daemon` 运行，仅连接回环测试端点，验证实际 hooks、终端输入、画面和重启接回；首次新会话可等到第一条消息才产生 hooks。测试前后生产服务 PID 和原有 Claude tmux 会话保持不变。Windows 原生控制台全流程仍需另行验收。
