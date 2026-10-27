@@ -226,6 +226,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     switch ($p[0]) {
       'anc'    { $r = 'ok ' + [AmeCon]::Ancestors([uint32]$p[1]) }
       'alive'  { $r = 'ok ' + [int][AmeCon]::Alive([uint32]$p[1]) }
+      'identity' { $r = 'ok ' + [Diagnostics.Process]::GetProcessById([int]$p[1]).StartTime.ToUniversalTime().Ticks.ToString() }
       'desc'   { $r = 'ok ' + [AmeCon]::Descendants([uint32]$p[1]) }
       'screen' { $t = [AmeCon]::Screen([uint32]$p[1], ($p.Length -gt 2 -and $p[2] -eq 'hl')); if ($t.StartsWith('=')) { $r = 'ok ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t.Substring(1))) } else { $r = 'err ' + $t.TrimStart('!') } }
       'launch' {

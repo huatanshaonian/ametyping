@@ -154,7 +154,7 @@ WriteUtf8 $petFile ($pet | ConvertTo-Json -Depth 5 -Compress)
 
 Step '安装 Claude Code hooks（原设置会先备份）'
 & $node (Join-Path $Dir 'headless\install-hooks.js')
-if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.codex'))) {
+if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.codex')) -or ($env:CODEX_HOME -and (Test-Path -LiteralPath $env:CODEX_HOME))) {
   Step '安装 Codex hooks（原设置会先备份）'
   & $node (Join-Path $Dir 'install-codex-hooks.js')
   $codexHooks = $true

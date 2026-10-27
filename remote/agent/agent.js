@@ -30,6 +30,7 @@ const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
 const { createArtifacts } = require('./artifacts');
 const { agentsOf } = require('./subagents');
+const codexAgents = require('./codex-subagents');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -110,18 +111,33 @@ function scan() {
   for (const id of [...sess.keys()]) if (!seen.has(id)) sess.delete(id);
   // Codex CLI sessions: only stored on the server (the pet reports their live state); same idle rule
   const cseen = new Set();
-  for (const f of codex.recentFiles(IDLE_DROP_MS)) {
+  const cfiles = codex.recentFiles(Math.max(IDLE_DROP_MS, 6 * 3600e3));
+  const subs = [];
+  for (const f of cfiles) {
     let m = codexMeta.get(f.file);
     if (!m) { m = codex.metaOf(f.file); if (m) codexMeta.set(f.file, m); }    // a brand-new file may not have its first line yet
-    if (!m || m.sub) continue;                                            // sub-threads (auto review...) are not sessions
+    if (!m) continue;
+    if (m.sub) { subs.push(f); continue; }                                 // sub-threads are nested, not root sessions
     const id = 'codex:' + m.id;
+    if (now - f.mtime > IDLE_DROP_MS && !pet.has(id)) continue;
     cseen.add(id);
     codexSess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: codex.titleOf(m.id) });
+  }
+  codexAgentRows = codexAgents.scan(subs);
+  // A still-open CLI may have been idle longer than the scan window, including a freshly resumed old thread.
+  for (const [id] of pet) {
+    if (!id.startsWith('codex:') || cseen.has(id)) continue;
+    const previous = codexSess.get(id), file = previous && fs.existsSync(previous.file) ? previous.file : codex.fileOf(id.slice(6));
+    const m = file && (codexMeta.get(file) || codex.metaOf(file));
+    if (!m || m.sub) continue;
+    cseen.add(id);
+    codexSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: codex.titleOf(m.id) });
   }
   for (const id of [...codexSess.keys()]) if (!cseen.has(id)) codexSess.delete(id);
 }
 const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
 const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
+let codexAgentRows = new Map();
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
 const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, projectOf,
   live: (id) => sess.has(id) || codexSess.has(id), stored: (id) => serverOff && serverOff[id] });
@@ -215,8 +231,8 @@ function stateList() {
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
     if (sess.has(id) || line.parked.has(id)) continue;
-    out.push({ id, label: p.label || 'Claude', project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
-      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [] });
+    out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
+      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [] });
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
@@ -311,6 +327,11 @@ function pushRecords() {
       if (isCodex) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
+      r.sentTitle = c.title || '';
+    }
+    if (id.startsWith('codex:') && r.sentTitle !== (c.title || '')) {
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
+      r.sentTitle = c.title || '';
     }
     for (let k = 0; k < 8; k++) {
       if (ws.bufferedAmount > 8e6) return;                             // let the socket drain first
@@ -350,11 +371,13 @@ function forwardBtw() {
 // on connecting, then whenever a look every 10 minutes finds them changed
 let cmdsSig = '';
 function sendCommands(force) {
-  let list = []; try { list = commands.scan(os.homedir()); } catch {}
-  const sig = JSON.stringify(list);
+  let list = [], codexList = [];
+  try { list = commands.scan(os.homedir()); codexList = commands.scanCodex(os.homedir()); } catch {}
+  const sig = JSON.stringify([list, codexList]);
   if (!force && sig === cmdsSig) return;
   cmdsSig = sig;
   sendJSON({ t: 'cmds', list });
+  sendJSON({ t: 'cmds', provider: 'codex', list: codexList });
 }
 setInterval(() => sendCommands(false), 10 * 60e3).unref();
 
@@ -370,7 +393,7 @@ async function tick(force) {
     forwardBtw();
     scan();
     const list = stateList();
-    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
+    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.label, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
       sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked] });

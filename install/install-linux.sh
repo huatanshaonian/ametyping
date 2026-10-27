@@ -120,7 +120,7 @@ fi
 step '安装 Claude Code hooks（原设置会先备份）'
 "$NODE" "$DIR/headless/install-hooks.js"
 CODEX_HOOKS=
-if command -v codex >/dev/null 2>&1 || [ -x "$HOME/.local/bin/codex" ] || [ -d "$HOME/.codex" ]; then
+if command -v codex >/dev/null 2>&1 || [ -x "$HOME/.local/bin/codex" ] || [ -d "${CODEX_HOME:-$HOME/.codex}" ]; then
   step '安装 Codex hooks（原设置会先备份）'
   "$NODE" "$DIR/install-codex-hooks.js"
   CODEX_HOOKS=1

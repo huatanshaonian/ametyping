@@ -13,6 +13,7 @@ const { CLAUDE_EXE, TERM_HOSTS, createLocator } = require('./session-locate');
 const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
 const codexRecords = require('./codex-records');
+const codexSessions = require('./codex-sessions');
 const { update } = require('./update');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -664,6 +665,7 @@ function onClaudeEvent(type, d) {
   const id = d.session || 'unknown', t = Date.now();
   if (type === 'quit') {
     const q = sessions.get(id);
+    if (q && q.provider === 'codex') codexSessions.forget(q.rawSession);
     if (chatMode() && q) { q.state = 'ended'; q.claudePid = null; q.headless = false; q.fromPid = null; q.last = t; }   // kept: can be resumed
     else sessions.delete(id);
     if (![...sessions.values()].some((s) => WORKING.has(s.state))) win.webContents.send('claude', 'idle');
@@ -672,10 +674,11 @@ function onClaudeEvent(type, d) {
   let s = sessions.get(id);
   if (!s) { s = { id, provider: d.provider || 'claude', rawSession: d.rawSession || id, project: '', state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t }; sessions.set(id, s); }
   s.dormant = false;                                             // activity again: the usual quiet timer starts over
-  if (d.project) s.project = String(d.project).slice(0, 40);
+  if (d.project && !(d.provider === 'codex' && d.agentId)) s.project = String(d.project).slice(0, 40);
   if (d.title) s.title = String(d.title).slice(0, 60);
   if (d.transcript) s.transcript = String(d.transcript);
-  if (d.cwd) s.cwd = String(d.cwd);
+  if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
+  codexSessions.remember(s);
   if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return pushBubble(null); }   // SessionStart
   if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; if (type === 'message' && s.lines.length) s.lines.push({ sep: true, t }); }
   if (type === 'thinking' || type === 'reading') s.steps++;

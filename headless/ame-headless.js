@@ -21,6 +21,8 @@ const tmux = require('./tmux');
 const { modeFromScreen } = require('../app/permission-mode');
 const { tidyScreen, plainScreen } = require('../app/screen-text');
 const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
+const codexSessions = require('../app/codex-sessions');
+const codexRecords = require('../app/codex-records');
 const { resume } = require('./resume');
 const { launch } = require('./launch');
 const btwPanel = require('../app/btw-panel');
@@ -39,6 +41,7 @@ function locate(s, pid) {
   if (!c) return;
   s.fromPid = pid;
   s.claudePid = c.pid; s.claudeComm = c.comm;
+  s.processIdentity = proc.identity(c.pid);
   s.headless = c.parent === process.pid;                             // a `claude -p --resume` / `codex exec resume` we started ourselves
   s.target = s.headless ? null : proc.tmuxPaneOf(c.pid);
   // the environment the session was started with (proxy, API settings...): a background resume reuses it
@@ -47,6 +50,7 @@ function locate(s, pid) {
     delete env.TMUX; delete env.TMUX_PANE;
     if (env.PATH) s.env = env;
   }
+  codexSessions.remember(s);
 }
 
 // ---- reply to a session ----
@@ -95,7 +99,7 @@ async function chatKey(id, key, wantScreen = false, hl = false) {
   // mode with the next message); wantScreen: the screen after the key too (the dashboard's 终端画面 is open)
   await new Promise((res) => setTimeout(res, 350));
   const text = await tmux.screen(s.target, hl);
-  return { ok: true, mode: key === 'btab' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
+  return { ok: true, mode: key === 'btab' && s.provider !== 'codex' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
 }
 
 // what the session's tmux pane shows right now (asked for in the dashboard, never polled): Claude Code's own menus
@@ -183,9 +187,9 @@ const server = http.createServer((req, res) => {
     if (!m) { res.writeHead(404); res.end(); return; }
     permissions.advance(d);
     // look the process up before answering: the hook's parent is guaranteed alive while it waits for us
-    if (d.pid && m[1] !== 'quit') locate(sessions.ensure(d.session || 'unknown', d), d.pid);
-    res.writeHead(200); res.end();
     sessions.event(m[1], d);
+    if (d.pid && m[1] !== 'quit') locate(sessions.map.get(d.session || 'unknown'), d.pid);
+    res.writeHead(200); res.end();
   });
 });
 
@@ -211,6 +215,17 @@ function adoptRunning() {
     locate(s, r.pid);                                                 // its tmux pane and environment, as for a hook
     n++;
   }
-  if (n) console.log(`接回了 ${n} 个已在运行的 Claude 会话`);
+  for (const r of codexSessions.list()) {
+    const id = 'codex:' + r.id;
+    if (sessions.map.has(id)) continue;
+    const c = proc.findCodex(r.pid);
+    if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { codexSessions.forget(r.id); continue; }
+    const s = sessions.ensure(id, { provider: 'codex', rawSession: r.id });
+    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, title: codexRecords.titleOf(r.id) || r.title || undefined,
+      transcript: r.transcript || codexRecords.fileOf(r.id) || undefined });
+    locate(s, r.pid);
+    n++;
+  }
+  if (n) console.log(`接回了 ${n} 个已在运行的 Claude / Codex 会话`);
 }
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { permissions.clear(); removeToken(); process.exit(0); });

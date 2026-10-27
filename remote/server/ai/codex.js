@@ -10,7 +10,7 @@ const { request } = require('../google/http');
 const { createCliAdmin } = require('./cli-admin');
 
 // codex: { bin (path or [cmd, ...args]), pathPrefix }; egress: the proxies (null: direct)
-function createCodexAdmin({ dataDir, codex, egress = null, codexHome = path.join(os.homedir(), '.codex'), log = () => {} }) {
+function createCodexAdmin({ dataDir, codex, egress = null, codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), log = () => {} }) {
   return createCliAdmin({ dataDir, egress, log, tool: {
     name: 'codex', label: 'Codex', bin: codex.bin, pathPrefix: codex.pathPrefix, versionHost: 'chatgpt.com', updateHost: 'github.com',
     async newest(eg) {

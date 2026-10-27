@@ -8,13 +8,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = path.join(os.homedir(), '.codex');
+const ROOT = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 const SESSIONS = path.join(ROOT, 'sessions');
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 // text Codex adds to the conversation itself (context, instructions), not something you typed
 const HARNESS = /^\s*(<(environment_context|user_instructions|permissions|user_shell_command|turn_aborted|subagent_notification)|# AGENTS\.md instructions)/;
 
 function toolLine(name, args) {
+  name = String(name || '').replace(/^functions\./, '');
   if (name === 'shell' || name === 'exec_command' || name === 'shell_command') {
     let a = args; try { a = typeof args === 'string' ? JSON.parse(args) : args; } catch {}
     const cmd = Array.isArray(a && a.command) ? a.command[a.command.length - 1] : (a && (a.command || a.cmd)) || '';
@@ -30,6 +31,7 @@ function toolLine(name, args) {
 // the structured detail next to the line (as in app/transcript.js toolExtra): full command, patched files (paths as
 // Codex wrote them, often relative to the session's folder), the plan's steps
 function toolExtra(name, args) {
+  name = String(name || '').replace(/^functions\./, '');
   if (name === 'shell' || name === 'exec_command' || name === 'shell_command') {
     let a = args; try { a = typeof args === 'string' ? JSON.parse(args) : args; } catch {}
     const cmd = Array.isArray(a && a.command) ? a.command[a.command.length - 1] : (a && (a.command || a.cmd)) || '';
@@ -40,7 +42,7 @@ function toolExtra(name, args) {
     return p.length ? { op: 'edit', p: p.slice(0, 50) } : undefined;
   }
   if (name === 'update_plan') {
-    let a = null; try { a = JSON.parse(args); } catch {}
+    let a = args; try { if (typeof args === 'string') a = JSON.parse(args); } catch {}
     const steps = a && Array.isArray(a.plan) ? a.plan : [];
     return steps.length ? { op: 'todo', todos: steps.slice(0, 40).map((s) => [String(s.step || '').slice(0, 200), String(s.status || '')]) } : undefined;
   }
@@ -51,6 +53,7 @@ const toolRec = (name, args, t) => { const x = toolExtra(name, args); return x ?
 // the records one rollout line contributes
 function recordsOf(o) {
   const out = [];
+  if (!o || typeof o !== 'object') return out;
   const t = o && o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const p = (o && o.payload) || {};
   if (o.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
@@ -63,6 +66,9 @@ function recordsOf(o) {
     out.push(toolRec(p.name, p.input, t));
   } else if (o.type === 'response_item' && p.type === 'local_shell_call') {
     out.push(toolRec('shell', p.action, t));
+  } else if (o.type === 'turn_context') {
+    const mode = p.permission_mode || (p.collaboration_mode && p.collaboration_mode.mode === 'plan' ? 'plan' : p.approval_policy === 'never' ? 'dontAsk' : 'default');
+    out.push({ role: 'mode', text: String(mode).slice(0, 24), t });
   } else if (o.type === 'compacted') {
     out.push({ role: 'sys', text: '（上下文已压缩）', t });
   } else if (o.type === 'event_msg' && p.type === 'turn_aborted') {
@@ -76,7 +82,7 @@ function recordsOf(o) {
 }
 
 // { id, cwd, sub } from the first line (session_meta)
-function metaOf(file) {
+function metadataOf(file) {
   try {
     // the whole first line: it carries Codex's instructions too (over 20 KB since 0.16x), so read on to its end
     const fd = fs.openSync(file, 'r'), parts = [];
@@ -91,23 +97,21 @@ function metaOf(file) {
     } finally { fs.closeSync(fd); }
     const o = JSON.parse(Buffer.concat(parts).toString('utf8'));
     if (o.type !== 'session_meta' || !o.payload || !o.payload.id) return null;
-    return { id: o.payload.id, cwd: o.payload.cwd || '', sub: !!o.payload.parent_thread_id };
+    return o.payload;
   } catch { return null; }
 }
+function metaOf(file) {
+  const p = metadataOf(file);
+  if (!p) return null;
+  return { id: p.id, cwd: p.cwd || '', sub: !!p.parent_thread_id || !!(p.source && typeof p.source === 'object' && p.source.subagent) };
+}
 
-// rollout files changed within the last `withinMs` (only the recent date folders are looked at)
+// A resumed thread keeps its original date directory. Filter by file mtime, never the directory's date.
 function recentFiles(withinMs) {
   const out = [], now = Date.now();
-  for (let d = 0; d <= Math.ceil(withinMs / 86400e3) + 1; d++) {
-    const day = new Date(now - d * 86400e3);
-    const dir = path.join(SESSIONS, String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0'));
-    let names = []; try { names = fs.readdirSync(dir); } catch { continue; }
-    for (const n of names) {
-      if (!n.endsWith('.jsonl')) continue;
-      const file = path.join(dir, n);
-      let st; try { st = fs.statSync(file); } catch { continue; }
-      if (now - st.mtimeMs <= withinMs) out.push({ file, mtime: st.mtimeMs });
-    }
+  for (const file of allFiles()) {
+    let st; try { st = fs.statSync(file); } catch { continue; }
+    if (now - st.mtimeMs <= withinMs) out.push({ file, mtime: st.mtimeMs });
   }
   return out;
 }
@@ -129,7 +133,7 @@ function allFiles() {
 function fileOf(id) {
   if (!/^[0-9a-f-]{36}$/.test(String(id))) return null;
   const hit = (list) => list.find((f) => f.endsWith(`-${id}.jsonl`));
-  return hit(recentFiles(2 * 86400e3).map((f) => f.file)) || hit(allFiles()) || null;
+  return hit(allFiles()) || null;
 }
 
 // thread titles (id -> name); re-read only when the index file changes
@@ -146,4 +150,4 @@ function titleOf(id) {
   return titles.get(id) || '';
 }
 
-module.exports = { recordsOf, metaOf, recentFiles, allFiles, fileOf, titleOf };
+module.exports = { recordsOf, metaOf, metadataOf, recentFiles, allFiles, fileOf, titleOf };

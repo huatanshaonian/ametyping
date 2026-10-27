@@ -37,7 +37,21 @@ function find(pid, re) {
   return null;
 }
 const findClaude = (pid) => find(pid, CLAUDE_COMM);
-const findCodex = (pid) => find(pid, CODEX_COMM);
+// Hooks can run inside a Codex sandbox/helper. Keep the outer CLI, not a short-lived nested helper.
+function findCodex(pid) {
+  let found = null;
+  for (let p = +pid, n = 0; p > 1 && n < 16; p = ppid(p), n++) {
+    const c = comm(p);
+    if (c === 'codex') found = { pid: p, comm: c, parent: ppid(p) };
+  }
+  return found || find(pid, CODEX_COMM);
+}
+function identity(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() + ':' + stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+  } catch { return null; }
+}
 
 // tmux exports TMUX="<socket>,<server pid>,<session>" and TMUX_PANE="%N" to everything started in a pane
 function tmuxPaneOf(pid) {
@@ -52,4 +66,4 @@ function alive(pid, expectComm) {
   return c != null && (!expectComm || c === expectComm);
 }
 
-module.exports = { findClaude, findCodex, tmuxPaneOf, alive, comm, ppid, environ };
+module.exports = { findClaude, findCodex, tmuxPaneOf, alive, comm, ppid, environ, identity };

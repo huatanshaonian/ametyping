@@ -67,7 +67,7 @@ p = P('login');
 chk('/login: titled, the three ways to sign in as numbered rows, Esc', p.kind === 'dialog' && p.title === 'Login' && p.blocks.filter((b) => b.type === 'list').length === 1 &&
   p.blocks.find((b) => b.type === 'list').rows.map((r) => (r.cur ? '>' : '') + r.num).join() === '>1,2,3' && p.hints.map((x) => x.keys.map((k) => k.key).join()).join() === 'esc' && !p.ask, p);
 p = P('login-url');
-const loginRaw = fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'login-url.txt'), 'utf8').split('\n');
+const loginRaw = fs.readFileSync(path.join(__dirname, 'fixtures', 'screens', 'login-url.txt'), 'utf8').split(/\r?\n/);
 const loginAt = loginRaw.findIndex((l) => l.startsWith('https://'));
 const loginUrl = loginRaw.slice(loginAt, loginAt + 6).join('');
 const link = p.blocks.find((b) => b.type === 'link');

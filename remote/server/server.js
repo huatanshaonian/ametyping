@@ -320,7 +320,7 @@ function onAgentMessage(m, raw, ws) {
   }
   // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
   if (d.t === 'cmds' && Array.isArray(d.list)) {
-    m.cmds = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
+    m[d.provider === 'codex' ? 'codexCmds' : 'cmds'] = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
       .map((c) => ({ name: String(c.name), desc: str(c.desc, 120), src: str(c.src, 10) }));
     return;
   }
@@ -527,7 +527,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
-    return json(res, 200, { list: (m && m.cmds) || [] });
+    return json(res, 200, { list: (m && m[url.searchParams.get('provider') === 'codex' ? 'codexCmds' : 'cmds']) || [] });
   }
   if (req.method === 'GET' && p === '/api/session/export') {
     const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');

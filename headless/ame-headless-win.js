@@ -146,10 +146,10 @@ const server = http.createServer((req, res) => {
     // first start takes a moment, and the hook must not hold Claude Code up for it)
     if (d.pid && m[1] !== 'quit') {
       const s = sessions.ensure(d.session || 'unknown', d);
+      sessions.event(m[1], d);
       await Promise.race([locate(s, d.pid).catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
-    }
+    } else sessions.event(m[1], d);
     res.writeHead(200); res.end();
-    sessions.event(m[1], d);
   });
 });
 
@@ -161,7 +161,7 @@ server.listen(PORT, '127.0.0.1', () => {
   bridge.start();                                                    // warm up: the first hook event needs the process lookup fast
   // Claude Code sessions already open (a restart, the computer waking up): on the list at once
   setTimeout(() => adoptRunning({ sessions: sessions.map, bridge, home: HOME, isClaude: (n) => CLAUDE_EXE.test(n), isTerminal: (n) => TERM_HOSTS.test(n), onChange: () => {} })
-    .then((n) => { if (n) log(`接回了 ${n} 个已在运行的 Claude 会话`); }, (e) => log('adopt: ' + e.message)), 1500);
+    .then((n) => { if (n) log(`接回了 ${n} 个已在运行的 Claude / Codex 会话`); }, (e) => log('adopt: ' + e.message)), 1500);
 });
 function stop() { permissions.clear(); removeToken(); bridge.stop(); process.exit(0); }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, stop);

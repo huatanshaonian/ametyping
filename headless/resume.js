@@ -27,7 +27,7 @@ function resume(id, cwd, env, text, onExit, codex = false) {
   p.on('error', () => {});
   p.stdin.on('error', () => {});
   p.stdin.end(text);                                               // prompt on stdin: never parsed as an option
-  p.on('exit', onExit);
+  p.once('close', onExit); // close also fires after a failed spawn; never leave the session permanently busy.
   return { ok: true, pid: p.pid };
 }
 

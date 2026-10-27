@@ -5,6 +5,9 @@
 'use strict';
 const { listRunning, lineage, transcriptOf, projectOf } = require('./running-sessions');
 const { inTerminal } = require('./session-terminal');
+const codexSessions = require('./codex-sessions');
+const codexCli = require('./codex-cli');
+const codexRecords = require('./codex-records');
 
 // deps: sessions (the pet's Map), bridge (ancestors, screen), home, isClaude(name), isTerminal(name), onChange()
 async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onChange }) {
@@ -21,6 +24,26 @@ async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onCh
       id: r.sessionId, provider: 'claude', rawSession: r.sessionId, project: projectOf(r.cwd), title: r.name || undefined, cwd: r.cwd,
       transcript: transcriptOf(home, r.cwd, r.sessionId) || undefined, state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t,
       claudePid: r.pid, fromPid: null, headless: false, terminal,
+    });
+    n++;
+  }
+  for (const r of codexSessions.list(home)) {
+    const id = 'codex:' + r.id;
+    if (sessions.has(id)) continue;
+    const chain = await bridge.ancestors(r.pid);
+    if (!chain.length) continue; // A slow bridge is not proof that the process ended.
+    const c = codexCli.findCodex(chain, process.pid);
+    if (!c || c.pid !== r.pid) { codexSessions.forget(r.id, home); continue; }
+    const identity = bridge.identity ? await bridge.identity(c.pid) : null;
+    if (!identity) continue;
+    if (identity !== r.identity) { codexSessions.forget(r.id, home); continue; }
+    if (sessions.has(id)) continue;
+    const t = Date.now();
+    sessions.set(id, {
+      id, provider: 'codex', rawSession: r.id, project: projectOf(r.cwd), cwd: r.cwd,
+      title: codexRecords.titleOf(r.id) || r.title || undefined, transcript: r.transcript || codexRecords.fileOf(r.id) || undefined,
+      state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t,
+      claudePid: c.pid, processIdentity: identity, fromPid: null, headless: c.own, terminal: !c.own && !!c.parent && isTerminal(c.parent.name),
     });
     n++;
   }

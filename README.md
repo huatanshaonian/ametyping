@@ -23,9 +23,11 @@ Claude Code 与 Codex 的 hook 把会话事件发给糖糖，她下面的面板�
 
 - **面板模式**（托盘）：弹出进度（有动静时弹出、停下后收起）／常驻对话（完整对话 + 回复框）／关闭（只在 Windose 网页里看）。
 - **权限确认卡片**：显示工具、目录、命令或文件与完整参数，「允许」「拒绝」（Codex 另有「在 Codex 中处理」）。Claude Code 在等待卡片的同时终端里也会问，任意一边回答即可；卡片最多等约 60 分钟，超时交回终端。
-- **回复**：会话在终端里就直接打进终端（`WriteConsoleInput`，不抢焦点）；会话已关闭则用 `claude -p --resume` 后台续上；IDE / 桌面 App 里的会话只能看；有待确认时回复会被拦下。Codex CLI 的会话同样可以回复（已关闭的用 `codex exec resume` 续上），面板里显示它的完整对话；Linux 无头服务上的 Codex 会话暂时只能看和审批。
+- **回复**：会话在终端里就直接打进终端（`WriteConsoleInput`，不抢焦点）；会话已关闭则用 `claude -p --resume` 后台续上；IDE / 桌面 App 里的会话只能看；有待确认时回复会被拦下。Codex CLI 的会话同样可以回复（已关闭的用 `codex exec resume` 续上），面板里显示它的完整对话；Linux 上的 Claude Code / Codex 在 tmux 中运行即可从看板回复、按键和查看画面。
 
-安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任。一键部署脚本（见下）会自动做这些。
+安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任；`node install-codex-hooks.js --remove` 可移除。Codex 的 hooks、对话、标题和技能均支持自定义 `CODEX_HOME`。一键部署脚本（见下）会自动做这些。
+
+Codex 与 Claude Code 一样支持桌宠进度、完整对话与存档、终端回复和按键、后台续聊、远程新建与恢复会话。Codex 另支持子代理状态、压缩进度、计划模式、`/` 命令提示与 `$` 技能提示；服务重启后自动接回曾通过 hooks 识别的仍在运行的 Codex 会话。权限按钮打开 Codex 自己的 `/permissions` 菜单。功能对照、协议差异和验证方法见 [Codex 支持说明](docs/codex-support.md)。
 
 ## Windose 远程桌面
 

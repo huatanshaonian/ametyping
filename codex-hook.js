@@ -10,7 +10,8 @@ function mapHook(p, eventAt = Date.now()) {
   const body = { provider: 'codex', session: p.session_id, project: path.basename(p.cwd || ''),
     cwd: p.cwd || '', hookEvent: p.hook_event_name, eventAt,
     // pid: what started us (Codex, or the shell it runs hooks through): the pet walks up from it to the terminal
-    pid: process.ppid,
+    pid: p.agent_id ? undefined : process.ppid,
+    transcript: !p.agent_id && typeof p.transcript_path === 'string' ? p.transcript_path : undefined,
     agentId: p.agent_id || '', subagent: p.agent_type || '' };
   const input = p.tool_input || {};
   if (p.hook_event_name === 'PermissionRequest') {
@@ -38,8 +39,14 @@ function mapHook(p, eventAt = Date.now()) {
     }
     case 'Stop': event = 'done'; text = p.last_assistant_message ? `完成了：${cut(p.last_assistant_message, 200)}` : '完成了'; break;
     case 'Interrupt': event = 'paused'; text = '已中断'; break;
+    case 'PreCompact': event = 'thinking'; text = '正在压缩上下文'; break;
+    case 'PostCompact': event = 'thinking'; text = '上下文已压缩，继续工作'; break;
+    case 'SubagentStart': event = 'thinking'; text = `子代理开始：${cut(p.agent_type || p.agent_id)}`; break;
+    case 'SubagentStop': event = 'thinking'; text = `子代理完成：${cut(p.agent_type || p.agent_id)}`; break;
     default: return null;
   }
+  // A child finishing must not mark its still-working parent as done (or close it).
+  if (p.agent_id && (event === 'done' || event === 'quit' || event === 'idle')) event = 'thinking';
   return { route: '/event/' + event, body: { ...body, text } };
 }
 

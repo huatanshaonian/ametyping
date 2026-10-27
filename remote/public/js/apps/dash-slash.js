@@ -17,23 +17,30 @@ const BUILTIN = [
   ['usage', '用量和限额'], ['vim', 'Vim 编辑模式'],
 ].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
 const MAX = 8, CACHE_MS = 5 * 60e3;
+const CODEX = [
+  ['model', '切换模型和推理强度'], ['permissions', '设置权限'], ['plan', '切换计划模式'], ['status', '会话、上下文和用量'],
+  ['resume', '恢复已有会话'], ['new', '开始新会话'], ['clear', '清屏并开始新会话'], ['rename', '重命名当前会话'],
+  ['fork', '从当前会话分支'], ['compact', '压缩上下文'], ['review', '审查代码改动'], ['diff', '查看代码改动'],
+  ['init', '生成 AGENTS.md'], ['skills', '选择技能'], ['mcp', '查看 MCP 服务器'], ['hooks', '管理 hooks'],
+  ['ps', '查看后台终端'], ['stop', '停止后台终端'], ['quit', '退出 Codex'], ['feedback', '提交反馈'],
+].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
 
-export function createSlash({ say, machine, onFill }) {
+export function createSlash({ say, machine, provider = () => 'claude', onFill }) {
   const el = h('div', { class: 'slash', hidden: true });
   const cache = new Map();                           // machine -> { at, list }
   let items = [], idx = 0, prefix = null;
 
-  async function own(m) {
-    const c = cache.get(m);
+  async function own(m, p) {
+    const key = m + '|' + p, c = cache.get(key);
     if (c && Date.now() - c.at < CACHE_MS) return c.list;
-    cache.set(m, { at: Date.now(), list: c ? c.list : [] });         // (one fetch at a time)
-    try { const r = await fetch('/api/commands?machine=' + encodeURIComponent(m)); if (r.ok) cache.set(m, { at: Date.now(), list: (await r.json()).list || [] }); } catch {}
-    return cache.get(m).list;
+    cache.set(key, { at: Date.now(), list: c ? c.list : [] });
+    try { const r = await fetch('/api/commands?machine=' + encodeURIComponent(m) + '&provider=' + p); if (r.ok) cache.set(key, { at: Date.now(), list: (await r.json()).list || [] }); } catch {}
+    return cache.get(key).list;
   }
   // the command word being typed: "/" at the very start, the caret still inside the word
   function token() {
     const v = say.value, c = say.selectionStart;
-    if (!v.startsWith('/') || say.selectionEnd !== c) return null;
+    if (!(v.startsWith('/') || (provider() === 'codex' && v.startsWith('$'))) || say.selectionEnd !== c) return null;
     const word = v.slice(1, c);
     return /\s/.test(word) ? null : word;
   }
@@ -41,8 +48,9 @@ export function createSlash({ say, machine, onFill }) {
     const t = say.disabled ? null : token();
     if (t == null) return close();
     const m = machine();
-    const all = [...(m ? await own(m) : []), ...BUILTIN];
-    if (token() !== t) return;                                         // typed on while fetching
+    const p = provider(), leader = say.value[0];
+    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : BUILTIN)];
+    if (say.disabled || token() !== t || provider() !== p || machine() !== m || say.value[0] !== leader) return;
     const low = t.toLowerCase();
     const starts = all.filter((c) => c.name.toLowerCase().startsWith(low));
     const inside = low ? all.filter((c) => !c.name.toLowerCase().startsWith(low) && c.name.toLowerCase().includes(low)) : [];
@@ -55,14 +63,15 @@ export function createSlash({ say, machine, onFill }) {
   }
   function render() {
     el.replaceChildren(...items.map((c, i) => h('div', { class: 'sl' + (i === idx ? ' on' : ''), dataset: { i } },
-      h('b', { text: '/' + c.name }), h('span', { text: c.desc || '' }), c.src !== 'builtin' ? h('i', { text: c.src === 'skill' ? '技能' : '自定义' }) : null)));
+      h('b', { text: trigger(c) + c.name }), h('span', { text: c.desc || '' }), c.src !== 'builtin' ? h('i', { text: c.src === 'skill' ? '技能' : '自定义' }) : null)));
     el.hidden = false;
   }
   function close() { el.hidden = true; items = []; prefix = null; }
+  const trigger = (c) => provider() === 'codex' && c.src === 'skill' ? '$' : '/';
   function fill(i) {
     const c = items[i]; if (!c) return;
     const v = say.value, end = say.selectionStart;
-    say.value = '/' + c.name + ' ' + v.slice(end).replace(/^\S*\s?/, '');
+    say.value = trigger(c) + c.name + ' ' + v.slice(end).replace(/^\S*\s?/, '');
     const pos = c.name.length + 2;
     say.setSelectionRange(pos, pos);
     close();
@@ -74,7 +83,7 @@ export function createSlash({ say, machine, onFill }) {
     const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { idx = (idx + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; render(); stop(); }
     else if (e.key === 'Tab' && !e.shiftKey) { fill(idx); stop(); }
-    else if (e.key === 'Enter' && !e.shiftKey && say.value.trim() !== '/' + items[idx].name) { fill(idx); stop(); }
+    else if (e.key === 'Enter' && !e.shiftKey && say.value.trim() !== trigger(items[idx]) + items[idx].name) { fill(idx); stop(); }
     else if (e.key === 'Escape') { close(); stop(); }
   }, true);
   say.addEventListener('input', refresh);

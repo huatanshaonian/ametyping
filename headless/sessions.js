@@ -3,6 +3,7 @@
 // kept for a while so it can still be resumed from the dashboard.
 'use strict';
 const proc = require('./proc-linux');
+const codexSessions = require('../app/codex-sessions');
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, KEEP_MS = 12 * 3600e3;
@@ -27,14 +28,16 @@ function createSessions() {
     const id = d.session || 'unknown', t = Date.now();
     if (type === 'quit') {
       const q = map.get(id);
+      if (q && q.provider === 'codex') codexSessions.forget(q.rawSession);
       if (q) Object.assign(q, { state: 'ended', claudePid: null, claudeComm: null, fromPid: null, target: null, headless: false, last: t });
       return;
     }
     const s = ensure(id, d);
-    if (d.project) s.project = String(d.project).slice(0, 40);
+    if (d.project && !(d.provider === 'codex' && d.agentId)) s.project = String(d.project).slice(0, 40);
     if (d.title) s.title = String(d.title).slice(0, 60);
     if (d.transcript) s.transcript = String(d.transcript);
-    if (d.cwd) s.cwd = String(d.cwd);
+    if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
+    codexSessions.remember(s);
     if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return; }   // SessionStart
     if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; }
     if (type === 'thinking' || type === 'reading') s.steps++;

@@ -7,6 +7,7 @@
 // desktop app cannot.
 'use strict';
 const codexCli = require('./codex-cli');
+const codexSessions = require('./codex-sessions');
 const { inTerminal } = require('./session-terminal');
 
 const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
@@ -15,7 +16,7 @@ const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|Windo
 // bridge: the console bridge (bridge.js); onChange(): a session's terminal became known (the reply box may be usable)
 function createLocator({ bridge, onChange = () => {} }) {
   async function locate(s, pid) {
-    if (!s || !pid || s.fromPid === pid) return;
+    if (!s || !pid || (s.fromPid === pid && (s.provider !== 'codex' || s.processIdentity))) return;
     const chain = await bridge.ancestors(pid);
     if (s.provider === 'codex') {
       const c = codexCli.findCodex(chain, process.pid);
@@ -23,6 +24,8 @@ function createLocator({ bridge, onChange = () => {} }) {
       s.fromPid = pid; s.claudePid = c.pid;
       s.headless = c.own;                                            // a `codex exec resume` we started ourselves
       s.terminal = !c.own && !!c.parent && TERM_HOSTS.test(c.parent.name);
+      s.processIdentity = bridge.identity ? await bridge.identity(c.pid) : null;
+      codexSessions.remember(s);
       return onChange();
     }
     const i = chain.findIndex((p) => CLAUDE_EXE.test(p.name));

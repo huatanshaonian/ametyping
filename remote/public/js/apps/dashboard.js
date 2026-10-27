@@ -98,7 +98,7 @@ function mount(current) {
   // the session's permission mode; a click cycles it like Shift+Tab in the terminal
   const modeBtn = h('button', { class: 'btn mode', type: 'button', hidden: true, text: '模式？' });
   // "/" in the reply box: suggestions of the session's machine's commands (dash-slash.js)
-  const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), onFill: () => say.dispatchEvent(new Event('input')) });
+  const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), provider: () => sel && sel.split('|')[1].startsWith('codex:') ? 'codex' : 'claude', onFill: () => say.dispatchEvent(new Event('input')) });
   const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn, slash.el);
   // /btw answers pop up over the conversation (dash-btw.js); a click on one in the conversation opens it again
   // (转成后台任务 there: "f" in the terminal's /btw overlay, which the pet presses only while it is open)
@@ -167,6 +167,7 @@ function mount(current) {
 
   function select(key) {
     if (key !== sel) keepDraft();                   // the one we leave keeps its unsent text
+    slash.close();
     sel = key;
     renderList();
     root.classList.add('viewing'); navLevel();
@@ -221,6 +222,7 @@ function mount(current) {
     sendBtn.disabled = say.disabled || !say.value.trim();
     termOk = !!(s && s.online && via === 'terminal');
     keys.hidden = !(termOk && showKeys);
+    for (const b of keys.querySelectorAll('button[data-key]')) if (COMBOS.some(([k]) => k === b.dataset.key)) b.hidden = !!(s && s.id.startsWith('codex:'));
     term.target(termOk ? sel : null);
     kbdBtn.hidden = !termOk;
     renderMode(s);
@@ -236,12 +238,20 @@ function mount(current) {
     if (p && s && s.mode !== p.base) pressed.delete(sel);
     const m = pressed.has(sel) ? p.mode : s && s.mode;
     modeBtn.hidden = !(s && (m || termOk));
-    modeBtn.disabled = !termOk;
+    modeBtn.disabled = !termOk || sending;
     modeBtn.textContent = m ? MODE[m] || m : '模式？';
     modeBtn.dataset.mode = m || '';
     modeBtn.title = (m ? `权限模式：${MODE[m] || m}（发消息时记录）` : '权限模式：发一条消息后才知道') + (termOk ? '；点击或 Shift+Tab 轮转' : '');
+    if (s && s.id.startsWith('codex:')) modeBtn.title = '点击打开 Codex 的 /permissions 权限菜单；Shift+Tab 切换计划模式';
   }
-  modeBtn.addEventListener('click', () => pressKey('btab', modeBtn));
+  modeBtn.addEventListener('click', async () => {
+    const s = find(sel);
+    if (!s || !s.id.startsWith('codex:')) return pressKey('btab', modeBtn);
+    const at = sel;
+    const r = await net.act({ t: 'send', machine: s.machine, id: s.id, text: '/permissions' });
+    if (!r.ok) return showNote(r.msg || '打开权限菜单失败', true);
+    if (sel === at) { term.show(true); term.load(900); }
+  });
   const fitSay = () => { say.style.height = 'auto'; say.style.height = Math.min(140, say.scrollHeight + 2) + 'px'; };
   say.addEventListener('input', () => { fitSay(); sendBtn.disabled = say.disabled || !say.value.trim(); keepDraft(); });
   say.addEventListener('keydown', (e) => {

@@ -61,4 +61,11 @@ function scan(home) {
   return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
 }
 
-module.exports = { scan };
+function scanCodex(home) {
+  const out = [];
+  skillsIn(path.join(home, '.agents', 'skills'), '', out);
+  skillsIn(path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'skills'), '', out);
+  const seen = new Set();
+  return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
+}
+module.exports = { scan, scanCodex };

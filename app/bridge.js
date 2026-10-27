@@ -58,6 +58,7 @@ module.exports = {
   // the process and everything started under it, nearest first
   descendants: async (pid) => procs(await call(`desc ${pid | 0}`, 3000)),
   alive: async (pid) => { const r = await call(`alive ${pid | 0}`, 3000); return r.ok && r.v === '1'; },
+  identity: async (pid) => { const r = await call(`identity ${pid | 0}`, 3000); return r.ok ? r.v : null; },
   send: (pid, text) => call(`send ${pid | 0} ${b64(text)}`, 15000),
   // hl: with what is highlighted on the screen (a menu's current tab) between U+E000 and U+E001
   screen: async (pid, hl) => { const r = await call(`screen ${pid | 0}${hl ? ' hl' : ''}`, 5000); return r.ok ? Buffer.from(r.v || '', 'base64').toString('utf8') : null; },

@@ -50,7 +50,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       p.stdin.on('error', () => {});
       p.stdin.end(text);                                           // prompt on stdin: never parsed as an option
     }
-    p.on('exit', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
+    p.once('close', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
     s.headless = true; s.state = 'message'; s.last = Date.now();
     pushBubble(null);
     return { ok: true, msg: codex ? '这个会话已经关了，在后台用 codex exec resume 续上（不会再问你确认：按 Codex 自己的沙箱设置来）'
@@ -112,7 +112,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     // mode with the next message). (Text typed into a menu's search box: the list under it takes a little longer.)
     await sleep(ch && ch[1].length > 1 ? 700 : 350);
     const text = await bridge.screen(t.pid, hl);
-    return { ok: true, mode: key === 'btab' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
+    return { ok: true, mode: key === 'btab' && sessions.get(id).provider !== 'codex' ? modeFromScreen(plainScreen(text)) : undefined, screen: wantScreen ? tidyScreen(text) || '' : undefined };
   }
 
   // what the session's terminal shows right now (asked for by you in the dashboard, never polled): Claude Code's own
@@ -156,6 +156,8 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     if (s && s.claudePid && s.state !== 'ended') return;           // (its own hook came in meanwhile)
     if (!s) { s = { id, provider: 'codex', rawSession: id.slice(6), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
     Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: cpid, fromPid: null, headless: false, terminal: true });
+    s.processIdentity = bridge.identity ? await bridge.identity(cpid) : null;
+    require('./codex-sessions').remember(s, home());
     pushBubble(null);
   }
 
