@@ -37,6 +37,7 @@ const { createBackup } = require('./backup');
 const { createMail } = require('./mail');
 const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
+const { createClaudeApis } = require('./claude-apis');
 const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
@@ -130,8 +131,9 @@ function machine(name) {
 }
 // how to continue a session on its machine (Windows paths get PowerShell syntax)
 // (Codex sessions, "codex:<id>", continue with `codex resume`)
-function resumeCmd(cwd, id) {
-  const cmd = id.startsWith('codex:') ? `codex resume ${id.slice(6)}` : `claude --resume ${id}`;
+function resumeCmd(cwd, id, api = '') {
+  const claude = /^[A-Za-z0-9._-]{1,40}$/.test(String(api || '')) ? `claude-${api}` : 'claude';
+  const cmd = id.startsWith('codex:') ? `codex resume ${id.slice(6)}` : `${claude} --resume ${id}`;
   if (!cwd) return cmd;
   const q = `'${cwd.replace(/'/g, "''")}'`;
   return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; ${cmd}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${cmd}`;
@@ -157,13 +159,13 @@ function snapshot() {
     const list = [...m.sessions.values()].map((s) => {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id), cwd: (e && e.cwd) || undefined, mode: e ? e.mode : '', ctx: e ? e.ctx : null,
+        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id, s.api || (e && e.api)), api: s.api || (e && e.api) || '', cwd: (e && e.cwd) || undefined, mode: e ? e.mode : '', ctx: e ? e.ctx : null,
         agents: s.agents && s.agents.length ? s.agents : undefined };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id), cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id, e.api), api: e.api || '', cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -183,6 +185,37 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+// Claude Code API aliases (控制面板 → Claude Code API): the same alias on every machine, a machine variant where
+// its environment differs. The resolved settings are sent to the agent only when launching or when it syncs.
+const claudeApis = createClaudeApis({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
+  audit: (...a) => audit(...a), onChange: () => pushClaudeApis() });
+// a request to one agent that is not a browser action (reading its local Claude settings for an import)
+const agentReqs = new Map();       // rid -> { resolve, timer }
+function askAgent(m, obj, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const sock = m && m.sockets && [...m.sockets].pop();
+    if (!sock) return resolve({ ok: false, msg: '这台机器不在线' });
+    const rid = crypto.randomBytes(12).toString('hex');
+    const timer = setTimeout(() => { agentReqs.delete(rid); resolve({ ok: false, msg: '机器没有回应' }); }, timeoutMs);
+    agentReqs.set(rid, { resolve, timer });
+    try { sock.send(JSON.stringify({ ...obj, rid })); } catch { agentReqs.delete(rid); clearTimeout(timer); resolve({ ok: false, msg: '发送失败' }); }
+  });
+}
+// the machines the control panel may offer: the agents seen and the stored history
+function knownMachines() {
+  return [...new Set([...machines.keys(), ...Object.keys(store.sessions())])].sort().map((name) => ({
+    name, online: !!(machines.get(name) && machines.get(name).online),
+  }));
+}
+// every machine's agent writes a local copy (the terminal wrappers and background resumes read it)
+function pushClaudeApis() {
+  for (const m of machines.values()) {
+    if (!m.online || !m.sockets) continue;
+    let msg;
+    try { msg = JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(m.name) }); } catch { continue; }
+    for (const s of m.sockets) { try { s.send(msg); } catch {} }
+  }
+}
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
@@ -214,7 +247,7 @@ const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...t
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
 if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
 const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, searchIndex, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
+  resumeCmd, artifacts, todos, notes, searchIndex, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
@@ -327,6 +360,17 @@ function onAgentMessage(m, raw, ws) {
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
+  // the agent read the machine's ~/.claude/settings.json for an import (the server keeps the key; the browser never sees it)
+  if (d.t === 'claude-settings' && typeof d.rid === 'string') {
+    const p = agentReqs.get(d.rid);
+    if (p) { agentReqs.delete(d.rid); clearTimeout(p.timer); p.resolve({ ok: d.ok === true, settings: d.settings, msg: str(d.msg, 200) }); }
+    return;
+  }
+  if (d.t === 'claude-settings-backup' && typeof d.rid === 'string') {
+    const p = agentReqs.get(d.rid);
+    if (p) { agentReqs.delete(d.rid); clearTimeout(p.timer); p.resolve({ ok: d.ok === true, files: Array.isArray(d.files) ? d.files.slice(0, 20) : [], msg: str(d.msg, 200) }); }
+    return;
+  }
   if (d.t === 'state' && Array.isArray(d.sessions)) {
     if (typeof d.control === 'boolean') m.control = d.control;
     if (typeof d.files === 'boolean') m.files = d.files;
@@ -346,6 +390,8 @@ function onAgentMessage(m, raw, ws) {
       cur.t0 = +s.t0 || Date.now(); cur.last = +s.last || Date.now();
       cur.lines = Array.isArray(s.lines) ? s.lines.slice(-8).map((l) => ({ text: String(l.text || '').slice(0, 300), t: +l.t || 0, type: String(l.type || '').slice(0, 16) })) : [];
       cur.via = VIA.includes(s.via) ? s.via : 'off';
+      cur.api = typeof s.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(s.api) ? s.api : '';   // the alias it was launched with
+      if (cur.api) store.meta(m.name, s.id, { api: cur.api });   // keep it after this machine forgets the session
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
       cur.agents = agentRows(s.agents);              // the subagents it started (the agent's subagents.js)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
@@ -397,6 +443,11 @@ function onBrowserAction(c, d) {
   const sess = auth.checkSession(c.sid);
   if (!auth.isFresh(sess)) { c.acts.pop(); return reply(false, '操作前请再输一次验证码', 'totp'); }
   let out;
+  // the alias a new launch (or a resumed one) runs with: the one asked for, the session's own, or this machine's default
+  const resolveApi = (id) => {
+    const wanted = id || claudeApis.defaultFor(m.name);
+    return wanted ? claudeApis.resolve(wanted, m.name) : null;
+  };
   if (d.t === 'resume') {
     // a conversation that is over, opened again on its machine: a terminal in the folder it ran in, `claude --resume`
     // or, a Codex thread ("codex:<id>"), `codex resume`
@@ -404,16 +455,37 @@ function onBrowserAction(c, d) {
     const id = typeof d.id === 'string' ? d.id : '';
     if (!/^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
     if (s && s.via === 'terminal') return reply(false, '这个会话还开着，直接在这里回复就行');
-    if (!s && !(store.sessions()[m.name] || []).some((e) => e.id === id)) return reply(false, '这台电脑没有这个会话');
-    out = { t: 'resume', id };
-    audit('control-resume', c.ip, m.name, id);
+    const saved = store.sessions()[m.name] || [];
+    if (!s && !saved.some((e) => e.id === id)) return reply(false, '这台电脑没有这个会话');
+    if (id.startsWith('codex:')) {
+      out = { t: 'resume', id };
+      audit('control-resume', c.ip, m.name, id);
+    } else {
+      // the resume selector may name the alias for this one continuation; otherwise the session's own, never the
+      // machine default. '__none__' means the machine's original settings (no alias).
+      const explicit = d.api === '__none__' ? 'none' : (typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '');
+      const stored = saved.find((e) => e.id === id);
+      const wanted = explicit === 'none' ? '' : explicit || (s && s.api) || (stored && stored.api) || '';
+      let api = null;
+      if (wanted) {
+        api = claudeApis.resolve(wanted, m.name);
+        if (!api || !Object.keys(api.settings || {}).length) {
+          return reply(false, `API 别名「${wanted}」现在不可用；请换一个别名，或恢复它后再试。`);
+        }
+      }
+      out = { t: 'resume', id, api: api || undefined };
+      audit('control-resume', c.ip, m.name, id, explicit === 'none' ? 'none' : api ? api.id : '');
+    }
   } else if (d.t === 'launch') {
     // a new Claude Code (or Codex: tool) session in a folder of that machine (the agent checks it is a folder it lets you browse)
     const cwd = typeof d.cwd === 'string' ? d.cwd : '', prompt = typeof d.prompt === 'string' ? d.prompt : '';
     if (!cwd || cwd.length > 1000 || prompt.length > 8000) return reply(false, '无效请求');
     const tool = d.tool === 'codex' ? 'codex' : 'claude';
-    out = { t: 'launch', cwd, prompt, tool };
-    audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`, tool);
+    const requested = typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '';
+    const api = tool === 'codex' ? null : resolveApi(requested);
+    if (requested && tool === 'claude' && (!api || !Object.keys(api.settings || {}).length)) return reply(false, '这台机器没有这个 API 别名');
+    out = { t: 'launch', cwd, prompt, tool, api: api && Object.keys(api.settings || {}).length ? api : undefined };
+    audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`, tool, api ? api.id : '');
   } else if (d.t === 'send') {
     const text = typeof d.text === 'string' ? d.text : '';
     if (!text.trim() || text.length > 8000) return reply(false, '内容为空或太长（最多 8000 字）');
@@ -506,6 +578,44 @@ const server = http.createServer(async (req, res) => {
     const r = p.endsWith('/add') ? agentsAdmin.add(d.name, ip) : agentsAdmin.remove(String(d.name || ''), ip);
     if (r.ok) broadcast({ t: 'sessions', data: snapshot() });
     return json(res, 200, r);
+  }
+  // Claude Code API aliases (控制面板 → Claude Code API, and the launch selector in 我的电脑)
+  if (req.method === 'GET' && p === '/api/claude-apis') {
+    const machine = String(url.searchParams.get('machine') || '');
+    if (machine) return json(res, 200, claudeApis.launchList(machine));
+    return json(res, 200, { ...claudeApis.view(), known: knownMachines() });
+  }
+  if (req.method === 'POST' && p === '/api/claude-apis/set') {
+    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
+    let d = {}; try { d = JSON.parse(await readBody(req, 300000)); } catch {}
+    const r = claudeApis.set(d);
+    if (r.ok) audit('claude-apis-set', ip, Object.keys(d.aliases || {}).join(',').slice(0, 300));
+    return json(res, 200, { ...r, view: r.view ? { ...r.view, known: knownMachines() } : undefined });
+  }
+  if (req.method === 'POST' && p === '/api/claude-apis/import') {
+    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
+    let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
+    const machine = String(d.machine || '');
+    const m = machines.get(machine);
+    if (!m || !m.online) return json(res, 200, { ok: false, msg: '这台机器不在线' });
+    if (!m.control) return json(res, 200, { ok: false, msg: '这台机器没开远程控制' });
+    const r = await askAgent(m, { t: 'read-claude-settings' });
+    if (!r.ok) return json(res, 200, { ok: false, msg: r.msg || '读不到本机 Claude 设置' });
+    const out = claudeApis.importSettings({ machine, alias: d.alias, label: d.label, proxy: d.proxy, scope: d.scope === 'shared' ? 'shared' : 'machine', settings: r.settings || {} });
+    if (out.ok) audit('claude-apis-import', ip, machine, String(d.alias || '').slice(0, 40), d.scope === 'shared' ? 'shared' : 'machine');
+    return json(res, 200, { ...out, view: out.view ? { ...out.view, known: knownMachines() } : undefined });
+  }
+  if (req.method === 'POST' && p === '/api/claude-apis/backup') {
+    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
+    let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
+    const machine = String(d.machine || '');
+    const m = machines.get(machine);
+    if (!m || !m.online) return json(res, 200, { ok: false, msg: '这台机器不在线' });
+    if (!m.control) return json(res, 200, { ok: false, msg: '这台机器没开远程控制' });
+    const r = await askAgent(m, { t: 'backup-claude-settings' });
+    if (!r.ok) return json(res, 200, { ok: false, msg: r.msg || '备份失败' });
+    audit('claude-apis-backup', ip, machine);
+    return json(res, 200, { ok: true, files: Array.isArray(r.files) ? r.files.filter((x) => typeof x === 'string').slice(0, 10) : [], msg: '已备份' });
   }
   // wallpapers the server downloaded (display settings on the desktop)
   if (req.method === 'GET' && p === '/api/walls') return json(res, 200, { items: walls.list().map((w) => ({ name: w.name, url: '/wallpaper/' + w.name })) });
@@ -708,6 +818,8 @@ wssAgent.on('connection', (ws, req, a) => {
   broadcast({ t: 'sessions', data: snapshot() });
   // where the stored conversations of this machine stand: the agent streams on from there
   try { ws.send(JSON.stringify({ t: 'sync', offsets: store.offsets(a.name) })); } catch {}
+  // the aliases this machine launches with (local mirror + terminal wrappers on the agent side)
+  try { ws.send(JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(a.name) })); } catch {}
   ws.on('message', (raw) => onAgentMessage(m, raw, ws));             // size capped by maxPayload
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {

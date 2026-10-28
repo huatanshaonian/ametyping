@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { codexBin, threadOf } = require('./codex');
+const claudeApi = require('../app/claude-api');
 
 const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|LANG|LC_ALL)$/;
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -33,7 +34,7 @@ function claudeBin(env) {
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
 // resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's
 // ("codex:<id>") -- `codex resume <id>`
-function launch({ cwd, prompt, env, resume = '', tool = 'claude' }) {
+function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null }) {
   return new Promise((resolve) => {
     const thread = threadOf(resume);
     if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
@@ -42,15 +43,32 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude' }) {
     const codex = !!thread || (!resume && tool === 'codex');
     const bin = codex ? codexBin(env) : claudeBin(env);
     if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : '找不到 claude' });
+    const api = codex ? null : claudeApi.valid(apiArg);
+    if (!codex && apiArg && !api) return resolve({ ok: false, msg: 'API 别名配置不对' });
+    const sf = api ? claudeApi.settingsFile(api) : null;
+    if (api && !sf) return resolve({ ok: false, msg: '写 API 设置失败' });
     const tag = crypto.randomBytes(3).toString('hex');
     const name = `${codex ? 'codex' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
     const envFile = path.join(os.tmpdir(), `ame-launch-${crypto.randomBytes(8).toString('hex')}.env`);
-    const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k)).map(([k, v]) => `export ${k}=${q(v)}`);
-    try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { return resolve({ ok: false, msg: '写临时文件失败' }); }
+    // an alias is the authority for the API: do not carry a recent session's ANTHROPIC_* / CLAUDE_* along with it
+    const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k) && !/^CLAUDE_CONFIG_DIR$/i.test(k) && (!api || !/^(ANTHROPIC_|CLAUDE_)/.test(k))).map(([k, v]) => `export ${k}=${q(v)}`);
+    if (api) lines.push(`export AME_CLAUDE_API=${q(api.id)}`);
+    const proxy = api ? (claudeApi.PROXY.test(api.proxy || '') ? api.proxy : 'inherit') : 'inherit';
+    if (api && proxy !== 'inherit' && /^https?:\/\//.test(proxy)) {
+      for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) lines.push(`export ${k}=${q(proxy)}`);
+    }
+    try { fs.writeFileSync(envFile, lines.join('\n') + '\n', { mode: 0o600 }); } catch { if (sf) sf.cleanup(); return resolve({ ok: false, msg: '写临时文件失败' }); }
     const pre = path.join(os.homedir(), '.ametyping', 'launch.sh');
-    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; exec ${q(bin)}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
+    const direct = api && proxy === 'direct'
+      ? `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; export NO_PROXY='*' no_proxy='*'; ` : '';
+    // an inherited NO_PROXY=* (from a recent direct session or launch.sh) would bypass an explicit proxy
+    const explicit = api && proxy !== 'inherit' && /^https?:\/\//.test(proxy)
+      ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
+    const settings = sf ? ` --settings ${q(sf.file)}` : '';
+    // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
+    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
-      if (err) { try { fs.unlinkSync(envFile); } catch {} return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
+      if (err) { try { fs.unlinkSync(envFile); } catch {} if (sf) sf.cleanup(); return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
       answerTrust(name, codex);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });

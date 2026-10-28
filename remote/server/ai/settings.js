@@ -27,7 +27,7 @@ const TASKS = [
   { id: 'boardDesign', name: '画板设计', note: '把誊清后的页面做成有排版设计的 HTML' },
   { id: 'litVision', name: '文献读图', note: '把论文页面看成图片逐页转写（公式、表格），深读前自动做；超过页数上限的要你批准' },
 ];
-const SLUG = /^[\w.:-]{1,60}$/, EFFORT = /^[a-z]{2,10}$/;
+const SLUG = /^[\w.:-]{1,120}$/, EFFORT = /^[a-z]{2,10}$/;
 // Claude Code's catalog missing (not run yet on this machine): its current main models
 const CLAUDE_KNOWN = [
   { slug: 'claude-opus-5-5', name: 'Opus 5.5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium' },
@@ -38,7 +38,8 @@ const CLAUDE_KNOWN = [
 const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 
 // codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model
-function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna' }) {
+// claudeApis: the Claude Code API aliases (server/claude-apis.js); machine: the name the NAS uses in them
+function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas' }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -73,22 +74,41 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     } catch {}
     return CLAUDE_KNOWN.map((m) => ({ ...m, note: '', provider: 'claude' }));
   }
-  // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude' }] -- what the accounts can use
-  const models = () => [...codexModels(), ...claudeModels()];
+  // the same Claude models once per API alias (控制面板 → Claude Code API): the choice is made in the model select,
+  // no separate dropdown. The slug keeps the alias, so a job remembers which API it runs on.
+  function aliasModels(list) {
+    if (!claudeApis || typeof claudeApis.ids !== 'function') return [];
+    const out = [];
+    for (const id of claudeApis.ids()) {
+      const a = claudeApis.resolve(id, machine);
+      if (!a || !a.settings || !Object.keys(a.settings).length) continue;
+      const mode = a.proxy === 'direct' ? '直连' : /^https?:\/\//.test(a.proxy || '') ? '指定代理' : '本机代理';
+      for (const m of list) out.push({ ...m, slug: `api:${id}:${m.slug}`, name: `claude-${id} · ${m.name}`, note: `API 别名 ${id}（${mode}）`, api: id, model: m.slug });
+    }
+    return out;
+  }
+  // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude', api?, model? }] -- what the accounts can use
+  const models = () => {
+    const claude = claudeModels();
+    return [...codexModels(), ...claude, ...aliasModels(claude)];
+  };
 
-  // a model + effort as it will run: the effort only when that model has it; who runs it
+  // a model + effort as it will run: the effort only when that model has it; who runs it (and which API alias)
   function resolve(model, effort, list = models()) {
     const m = list.find((x) => x.slug === model);
+    const am = /^api:([A-Za-z0-9._-]{1,40}):(.+)$/.exec(String(model || ''));
     if (effort && m && m.efforts.length && !m.efforts.includes(effort)) effort = '';      // (not one this model has)
     if (m && !m.efforts.length) effort = '';                                               // (one that does not think)
-    return { model, effort, provider: m ? m.provider : isClaude(model) ? 'claude' : 'codex' };
+    const base = m && m.model ? m.model : am ? am[2] : model;
+    return { model: base, effort, provider: m ? m.provider : isClaude(base) ? 'claude' : 'codex', api: m && m.api ? m.api : am ? am[1] : undefined };
   }
   // what a job runs with: { model, effort ('' = the model's default), provider, backup: { model, effort, provider } | null }
   function pick(task) {
     const list = models();
     const t = st.tasks[task] || {}, d = st.default || {}, b = st.backup || {};
-    const use = resolve(t.model || d.model || fallbackModel, t.effort || d.effort || '', list);
-    const backup = b.model && b.model !== use.model ? resolve(b.model, b.effort || '', list) : null;
+    const selected = t.model || d.model || fallbackModel;
+    const use = resolve(selected, t.effort || d.effort || '', list);
+    const backup = b.model && b.model !== selected ? resolve(b.model, b.effort || '', list) : null;
     return { ...use, backup };
   }
 

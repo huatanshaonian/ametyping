@@ -210,7 +210,7 @@ function createStore(dir) {
     const e = state[m] && state[m][id];
     if (!e) return;
     let changed = false;
-    for (const [k, n] of [['project', 60], ['title', 80], ['cwd', 500]]) {
+    for (const [k, n] of [['project', 60], ['title', 80], ['cwd', 500], ['api', 40]]) {
       if (typeof d[k] === 'string' && d[k] && e[k] !== d[k].slice(0, n)) { e[k] = d[k].slice(0, n); changed = true; }
     }
     if (changed) dirty = true;
@@ -220,7 +220,7 @@ function createStore(dir) {
     const out = {};
     for (const [m, ids] of Object.entries(state)) {
       out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
-        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null }));
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null, api: e.api || '' }));
     }
     return out;
   }

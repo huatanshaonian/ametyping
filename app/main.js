@@ -678,6 +678,7 @@ function onClaudeEvent(type, d) {
   if (d.title) s.title = String(d.title).slice(0, 60);
   if (d.transcript) s.transcript = String(d.transcript);
   if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
+  if (apiId(d.api)) s.api = apiId(d.api);
   codexSessions.remember(s);
   if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return pushBubble(null); }   // SessionStart
   if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; if (type === 'message' && s.lines.length) s.lines.push({ sep: true, t }); }
@@ -736,6 +737,8 @@ setInterval(() => {
 // ~/.ametyping/control-token-<port> (this user only). The custom header also keeps web pages out: a
 // cross-origin request carrying it needs a CORS preflight, which is never answered; any Origin is refused.
 const CONTROL_TOKEN = crypto.randomBytes(32).toString('hex');
+// the alias a session was started with (hook-relay.js sends AME_CLAUDE_API): used again when it is resumed
+const apiId = (v) => (typeof v === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(v) ? v : '');
 const controlTokenFile = path.join(app.getPath('home'), '.ametyping', `control-token-${PORT}`);
 function writeControlToken() {
   try {
@@ -751,7 +754,7 @@ function controlOk(req) {
 function controlState() {
   return listed().sort((x, y) => x.born - y.born).map((s) => ({
     id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
-    t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8), btw: btwList(s),
+    t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8), btw: btwList(s), api: s.api || undefined,
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
@@ -787,7 +790,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude'));
+    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude', d.api));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

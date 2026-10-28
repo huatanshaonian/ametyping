@@ -32,7 +32,7 @@ function readBody(req, cap = 4096) {
 // onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
 // (the pet's morning bubble)
 // calendar(from, to): Google Calendar events for a report's window (google/index.js forReport), or null
-function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, notes = null, calendar = null, searchIndex = null, mail = () => null, onNote = () => {}, log = console.log, audit = () => {} }) {
+function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todos = null, notes = null, calendar = null, searchIndex = null, mail = () => null, claudeApis = null, onNote = () => {}, log = console.log, audit = () => {} }) {
   if (cfg.enabled === false) return null;
   const reports = createReports(dir);
   const linux = process.platform === 'linux';
@@ -52,7 +52,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
   const egress = Array.isArray(cfg.proxies) && cfg.proxies.length ? createEgress({ proxies: cfg.proxies, log }) : null;
   // which model / effort each job uses and the backup, asking Codex or Claude Code, both kept up to date
   // (控制面板 → AI 模型); cfg.codexHome / cfg.claudeHome: tests
-  const ai = createAi({ dataDir: path.dirname(dir), codex, claude, egress, fallbackModel: codex.model, codexHome: cfg.codexHome, claudeHome: cfg.claudeHome, apiBase: cfg.claudeApiBase, log, audit });
+  const ai = createAi({ dataDir: path.dirname(dir), codex, claude, egress, fallbackModel: codex.model, codexHome: cfg.codexHome, claudeHome: cfg.claudeHome, apiBase: cfg.claudeApiBase, claudeApis, machine: 'nas', log, audit });
   const gen = createGenerator({ store, reports, classify: createClassifier(cfg.categories), ask: ai.ask, resumeCmd, log,
     artifacts, todos, calendar, backupBytes: (cfg.backupMaxMB != null ? +cfg.backupMaxMB : 5) * 1e6 });
   const weekly = createWeekly({ reports, ask: gen.ask, todos, log });

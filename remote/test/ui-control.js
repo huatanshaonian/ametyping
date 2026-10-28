@@ -82,10 +82,10 @@ function login() {
       n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the eight items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|文献' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 8 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|文献' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 9 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
-    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['AI 模型', '.aim', '默认']]) {
+    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '从本机 settings.json 导入'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);
@@ -113,6 +113,12 @@ function login() {
     const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
     chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 12 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
+    // Claude Code API: a configured key must show as set (the row check used to pass the env object to a helper that
+    // expected a settings object, always showing 未设置)
+    const capi = await evalJs("fetch('/api/claude-apis/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aliases:{deepseek:{label:'DeepSeek',proxy:'direct',settings:{env:{ANTHROPIC_BASE_URL:'https://deepseek.example',ANTHROPIC_AUTH_TOKEN:'sk-ui-test'}}}}})}).then(r=>r.json())");
+    await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('Claude Code API')).click()"); await sleep(900);
+    const capiShown = await evalJs("(document.querySelector('.capi-token') || {}).textContent || ''");
+    chk('Claude Code API: a configured key shows as set, not 密钥未设置', capi.ok === true && capiShown === '密钥已设置', [capi, capiShown]);
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);
     await evalJs("[...document.querySelectorAll('.cal-g .rs-link')].find(b => b.textContent.includes('连接 Google')).click()"); await sleep(1200);

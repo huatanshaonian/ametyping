@@ -16,10 +16,10 @@ const { createApiKey } = require('./api-key');
 const { checkKey } = require('./anthropic-api');
 
 // codex / claude: { bin, pathPrefix, timeoutMs }; apiBase: another address for the Claude API (tests)
-function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', log = () => {}, audit = () => {} }) {
+function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', claudeApis = null, machine = 'nas', log = () => {}, audit = () => {} }) {
   const apiKey = createApiKey({ dataDir });
-  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome });
-  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, log });
+  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine });
+  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, log });
   // the key as last tried against the API: { at, ok, error }
   let checked = null;
   async function apiStatus(check) {

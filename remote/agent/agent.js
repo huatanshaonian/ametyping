@@ -26,6 +26,7 @@ const records = require('./records');
 const commands = require('./commands');
 const codex = require('../../app/codex-records');
 const { createFiles } = require('./files');
+const claudeApis = require('./claude-apis');
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
 const { createArtifacts } = require('./artifacts');
@@ -187,8 +188,20 @@ async function pollPet() {
 // the only things the agent does for the server: type a reply, press a navigation key, read the terminal's screen
 // (its menus), answer a permission card,
 // start Claude Code in a folder (one the file explorer may browse)
+// the alias settings the server resolved for this machine (id / label / proxy / settings); bounded and validated
+function apiOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const id = /^[A-Za-z0-9._-]{1,40}$/.test(String(v.id || '')) ? String(v.id) : '';
+  if (!id) return null;
+  const proxy = typeof v.proxy === 'string' && /^(direct|inherit|https?:\/\/\S{1,480})$/.test(v.proxy) ? v.proxy : 'inherit';
+  const settings = v.settings && typeof v.settings === 'object' && !Array.isArray(v.settings) ? v.settings : {};
+  if (JSON.stringify(settings).length > 256 * 1024) return null;
+  return { id, label: typeof v.label === 'string' ? v.label.slice(0, 60) : id, proxy, settings };
+}
+
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
+  const api = apiOf(d.api);
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
@@ -199,13 +212,13 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
-    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: d.tool === 'codex' ? 'codex' : 'claude' });
+    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: d.tool === 'codex' ? 'codex' : 'claude', api: d.tool === 'codex' ? undefined : api || undefined });
   } else if (d.t === 'resume' && typeof d.id === 'string' && /^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id)) {
     // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);
     const cwd = !f ? '' : f.codex ? f.cwd || '' : records.lastCwd(f.file);   // (where it was last, not where it began; Codex: its folder)
     if (!cwd) return { ok: false, msg: '这台电脑上找不到这个会话的记录' };
-    r = await petCall('POST', '/control/launch', { cwd, resume: d.id });
+    r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: d.id.startsWith('codex:') ? undefined : api || undefined });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
   } else return { ok: false, msg: '无效请求' };
@@ -226,13 +239,15 @@ function stateList() {
     return { id, label: c.title || (p && p.label) || c.project || 'Claude', project: c.project || '',
       state: p ? p.state : deriveState(c),
       steps: 0, t0: msgs[0] ? msgs[0].t : c.mtime, last: c.mtime, lines: msgs.slice(-8).map(lineOf).filter((l) => l.text),
-      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id), agents: safeAgents(c.file) };
+      via: p ? p.via : 'off', perms: p ? p.perms : [], bg: !!(p && p.bg) || line.bg.has(id), agents: safeAgents(c.file),
+      api: p && typeof p.api === 'string' ? p.api : undefined };
   });
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
     if (sess.has(id) || line.parked.has(id)) continue;
     out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
-      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [] });
+      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [],
+      api: typeof p.api === 'string' ? p.api : undefined });
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
@@ -288,7 +303,7 @@ function connect() {
         if (metaSent.has(id) || readers.has(id) || (!files.has(id) && !cfiles.has(id))) continue;
         metaSent.add(id);
         const cwd = files.has(id) ? records.firstCwd(files.get(id)) : cfiles.get(id).cwd;
-        if (cwd) sendJSON({ t: 'meta', id, cwd });
+        if (cwd) { const p = pet.get(id); sendJSON({ t: 'meta', id, cwd, api: p && p.api }); }
       }
       pushRecords();
     }
@@ -299,6 +314,19 @@ function connect() {
     else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
     // a session renamed (the server tells every machine): this one's pet shows the new name at once
     else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });
+    else if (d.t === 'claude-apis') {
+      if (!CONTROL) return;                                  // read-only machine: no remote config, no wrappers
+      try { const r = claudeApis.sync(d); if (r && r.ok === false) console.error('别名同步失败：' + r.msg); }
+      catch (e) { console.error('别名同步失败：' + e.message); }
+    }
+    else if (d.t === 'read-claude-settings' && typeof d.rid === 'string') {
+      const r = CONTROL ? claudeApis.readSettings() : { ok: false, msg: '这台机器没开远程控制' };
+      sendJSON({ t: 'claude-settings', rid: d.rid, ...r });
+    }
+    else if (d.t === 'backup-claude-settings' && typeof d.rid === 'string') {
+      const r = CONTROL ? claudeApis.backupSettings() : { ok: false, msg: '这台机器没开远程控制' };
+      sendJSON({ t: 'claude-settings-backup', rid: d.rid, ...r });
+    }
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));
@@ -326,11 +354,11 @@ function pushRecords() {
       r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : undefined); readers.set(id, r);
       if (isCodex) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
-      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
       r.sentTitle = c.title || '';
     }
     if (id.startsWith('codex:') && r.sentTitle !== (c.title || '')) {
-      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined });
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
       r.sentTitle = c.title || '';
     }
     for (let k = 0; k < 8; k++) {

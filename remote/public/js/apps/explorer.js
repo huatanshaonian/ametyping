@@ -58,9 +58,25 @@ function create(machine, startPath, startPick) {
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
   const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
     h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
-  const tool = h('select', { class: 'field xtool', title: '启动哪一个' }, h('option', { value: 'claude', text: 'Claude Code' }), h('option', { value: 'codex', text: 'Codex' }));
-  tool.value = prefs.get('files.tool', 'claude') === 'codex' ? 'codex' : 'claude';
+  const tool = h('select', { class: 'field xtool', title: '启动哪一个：Claude Code 的某个 API 别名，或 Codex' },
+    h('option', { value: 'claude', text: 'Claude Code' }), h('option', { value: 'codex', text: 'Codex' }));
+  tool.value = 'claude';
   tool.addEventListener('change', () => prefs.set('files.tool', tool.value));
+  // the aliases this machine has (claude-deepseek, claude-nebula, ...); each machine resolves its own variant
+  async function refreshTools() {
+    let list = {};
+    try { list = await (await fetch('/api/claude-apis?machine=' + encodeURIComponent(machine))).json(); } catch {}
+    const aliases = Array.isArray(list.aliases) ? list.aliases.filter((a) => a && /^[A-Za-z0-9._-]{1,40}$/.test(a.id)) : [];
+    const keep = tool.value || prefs.get('files.tool', '');
+    const opts = aliases.map((a) => h('option', { value: 'claude:' + a.id, text: 'claude-' + a.id, title: a.label || a.id }));
+    if (!aliases.length) opts.push(h('option', { value: 'claude', text: 'Claude Code' }));
+    opts.push(h('option', { value: 'codex', text: 'Codex' }));
+    tool.replaceChildren(...opts);
+    const has = (v) => [...tool.options].some((o) => o.value === v);
+    const def = list.default && aliases.some((a) => a.id === list.default) ? 'claude:' + list.default : '';
+    tool.value = has(keep) ? keep : (def || (aliases[0] ? 'claude:' + aliases[0].id : 'claude'));
+  }
+  refreshTools();
   const first = h('input', { class: 'field', type: 'text', placeholder: '第一句话（可不填）' });
   const go = h('button', { class: 'btn go', type: 'submit', text: '启动' });
   const launchBar = h('form', { class: 'xlaunch', hidden: true, autocomplete: 'off' }, h('span', { class: 'xlh' }), tool, first, go,
@@ -131,14 +147,17 @@ function create(machine, startPath, startPick) {
     if (!quiet) status.textContent = `${entries.length} 个项目${truncated ? '（太多了，只显示前 5000 个）' : ''}`;
   }
 
-  launchBtn.addEventListener('click', () => {
+  launchBtn.addEventListener('click', async () => {
     if (cur == null) return;
     launchBar.hidden = false; $q('.xlh', launchBar).textContent = `在 ${cur} 启动：`; first.focus();
+    await refreshTools();
   });
   launchBar.addEventListener('submit', async (e) => {
     e.preventDefault();
     go.disabled = true; status.textContent = '启动中…';
-    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value, tool: tool.value });
+    const pick = tool.value;
+    const api = pick.startsWith('claude:') ? pick.slice(7) : '';
+    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value, tool: pick === 'codex' ? 'codex' : 'claude', api });
     go.disabled = false;
     status.textContent = r.ok ? (r.msg || '已启动') + ' —— 会话出现后可在糖糖看板里查看和回复' : r.msg || '启动失败';
     if (r.ok) { launchBar.hidden = true; first.value = ''; }

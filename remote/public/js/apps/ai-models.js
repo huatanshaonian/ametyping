@@ -21,7 +21,10 @@ export function panel() {
   root.append(msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：OpenAI 的模型走 Codex；Claude 的模型在填了 Claude API 的 key 后先走 API（用每月的 API 赠金），API 出错或赠金用完时自动改走 Claude Code（用订阅用量）。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
     down, table, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
   let view = null, dirty = false;
-  const nameOf = (slug) => (view.models.find((m) => m.slug === slug) || {}).name || slug;
+  const nameOf = (slug, api = '') => {
+    const m = view.models.find((x) => x.slug === (api ? `api:${api}:${slug}` : slug)) || view.models.find((x) => x.slug === slug);
+    return (m && m.name) || slug;
+  };
 
   // a model + effort pair of selects, the models grouped by tool; follow: the '' option's text (跟随默认 / 不用后备)
   function pair(cur, follow, onChange) {
@@ -45,13 +48,13 @@ export function panel() {
     return { model, effort, get: () => ({ model: model.value, effort: effort.value }) };
   }
 
-  const one = (u) => `${nameOf(u.model)} · ${u.effort ? EFFORT[u.effort] || u.effort : '默认强度'}`;
-  const uses = (u) => '实际：' + one(u) + (u.backup ? `；出错时改用 ${nameOf(u.backup.model)}` : '');
+  const one = (u) => `${nameOf(u.model, u.api)} · ${u.effort ? EFFORT[u.effort] || u.effort : '默认强度'}`;
+  const uses = (u) => '实际：' + one(u) + (u.backup ? `；出错时改用 ${nameOf(u.backup.model, u.backup.api)}` : '');
   // the models that failed lately: the next calls go to the other one first for 15 minutes
   function showDown() {
     const list = (view.down || []).filter((d) => d.until > Date.now());
     const ad = view.api && view.api.down;
-    down.replaceChildren(...(ad && ad.until > Date.now() ? [h('p', { class: 'ghint bad', text: `Claude API 在 ${when(ad.at)} 出错（${ad.error.slice(0, 120)}），${when(ad.until).replace(/.* 日 /, '')} 前 Claude 的模型先走 Claude Code（订阅用量）` })] : []), ...list.map((d) => h('p', { class: 'ghint bad', text: `${nameOf(d.model)} 在 ${when(d.at)} 出错（${d.error.slice(0, 120)}），${when(d.until).replace(/.* 日 /, '')} 前先用另一个模型` })));
+    down.replaceChildren(...(ad && ad.until > Date.now() ? [h('p', { class: 'ghint bad', text: `Claude API 在 ${when(ad.at)} 出错（${ad.error.slice(0, 120)}），${when(ad.until).replace(/.* 日 /, '')} 前 Claude 的模型先走 Claude Code（订阅用量）` })] : []), ...list.map((d) => h('p', { class: 'ghint bad', text: `${nameOf(d.model, d.api)} 在 ${when(d.at)} 出错（${d.error.slice(0, 120)}），${when(d.until).replace(/.* 日 /, '')} 前先用另一个模型` })));
   }
 
   async function load() {

@@ -80,7 +80,9 @@
 .dash .sn-row ul { margin: 0; padding-left: 16px; }
 .dash .sn-more { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--border); font-size: 11.5px; text-decoration: underline; }
 .dash .back { display: none; margin-right: 4px; padding: 1px 8px; font-size: 12px; }
-.dash .resume { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: var(--muted); }
+.dash .resume { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 12px; border-bottom: 1px dotted var(--edge); font-size: 11.5px; color: var(--muted); }
+.dash .resume .rapi-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.dash .resume .rapi { max-width: 210px; min-width: 120px; }
 .dash .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; color: var(--ink); background: var(--tint); padding: 2px 6px; user-select: all; }
 .dash .conv { flex: 1; overflow-y: auto; padding: 10px 12px; }
 /* the cards may shrink (and scroll) when the window is short -- a phone with its keyboard up -- instead of pushing the

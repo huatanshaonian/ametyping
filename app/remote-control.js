@@ -12,6 +12,7 @@ const { modeFromScreen } = require('./permission-mode');
 const { tidyScreen, plainScreen } = require('./screen-text');
 const codexCli = require('./codex-cli');
 const btwPanel = require('./btw-panel');
+const claudeApi = require('./claude-api');
 
 // (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
 // ctrl<letter>: the Ctrl combinations its menus name, e.g. Ctrl+A in /resume -- never C, D or Z, which interrupt or
@@ -45,10 +46,14 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     } else {
       const exe = claudeExe();
       if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
-      p = spawn(exe, ['-p', '--resume', s.id], { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
-      p.on('error', () => {});
+      const api = claudeApi.mirrorAlias(s.api);
+      const sf = api ? claudeApi.settingsFile(api) : null;
+      p = spawn(exe, [...(sf ? ['--settings', sf.file] : []), '-p', '--resume', s.id],
+        { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'], env: claudeApi.envForProxy(api) });
+      p.on('error', () => { if (sf) sf.cleanup(); });
       p.stdin.on('error', () => {});
       p.stdin.end(text);                                           // prompt on stdin: never parsed as an option
+      if (sf) p.on('exit', () => sf.cleanup());
     }
     p.once('close', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
     s.headless = true; s.state = 'message'; s.last = Date.now();
@@ -164,7 +169,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
   // tool: 'codex' -- a new Codex session instead of Claude Code's
-  async function launch(cwd, prompt, resume = '', tool = 'claude') {
+  async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null) {
     const thread = /^codex:/.test(resume) ? resume.slice(6) : '';
     if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(thread || resume)) return { ok: false, msg: '无效请求' };
     if (resume) { const s = sessions.get(resume); if (s && s.claudePid && await procAlive(s.claudePid)) return { ok: false, msg: '这个会话还开着' }; }
@@ -174,21 +179,28 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     const cx = codex ? codexCli.command() : null;
     const exe = codex ? cx && cx.exe : claudeExe();
     if (!exe) return { ok: false, msg: codex ? '找不到 codex' : '找不到 claude.exe' };
+    const api = codex ? null : claudeApi.valid(apiArg);
+    if (!codex && apiArg && !api) return { ok: false, msg: 'API 别名配置不对' };
+    const sf = api ? claudeApi.settingsFile(api) : null;
+    if (api && !sf) return { ok: false, msg: '写 API 设置失败' };
     const first = String(prompt || '').trim();
     // (Codex's first message is typed into it once it is up, not passed along: it may be started through cmd.exe,
     // where a sentence with quotes or an & in it does not survive as an argument)
-    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args] : resume ? ['--resume', resume] : first ? [first] : [];
+    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args]
+      : [...(sf ? ['--settings', sf.file] : []), ...(resume ? ['--resume', resume] : first ? [first] : [])];
     // ~/.ametyping/launch.ps1, when it is there, runs first in the new window (e.g. `proxy`, a function of your PowerShell
     // profile: the pet's own environment has no proxy set) -- Claude Code is then started from that PowerShell, as you
     // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.
     const pre = path.join(home(), '.ametyping', 'launch.ps1');
     let pid;
-    if (fs.existsSync(pre)) {
+    if (fs.existsSync(pre) || api) {
       const ps = (x) => "'" + String(x).replace(/'/g, "''") + "'";
-      const cmd = `. ${ps(pre)}; & ${ps(exe)} ${args.map(ps).join(' ')}`;
+      const preCmd = fs.existsSync(pre) ? `. ${ps(pre)}; ` : '';
+      const cmd = `${preCmd}${claudeApi.powershellSnippet(api)}& ${ps(exe)} ${args.map(ps).join(' ')}`;
       pid = await bridge.launch('powershell.exe', ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
     } else pid = await bridge.launch(exe, args, cwd);
-    if (!pid) return { ok: false, msg: '启动失败' };
+    if (!pid) { if (sf) sf.cleanup(); return { ok: false, msg: '启动失败' }; }
+    if (resume && api) { const s = sessions.get(resume); if (s) s.api = api.id; }
     if (codex) codexCli.greet(bridge, pid, thread ? '' : first).catch(() => {}); else answerTrust(pid);
     if (thread) adoptCodex(resume, pid, cwd).catch(() => {});
     return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };

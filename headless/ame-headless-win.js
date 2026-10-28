@@ -80,7 +80,7 @@ function controlState() {
   const { bg, parked } = sessionLineage();
   return sessions.list().filter((s) => !parked.has(s.id)).map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s), bg: bg.has(s.id),
-    t0: s.t0, last: s.last, lines: s.lines.slice(-8), btw: rc.btwList(s),
+    t0: s.t0, last: s.last, lines: s.lines.slice(-8), btw: rc.btwList(s), api: s.api || undefined,
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));
@@ -111,7 +111,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await rc.launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude'));
+    return out(200, await rc.launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude', d.api));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
