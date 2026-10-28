@@ -40,6 +40,7 @@
   .card .nm .prov { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; background: currentColor;
     -webkit-mask: url(assets/provider/openai.svg) center / contain no-repeat; mask: url(assets/provider/openai.svg) center / contain no-repeat; }
   .card .nm .prov.cla { background: #d97757; -webkit-mask-image: url(assets/provider/claude.svg); mask-image: url(assets/provider/claude.svg); }
+  .card .nm .prov.opn { -webkit-mask-image: url(assets/provider/opencode.svg); mask-image: url(assets/provider/opencode.svg); }
   .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
   .card .sm { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .st { font-size: 10px; line-height: 13px; }
@@ -129,7 +130,7 @@
 </head>
 <body>
 <div id="box">
-  <div id="title"><span id="who">Claude / Codex</span><span id="meta"></span><span id="ub"><i></i><b id="ubn"></b></span><span id="fold" title="收成 P 酱">&minus;</span><span id="close" title="收起">×</span></div>
+  <div id="title"><span id="who">Claude / Codex / OpenCode</span><span id="meta"></span><span id="ub"><i></i><b id="ubn"></b></span><span id="fold" title="收成 P 酱">&minus;</span><span id="close" title="收起">×</span></div>
   <div id="grip" title="拖动调整大小"></div>
   <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div>
     <div id="permissions" aria-live="polite"></div>

@@ -30,7 +30,7 @@ function createExport({ store, resumeCmd }) {
     if (!e) return null;
     const msgs = messagesOf(store.records(machine, id, 0, Date.now() + 86400e3));
     const title = e.title || e.project || id.slice(0, 8);
-    const bot = id.startsWith('codex:') ? 'Codex' : 'Claude';
+    const bot = id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : 'Claude';
     const resume = resumeCmd ? resumeCmd(e.cwd, id) : '';
     const first = msgs.length ? msgs[0].t : e.first, last = msgs.length ? msgs[msgs.length - 1].t : e.last;
     const span = first ? `${ymd(first)} ${hm(first)} – ${ymd(last)} ${hm(last)}` : '';

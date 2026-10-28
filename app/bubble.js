@@ -22,7 +22,7 @@ const isUnread = (s) => (seen[s.id] || 0) < s.last && (collapsed || s.id !== sel
 
 function header() {
   const running = data.filter((s) => WORKING.has(s.state)).length, waiting = data.filter((s) => s.state === 'waiting').length;
-  $('who').textContent = `Claude / Codex ─ ${data.length} 个会话`;
+  $('who').textContent = `Claude / Codex / OpenCode ─ ${data.length} 个会话`;
   $('meta').textContent = [running && `${running} 个在跑`, waiting && `${waiting} 个等你`].filter(Boolean).join(' · ') || '都停下了';
   const nUnread = data.filter(isUnread).length;
   $('ub').classList.toggle('on', nUnread > 0); $('ubn').textContent = nUnread;
@@ -52,10 +52,10 @@ function renderList() {
     c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
     const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
-    const mark = document.createElement('span'); mark.className = 'prov ' + (s.provider === 'codex' ? 'cdx' : 'cla'); nm.prepend(mark);   // whose session
+    const mark = document.createElement('span'); mark.className = 'prov ' + (s.provider === 'codex' ? 'cdx' : s.provider === 'opencode' ? 'opn' : 'cla'); nm.prepend(mark);   // whose session
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
-    st.textContent = `${s.provider === 'codex' ? 'Codex' : 'Claude'} · ${name}`;
+    st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : 'Claude'} · ${name}`;
   });
 }
 // select on press (not click): nothing can swap the element between press and release

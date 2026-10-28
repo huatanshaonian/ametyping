@@ -14,6 +14,7 @@ const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
 const codexRecords = require('./codex-records');
 const codexSessions = require('./codex-sessions');
+const opencodeRecords = require('./opencode-records');
 const { update } = require('./update');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -597,7 +598,7 @@ let hideTimer = null;
 function sessionLabel(s) {
   if (s.title) return s.title;                                    // the conversation's name in the Claude app
   const same = [...sessions.values()].filter((o) => o.provider === s.provider && o.project === s.project && !o.title);
-  const base = s.project || (s.provider === 'codex' ? 'Codex' : 'Claude');
+  const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : 'Claude');
   return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
 }
 // A card answered (here, on the dashboard or in the terminal) puts the session back to work. Left "waiting" with
@@ -629,6 +630,7 @@ const listed = () => { const { parked } = sessionLineage(); return [...sessions.
 function replyVia(s) {
   if (s.state === 'ended') return 'resume';
   if (s.headless) return 'busy';
+  if (s.provider === 'opencode') return s.claudePid ? 'terminal' : 'unknown';   // a live plugin can take a reply
   if (s.claudePid && s.terminal) return 'terminal';
   return s.claudePid ? 'none' : 'unknown';
 }
@@ -679,7 +681,13 @@ function onClaudeEvent(type, d) {
   if (d.transcript) s.transcript = String(d.transcript);
   if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
   if (apiId(d.api)) s.api = apiId(d.api);
+  // OpenCode has no per-session process and no terminal to type into: the plugin's host (the OpenCode server) is
+  // what is alive, and a reply goes through its API. `terminal` means "can be replied to from the panel".
+  if (s.provider === 'opencode' && Number.isInteger(d.pid) && d.pid > 0) {
+    s.claudePid = d.pid; s.fromPid = null; s.headless = false; s.terminal = true;
+  }
   codexSessions.remember(s);
+  if (type === 'meta') { s.last = t; pushBubble(null); return; }   // a title / folder update: no state change
   if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return pushBubble(null); }   // SessionStart
   if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; if (type === 'message' && s.lines.length) s.lines.push({ sep: true, t }); }
   if (type === 'thinking' || type === 'reading') s.steps++;
@@ -790,7 +798,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude', d.api));
+    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', d.api));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
@@ -818,7 +826,7 @@ http.createServer((req, res) => {
       permissions.add(d, res);
       onClaudeEvent('waiting', { ...d, text: `需要确认：${d.tool}` });
       pushBubble(d.session);
-      if (d.pid) locateSession(sessions.get(d.session), d.pid).catch(() => {});
+      if (d.pid && d.provider !== 'opencode') locateSession(sessions.get(d.session), d.pid).catch(() => {});
       return;
     }
     if (m) permissions.advance(d);
@@ -828,7 +836,8 @@ http.createServer((req, res) => {
       const id = d.session || 'unknown';
       let s = sessions.get(id);
       if (!s) { onClaudeEvent('idle', { ...d, session: id }); s = sessions.get(id); }
-      if (s) await Promise.race([locateSession(s, d.pid).catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
+      // OpenCode's pid is its server's, not a CLI process: there is no terminal to find (the plugin is the channel)
+      if (s && s.provider !== 'opencode') await Promise.race([locateSession(s, d.pid).catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
     }
     res.writeHead(m ? 200 : 404); res.end();
     if (!m || !win || win.isDestroyed()) return;
@@ -850,28 +859,31 @@ function pushChat(force) {
   const s = chatSel && sessions.get(chatSel);
   if (!s || !chatMode() || !bubbleWin || !bubbleWin.isVisible()) return;
   // a Codex session: its rollout file read like a Claude Code transcript; until that file is found, the live progress
-  if (s.provider === 'codex' && !s.transcript && Date.now() - (s.lookedAt || 0) > 5000) {
+  // (OpenCode: the conversation mirror the plugin appends to, same idea)
+  const live = s.provider === 'codex' || s.provider === 'opencode';
+  if (live && !s.transcript && Date.now() - (s.lookedAt || 0) > 5000) {
     s.lookedAt = Date.now();
-    s.transcript = codexRecords.fileOf(s.rawSession);
-    const title = codexRecords.titleOf(s.rawSession);
+    s.transcript = s.provider === 'codex' ? codexRecords.fileOf(s.rawSession) : opencodeRecords.fileOf(s.rawSession);
+    const title = s.provider === 'codex' ? codexRecords.titleOf(s.rawSession) : opencodeRecords.titleOf(s.rawSession);
     if (title && !s.title) { s.title = title.slice(0, 60); pushBubble(null); }
   }
-  if (s.provider === 'codex' && !s.transcript) {
+  if (live && !s.transcript) {
     if (force || s.chatPushed !== s.last) {
       s.chatPushed = s.last;
       bubbleWin.webContents.send('chat-log', { id: s.id, msgs: [
-        { role: 'sys', text: 'Codex 实时进度', t: s.born },
+        { role: 'sys', text: s.provider === 'codex' ? 'Codex 实时进度' : 'OpenCode 实时进度', t: s.born },
         ...s.lines.filter((l) => !l.sep).map((l) => ({ role: 'sys', text: l.text, t: l.t })),
       ] });
     }
     return;
   }
-  if (!s.transcript && s.provider !== 'codex') s.transcript = findTranscript(s.id);
+  if (!s.transcript && s.provider === 'claude') s.transcript = findTranscript(s.id);
   if (!s.transcript) return;
   let c = chats.get(s.id);
   if (!c || c.file !== s.transcript) { c = { file: s.transcript }; chats.set(s.id, c); }
   let changed = false;
-  try { changed = transcript.poll(c, s.provider === 'codex' ? codexRecords.recordsOf : undefined); } catch (e) { console.error('transcript: ' + e.message); }
+  const parse = s.provider === 'codex' ? codexRecords.recordsOf : s.provider === 'opencode' ? opencodeRecords.recordsOf : undefined;
+  try { changed = transcript.poll(c, parse); } catch (e) { console.error('transcript: ' + e.message); }
   if (c.title && !s.title) { s.title = String(c.title).slice(0, 60); pushBubble(null); }
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });
 }

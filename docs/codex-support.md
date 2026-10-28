@@ -1,5 +1,7 @@
 # Claude Code / Codex 支持对照
 
+> OpenCode（第三个 provider）见 [OpenCode 支持说明](opencode-support.md)。
+
 | 功能 | Claude Code | Codex |
 | --- | --- | --- |
 | 桌宠表情、进度、完成和等待审批 | 支持 | 支持；另有中断、上下文压缩进度 |

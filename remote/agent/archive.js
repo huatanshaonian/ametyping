@@ -6,9 +6,9 @@
 const fs = require('fs');
 const path = require('path');
 
-// deps: claudeFiles() -> [{ id, file, mtime }], codex (app/codex-records.js), projectOf(file), live(id) -> bool,
-//       stored(id) -> the server's byte offset (undefined: nothing stored)
-function createArchive({ days = 30, claudeFiles, codex, projectOf, live, stored, everyMs = 60e3 }) {
+// deps: claudeFiles() -> [{ id, file, mtime }], codex (app/codex-records.js), opencode (app/opencode-records.js),
+//       projectOf(file), live(id) -> bool, stored(id) -> the server's byte offset (undefined: nothing stored)
+function createArchive({ days = 30, claudeFiles, codex, opencode, projectOf, live, stored, everyMs = 60e3 }) {
   const map = new Map();                              // id -> { file, project, cwd?, title? }
   let at = 0;
   const behind = (id, file) => { let st; try { st = fs.statSync(file); } catch { return false; } return (stored(id) || 0) < st.size; };
@@ -29,6 +29,16 @@ function createArchive({ days = 30, claudeFiles, codex, projectOf, live, stored,
       const id = 'codex:' + m.id;
       if (live(id) || map.has(id) || !behind(id, file)) continue;
       map.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: codex.titleOf(m.id) });
+    }
+    if (opencode) {
+      for (const f of opencode.allFiles()) {
+        if (f.mtime < since) continue;
+        const m = opencode.metaOf(f.file);
+        if (!m) continue;
+        const id = 'opencode:' + m.id;
+        if (live(id) || map.has(id) || !behind(id, f.file)) continue;
+        map.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title });
+      }
     }
     return map;
   }

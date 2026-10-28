@@ -125,6 +125,12 @@ if command -v codex >/dev/null 2>&1 || [ -x "$HOME/.local/bin/codex" ] || [ -d "
   "$NODE" "$DIR/install-codex-hooks.js"
   CODEX_HOOKS=1
 fi
+OPENCODE_PLUGIN=
+if command -v opencode >/dev/null 2>&1 || [ -x "$HOME/.local/bin/opencode" ] || [ -x "$HOME/.bun/bin/opencode" ] || [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]; then
+  step '安装 OpenCode 插件（原配置会先备份）'
+  "$NODE" "$DIR/install-opencode-plugin.js"
+  OPENCODE_PLUGIN=1
+fi
 
 step '启动 Claude 前的准备（从看板在文件夹启动 Claude 时用）'
 mkdir -p "$HOME/.ametyping"
@@ -157,3 +163,4 @@ info "agent：$(systemctl --user is-active ame-agent)（日志：journalctl --us
 info '打开 https://win98.huatan.org 应能在「网上邻居」里看到这台机器。'
 info '要从看板回复，claude 需要在 tmux 里运行；已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
 if [ -n "$CODEX_HOOKS" ]; then info 'Codex：下次打开 codex 时会问是否信任这几条 hooks，选信任后才生效；要从看板回复，它同样要在 tmux 里运行。'; fi
+if [ -n "$OPENCODE_PLUGIN" ]; then info 'OpenCode：插件已写进 ~/.config/opencode/opencode.json，重开 OpenCode（或 /reload）后生效；它直接走会话 API，不需要 tmux。'; fi

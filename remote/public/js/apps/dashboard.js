@@ -23,8 +23,10 @@ const PLACEHOLDER = {
   none: '不在终端里，只能看',
   unknown: '还不知道在哪个终端',
   codex: 'Codex 会话：只能看和审批',
+  opencode: '直接回复（OpenCode 走它自己的会话 API）',
   off: '没开远程控制，只能看',
 };
+const provOf = (id) => (String(id || '').startsWith('codex:') ? 'codex' : String(id || '').startsWith('opencode:') ? 'opencode' : 'claude');
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
 // Claude Code's own Ctrl combinations (buttons only): [key, label, what it does]
 const COMBOS = [['ctrlb', '转后台', 'Ctrl+B：把正在跑的命令放到后台，Claude 接着往下做'],
@@ -75,7 +77,7 @@ function mount(current) {
   }
   // the command shown/copied follows the selector too (follow-record keeps the server's command)
   function commandFor(s, pick) {
-    if (!s || !s.resume || String(s.id).startsWith('codex:')) return s ? s.resume : '';
+    if (!s || !s.resume || /^(codex|opencode):/.test(String(s.id))) return s ? s.resume : '';
     if (pick === '') return s.resume;
     const cmd = (pick && pick !== '__none__' ? 'claude-' + pick : 'claude') + ' --resume ' + s.id;
     const at = s.resume.lastIndexOf('claude', s.resume.indexOf('--resume'));
@@ -143,7 +145,7 @@ function mount(current) {
   // the session's permission mode; a click cycles it like Shift+Tab in the terminal
   const modeBtn = h('button', { class: 'btn mode', type: 'button', hidden: true, text: '模式？' });
   // "/" in the reply box: suggestions of the session's machine's commands (dash-slash.js)
-  const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), provider: () => sel && sel.split('|')[1].startsWith('codex:') ? 'codex' : 'claude', onFill: () => say.dispatchEvent(new Event('input')) });
+  const slash = createSlash({ say, machine: () => (sel ? sel.split('|')[0] : null), provider: () => (sel ? provOf(sel.split('|')[1]) : 'claude'), onFill: () => say.dispatchEvent(new Event('input')) });
   const compose = h('form', { class: 'compose', autocomplete: 'off' }, kbdBtn, modeBtn, say, sendBtn, slash.el);
   // /btw answers pop up over the conversation (dash-btw.js); a click on one in the conversation opens it again
   // (转成后台任务 there: "f" in the terminal's /btw overlay, which the pet presses only while it is open)
@@ -230,17 +232,21 @@ function mount(current) {
   function header(s) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
-    if (s) { const cx = String(s.id).startsWith('codex:'); hname.prepend(h('span', { class: 'prov ' + (cx ? 'cdx' : 'cla'), title: cx ? 'Codex 的会话' : 'Claude Code 的会话' })); }
+    if (s) {
+      const p = provOf(s.id);
+      hname.prepend(h('span', { class: 'prov ' + (p === 'codex' ? 'cdx' : p === 'opencode' ? 'opn' : 'cla'),
+        title: p === 'codex' ? 'Codex 的会话' : p === 'opencode' ? 'OpenCode 的会话' : 'Claude Code 的会话' }));
+    }
     hmeta.textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
     // context left (from the last reply's token count); warned about when it runs low
     const left = s ? ctxLeft(s) : null;
     if (left != null) {
       hmeta.append(' · ', h('span', { class: 'cx' + (left <= 10 ? ' bad' : left <= CTX_LOW ? ' low' : ''), text: `上下文剩 ${left}%`,
-        title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${s.id.startsWith('codex:') ? 'Codex' : '到自动压缩前'}）` }));
+        title: `已用约 ${Math.round(s.ctx.used / 1000)}k / ${Math.round(s.ctx.win / 1000)}k tokens（${provOf(s.id) === 'codex' ? 'Codex' : '到自动压缩前'}）` }));
     }
     resume.hidden = !(s && s.resume);
     reopen.hidden = !(s && s.online && s.via !== 'terminal');
-    apiWrap.hidden = !(s && s.resume && !String(s.id).startsWith('codex:'));
+    apiWrap.hidden = !(s && s.resume && provOf(s.id) === 'claude');
     if (s) { ensureApis(s.machine); renderResumeApi(s); } else resumeApi.replaceChildren();
     if (s && s.resume) { const cmd = commandFor(s, resumeApi.value); if (rcmd.textContent !== cmd) rcmd.textContent = cmd; }
     agents.render(s);
@@ -261,15 +267,15 @@ function mount(current) {
     const s = find(sel);
     const via = s ? (s.online ? s.via || 'off' : 'off') : null;
     say.disabled = !s || sending || !['terminal', 'resume'].includes(via);
-    say.placeholder = !s ? '先选一个会话' : s.state === 'history' ? '历史会话：用上面的命令继续' : s.online ? PLACEHOLDER[via] || PLACEHOLDER.off : '机器离线';
+    say.placeholder = !s ? '先选一个会话' : s.state === 'history' ? '历史会话：用上面的命令继续' : s.online ? PLACEHOLDER[provOf(s.id) === 'opencode' && via !== 'off' ? 'opencode' : via] || PLACEHOLDER.off : '机器离线';
     const asking = !!(s && s.online && (s.perms || []).length);
     if (asking) { say.disabled = true; say.placeholder = '先处理确认卡片'; }
     // a card open: the (disabled) reply box folds to one line so the card has the room; afterwards it grows back
     if (root.classList.contains('asking') !== asking) { root.classList.toggle('asking', asking); if (!asking) fitSay(); }
     sendBtn.disabled = say.disabled || !say.value.trim();
-    termOk = !!(s && s.online && via === 'terminal');
+    termOk = !!(s && s.online && via === 'terminal' && provOf(s.id) !== 'opencode');
     keys.hidden = !(termOk && showKeys);
-    for (const b of keys.querySelectorAll('button[data-key]')) if (COMBOS.some(([k]) => k === b.dataset.key)) b.hidden = !!(s && s.id.startsWith('codex:'));
+    for (const b of keys.querySelectorAll('button[data-key]')) if (COMBOS.some(([k]) => k === b.dataset.key)) b.hidden = provOf(s && s.id) !== 'claude';
     term.target(termOk ? sel : null);
     kbdBtn.hidden = !termOk;
     renderMode(s);
@@ -284,8 +290,9 @@ function mount(current) {
     const p = pressed.get(sel);
     if (p && s && s.mode !== p.base) pressed.delete(sel);
     const m = pressed.has(sel) ? p.mode : s && s.mode;
-    modeBtn.hidden = !(s && (m || termOk));
-    modeBtn.disabled = !termOk || sending;
+    const oc = !!(s && provOf(s.id) === 'opencode');
+    modeBtn.hidden = oc || !(s && (m || termOk));
+    modeBtn.disabled = oc || !termOk || sending;
     modeBtn.textContent = m ? MODE[m] || m : '模式？';
     modeBtn.dataset.mode = m || '';
     modeBtn.title = (m ? `权限模式：${MODE[m] || m}（发消息时记录）` : '权限模式：发一条消息后才知道') + (termOk ? '；点击或 Shift+Tab 轮转' : '');
@@ -364,7 +371,9 @@ function mount(current) {
           h('span', { class: 'ps', text: '回车 = 允许 · 也可在那台机器上回答' })),
         // what 总是允许 adds, and where (this session / the project's settings)
         p.always ? h('div', { class: 'pal', text: '总是允许 = 允许，并且以后不再问：' + p.always }) : null,
-        h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
+        h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, p.provider === 'opencode' && i.message && `说明：${i.message}`,
+          p.provider === 'opencode' && Array.isArray(i.resources) && i.resources.length && `对象：${i.resources.join(' · ')}`,
+          i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
           (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }));
       card.dataset.shown = Date.now();
       permCards.set(p.id, card); permsEl.append(card);

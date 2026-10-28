@@ -32,8 +32,9 @@ const NAS = cfg.nas;
 
 const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server/config.json*', 'remote/test/out', '*.log', '*.log.old'];
 // what an agent machine runs: remote/agent/ and headless/, plus the app/ modules they load (found by following their
-// require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there
-const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js'];
+// require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there, and the OpenCode plugin
+const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
+  'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
 function depsOf(ref, roots) {
   const deps = new Set(), seen = new Set();
   const visit = (file) => {

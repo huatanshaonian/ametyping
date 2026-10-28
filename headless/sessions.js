@@ -38,7 +38,13 @@ function createSessions() {
     if (d.transcript) s.transcript = String(d.transcript);
     if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
     if (typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api)) s.api = d.api;
+    // OpenCode has no per-session process and no terminal to type into: the plugin's host (the OpenCode server) is
+    // what is alive, and a reply goes through its API. `terminal` here means "can be replied to from the dashboard".
+    if (s.provider === 'opencode' && Number.isInteger(d.pid) && d.pid > 0) {
+      s.claudePid = d.pid; s.claudeComm = null; s.fromPid = null; s.target = null; s.headless = false; s.terminal = true;
+    }
     codexSessions.remember(s);
+    if (type === 'meta') { s.last = t; return; }                    // a title / folder update: no state change
     if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return; }   // SessionStart
     if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; }
     if (type === 'thinking' || type === 'reading') s.steps++;
@@ -68,7 +74,7 @@ function createSessions() {
   function label(s) {
     if (s.title) return s.title;
     const same = [...map.values()].filter((o) => o.provider === s.provider && o.project === s.project && !o.title);
-    const base = s.project || (s.provider === 'codex' ? 'Codex' : 'Claude');
+    const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : 'Claude');
     return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
   }
 
@@ -76,6 +82,7 @@ function createSessions() {
   function via(s) {
     if (s.state === 'ended') return 'resume';
     if (s.headless) return 'busy';
+    if (s.provider === 'opencode') return s.claudePid ? 'terminal' : 'unknown';   // a live plugin can take a reply
     if (s.claudePid && s.target) return 'terminal';
     return s.claudePid ? 'none' : 'unknown';
   }
