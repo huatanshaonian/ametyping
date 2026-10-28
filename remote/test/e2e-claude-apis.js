@@ -37,6 +37,7 @@ fs.writeFileSync(path.join(dataDir, 'claude-apis.json'), JSON.stringify({
 }));
 const tok = node([R + '/server/setup.js', 'add-agent', 'box']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
 const tokRo = node([R + '/server/setup.js', 'add-agent', 'ro']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
+const tokMulti = node([R + '/server/setup.js', 'add-agent', 'multi']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'box', control: true, petPort: PET, files: { roots: [ROOT] } }));
 const RO_HOME = path.join(T, 'home-ro'); fs.mkdirSync(path.join(RO_HOME, '.ametyping'), { recursive: true });
@@ -66,6 +67,33 @@ const req = (p, body, cookie) => new Promise((resolve) => {
   r.end(data);
 });
 const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000) + offset);
+const probeSockets = [];
+// A pong is ordered after messages already queued on that same socket, so negative delivery assertions do not
+// depend on sleeping long enough. These probes inspect the wire; a read-only agent discarding a key is too late.
+function drained(socket) {
+  return new Promise((resolve, reject) => {
+    const done = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { socket.off('pong', done); reject(new Error('agent pong timed out')); }, 3000);
+    socket.once('pong', done); socket.ping();
+  });
+}
+async function aliasProbe(allowed) {
+  const socket = new WebSocket('ws://127.0.0.1:' + PORT + '/agent', { headers: { Authorization: 'Bearer ' + tokMulti } });
+  probeSockets.push(socket);
+  const messages = [];
+  socket.on('message', (raw) => messages.push(JSON.parse(raw)));
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('agent open timed out')), 3000);
+    socket.once('open', () => { clearTimeout(timer); resolve(); });
+    socket.once('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+  const hello = async (value) => {
+    socket.send(JSON.stringify({ t: 'hello', machine: 'multi', control: value, apis: value }));
+    await drained(socket);
+  };
+  if (typeof allowed === 'boolean') await hello(allowed);
+  return { socket, messages, hello };
+}
 
 (async () => {
   try {
@@ -141,9 +169,36 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     const roBin = path.join(RO_HOME, '.local', 'bin');
     const roWrappers = fs.existsSync(roBin) ? fs.readdirSync(roBin).filter((n) => /^claude-/.test(n)) : [];
     ok('a control:false agent never receives the shared keys or terminal wrappers', !fs.existsSync(roMirror) && roWrappers.length === 0, { mirror: fs.existsSync(roMirror), roWrappers });
+    const readonly = await aliasProbe(false), writable = await aliasProbe(true);
+    const hasConfig = (probe) => probe.messages.some((d) => d.t === 'claude-apis');
+    const hasToken = (probe, token) => probe.messages.some((d) => d.t === 'claude-apis' &&
+      d.aliases.deepseek.settings.env.ANTHROPIC_AUTH_TOKEN === token);
+    const saveProbeToken = (token) => req('/api/claude-apis/set', { aliases: {
+      deepseek: { proxy: 'direct', settings: { env: { ANTHROPIC_BASE_URL: 'https://deepseek.example', ANTHROPIC_AUTH_TOKEN: token } } },
+    } }, login.cookie);
+    const firstSync = await saveProbeToken('sk-socket-first');
+    await Promise.all([drained(readonly.socket), drained(writable.socket)]);
+    ok('same machine: a writable hello never gives the read-only socket API keys',
+      firstSync.j.ok && hasToken(writable, 'sk-socket-first') && !hasConfig(readonly));
+
+    const pending = await aliasProbe(), laterReadonly = await aliasProbe(false);
+    const secondSync = await saveProbeToken('sk-socket-second');
+    await Promise.all([readonly, writable, pending, laterReadonly].map((p) => drained(p.socket)));
+    ok('a new or read-only connection cannot disable an existing writable connection or receive its keys',
+      secondSync.j.ok && hasToken(writable, 'sk-socket-second') && !hasConfig(readonly) && !hasConfig(laterReadonly) && !hasConfig(pending));
+
+    await pending.hello(true);
+    ok('a connection receives its first configuration only after its own writable hello', hasToken(pending, 'sk-socket-second'));
+    await writable.hello(false);
+    const thirdSync = await saveProbeToken('sk-socket-third');
+    await Promise.all([readonly, writable, pending, laterReadonly].map((p) => drained(p.socket)));
+    ok('revoking one connection stops its future keys while another writable connection keeps syncing',
+      thirdSync.j.ok && !hasToken(writable, 'sk-socket-third') && hasToken(pending, 'sk-socket-third') &&
+      !hasConfig(readonly) && !hasConfig(laterReadonly));
     ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
+    for (const socket of probeSockets) socket.terminate();
     for (const k of kids) try { k.kill(); } catch {}
     await sleep(500);
     try { fs.rmSync(T, { recursive: true, force: true }); } catch {}

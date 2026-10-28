@@ -210,10 +210,12 @@ function knownMachines() {
 // every machine's agent writes a local copy (the terminal wrappers and background resumes read it)
 function pushClaudeApis() {
   for (const m of machines.values()) {
-    if (!m.online || !m.sockets || m.apis !== true) continue;   // read-only agents never get the keys
+    if (!m.online || !m.sockets) continue;
+    const recipients = [...m.sockets].filter((s) => s.claudeApisAllowed === true);
+    if (!recipients.length) continue;   // read-only and pre-hello connections never get the keys
     let msg;
     try { msg = JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(m.name) }); } catch { continue; }
-    for (const s of m.sockets) { try { s.send(msg); } catch {} }
+    for (const s of recipients) { try { s.send(msg); } catch {} }
   }
 }
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
@@ -313,12 +315,13 @@ const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
-    m.control = d.control === true; m.apis = d.apis === true; m.files = d.files === true; m.upload = d.upload === true;
+    m.control = d.control === true; m.files = d.files === true; m.upload = d.upload === true;
+    ws.claudeApisAllowed = d.apis === true;
     broadcast({ t: 'sessions', data: snapshot() });
-    // the API aliases (keys included) only go to a machine whose agent allows this; wait for hello so a control:false
-    // agent is never sent them. A machine that lost the right gets an empty copy cleared on its side.
+    // Credentials are authorized per connection: another agent with the same machine identity cannot grant or
+    // revoke this socket's access. A connection that lost access is told to clear its own local copy.
     try {
-      ws.send(JSON.stringify(m.apis ? { t: 'claude-apis', ...claudeApis.forMachine(m.name) } : { t: 'claude-apis-off' }));
+      ws.send(JSON.stringify(ws.claudeApisAllowed ? { t: 'claude-apis', ...claudeApis.forMachine(m.name) } : { t: 'claude-apis-off' }));
     } catch {}
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
@@ -817,7 +820,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
 
 wssAgent.on('connection', (ws, req, a) => {
   const m = machine(a.name);
-  m.online = true; m.since = Date.now(); m.apis = false;   // until hello: no alias keys on this connection
+  m.online = true; m.since = Date.now();
+  ws.claudeApisAllowed = false;   // until this socket's own hello, never send it alias keys
   if (!m.sockets) m.sockets = new Set();
   m.sockets.add(ws);
   audit('agent-online', a.name, clientIp(req));
