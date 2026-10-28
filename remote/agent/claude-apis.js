@@ -56,6 +56,17 @@ function ensureOriginal(file, originalName) {
   if (fs.existsSync(original)) return;
   try { fs.mkdirSync(BACKUP, { recursive: true, mode: 0o700 }); fs.copyFileSync(file, original); fs.chmodSync(original, 0o600); } catch {}
 }
+// control turned off / a read-only agent: remove the synced keys and the terminal wrappers we made, no more launches
+function clear() {
+  try { fs.unlinkSync(MIRROR); } catch {}
+  let ids = [];
+  try { ids = JSON.parse(fs.readFileSync(INDEX, 'utf8')).ids || []; } catch {}
+  for (const id of ids) if (ALIAS.test(id)) { try { fs.unlinkSync(path.join(ALIAS_DIR, `${id}.json`)); } catch {} }
+  try { fs.unlinkSync(INDEX); } catch {}
+  removeStale(new Set());
+  return { ok: true };
+}
+
 // called before sync/read: settings.json, settings.local.json and the resolved local mirror all get an original copy
 function backupSettings() {
   const files = [];
@@ -198,4 +209,4 @@ function sync(cfg) {
   return { ok: true };
 }
 
-module.exports = { readSettings, sync, backupSettings, MIRROR, ALIAS_DIR, LAUNCHER, BACKUP };
+module.exports = { readSettings, sync, clear, backupSettings, MIRROR, ALIAS_DIR, LAUNCHER, BACKUP };

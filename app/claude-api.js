@@ -43,7 +43,8 @@ function valid(api) {
 }
 function mirror() {
   try {
-    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.ametyping', 'claude-apis.local.json'), 'utf8'));
+    const f = process.env.AME_CLAUDE_MIRROR || path.join(os.homedir(), '.ametyping', 'claude-apis.local.json');
+    const j = JSON.parse(fs.readFileSync(f, 'utf8'));
     return j && j.aliases && typeof j.aliases === 'object' ? j : { aliases: {} };
   } catch { return { aliases: {} }; }
 }
@@ -70,7 +71,7 @@ function applyProxy(settings, proxy) {
 function settingsFile(api) {
   const a = valid(api);
   if (!a) return null;
-  const dir = path.join(os.homedir(), '.ametyping', 'tmp');
+  const dir = process.env.AME_CLAUDE_TMP || path.join(os.homedir(), '.ametyping', 'tmp');
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const f of fs.readdirSync(dir)) {
@@ -86,6 +87,17 @@ function settingsFile(api) {
 }
 // the child environment for a launch we start ourselves (background resume). The new-window launch uses
 // powershellSnippet() instead, because the console bridge cannot set an environment per window.
+// A background resume must either use the session's alias or stop: a missing mirror / failed temp write never falls
+// back to an unmarked Claude (which would silently use the machine's base API while the session still says the alias).
+function resumePlan(apiId, env = process.env) {
+  const wanted = typeof apiId === 'string' ? apiId : '';
+  const api = wanted ? mirrorAlias(wanted) : null;
+  if (wanted && !api) return { ok: false, msg: `这个会话原来的 API 别名「${wanted}」在本机不可用（镜像读不到）；为避免切换 API，先不续聊。恢复别名后再试。` };
+  const sf = api ? settingsFile(api) : null;
+  if (api && !sf) return { ok: false, msg: '写 API 设置失败；为避免切换 API，先不续聊。' };
+  return { ok: true, api, sf, env: envForProxy(api, env) };
+}
+
 function envForProxy(api, env = process.env) {
   const out = { ...env, AME_CLAUDE_API: api && ALIAS.test(String(api.id || '')) ? api.id : '' };
   delete out.CLAUDE_CONFIG_DIR;                           // alt launches keep the default memory directory
@@ -122,4 +134,4 @@ function powershellSnippet(api) {
   return s;
 }
 
-module.exports = { valid, mirror, mirrorAlias, settingsFile, envForProxy, powershellSnippet, baseSettings, mergeSettings, ALIAS, PROXY };
+module.exports = { valid, mirror, mirrorAlias, settingsFile, resumePlan, envForProxy, powershellSnippet, baseSettings, mergeSettings, ALIAS, PROXY };

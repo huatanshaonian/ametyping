@@ -274,7 +274,7 @@ function connect() {
   ws.on('open', () => {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), files: browse.enabled, upload: browse.canUpload }));
+    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), apis: CONTROL, files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
     lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
@@ -315,9 +315,12 @@ function connect() {
     // a session renamed (the server tells every machine): this one's pet shows the new name at once
     else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });
     else if (d.t === 'claude-apis') {
-      if (!CONTROL) return;                                  // read-only machine: no remote config, no wrappers
+      if (!CONTROL) { try { claudeApis.clear(); } catch {} return; }   // read-only machine: never write a received key
       try { const r = claudeApis.sync(d); if (r && r.ok === false) console.error('别名同步失败：' + r.msg); }
       catch (e) { console.error('别名同步失败：' + e.message); }
+    }
+    else if (d.t === 'claude-apis-off') {
+      try { claudeApis.clear(); } catch {}                   // control turned off: drop this machine's synced copy
     }
     else if (d.t === 'read-claude-settings' && typeof d.rid === 'string') {
       const r = CONTROL ? claudeApis.readSettings() : { ok: false, msg: '这台机器没开远程控制' };

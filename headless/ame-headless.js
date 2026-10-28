@@ -24,6 +24,7 @@ const { listRunning, transcriptOf, projectOf } = require('../app/running-session
 const codexSessions = require('../app/codex-sessions');
 const codexRecords = require('../app/codex-records');
 const { resume } = require('./resume');
+const claudeApi = require('../app/claude-api');
 const { launch } = require('./launch');
 const btwPanel = require('../app/btw-panel');
 
@@ -75,10 +76,15 @@ async function chatSend(id, text) {
     return r.ok ? { ok: true } : { ok: false, msg: '发送失败：' + r.err };
   }
   if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
-  const r = resume(s.rawSession || s.id, s.cwd, s.env, text, () => {
+  const codex = s.provider === 'codex';
+  const plan = codex ? { ok: true, sf: null, env: s.env || process.env } : claudeApi.resumePlan(s.api, s.env || process.env);
+  if (!plan.ok) return plan;
+  const sf = plan.sf;
+  const r = resume(s.rawSession || s.id, s.cwd, plan.env, text, () => {
     Object.assign(s, { headless: false, claudePid: null, claudeComm: null, fromPid: null, target: null, state: 'ended', last: Date.now() });
-  }, s.provider === 'codex');
-  if (!r.ok) return r;
+    if (sf) sf.cleanup();
+  }, codex, sf ? sf.file : '');
+  if (!r.ok) { if (sf) sf.cleanup(); return r; }
   Object.assign(s, { headless: true, state: 'message', last: Date.now() });
   return { ok: true, msg: s.provider === 'codex' ? '这个会话已经关了，在后台用 codex exec resume 续上（不会再问你确认：按 Codex 自己的沙箱设置来）'
     : '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };

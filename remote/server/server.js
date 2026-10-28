@@ -210,7 +210,7 @@ function knownMachines() {
 // every machine's agent writes a local copy (the terminal wrappers and background resumes read it)
 function pushClaudeApis() {
   for (const m of machines.values()) {
-    if (!m.online || !m.sockets) continue;
+    if (!m.online || !m.sockets || m.apis !== true) continue;   // read-only agents never get the keys
     let msg;
     try { msg = JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(m.name) }); } catch { continue; }
     for (const s of m.sockets) { try { s.send(msg); } catch {} }
@@ -303,7 +303,7 @@ function pushConvTo(c) {
 }
 
 // ---------- agent -> server messages (the ONLY thing the server accepts from a machine) ----------
-// hello  {machine, control}             after token auth; marks the machine online
+// hello  {machine, control, apis, files}  after token auth; marks the machine online (apis: it may receive the aliases)
 // state  {control, sessions:[{id,label,project,state,steps,t0,last,lines,via,perms}]}   full session list
 // conv   {id, msgs:[{role,text,items,t}]}                            a session's conversation (tail)
 // result {rid, ok, msg}                                              outcome of a send / decide
@@ -313,7 +313,13 @@ const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
-    m.control = d.control === true; m.files = d.files === true; m.upload = d.upload === true; broadcast({ t: 'sessions', data: snapshot() });
+    m.control = d.control === true; m.apis = d.apis === true; m.files = d.files === true; m.upload = d.upload === true;
+    broadcast({ t: 'sessions', data: snapshot() });
+    // the API aliases (keys included) only go to a machine whose agent allows this; wait for hello so a control:false
+    // agent is never sent them. A machine that lost the right gets an empty copy cleared on its side.
+    try {
+      ws.send(JSON.stringify(m.apis ? { t: 'claude-apis', ...claudeApis.forMachine(m.name) } : { t: 'claude-apis-off' }));
+    } catch {}
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
@@ -811,15 +817,13 @@ wssBrowser.on('connection', (ws, req, sid) => {
 
 wssAgent.on('connection', (ws, req, a) => {
   const m = machine(a.name);
-  m.online = true; m.since = Date.now();
+  m.online = true; m.since = Date.now(); m.apis = false;   // until hello: no alias keys on this connection
   if (!m.sockets) m.sockets = new Set();
   m.sockets.add(ws);
   audit('agent-online', a.name, clientIp(req));
   broadcast({ t: 'sessions', data: snapshot() });
   // where the stored conversations of this machine stand: the agent streams on from there
   try { ws.send(JSON.stringify({ t: 'sync', offsets: store.offsets(a.name) })); } catch {}
-  // the aliases this machine launches with (local mirror + terminal wrappers on the agent side)
-  try { ws.send(JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(a.name) })); } catch {}
   ws.on('message', (raw) => onAgentMessage(m, raw, ws));             // size capped by maxPayload
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {

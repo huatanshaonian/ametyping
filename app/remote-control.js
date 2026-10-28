@@ -46,10 +46,11 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     } else {
       const exe = claudeExe();
       if (!exe) return { ok: false, msg: '找不到 claude.exe，没法在后台续聊' };
-      const api = claudeApi.mirrorAlias(s.api);
-      const sf = api ? claudeApi.settingsFile(api) : null;
+      const plan = claudeApi.resumePlan(s.api);
+      if (!plan.ok) return plan;
+      const sf = plan.sf;
       p = spawn(exe, [...(sf ? ['--settings', sf.file] : []), '-p', '--resume', s.id],
-        { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'], env: claudeApi.envForProxy(api) });
+        { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'], env: plan.env });
       p.on('error', () => { if (sf) sf.cleanup(); });
       p.stdin.on('error', () => {});
       p.stdin.end(text);                                           // prompt on stdin: never parsed as an option

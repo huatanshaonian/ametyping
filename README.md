@@ -114,7 +114,7 @@ cd app && npm install && npm start            # 糖糖开发运行
 npm run dist                                  # 打包到 ../dist/AmeTyping-win32-x64
 cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
-node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js   # API 别名
+node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js   # API 别名
 ```
 
 国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。

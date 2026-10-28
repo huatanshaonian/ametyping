@@ -36,8 +36,12 @@ fs.writeFileSync(path.join(dataDir, 'claude-apis.json'), JSON.stringify({
   },
 }));
 const tok = node([R + '/server/setup.js', 'add-agent', 'box']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
+const tokRo = node([R + '/server/setup.js', 'add-agent', 'ro']).split('\n').map((s) => s.trim()).find((s) => /^[A-Za-z0-9_-]{30,}$/.test(s));
 const ACFG = path.join(T, 'agent.json');
 fs.writeFileSync(ACFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tok, name: 'box', control: true, petPort: PET, files: { roots: [ROOT] } }));
+const RO_HOME = path.join(T, 'home-ro'); fs.mkdirSync(path.join(RO_HOME, '.ametyping'), { recursive: true });
+const RO_CFG = path.join(T, 'agent-ro.json');
+fs.writeFileSync(RO_CFG, JSON.stringify({ server: `ws://127.0.0.1:${PORT}/agent`, token: tokRo, name: 'ro', control: false, petPort: PET + 1 }));
 const petToken = 'x'.repeat(64);
 fs.writeFileSync(path.join(HOME, '.ametyping', `control-token-${PET}`), petToken);
 const launches = [];
@@ -66,7 +70,9 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
 (async () => {
   try {
     spawn([R + '/server/server.js']); await sleep(3000);
-    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG }); await sleep(3000);
+    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
+    spawn([R + '/agent/agent.js'], { USERPROFILE: RO_HOME, HOME: RO_HOME, AME_AGENT_CONFIG: RO_CFG });
+    await sleep(3500);
     const login = await req('/api/login', { user: 'u', password: 'pw-123456789012', code: code() });
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Origin: `http://127.0.0.1:${PORT}`, Cookie: login.cookie } });
     const waiting = new Map(); let n = 0;
@@ -130,6 +136,11 @@ const code = (offset = 0) => auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSe
     const n1 = launches.length;
     const r6 = await act({ t: 'resume', machine: 'box', id: RID });
     ok('a stored alias that is gone fails the resume instead of switching API', del.j.ok && r6.ok === false && launches.length === n1 && /API 别名「nebula」现在不可用/.test(r6.msg || ''), JSON.stringify([del.j.ok, r6, n1, launches.length]));
+    await sleep(1200);                                  // the config change was pushed to every writable agent
+    const roMirror = path.join(RO_HOME, '.ametyping', 'claude-apis.local.json');
+    const roBin = path.join(RO_HOME, '.local', 'bin');
+    const roWrappers = fs.existsSync(roBin) ? fs.readdirSync(roBin).filter((n) => /^claude-/.test(n)) : [];
+    ok('a control:false agent never receives the shared keys or terminal wrappers', !fs.existsSync(roMirror) && roWrappers.length === 0, { mirror: fs.existsSync(roMirror), roWrappers });
     ws.close();
   } catch (e) { fail++; console.log('ERROR', e); }
   finally {
