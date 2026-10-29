@@ -111,10 +111,13 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     const [cls, name] = stateName(s), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
-    // (whose session it is: Codex's or Claude Code's mark, or OpenCode's followed by the AI provider's)
-    const ai = String(s.id).startsWith('opencode:') ? aiMark(s) : null;
-    const badge = String(s.id).startsWith('opencode:')
+    // (whose session it is: Codex's or Claude Code's mark, or OpenCode's / Antigravity's followed by the AI provider's)
+    const isOc = String(s.id).startsWith('opencode:'), isAgy = String(s.id).startsWith('agy:');
+    const ai = (isOc || isAgy) ? aiMark(s) : null;
+    const badge = isOc
       ? `<span class="provs" title="OpenCode${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov opn"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : isAgy
+      ? `<span class="provs" title="Antigravity${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov agy"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
       : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
     const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + badge + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');

@@ -8,6 +8,9 @@ const { inTerminal } = require('./session-terminal');
 const codexSessions = require('./codex-sessions');
 const codexCli = require('./codex-cli');
 const codexRecords = require('./codex-records');
+const agySessions = require('./agy-sessions');
+const agyCli = require('./agy-cli');
+const agyRecords = require('./agy-records');
 
 // deps: sessions (the pet's Map), bridge (ancestors, screen), home, isClaude(name), isTerminal(name), onChange()
 async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onChange }) {
@@ -42,6 +45,29 @@ async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onCh
     sessions.set(id, {
       id, provider: 'codex', rawSession: r.id, project: projectOf(r.cwd), cwd: r.cwd,
       title: codexRecords.titleOf(r.id) || r.title || undefined, transcript: r.transcript || codexRecords.fileOf(r.id) || undefined,
+      state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t,
+      claudePid: c.pid, processIdentity: identity, fromPid: null, headless: c.own, terminal: !c.own && !!c.parent && isTerminal(c.parent.name),
+    });
+    n++;
+  }
+  for (const r of agySessions.list(home)) {
+    const id = 'agy:' + r.id;
+    if (sessions.has(id)) continue;
+    const chain = await bridge.ancestors(r.pid);
+    if (!chain.length) continue;
+    const c = agyCli.findAgy(chain, process.pid);
+    if (!c || c.pid !== r.pid) { agySessions.forget(r.id, home); continue; }
+    const identity = bridge.identity ? await bridge.identity(c.pid) : null;
+    if (!identity) continue;
+    if (identity !== r.identity) { agySessions.forget(r.id, home); continue; }
+    if (sessions.has(id)) continue;
+    const t = Date.now();
+    const transcript = r.transcript || agyRecords.fileOf(r.id) || undefined;
+    const meta = transcript ? agyRecords.metaOf(transcript) : null;
+    sessions.set(id, {
+      id, provider: 'agy', rawSession: r.id, project: projectOf(r.cwd || (meta && meta.cwd)), cwd: r.cwd || (meta && meta.cwd) || '',
+      title: agyRecords.titleOf(r.id) || r.title || (meta && meta.title) || undefined, transcript,
+      model: (meta && meta.model) || undefined, ai: (meta && meta.ai) || undefined,
       state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t,
       claudePid: c.pid, processIdentity: identity, fromPid: null, headless: c.own, terminal: !c.own && !!c.parent && isTerminal(c.parent.name),
     });

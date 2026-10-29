@@ -17,10 +17,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { codexBin, threadOf } = require('./codex');
+const { agyBin, threadOf: agyThreadOf } = require('./agy');
 const opencode = require('../app/opencode');
 const claudeApi = require('../app/claude-api');
 
-const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|LANG|LC_ALL)$/;
+const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|GEMINI_[A-Z0-9_]+|AGY_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|LANG|LC_ALL)$/;
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 function claudeBin(env) {
@@ -38,10 +39,11 @@ function claudeBin(env) {
 function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null }) {
   return new Promise((resolve) => {
     const thread = threadOf(resume);
+    const agyThread = agyThreadOf(resume);
     const ocThread = /^opencode:/.test(resume) ? opencode.rawId(resume) : '';
     const openMode = !!ocThread || (!resume && tool === 'opencode');
     if (resume && openMode) { if (!opencode.isId(ocThread)) return resolve({ ok: false, msg: '无效请求' }); }
-    else if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
+    else if (resume && !thread && !agyThread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
     let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
     if (openMode) {
@@ -59,14 +61,15 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
       return;
     }
     const codex = !!thread || (!resume && tool === 'codex');
-    const bin = codex ? codexBin(env) : claudeBin(env);
-    if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : '找不到 claude' });
-    const api = codex ? null : claudeApi.valid(apiArg);
-    if (!codex && apiArg && !api) return resolve({ ok: false, msg: 'API 别名配置不对' });
+    const agy = !!agyThread || (!resume && tool === 'agy');
+    const bin = codex ? codexBin(env) : agy ? agyBin(env) : claudeBin(env);
+    if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : agy ? '找不到 agy' : '找不到 claude' });
+    const api = (codex || agy) ? null : claudeApi.valid(apiArg);
+    if (!codex && !agy && apiArg && !api) return resolve({ ok: false, msg: 'API 别名配置不对' });
     const sf = api ? claudeApi.settingsFile(api) : null;
     if (api && !sf) return resolve({ ok: false, msg: '写 API 设置失败' });
     const tag = crypto.randomBytes(3).toString('hex');
-    const name = `${codex ? 'codex' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
+    const name = `${codex ? 'codex' : agy ? 'agy' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
     const envFile = path.join(os.tmpdir(), `ame-launch-${crypto.randomBytes(8).toString('hex')}.env`);
     // an alias is the authority for the API: do not carry a recent session's ANTHROPIC_* / CLAUDE_* along with it
     const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k) && !/^CLAUDE_CONFIG_DIR$/i.test(k) && (!api || !/^(ANTHROPIC_|CLAUDE_)/.test(k))).map(([k, v]) => `export ${k}=${q(v)}`);
@@ -84,7 +87,8 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
       ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
     const settings = sf ? ' ' + sf.args.map(q).join(' ') : '';
     // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
-    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
+    const tail = thread ? ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : '';
+    const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${tail}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} if (sf) sf.cleanup(); return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
       answerTrust(name, codex);
@@ -123,7 +127,7 @@ function answerTrust(name, codex = false) {
       else if (/enter confirm|Press enter to continue/i.test(text) || /›\s+Ask Codex to do anything|esc to interrupt/.test(text)) return;
       return void setTimeout(tick, 700);
     }
-    if (/Yes, I trust this folder/.test(text)) {
+    if (/Yes, I trust this folder|Do you trust the contents of this project/i.test(text)) {
       const onNo = /❯\s*(\d\.\s*)?No, exit/.test(text);
       if (onNo) await keys('Down');
       await keys('Enter');

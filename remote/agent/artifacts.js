@@ -14,6 +14,7 @@ const { execFile } = require('child_process');
 const transcript = require('../../app/transcript');
 const codex = require('../../app/codex-records');
 const opencode = require('../../app/opencode-records');
+const agy = require('../../app/agy-records');
 const { denied } = require('./files');
 
 const CHUNK = 256 * 1024;
@@ -36,11 +37,11 @@ function createArtifacts({ sessionFile, send }) {
     let st; try { st = fs.statSync(sf.file); } catch { return null; }
     const c = written.get(id);
     if (c && c.size === st.size) return c.paths;
-    const parse = sf.codex ? codex.recordsOf : sf.opencode ? opencode.recordsOf : transcript.recordsOf;
+    const parse = sf.codex ? codex.recordsOf : sf.opencode ? opencode.recordsOf : sf.agy ? agy.recordsOf : transcript.recordsOf;
     const paths = new Set();
     let cwd = sf.cwd || '';
     for (const line of fs.readFileSync(sf.file, 'utf8').split('\n')) {
-      if (!sf.opencode && !line.includes('"file_path"') && !line.includes('File:') && !line.includes('notebook_path')) { if (!cwd && line.includes('"cwd"')) { try { cwd = JSON.parse(line).cwd || ''; } catch {} } continue; }
+      if (!sf.opencode && !sf.agy && !line.includes('"file_path"') && !line.includes('File:') && !line.includes('notebook_path')) { if (!cwd && line.includes('"cwd"')) { try { cwd = JSON.parse(line).cwd || ''; } catch {} } continue; }
       let o; try { o = JSON.parse(line); } catch { continue; }
       if (!cwd && o.cwd) cwd = o.cwd;
       for (const r of parse(o)) {

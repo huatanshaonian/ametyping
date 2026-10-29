@@ -8,14 +8,13 @@ const { alwaysLabel } = require('./permission-rules');
 // terminal still asks. Codex waits for the hook before it asks itself, so its cards stay short.
 // OpenCode shows its own prompt at the same time too (the plugin watches its permission events), so its card may
 // wait as long as Claude's.
-const WAIT = { claude: 3590e3, codex: 105e3, opencode: 3590e3 };
+const WAIT = { claude: 3590e3, codex: 105e3, opencode: 3590e3, agy: 105e3 };
 
-// Claude asking you something (its AskUserQuestion tool: up to four questions, each with options, some with several
-// answers allowed) comes through the same hook as a permission prompt. It is answered by handing the tool's own input
-// back with the answers filled in -- { "<the question>": "<the option's label, labels joined with ", ", or your own
-// words>" } -- which Claude Code takes exactly like an answer given in its terminal. An "allow" without answers it
-// ignores (the terminal keeps asking), so such a card has no 允许.
-const isAsk = (p) => p.provider === 'claude' && p.tool === 'AskUserQuestion' && Array.isArray(p.input.questions) && p.input.questions.length > 0 &&
+// Claude or Antigravity asking you something (AskUserQuestion / ask_question: questions, each with options, some with
+// several answers allowed) comes through the same hook as a permission prompt. It is answered by handing the tool's own
+// input back with the answers filled in -- { "<the question>": "<the option's label, labels joined with ", ", or your own
+// words>" }. An "allow" without answers has no effect, so such a card has no 允许.
+const isAsk = (p) => (p.provider === 'claude' || p.provider === 'agy') && (p.tool === 'AskUserQuestion' || p.tool === 'ask_question') && Array.isArray(p.input.questions) && p.input.questions.length > 0 &&
   p.input.questions.every((q) => q && typeof q.question === 'string' && q.question);
 function answersFor(p, a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
@@ -61,7 +60,9 @@ function createPermissions(onChange, timeout = WAIT) {
         // one line; '' = no such option
         always: d.provider === 'codex' ? '' : d.provider === 'opencode'
           ? (Array.isArray(d.suggestions) && d.suggestions.length ? '总是允许：' + d.suggestions.join(' ') : '')
-          : alwaysLabel(d.suggestions),
+          : d.provider === 'agy'
+            ? (d.alwaysRule ? '总是允许：' + d.alwaysRule : '')
+            : alwaysLabel(d.suggestions),
         started: Date.now(), res };
       p.ask = isAsk(p);                                              // Claude's questions: answered, not allowed
       if (p.ask) p.always = '';
@@ -79,7 +80,7 @@ function createPermissions(onChange, timeout = WAIT) {
     // extra: { answers } with choice 'answer'
     decide(id, choice, extra) {
       const p = pending.get(id);
-      if (choice === 'defer' && p && p.provider === 'codex') return finish(id, undefined, 'defer');
+      if (choice === 'defer' && p && (p.provider === 'codex' || p.provider === 'agy')) return finish(id, undefined, 'defer');
       if (p && p.ask) {
         if (choice === 'answer') {
           const answers = answersFor(p, extra && extra.answers);

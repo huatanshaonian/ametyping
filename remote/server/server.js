@@ -144,6 +144,7 @@ function resumeCmd(cwd, id, api = '') {
   const claude = /^[A-Za-z0-9._-]{1,40}$/.test(String(api || '')) ? `claude-${api}` : 'claude';
   const cmd = id.startsWith('codex:') ? `codex resume ${id.slice(6)}`
     : id.startsWith('opencode:') ? `opencode -s ${id.slice(9)}`
+    : id.startsWith('agy:') ? `agy --conversation ${id.slice(4)}`
     : `${claude} --resume ${id}`;
   if (!cwd) return cmd;
   const q = `'${cwd.replace(/'/g, "''")}'`;
@@ -176,7 +177,7 @@ function snapshot() {
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
-      list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : e.id.startsWith('opencode:') ? 'OpenCode' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
+      list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : e.id.startsWith('opencode:') ? 'OpenCode' : e.id.startsWith('agy:') ? 'Antigravity' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
         lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id, e.api), api: e.api || '', cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined,
         model: e.model || undefined, ai: e.ai || undefined });
     }
@@ -373,7 +374,8 @@ function onAgentMessage(m, raw, ws) {
   }
   // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
   if (d.t === 'cmds' && Array.isArray(d.list)) {
-    m[d.provider === 'codex' ? 'codexCmds' : 'cmds'] = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
+    const key = d.provider === 'codex' ? 'codexCmds' : d.provider === 'agy' ? 'agyCmds' : 'cmds';
+    m[key] = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
       .map((c) => ({ name: String(c.name), desc: str(c.desc, 120), src: str(c.src, 10) }));
     return;
   }
@@ -419,7 +421,7 @@ function onAgentMessage(m, raw, ws) {
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
       cur.agents = agentRows(s.agents);              // the subagents it started (the agent's subagents.js)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({
-        id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : p.provider === 'opencode' ? 'opencode' : 'claude', tool: str(p.tool, 80),
+        id: str(p.id, 64), provider: p.provider === 'codex' ? 'codex' : p.provider === 'opencode' ? 'opencode' : p.provider === 'agy' ? 'agy' : 'claude', tool: str(p.tool, 80),
         cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000), ask: p.ask === true || undefined })) : [];
     }
     for (const id of [...m.sessions.keys()]) if (!keep.has(id)) m.sessions.delete(id);
@@ -477,11 +479,11 @@ function onBrowserAction(c, d) {
     // (the agent finds the folder in the conversation's own transcript there; nothing about it comes from the page)
     const id = typeof d.id === 'string' ? d.id : '';
     const opencodeId = /^opencode:ses_[A-Za-z0-9]{6,80}$/.test(id);
-    if (!opencodeId && !/^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
+    if (!opencodeId && !/^(codex:|agy:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
     if (s && s.via === 'terminal') return reply(false, '这个会话还开着，直接在这里回复就行');
     const saved = store.sessions()[m.name] || [];
     if (!s && !saved.some((e) => e.id === id)) return reply(false, '这台电脑没有这个会话');
-    if (id.startsWith('codex:') || opencodeId) {
+    if (id.startsWith('codex:') || id.startsWith('agy:') || opencodeId) {
       out = { t: 'resume', id };
       audit('control-resume', c.ip, m.name, id);
     } else {
@@ -504,7 +506,7 @@ function onBrowserAction(c, d) {
     // a new Claude Code (or Codex: tool) session in a folder of that machine (the agent checks it is a folder it lets you browse)
     const cwd = typeof d.cwd === 'string' ? d.cwd : '', prompt = typeof d.prompt === 'string' ? d.prompt : '';
     if (!cwd || cwd.length > 1000 || prompt.length > 8000) return reply(false, '无效请求');
-    const tool = ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude';
+    const tool = ['codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude';
     const requested = typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '';
     const api = tool === 'claude' ? resolveApi(requested) : null;
     if (requested && tool === 'claude' && !api) return reply(false, '这台电脑没有这个本地启动入口，请刷新或配置后再试');
@@ -654,7 +656,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
     const provider = url.searchParams.get('provider');
-    return json(res, 200, { list: provider === 'opencode' ? [] : (m && m[provider === 'codex' ? 'codexCmds' : 'cmds']) || [] });
+    const key = provider === 'codex' ? 'codexCmds' : provider === 'agy' ? 'agyCmds' : 'cmds';
+    return json(res, 200, { list: provider === 'opencode' ? [] : (m && m[key]) || [] });
   }
   if (req.method === 'GET' && p === '/api/session/export') {
     const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');

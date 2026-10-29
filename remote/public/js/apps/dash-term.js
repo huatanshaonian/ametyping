@@ -13,8 +13,8 @@ import { artEl } from './term-art.js';
 // these only; others -- /compact, /clear, /context, a skill -- just run and print into the conversation). The first
 // group only when sent bare: with an argument ("/model opus") they act at once.
 const MENU_BARE = new Set(['model', 'effort', 'resume', 'theme', 'export', 'add-dir', 'fast']);
-const MENU = new Set(['config', 'permissions', 'mcp', 'hooks', 'plugin', 'plugins', 'memory', 'status', 'usage', 'stats', 'help', 'rewind', 'login', 'logout',
-  'ide', 'tasks', 'bashes', 'statusline', 'terminal-setup', 'privacy-settings', 'tui']);
+const MENU = new Set(['config', 'settings', 'permissions', 'mcp', 'hooks', 'plugin', 'plugins', 'memory', 'status', 'usage', 'credits', 'stats', 'help', 'rewind', 'login', 'logout',
+  'ide', 'tasks', 'bashes', 'statusline', 'terminal-setup', 'privacy-settings', 'tui', 'agents', 'skills', 'artifact', 'diff']);
 export function opensMenu(text) {
   const m = /^\s*\/([\w-]+)(\s+\S)?/.exec(String(text || ''));
   return !!m && (MENU.has(m[1]) || (MENU_BARE.has(m[1]) && !m[2]));

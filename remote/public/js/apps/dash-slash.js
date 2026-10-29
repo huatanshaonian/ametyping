@@ -24,6 +24,16 @@ const CODEX = [
   ['init', '生成 AGENTS.md'], ['skills', '选择技能'], ['mcp', '查看 MCP 服务器'], ['hooks', '管理 hooks'],
   ['ps', '查看后台终端'], ['stop', '停止后台终端'], ['quit', '退出 Codex'], ['feedback', '提交反馈'],
 ].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
+const AGY = [
+  ['model', '切换模型'], ['effort', '设置推理强度（Effort Level）'], ['permissions', '查看和设置权限模式'],
+  ['plan', '切换计划模式（Plan Mode）'], ['config', '打开 Antigravity 设置'], ['settings', '打开 Antigravity 设置'],
+  ['compact', '压缩上下文'], ['resume', '恢复已有对话'], ['diff', '查看代码改动'], ['agents', '管理子代理'],
+  ['skills', '查看和管理技能'], ['hooks', '查看和管理 hooks'], ['mcp', '管理 MCP 服务器'], ['plugin', '管理插件'],
+  ['artifact', '查看当前会话的 Artifacts'], ['tasks', '查看后台任务'], ['usage', '查看用量'], ['credits', '查看额度'],
+  ['goal', '开启长时自动目标模式'], ['schedule', '设置定时或周期任务'], ['browser', '浏览器自动化模式'],
+  ['grill-me', '交互式访谈对齐方案'], ['teamwork', '多代理协同工作模式'], ['learn', '沉淀经验到自定义规则'],
+  ['boost', '深度思考与多视角验证'], ['btw', '顺带一问'], ['help', '帮助和命令列表'], ['exit', '退出 Antigravity'], ['quit', '退出 Antigravity'],
+].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
 
 export function createSlash({ say, machine, provider = () => 'claude', onFill }) {
   const el = h('div', { class: 'slash', hidden: true });
@@ -49,7 +59,7 @@ export function createSlash({ say, machine, provider = () => 'claude', onFill })
     if (t == null) return close();
     const m = machine();
     const p = provider(), leader = say.value[0];
-    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : p === 'opencode' ? [] : BUILTIN)];
+    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : p === 'agy' ? AGY : p === 'opencode' ? [] : BUILTIN)];
     if (say.disabled || token() !== t || provider() !== p || machine() !== m || say.value[0] !== leader) return;
     const low = t.toLowerCase();
     const starts = all.filter((c) => c.name.toLowerCase().startsWith(low));

@@ -68,4 +68,15 @@ function scanCodex(home) {
   const seen = new Set();
   return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
 }
-module.exports = { scan, scanCodex };
+
+function scanAgy(home) {
+  const out = [];
+  const cfgDir = process.env.AGY_CONFIG_DIR || path.join(home, '.gemini', 'config');
+  skillsIn(path.join(cfgDir, 'skills'), '', out);
+  skillsIn(path.join(home, '.agents', 'skills'), '', out);
+  skillsIn(path.join(home, '.gemini', 'skills'), '', out);
+  skillsIn(path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills'), '', out);
+  const seen = new Set();
+  return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
+}
+module.exports = { scan, scanCodex, scanAgy };

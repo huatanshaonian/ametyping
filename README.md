@@ -1,11 +1,11 @@
 # AmeTyping · 糖糖敲键盘桌宠 + Windose 远程桌面
 
-A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん) from *NEEDY GIRL OVERDOSE* types along with you — plus an optional self-hosted, Win98-styled web desktop to watch and drive your Claude Code / Codex / OpenCode sessions on every machine you own.
+A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん) from *NEEDY GIRL OVERDOSE* types along with you — plus an optional self-hosted, Win98-styled web desktop to watch and drive your Claude Code / Codex / OpenCode / Antigravity (`agy`) sessions on every machine you own.
 
 这个仓库有两部分，可以只用第一部分：
 
-1. **糖糖桌宠（Windows）**：Q 版糖糖坐在 75% 键盘后面，你按哪个键她就敲哪个键；可选接入 Claude Code / Codex / OpenCode，在她下面的 Windose 风格面板里看各会话的进度、处理权限确认、直接回复。
-2. **Windose 远程桌面（自托管网页）**：在手机或别的电脑上打开一个 Win98 风格的桌面，看每台机器上的会话、完整对话（长期存档）、浏览文件（Markdown 连同里面的图片）、远程回复 / 审批 / 在指定文件夹启动 Claude、Codex 或 OpenCode。Linux 机器用无头服务代替糖糖。
+1. **糖糖桌宠（Windows）**：Q 版糖糖坐在 75% 键盘后面，你按哪个键她就敲哪个键；可选接入 Claude Code / Codex / OpenCode / Antigravity (`agy`)，在她下面的 Windose 风格面板里看各会话的进度、处理权限确认、直接回复。
+2. **Windose 远程桌面（自托管网页）**：在手机或别的电脑上打开一个 Win98 风格的桌面，看每台机器上的会话、完整对话（长期存档）、浏览文件（Markdown 连同里面的图片）、远程回复 / 审批 / 在指定文件夹启动 Claude、Codex、OpenCode 或 Antigravity (`agy`)。Linux 机器用无头服务代替糖糖。
 
 ## 糖糖桌宠
 
@@ -17,21 +17,23 @@ A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん
 - **窗口**：透明区域逐像素鼠标穿透；拖动本体移动，拖右下角缩放；托盘菜单：大小、朝向、键帽主题、面板模式、提示音、允许远程控制、休息提醒、天使模式、鼠标穿透、触屏模式、检查更新（`git pull`、必要时 `npm install`、重启 agent 和糖糖）、开机自启。触屏设备请勾「触屏模式」：逐像素穿透靠鼠标悬停来判断，手指没有悬停，第一下会点穿；勾上后窗口按她的轮廓接收点按（轮廓外照样穿透），手指可以直接摸她、拖右下角缩放、点 P 酱；手指在她身上来回摸是摸头；按住不动半秒（她会点一下头）再拖才是移动她。
 - **隐私**：键盘钩子只读取键码（哪个物理键），不记录、不上传输入的文字；面板只监听本机 `127.0.0.1:3940`。
 
-### Claude Code / Codex / OpenCode 面板
+### Claude Code / Codex / OpenCode / Antigravity 面板
 
-Claude Code 与 Codex 的 hook 把会话事件发给糖糖，她下面的面板显示会话列表与进度：
+Claude Code、Codex 与 Antigravity (`agy`) 的 hook（以及 OpenCode 插件）把会话事件发给糖糖，她下面的面板显示会话列表与进度：
 
 - **面板模式**（托盘）：弹出进度（有动静时弹出、停下后收起）／常驻对话（完整对话 + 回复框）／关闭（只在 Windose 网页里看）。
-- **权限确认卡片**：显示工具、目录、命令或文件与完整参数，「允许」「拒绝」（Codex 另有「在 Codex 中处理」）。Claude Code 在等待卡片的同时终端里也会问，任意一边回答即可；卡片最多等约 60 分钟，超时交回终端。
-- **回复**：会话在终端里就直接打进终端（`WriteConsoleInput`，不抢焦点）；会话已关闭则用 `claude -p --resume` 后台续上；IDE / 桌面 App 里的会话只能看；有待确认时回复会被拦下。Codex CLI 的会话同样可以回复（已关闭的用 `codex exec resume` 续上），面板里显示它的完整对话；Linux 上的 Claude Code / Codex 在 tmux 中运行即可从看板回复、按键和查看画面。OpenCode 通过它自己的会话 API 回复与审批，不需要终端或 tmux。
+- **权限确认卡片**：显示工具、目录、命令或文件与完整参数，「允许」「拒绝」（Codex 与 Antigravity 另有「在终端中处理」）。Claude Code 与 Antigravity 在等待卡片的同时终端里也会问，任意一边回答即可；卡片最多等约 60 分钟，超时交回终端。
+- **回复**：会话在终端里就直接打进终端（`WriteConsoleInput`，不抢焦点）；会话已关闭则用 `claude -p --resume` 后台续上；IDE / 桌面 App 里的会话只能看；有待确认时回复会被拦下。Codex CLI 和 Antigravity (`agy`) 的会话同样可以回复（已关闭的分别用 `codex exec resume` / `agy --conversation <id> -p` 续上），面板里显示完整对话；Linux 上的 Claude Code / Codex / Antigravity 在 tmux 中运行即可从看板回复、按键和查看画面。OpenCode 通过它自己的会话 API 回复与审批，不需要终端或 tmux。
 
-安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任；`node install-codex-hooks.js --remove` 可移除。Codex 的 hooks、对话、标题和技能均支持自定义 `CODEX_HOME`。OpenCode：`node install-opencode-plugin.js`（写进 `~/.config/opencode/opencode.json` 的 `plugins`，原文件先备份，`--remove` 可移除；不需要 hook 进程）。一键部署脚本（见下）会自动做这些。
+安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任；`node install-codex-hooks.js --remove` 可移除。Codex 的 hooks、对话、标题和技能均支持自定义 `CODEX_HOME`。OpenCode：`node install-opencode-plugin.js`（写进 `~/.config/opencode/opencode.json` 的 `plugins`，原文件先备份，`--remove` 可移除；不需要 hook 进程）。Antigravity (`agy`)：`node install-agy-hooks.js`（写进 `~/.gemini/config/hooks.json` 的 `"ametyping"` 顶层分组，原文件先备份，`--remove` 可移除，支持 `$AGY_CONFIG_DIR` 和 `$AGY_HOME`）。一键部署脚本（见下）会自动做这些。
 
 OpenCode 用 OpenCode 自己的 server 插件接入：会话事件、完整对话、权限确认和回复都走它的 API，**不读终端画面，也不用往终端里打字**。回复在面板/看板里直接发给会话（多行原样送达）；已关闭的会话用 `opencode run --auto` 续上；权限卡片和 OpenCode 终端里的提示同时有效；它没有终端按键/画面，对话直接在看板里看。功能对照、协议和验证方法见 [OpenCode 支持说明](docs/opencode-support.md)。
 
 Codex 与 Claude Code 一样支持桌宠进度、完整对话与存档、终端回复和按键、后台续聊、远程新建与恢复会话。Codex 另支持子代理状态、压缩进度、计划模式、`/` 命令提示与 `$` 技能提示；服务重启后自动接回曾通过 hooks 识别的仍在运行的 Codex 会话。权限按钮打开 Codex 自己的 `/permissions` 菜单。功能对照、协议差异和验证方法见 [Codex 支持说明](docs/codex-support.md)。
 
 OpenCode 同样支持桌宠进度、完整对话与存档、远程回复、权限卡片、后台续聊、远程新建与恢复会话；它的回复和审批通过会话 API（不是终端输入），因此在 Windows 和 Linux 上都不需要 tmux 或控制台注入。会话徽标是 OpenCode 标志加当前模型厂商的标志（DeepSeek、Claude、OpenAI、Gemini、Qwen、Kimi、GLM 等，切换模型会跟着变）。见 [OpenCode 支持说明](docs/opencode-support.md)。
+
+Antigravity (`agy`) 支持桌宠进度、完整对话（含 `transcript.jsonl` / `transcript_full.jsonl` 按行智能回填截断字段与 `THINKING` 推理链折叠展示）、`brain/<id>/` 产物预览（`implementation_plan.md`、`walkthrough.md`、`task.md` 等）、子代理层级追踪（`.system_generated/subagents/*.json`）、`ask_question` 交互问答卡片、终端回复和按键、`agy --conversation <id> -p` 后台续聊、远程新建与恢复会话，以及 `GEMINI.md` / `.agents/rules/*.md` 记忆同步与完整字节存档。会话徽标显示 Antigravity 标志加当前模型厂商标志。功能对照、协议差异和验证方法见 [Antigravity 支持说明](docs/agy-support.md)。
 
 ## Windose 远程桌面
 
@@ -46,12 +48,12 @@ OpenCode 同样支持桌宠进度、完整对话与存档、远程回复、权�
 ### 能做什么
 
 - **桌面**：左边是当前电脑的桌面（壁纸、图标），右边「网上邻居」列出每台电脑的在线状态、会话数、待确认；底部任务栏、开始菜单、托盘音量。窗口可拖动、四边缩放、最大化；手机上窗口自动全屏。
-- **糖糖看板**（窗口应用）：所有电脑的会话，按最后活动时间倒序；Claude Code / Codex / OpenCode 退出后会话仍保留为「历史」，并给出继续命令（`claude --resume` / `codex resume` / `opencode -s`，带正确的目录）。
-- **对话存档**：实时看板继续使用精简格式；另有完整采集通路，将 Claude/Codex 原生记录、子会话及 OpenCode 正式导出和运行事件按原始字节存入 NAS SQLite，支持断线续传、整文件 SHA-256 校验和 OpenCode 历史接力导出。
-- **记忆与存档**：控制面板统一管理共享全局、机器专属、项目三层记忆；SQLite 保留来源与修订，生成三种工具可读取的 Markdown，支持项目路径映射、备份和冲突检测。见[完整说明](docs/knowledge-vault.md)。
+- **糖糖看板**（窗口应用）：所有电脑的会话，按最后活动时间倒序；Claude Code / Codex / OpenCode / Antigravity 退出后会话仍保留为「历史」，并给出继续命令（`claude --resume` / `codex resume` / `opencode -s` / `agy --conversation`，带正确的目录）。
+- **对话存档**：实时看板继续使用精简格式；另有完整采集通路，将 Claude/Codex/Antigravity 原生记录、子会话及 OpenCode 正式导出和运行事件按原始字节存入 NAS SQLite，支持断线续传、整文件 SHA-256 校验和 OpenCode 历史接力导出。
+- **记忆与存档**：控制面板统一管理共享全局、机器专属、项目三层记忆；SQLite 保留来源与修订，生成四种工具可读取的 Markdown，支持项目路径映射、备份和冲突检测。见[完整说明](docs/knowledge-vault.md)。
 - **远程回复与审批**：回复打进那台机器的终端；回复框为空时方向键 / 回车 / Esc / Tab 直接发给终端，用来操作 `/model`、`/resume` 这类菜单（触屏上显示按键条）。
 - **我的电脑**：只读浏览允许的目录（Windows 默认除 C 盘外所有盘），图片、文本（UTF-8 / GB18030）、Markdown（相对路径图片从同一文件夹取回显示）；单文件上限 100 MB，分块传输，服务器只转发不保存。
-- **在这里启动 Claude / Codex / OpenCode**：在文件夹里新开会话——Linux 在 tmux 里（可 `tmux attach` 接手），Windows 弹出一个命令行窗口；新文件夹的「是否信任」提示自动确认（Claude Code / Codex）。
+- **在这里启动 Claude / Codex / OpenCode / Antigravity**：在文件夹里新开会话——Linux 在 tmux 里（可 `tmux attach` 接手），Windows 弹出一个命令行窗口；新文件夹的「是否信任」提示自动确认（Claude Code / Codex）。
 - **添加电脑**：网页里输入名字即生成令牌（只显示一次），并给出新设备上直接粘贴运行的安装命令；也可移除（令牌作废并断开）。
 - **显示属性 / 声音**：内置壁纸、本地图片（只存在浏览器）、从网址下载（由服务器下载保存，所有设备可选）；填充 / 适应 / 拉伸 / 居中 / 平铺；Win98 系统音效（启动、注销、待确认、完成、失败），可逐个关闭。
 
@@ -120,7 +122,8 @@ cd app && npm install && npm start            # 糖糖开发运行
 npm run dist                                  # 打包到 ../dist/AmeTyping-win32-x64
 cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node install-opencode-plugin.js               # OpenCode 插件（写进 ~/.config/opencode）
-node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
+node install-agy-hooks.js                     # Antigravity hooks（写进 ~/.gemini/config/hooks.json）
+node --test codex-hook.test.js agy-hook.test.js app/agy-support.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
 node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js remote/test/claude-profile-requests.test.js   # 本地 API 入口
 node --test app/opencode.test.js app/ai-providers.test.js opencode-plugin/protocol.test.mjs opencode-plugin/plugin.test.mjs  # OpenCode 插件
 ```

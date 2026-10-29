@@ -9,6 +9,12 @@ test('a hook event keeps its model and gets the provider mark', () => {
   assert.deepEqual(s.model, { providerID: 'deepseek', id: 'deepseek-chat' });
   assert.deepEqual(s.ai, { slug: 'deepseek', name: 'DeepSeek' });
   assert.equal(s.session, 'opencode:ses_x');
+
+  const agy = normalizeSession({ provider: 'agy', session: '787c15ac-2977-40c9-ba34-e59b64506264', modelName: 'gemini-3.1-pro' });
+  assert.deepEqual(agy.model, { providerID: 'google', id: 'gemini-3.1-pro' });
+  assert.deepEqual(agy.ai, { slug: 'google', name: 'Google' });
+  assert.equal(agy.session, 'agy:787c15ac-2977-40c9-ba34-e59b64506264');
+  assert.equal(agy.rawSession, '787c15ac-2977-40c9-ba34-e59b64506264');
 });
 
 test('the provider a session runs on, from the model ref', () => {

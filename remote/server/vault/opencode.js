@@ -16,7 +16,7 @@ function* convert(source,chunks,directory){
     metadata:{ametyping:{machine:source.machine,session:source.session,key:source.key,generation:source.generation,digest:source.digest,
       conversion:'history-handoff-v1',limitations:['Foreign tool records are historical text, not executable calls.','Workspace files and external attachments must be restored separately.','Native provider runtime state is not transferred.']}}};
   yield Buffer.from('{"info":'+JSON.stringify(info)+',"messages":[');
-  let count=0,model={providerID:source.provider==='codex'?'openai':'anthropic',id:'unknown'};
+  let count=0,model={providerID:source.provider==='codex'?'openai':source.provider==='agy'?'google':'anthropic',id:'unknown'};
   const message=(type,text,at)=>{
     const base={id:'msg_'+crypto.randomBytes(16).toString('hex'),type,time:{created:at}};
     if(type==='assistant')return {...base,agent:'build',model,content:[{type:'text',text}],time:{created:at,completed:at}};
@@ -25,7 +25,7 @@ function* convert(source,chunks,directory){
   for(const line of lines(chunks)){
     if(!line.trim())continue;
     let o;try{o=JSON.parse(line);}catch{ o=null; }
-    let type='synthetic',text=line,at=Date.parse(o&&o.timestamp)||source.created;
+    let type='synthetic',text=line,at=Date.parse(o&&(o.timestamp||o.created_at))||source.created;
     if(source.provider==='claude'&&o&&o.message){
       if(o.message.model)model={providerID:'anthropic',id:o.message.model};
       const c=o.message.content;
@@ -37,6 +37,15 @@ function* convert(source,chunks,directory){
       if(o.type==='turn_context'&&p.model)model={providerID:'openai',id:p.model};
       if(o.type==='response_item'&&p.type==='message'&&['user','assistant'].includes(p.role)&&Array.isArray(p.content)&&p.content.every(x=>['input_text','output_text'].includes(x.type))){type=p.role;text=p.content.map(x=>x.text).join('\n');}
       else text='原 Codex 记录（仅作为历史）：\n'+line;
+    }else if(source.provider==='agy'&&o){
+      if(o.type==='USER_INPUT'&&typeof o.content==='string'){
+        const m=/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(o.content);
+        const body=(m?m[1]:o.content).trim();
+        if(body&&!/^<(?:EPHEMERAL_MESSAGE|TASK_NOTIFICATION)>/.test(body)){type='user';text=body;}
+        else text='原 Antigravity 系统通知记录（仅作为历史）：\n'+line;
+      }else if(o.type==='PLANNER_RESPONSE'&&typeof o.content==='string'&&o.content.trim()&&(!Array.isArray(o.tool_calls)||!o.tool_calls.length)){
+        type='assistant';text=o.content.trim();
+      }else text='原 Antigravity 记录（含工具调用或结果；仅作为历史）：\n'+line;
     }
     if(count++)yield Buffer.from(',');yield Buffer.from(JSON.stringify(message(type,text,at)));
   }

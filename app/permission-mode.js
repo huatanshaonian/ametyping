@@ -4,8 +4,8 @@
 // never count. null when the status line shows none of them.
 'use strict';
 
-const MODES = { 'auto mode': 'auto', 'manual mode': 'manual', 'accept edits': 'acceptEdits', 'plan mode': 'plan', 'bypass permissions': 'bypassPermissions' };
-const LINE = /^\s*(?:⏵⏵|⏵|⏸)\s*(auto mode|manual mode|accept edits|plan mode|bypass permissions) on\b/;
+const MODES = { 'auto mode': 'auto', 'manual mode': 'manual', 'accept edits': 'acceptEdits', 'accept-edits': 'acceptEdits', 'plan mode': 'plan', 'bypass permissions': 'bypassPermissions' };
+const LINE = /^\s*(?:⏵⏵|⏵|⏸)\s*(auto mode|manual mode|accept edits|accept-edits|plan mode|bypass permissions)(?: on)?\b/;
 
 function modeFromScreen(text) {
   const lines = String(text || '').split('\n').filter((l) => l.trim()).slice(-6).reverse();

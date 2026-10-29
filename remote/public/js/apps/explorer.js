@@ -58,8 +58,8 @@ function create(machine, startPath, startPick) {
   const addr = h('input', { class: 'field addr', type: 'text', spellcheck: 'false', placeholder: '我的电脑' });
   const launchBtn = h('button', { class: 'btn', type: 'button', title: '在这个文件夹里启动一个新的 Claude Code 或 Codex 会话' },
     h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在这里启动');
-  const tool = h('select', { class: 'field xtool', title: '启动哪一个：Claude Code 的某个 API 别名、Codex，或 OpenCode' },
-    h('option', { value: 'claude', text: 'Claude Code' }), h('option', { value: 'codex', text: 'Codex' }), h('option', { value: 'opencode', text: 'OpenCode' }));
+  const tool = h('select', { class: 'field xtool', title: '启动哪一个：Claude Code 的某个 API 别名、Codex、OpenCode，或 Antigravity (agy)' },
+    h('option', { value: 'claude', text: 'Claude Code' }), h('option', { value: 'codex', text: 'Codex' }), h('option', { value: 'opencode', text: 'OpenCode' }), h('option', { value: 'agy', text: 'Antigravity (agy)' }));
   tool.value = 'claude';
   tool.addEventListener('change', () => prefs.set('files.tool', tool.value));
   // the aliases this machine has (claude-deepseek, claude-nebula, ...); each machine resolves its own variant
@@ -70,7 +70,7 @@ function create(machine, startPath, startPick) {
     const keep = tool.value || prefs.get('files.tool', '');
     const opts = aliases.map((a) => h('option', { value: 'claude:' + a.id, text: 'claude-' + a.id, title: a.label || a.id }));
     if (!aliases.length) opts.push(h('option', { value: 'claude', text: 'Claude Code' }));
-    opts.push(h('option', { value: 'codex', text: 'Codex' }), h('option', { value: 'opencode', text: 'OpenCode' }));
+    opts.push(h('option', { value: 'codex', text: 'Codex' }), h('option', { value: 'opencode', text: 'OpenCode' }), h('option', { value: 'agy', text: 'Antigravity (agy)' }));
     tool.replaceChildren(...opts);
     const has = (v) => [...tool.options].some((o) => o.value === v);
     const def = list.default && aliases.some((a) => a.id === list.default) ? 'claude:' + list.default : '';
@@ -157,7 +157,7 @@ function create(machine, startPath, startPick) {
     go.disabled = true; status.textContent = '启动中…';
     const pick = tool.value;
     const api = pick.startsWith('claude:') ? pick.slice(7) : '';
-    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value, tool: ['codex', 'opencode'].includes(pick) ? pick : 'claude', api });
+    const r = await net.act({ t: 'launch', machine, cwd: cur, prompt: first.value, tool: ['codex', 'opencode', 'agy'].includes(pick) ? pick : 'claude', api });
     go.disabled = false;
     status.textContent = r.ok ? (r.msg || '已启动') + ' —— 会话出现后可在糖糖看板里查看和回复' : r.msg || '启动失败';
     if (r.ok) { launchBar.hidden = true; first.value = ''; }

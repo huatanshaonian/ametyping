@@ -60,6 +60,7 @@ test('memory export preserves Unicode and local content, follows Codex override,
   try{
     await m.handle(bundle);assert.match(fs.readFileSync(globals,'utf8'),/本机原有规则 😀/);assert.match(fs.readFileSync(globals,'utf8'),/你好 🌈/);
     assert.match(fs.readFileSync(codex,'utf8'),/现有覆盖规则/);assert.ok(!fs.existsSync(path.join(home,'.codex/AGENTS.md')));
+    assert.match(fs.readFileSync(path.join(home,'.gemini/GEMINI.md'),'utf8'),/你好 🌈/);
     assert.match(fs.readFileSync(path.join(project,'AGENTS.md'),'utf8'),/共同记忆/);
     const unchanged=fs.readFileSync(globals,'utf8');await m.handle(bundle);assert.equal(fs.readFileSync(globals,'utf8'),unchanged);
     write(globals,unchanged.replace('你好 🌈','本机改动'));await m.handle(bundle);assert.equal(sent.at(-2).ok,false);assert.match(fs.readFileSync(globals,'utf8'),/本机改动/);
@@ -113,6 +114,16 @@ test('portable OpenCode conversion preserves huge Unicode records across byte bo
   const result=JSON.parse(Buffer.concat([...convert(s,chunks,'/project')]).toString());
   assert.equal(result.messages.length,1);assert.equal(result.messages[0].type,'synthetic');assert.ok(result.messages[0].text.includes(text));
   assert.equal(result.info.metadata.ametyping.session,s.session);
+  const agyLines=Buffer.from(
+    JSON.stringify({type:'USER_INPUT',created_at:'2026-10-30T00:00:00Z',content:'<USER_REQUEST>\n帮我检查代码\n</USER_REQUEST>'})+'\n'+
+    JSON.stringify({type:'PLANNER_RESPONSE',created_at:'2026-10-30T00:00:02Z',content:'好的，已经检查完毕。'})+'\n'+
+    JSON.stringify({type:'PLANNER_RESPONSE',created_at:'2026-10-30T00:00:03Z',tool_calls:[{id:'1',name:'default_api:read_file',arguments:{Path:'/project/a.js'}}]})+'\n'
+  );
+  const agyRes=JSON.parse(Buffer.concat([...convert({provider:'agy',machine:'box',session:'agy:c1',key:'k',generation:'g',digest:'d',created:1},[agyLines],'/project')]).toString());
+  assert.equal(agyRes.messages.length,3);
+  assert.equal(agyRes.messages[0].type,'user');assert.equal(agyRes.messages[0].text,'帮我检查代码');
+  assert.equal(agyRes.messages[1].type,'assistant');assert.equal(agyRes.messages[1].content[0].text,'好的，已经检查完毕。');
+  assert.equal(agyRes.messages[2].type,'synthetic');
 });
 test('read-only memory mode reports pending state and does not alter the user home',async()=>{
   const home=temp(),sent=[];

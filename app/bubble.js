@@ -22,7 +22,7 @@ const isUnread = (s) => (seen[s.id] || 0) < s.last && (collapsed || s.id !== sel
 
 function header() {
   const running = data.filter((s) => WORKING.has(s.state)).length, waiting = data.filter((s) => s.state === 'waiting').length;
-  $('who').textContent = `Claude / Codex / OpenCode ─ ${data.length} 个会话`;
+  $('who').textContent = `Claude / Codex / OpenCode / Agy ─ ${data.length} 个会话`;
   $('meta').textContent = [running && `${running} 个在跑`, waiting && `${waiting} 个等你`].filter(Boolean).join(' · ') || '都停下了';
   const nUnread = data.filter(isUnread).length;
   $('ub').classList.toggle('on', nUnread > 0); $('ubn').textContent = nUnread;
@@ -53,12 +53,13 @@ function renderList() {
     const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
     let mark;
-    if (s.provider === 'opencode') {
-      mark = document.createElement('span'); mark.className = 'provs'; mark.title = 'OpenCode';
-      const oc = document.createElement('span'); oc.className = 'prov opn'; mark.append(oc);
+    if (s.provider === 'opencode' || s.provider === 'agy') {
+      const pname = s.provider === 'agy' ? 'Antigravity' : 'OpenCode';
+      mark = document.createElement('span'); mark.className = 'provs'; mark.title = pname;
+      const oc = document.createElement('span'); oc.className = 'prov ' + (s.provider === 'agy' ? 'agy' : 'opn'); mark.append(oc);
       if (s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || ''))) {
         const ai = document.createElement('span'); ai.className = 'prov ai ai-' + s.ai.slug; ai.title = String(s.ai.name || '');
-        mark.append(ai); mark.title = 'OpenCode' + (ai.title ? ' · ' + ai.title : '');
+        mark.append(ai); mark.title = pname + (ai.title ? ' · ' + ai.title : '');
       }
     } else {
       mark = document.createElement('span'); mark.className = 'prov ' + (s.provider === 'codex' ? 'cdx' : 'cla');
@@ -66,7 +67,7 @@ function renderList() {
     nm.prepend(mark);   // whose session
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
-    st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : 'Claude'} · ${name}`;
+    st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : 'Claude'} · ${name}`;
   });
 }
 // select on press (not click): nothing can swap the element between press and release
@@ -150,13 +151,14 @@ function renderPermissions() {
     const choices = [['allow', '允许'], ['deny', '拒绝']];
     if (p.always) choices.splice(1, 0, ['always', '总是允许']);       // Claude Code's "don't ask again" (what it adds: the tooltip)
     if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理']);
+    if (p.provider === 'agy') choices.push(['defer', '在 Antigravity 中处理']);
     for (const [choice, label] of choices) {
       const b = document.createElement('button'); b.type = 'button'; b.dataset.choice = choice; b.textContent = label;
       if (choice === 'always') b.title = '允许，并且以后不再问：' + p.always;
       actions.appendChild(b);
     }
     const status = document.createElement('span'); status.className = 'permission-status';
-    status.textContent = p.provider === 'codex' ? '超时后交回 Codex' : '也可在终端回答';
+    status.textContent = p.provider === 'codex' ? '超时后交回 Codex' : p.provider === 'agy' ? '超时后交回 Antigravity' : '也可在终端回答';
     actions.appendChild(status); card.append(title, details, actions);
     permissionCards.set(p.id, card); $('permissions').appendChild(card);
   }
@@ -172,7 +174,8 @@ function askQuestions(p) {
 function askCard(p, qs) {
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const card = el('div', 'permission ask'); card.dataset.id = p.id;
-  card.append(el('div', 'permission-title', `Claude 在问你${qs.length > 1 ? ` · ${qs.length} 个问题` : ''}${p.subagent ? ` · ${p.subagent}` : ''}`));
+  const askWho = p.provider === 'agy' ? 'Antigravity' : 'Claude';
+  card.append(el('div', 'permission-title', `${askWho} 在问你${qs.length > 1 ? ` · ${qs.length} 个问题` : ''}${p.subagent ? ` · ${p.subagent}` : ''}`));
   const state = qs.map(() => ({ picked: new Set(), own: '' }));
   const go = el('button', '', '提交回答'); go.type = 'button'; go.dataset.choice = 'answer'; go.disabled = true;
   card.answers = () => {

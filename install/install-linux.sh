@@ -131,6 +131,12 @@ if command -v opencode >/dev/null 2>&1 || [ -x "$HOME/.local/bin/opencode" ] || 
   "$NODE" "$DIR/install-opencode-plugin.js"
   OPENCODE_PLUGIN=1
 fi
+AGY_HOOKS=
+if command -v agy >/dev/null 2>&1 || [ -x "$HOME/.local/bin/agy" ] || [ -d "${AGY_HOME:-$HOME/.gemini/antigravity-cli}" ] || [ -d "${AGY_CONFIG_DIR:-$HOME/.gemini/config}" ]; then
+  step '安装 Antigravity (agy) hooks（原设置会先备份）'
+  "$NODE" "$DIR/install-agy-hooks.js"
+  AGY_HOOKS=1
+fi
 
 step '启动 Claude 前的准备（从看板在文件夹启动 Claude 时用）'
 mkdir -p "$HOME/.ametyping"
@@ -164,3 +170,4 @@ info '打开 https://win98.huatan.org 应能在「网上邻居」里看到这台
 info '要从看板回复，claude 需要在 tmux 里运行；已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
 if [ -n "$CODEX_HOOKS" ]; then info 'Codex：下次打开 codex 时会问是否信任这几条 hooks，选信任后才生效；要从看板回复，它同样要在 tmux 里运行。'; fi
 if [ -n "$OPENCODE_PLUGIN" ]; then info 'OpenCode：插件已写进 ~/.config/opencode/opencode.json，重开 OpenCode（或 /reload）后生效；它直接走会话 API，不需要 tmux。'; fi
+if [ -n "$AGY_HOOKS" ]; then info 'Antigravity (agy)：hooks 已写进 ~/.gemini/config/hooks.json，重开 agy 会话后生效；要从看板直接向终端回复，它同样要在 tmux 里运行（关闭后也可后台续聊）。'; fi

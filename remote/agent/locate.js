@@ -34,8 +34,8 @@ async function scan(file, rel, at) {
   if (st.size > MAX_TRANSCRIPT) return r;
   const base = path.basename(rel);
   // a full path ending in rel, either separator; not glued to more name on either side
-  const tail = rel.split(/[\\/]+/).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]');
-  const re = new RegExp(`(?:[A-Za-z]:[\\\\/]|/)(?:[^\\s"'<>|*?\\\\/:]+[\\\\/])*?${tail}(?![\\w.-])`, 'g');
+  const tail = rel.split(/[\\/]+/).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+');
+  const re = new RegExp(`(?:[A-Za-z]:[\\\\/]+|/)(?:[^\\s"'<>|*?\\\\/:]+[\\\\/]+)*?${tail}(?![\\w.-])`, 'g');
   const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   for await (const line of rl) {
     const c = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(line);

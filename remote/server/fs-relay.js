@@ -67,7 +67,7 @@ function createFsRelay({ machines, audit, fresh }) {
     // (a read may be a download to disk, dl, and carry on from a byte, from: the agent checks and says back where)
     const more = d.op === 'read' ? { ...(d.dl === true ? { dl: true } : {}), ...(Number.isSafeInteger(d.from) && d.from > 0 ? { from: d.from } : {}) }
       : d.op === 'up-open' ? { name: d.name, size: d.size, mtime: Number.isFinite(d.mtime) ? d.mtime : 0, overwrite: d.overwrite === true }
-      : d.op === 'locate' ? { session: typeof d.session === 'string' && /^(codex:|opencode:)?[\w-]{1,80}$/.test(d.session) ? d.session : undefined, at: Number.isFinite(d.at) ? d.at : undefined } : {};
+      : d.op === 'locate' ? { session: typeof d.session === 'string' && /^(codex:|opencode:|agy:)?[\w-]{1,80}$/.test(d.session) ? d.session : undefined, at: Number.isFinite(d.at) ? d.at : undefined } : {};
     if (!toAgent(d.machine, { t: 'fs', rid: srid, op: d.op, path: d.path, ...more })) end(srid, '发送失败');
   }
 

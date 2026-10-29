@@ -8,8 +8,8 @@ const path = require('path');
 const { aiOf } = require('../../app/ai-providers');
 
 // deps: claudeFiles() -> [{ id, file, mtime }], codex (app/codex-records.js), opencode (app/opencode-records.js),
-//       projectOf(file), live(id) -> bool, stored(id) -> the server's byte offset (undefined: nothing stored)
-function createArchive({ days = 30, claudeFiles, codex, opencode, projectOf, live, stored, everyMs = 60e3 }) {
+//       agy (app/agy-records.js), projectOf(file), live(id) -> bool, stored(id) -> the server's byte offset (undefined: nothing stored)
+function createArchive({ days = 30, claudeFiles, codex, opencode, agy, projectOf, live, stored, everyMs = 60e3 }) {
   const map = new Map();                              // id -> { file, project, cwd?, title? }
   let at = 0;
   const behind = (id, file) => { let st; try { st = fs.statSync(file); } catch { return false; } return (stored(id) || 0) < st.size; };
@@ -39,6 +39,19 @@ function createArchive({ days = 30, claudeFiles, codex, opencode, projectOf, liv
         const id = 'opencode:' + m.id;
         if (live(id) || map.has(id) || !behind(id, f.file)) continue;
         map.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title, model: m.model || null, ai: aiOf(m.model) });
+      }
+    }
+    if (agy) {
+      for (const f of agy.allFiles()) {
+        const file = typeof f === 'string' ? f : f.file;
+        let mtime = typeof f === 'object' && f ? f.mtime : 0;
+        if (!mtime) { try { mtime = fs.statSync(file).mtimeMs; } catch { continue; } }
+        if (mtime < since) continue;
+        const m = agy.metaOf(file);
+        if (!m || m.sub) continue;
+        const id = 'agy:' + m.id;
+        if (live(id) || map.has(id) || !behind(id, file)) continue;
+        map.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: agy.titleOf(m.id) || m.title, model: m.model || null, ai: aiOf(m.model) });
       }
     }
     return map;

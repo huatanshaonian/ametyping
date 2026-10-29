@@ -48,7 +48,7 @@ function openVault(dir) {
   const source = (m, key, gen) => db.prepare('SELECT * FROM sources WHERE machine=? AND key=? AND generation=?').get(m, key, gen);
   const latest = (m, key) => db.prepare('SELECT * FROM sources WHERE machine=? AND key=? ORDER BY created DESC,rowid DESC LIMIT 1').get(m, key);
   function begin(machine, d) {
-    if (!/^[a-f0-9]{64}$/.test(d.key || '') || !['claude','codex','opencode','workspace'].includes(d.provider) ||
+    if (!/^[a-f0-9]{64}$/.test(d.key || '') || !['claude','codex','opencode','agy','workspace'].includes(d.provider) ||
         !Number.isSafeInteger(d.size) || d.size < 0 || !Number.isFinite(d.mtime) || typeof d.path !== 'string' || d.path.length > 4096) throw new Error('无效的采集源');
     let s = latest(machine, d.key);
     if (!s || d.reset === true || d.size < s.bytes || (s.complete && d.size === s.bytes && d.mtime !== s.mtime)) {
