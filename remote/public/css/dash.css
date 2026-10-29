@@ -54,6 +54,42 @@
   -webkit-mask: url(../img/prov-openai.svg) center / contain no-repeat; mask: url(../img/prov-openai.svg) center / contain no-repeat; }
 .dash .prov.cla { background: #d97757; -webkit-mask-image: url(../img/prov-claude.svg); mask-image: url(../img/prov-claude.svg); }
 .dash .prov.opn { -webkit-mask-image: url(../img/prov-opencode.svg); mask-image: url(../img/prov-opencode.svg); }
+/* OpenCode sessions also show the AI provider they run on: OpenCode's mark, then the provider's */
+.dash .provs { display: inline-flex; align-items: center; gap: 2px; margin-right: 5px; vertical-align: -2px; flex: none; }
+.dash .provs .prov { margin-right: 0; }
+.dash .prov.ai { width: 13px; height: 13px; background: currentColor; -webkit-mask: none; mask: none;
+  -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; }
+.dash .prov.ai.ai-deepseek { color: #4D6BFE; -webkit-mask-image: url(../img/ai/deepseek.svg); mask-image: url(../img/ai/deepseek.svg); }
+.dash .prov.ai.ai-google { color: #4285F4; -webkit-mask-image: url(../img/ai/google.svg); mask-image: url(../img/ai/google.svg); }
+.dash .prov.ai.ai-xai { color: inherit; -webkit-mask-image: url(../img/ai/xai.svg); mask-image: url(../img/ai/xai.svg); }
+.dash .prov.ai.ai-alibaba { color: #615CED; -webkit-mask-image: url(../img/ai/alibaba.svg); mask-image: url(../img/ai/alibaba.svg); }
+.dash .prov.ai.ai-moonshotai { color: inherit; -webkit-mask-image: url(../img/ai/moonshotai.svg); mask-image: url(../img/ai/moonshotai.svg); }
+.dash .prov.ai.ai-zhipuai { color: #3859FF; -webkit-mask-image: url(../img/ai/zhipuai.svg); mask-image: url(../img/ai/zhipuai.svg); }
+.dash .prov.ai.ai-minimax { color: #E73562; -webkit-mask-image: url(../img/ai/minimax.svg); mask-image: url(../img/ai/minimax.svg); }
+.dash .prov.ai.ai-mistral { color: #FA520F; -webkit-mask-image: url(../img/ai/mistral.svg); mask-image: url(../img/ai/mistral.svg); }
+.dash .prov.ai.ai-meta { color: #0866FF; -webkit-mask-image: url(../img/ai/meta.svg); mask-image: url(../img/ai/meta.svg); }
+.dash .prov.ai.ai-cohere { color: #39594D; -webkit-mask-image: url(../img/ai/cohere.svg); mask-image: url(../img/ai/cohere.svg); }
+.dash .prov.ai.ai-groq { color: #F55036; -webkit-mask-image: url(../img/ai/groq.svg); mask-image: url(../img/ai/groq.svg); }
+.dash .prov.ai.ai-openrouter { color: #6467F2; -webkit-mask-image: url(../img/ai/openrouter.svg); mask-image: url(../img/ai/openrouter.svg); }
+.dash .prov.ai.ai-ollama-cloud { color: inherit; -webkit-mask-image: url(../img/ai/ollama-cloud.svg); mask-image: url(../img/ai/ollama-cloud.svg); }
+.dash .prov.ai.ai-github-copilot { color: inherit; -webkit-mask-image: url(../img/ai/github-copilot.svg); mask-image: url(../img/ai/github-copilot.svg); }
+.dash .prov.ai.ai-nvidia { color: #76B900; -webkit-mask-image: url(../img/ai/nvidia.svg); mask-image: url(../img/ai/nvidia.svg); }
+.dash .prov.ai.ai-perplexity { color: #1FB8CD; -webkit-mask-image: url(../img/ai/perplexity.svg); mask-image: url(../img/ai/perplexity.svg); }
+.dash .prov.ai.ai-huggingface { color: #E6A700; -webkit-mask-image: url(../img/ai/huggingface.svg); mask-image: url(../img/ai/huggingface.svg); }
+.dash .prov.ai.ai-cerebras { color: #F15A29; -webkit-mask-image: url(../img/ai/cerebras.svg); mask-image: url(../img/ai/cerebras.svg); }
+.dash .prov.ai.ai-togetherai { color: #0F6FFF; -webkit-mask-image: url(../img/ai/togetherai.svg); mask-image: url(../img/ai/togetherai.svg); }
+.dash .prov.ai.ai-xiaomi { color: #FF6900; -webkit-mask-image: url(../img/ai/xiaomi.svg); mask-image: url(../img/ai/xiaomi.svg); }
+.dash .prov.ai.ai-volcengine { color: #1664FF; -webkit-mask-image: url(../img/ai/volcengine.svg); mask-image: url(../img/ai/volcengine.svg); }
+.dash .prov.ai.ai-tencent { color: #0052D9; -webkit-mask-image: url(../img/ai/tencent.svg); mask-image: url(../img/ai/tencent.svg); }
+.dash .prov.ai.ai-stepfun { color: #0091FF; -webkit-mask-image: url(../img/ai/stepfun.svg); mask-image: url(../img/ai/stepfun.svg); }
+.dash .prov.ai.ai-siliconflow { color: #6E29F6; -webkit-mask-image: url(../img/ai/siliconflow.svg); mask-image: url(../img/ai/siliconflow.svg); }
+.dash .prov.ai.ai-deepinfra { color: #4B6BFB; -webkit-mask-image: url(../img/ai/deepinfra.svg); mask-image: url(../img/ai/deepinfra.svg); }
+.dash .prov.ai.ai-cloudflare { color: #F38020; -webkit-mask-image: url(../img/ai/cloudflare.svg); mask-image: url(../img/ai/cloudflare.svg); }
+.dash .prov.ai.ai-azure { color: #0078D4; -webkit-mask-image: url(../img/ai/azure.svg); mask-image: url(../img/ai/azure.svg); }
+.dash .prov.ai.ai-amazon-bedrock { color: #FF9900; -webkit-mask-image: url(../img/ai/amazon-bedrock.svg); mask-image: url(../img/ai/amazon-bedrock.svg); }
+.dash .prov.ai.ai-anthropic { color: #D97757; -webkit-mask-image: url(../img/prov-claude.svg); mask-image: url(../img/prov-claude.svg); }
+.dash .prov.ai.ai-openai { color: inherit; -webkit-mask-image: url(../img/prov-openai.svg); mask-image: url(../img/prov-openai.svg); }
 .dash .card .bgb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--muted); border: 1px dotted var(--muted); }   /* a background session (Claude Code's agent view) */
 .dash .more { padding: 5px 10px; font-size: 11.5px; color: var(--border); cursor: pointer; border-bottom: 1px dotted var(--edge); }
 .dash .more:hover { background: var(--hover); }

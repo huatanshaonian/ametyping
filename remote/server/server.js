@@ -19,7 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const auth = require('./auth');
-const { createStore } = require('./store');
+const { createStore, cleanModel, cleanAi } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createAgentsAdmin } = require('./agents-admin');
@@ -171,12 +171,14 @@ function snapshot() {
       const e = saved.get(s.id);
       return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
         lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id, s.api || (e && e.api)), api: s.api || (e && e.api) || '', cwd: (e && e.cwd) || undefined, mode: e ? e.mode : '', ctx: e ? e.ctx : null,
+        model: s.model || (e && e.model) || undefined, ai: s.ai || (e && e.ai) || undefined,
         agents: s.agents && s.agents.length ? s.agents : undefined };
     });
     for (const e of saved.values()) {
       if (m.sessions.has(e.id)) continue;
       list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : e.id.startsWith('opencode:') ? 'OpenCode' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id, e.api), api: e.api || '', cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined });
+        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id, e.api), api: e.api || '', cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined,
+        model: e.model || undefined, ai: e.ai || undefined });
     }
     out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
   }
@@ -411,6 +413,9 @@ function onAgentMessage(m, raw, ws) {
       cur.via = VIA.includes(s.via) ? s.via : 'off';
       cur.api = typeof s.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(s.api) ? s.api : '';   // the alias it was launched with
       if (cur.api) store.meta(m.name, s.id, { api: cur.api });   // keep it after this machine forgets the session
+      cur.model = cleanModel(s.model) || cur.model || null;
+      cur.ai = cleanAi(s.ai) || cur.ai || null;
+      if (cur.model || cur.ai) store.meta(m.name, s.id, { model: cur.model, ai: cur.ai });
       cur.bg = s.bg === true;                        // a background session of Claude Code's (no terminal window of its own)
       cur.agents = agentRows(s.agents);              // the subagents it started (the agent's subagents.js)
       cur.perms = Array.isArray(s.perms) ? s.perms.filter((p) => p && typeof p.id === 'string').slice(0, 10).map((p) => ({

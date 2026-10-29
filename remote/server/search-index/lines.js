@@ -134,6 +134,7 @@ function createLines(db, { dataDir, log }) {
         for (const r of db.prepare(`SELECT machine, session, t, role, text FROM lines WHERE ${cs.map((c) => c.sql).join(' AND ')} ORDER BY rowid DESC`).iterate(...cs.map((c) => c.arg))) {
           const k = r.machine + '|' + r.session, l = got.get(k) || [];
           if (!want.has(k) || l.length >= hitsPerSession) continue;
+          if (l.some((h) => h.t === r.t && h.text === r.text)) continue;      // (the same record indexed twice)
           l.push({ t: r.t, role: r.role, text: r.text }); got.set(k, l);
           if (l.length === hitsPerSession && ++full === want.size) break;
         }
@@ -150,7 +151,10 @@ function createLines(db, { dataDir, log }) {
     const hitsIn = (k, sql, cs) => {
       const got = [];
       for (const ch of [...(bySession.get(k) || [])].reverse()) {              // newest chunk first
-        for (const r of sql.all(...cs.map((c) => c.arg), ch.lo, ch.hi, hitsPerSession - got.length)) got.push({ t: r.t, role: r.role, text: r.text });
+        for (const r of sql.all(...cs.map((c) => c.arg), ch.lo, ch.hi, hitsPerSession - got.length)) {
+          if (got.some((h) => h.t === r.t && h.text === r.text)) continue;     // (the same record indexed twice)
+          got.push({ t: r.t, role: r.role, text: r.text });
+        }
         if (got.length >= hitsPerSession) break;
       }
       return got.sort((a, b) => b.t - a.t);

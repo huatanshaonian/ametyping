@@ -209,6 +209,13 @@ function recordsOf(o, st) {
 // message, consecutive tool calls one group; a title record sets out.title
 function mergeRecords(out, recs) {
   for (const r of recs) {
+    if (r.u) {
+      const k = r.u + '|' + (r.i || 0);
+      if (!out.seen) out.seen = new Set();
+      if (out.seen.has(k)) continue;                            // the same record stored twice (an old plugin bug)
+      out.seen.add(k);
+      if (out.seen.size > 50000) out.seen.clear();
+    }
     const last = out[out.length - 1];
     if (r.role === 'title') out.title = r.text;
     else if (r.role === 'mode') out.mode = r.text;

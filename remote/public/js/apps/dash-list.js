@@ -3,7 +3,7 @@
 // until you ask to see them. Right click (long press on a phone) a session, a group or the list for the menu.
 // Marks and groups live on the server (js/marks.js) so every device shows the same list. Above it: 活动 / 全部 and
 // the search box (dash-filter.js); the list element itself is `el`, the bar is returned as `tool`.
-import { $, h, esc, ago, stateName, prefs, ctxLeft, CTX_LOW, plain } from '../util.js';
+import { $, h, esc, ago, stateName, prefs, ctxLeft, CTX_LOW, plain, aiMark } from '../util.js';
 import * as net from '../net.js';
 import * as marks from '../marks.js';
 import * as ctx from '../ctxmenu.js';
@@ -111,8 +111,12 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     const [cls, name] = stateName(s), n = (s.perms || []).length;
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
-    // (whose session it is: the mark of Codex or of Claude Code before its name -- the rest of the card is the same)
-    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + (String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : String(s.id).startsWith('opencode:') ? '<span class="prov opn" title="OpenCode 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>') + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
+    // (whose session it is: Codex's or Claude Code's mark, or OpenCode's followed by the AI provider's)
+    const ai = String(s.id).startsWith('opencode:') ? aiMark(s) : null;
+    const badge = String(s.id).startsWith('opencode:')
+      ? `<span class="provs" title="OpenCode${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov opn"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
+    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + badge + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
     if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
     // while searching, the passage found in its conversation

@@ -18,9 +18,16 @@ const pad = (n) => String(n).padStart(2, '0');
 const dayOf = (t) => { const d = new Date(Number.isFinite(t) ? t : Date.now()); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 // the panel's merge (app/transcript.js mergeRecords): a reply streamed in parts is one message, consecutive
-// tool calls one group; title records are metadata
-function merge(out, recs) {
+// tool calls one group; title records are metadata. A record already seen (same u + i: the plugin was loaded more
+// than once, or two agents sent the same mirror) is skipped -- its stored duplicate would otherwise show twice.
+function merge(out, recs, seen = new Set()) {
   for (const r of recs) {
+    if (r.u) {
+      const k = r.u + '|' + (r.i || 0);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (seen.size > 50000) seen.clear();                 // (a session this long: old duplicates are long gone)
+    }
     if (r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
     const last = out[out.length - 1];
     if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid && last.mid === r.mid) last.text += '\n\n' + r.text;
@@ -57,6 +64,11 @@ function cleanX(x) {
 // message that always begins with this sentence. Read as the note the agent sends now (the files are left as they are).
 const COMPACTED = 'This session is being continued from a previous conversation that ran out of context.';
 const asRead = (r) => (r && r.role === 'user' && typeof r.text === 'string' && r.text.startsWith(COMPACTED) ? { ...r, role: 'sys', text: '（上下文已压缩）' } : r);
+// the model a session runs on (OpenCode): { providerID, id }, and the provider mark for its badge { slug, name }
+const cleanModel = (m) => (m && typeof m === 'object' && /^[A-Za-z0-9._-]{1,40}$/.test(String(m.providerID || ''))
+  ? { providerID: String(m.providerID).slice(0, 40), id: String(m.id == null ? '' : m.id).slice(0, 80) } : null);
+const cleanAi = (a) => (a && typeof a === 'object' && /^[a-z0-9-]{1,32}$/.test(String(a.slug || ''))
+  ? { slug: String(a.slug).slice(0, 32), name: String(a.name == null ? '' : a.name).slice(0, 48) } : null);
 
 function createStore(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -118,13 +130,15 @@ function createStore(dir) {
     if (typeof d.project === 'string' && d.project) e.project = d.project.slice(0, 60);
     if (typeof d.title === 'string' && d.title) e.title = d.title.slice(0, 80);
     if (typeof d.cwd === 'string' && d.cwd) e.cwd = d.cwd.slice(0, 500);
+    if (d.model) { const m = cleanModel(d.model); if (m) e.model = m; }
+    if (d.ai) { const a = cleanAi(d.ai); if (a) e.ai = a; }
     if (recs.length) {
       e.last = Math.max(e.last, recs[recs.length - 1].t);
       if (!e.first || recs[0].t < e.first) e.first = recs[0].t;
     }
     dirty = true;
     const tail = tails.get(`${m}|${d.id}`);
-    if (tail) merge(tail.msgs, recs);
+    if (tail) merge(tail.msgs, recs, tail.seen);
     // title: its new name, when this batch renamed it (a /rename, or the name Claude Code made up arriving)
     return { ok: true, changed: recs.length > 0, modeChanged, title: e.title && e.title !== named ? e.title : undefined };
   }
@@ -151,7 +165,7 @@ function createStore(dir) {
     if (!recs.length) return false;
     dirty = true;
     const tail = tails.get(`${m}|${id}`);
-    if (tail) merge(tail.msgs, recs);
+    if (tail) merge(tail.msgs, recs, tail.seen);
     return true;
   }
 
@@ -193,8 +207,8 @@ function createStore(dir) {
         chunks.unshift(recs); n += recs.length;
         if (n > TAIL * 3) break;
       }
-      t = { msgs: [], used: Date.now() };
-      for (const recs of chunks) merge(t.msgs, recs);
+      t = { msgs: [], used: Date.now(), seen: new Set() };
+      for (const recs of chunks) merge(t.msgs, recs, t.seen);
       tails.set(key, t);
       if (tails.size > MAX_TAILS) {                   // forget the least recently looked-at ones
         const old = [...tails.entries()].sort((a, b) => a[1].used - b[1].used).slice(0, tails.size - MAX_TAILS);
@@ -213,6 +227,9 @@ function createStore(dir) {
     for (const [k, n] of [['project', 60], ['title', 80], ['cwd', 500], ['api', 40]]) {
       if (typeof d[k] === 'string' && d[k] && e[k] !== d[k].slice(0, n)) { e[k] = d[k].slice(0, n); changed = true; }
     }
+    const model = cleanModel(d.model), ai = cleanAi(d.ai);
+    if (model && JSON.stringify(model) !== JSON.stringify(e.model)) { e.model = model; changed = true; }
+    if (ai && JSON.stringify(ai) !== JSON.stringify(e.ai)) { e.ai = ai; changed = true; }
     if (changed) dirty = true;
   }
   // every stored session that has said something: machine -> [{ id, project, title, cwd, first, last }]
@@ -220,7 +237,7 @@ function createStore(dir) {
     const out = {};
     for (const [m, ids] of Object.entries(state)) {
       out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
-        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null, api: e.api || '' }));
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null, api: e.api || '', model: e.model || null, ai: e.ai || null }));
     }
     return out;
   }
@@ -230,7 +247,7 @@ function createStore(dir) {
     const e = state[m] && state[m][id];
     if (!e || e.last < from || (e.first || e.last) >= to) return [];
     flush();
-    const out = [];
+    const out = [], seen = new Set();
     for (const day of e.days) {
       if (day < dayOf(from) || day > dayOf(to)) continue;
       let lines = [];
@@ -238,7 +255,10 @@ function createStore(dir) {
       for (const l of lines) {
         if (!l) continue;
         let r; try { r = JSON.parse(l); } catch { continue; }
-        if (r.t >= from && r.t < to) out.push(asRead(r));
+        if (r.t >= from && r.t < to) {
+          if (r.u) { const k = r.u + '|' + (r.i || 0); if (seen.has(k)) continue; seen.add(k); }
+          out.push(asRead(r));
+        }
       }
     }
     return out.sort((a, b) => a.t - b.t);
@@ -253,4 +273,4 @@ function createStore(dir) {
   return { accept, extra, meta, flush, tail, offsets, has, info, sessions, records, lastActivity, onAppend };
 }
 
-module.exports = { createStore };
+module.exports = { createStore, cleanModel, cleanAi };

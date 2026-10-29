@@ -18,6 +18,7 @@ function recordsOf(o) {
   if (!o || typeof o !== 'object' || o.type === META) return [];
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const r = { role: o.role, t: Number.isFinite(t) ? t : Date.now() };
+  if (typeof o.uuid === 'string') { r.u = o.uuid; r.i = +o.i || 0; }   // (dedupe key for the panel's merge)
   if (typeof o.text === 'string') r.text = o.text;
   if (Array.isArray(o.items)) r.items = o.items;
   if (typeof o.mid === 'string') r.mid = o.mid;
@@ -39,7 +40,8 @@ function metadataOf(file) {
     const line = buf.toString('utf8').split('\n').find((l) => l.trim());
     if (line) {
       const o = JSON.parse(line);
-      if (o && o.type === META && typeof o.id === 'string' && o.id) meta = { id: o.id, cwd: typeof o.cwd === 'string' ? o.cwd : '', title: typeof o.title === 'string' ? o.title : '' };
+      if (o && o.type === META && typeof o.id === 'string' && o.id) meta = { id: o.id, cwd: typeof o.cwd === 'string' ? o.cwd : '', title: typeof o.title === 'string' ? o.title : '',
+        model: typeof o.modelProvider === 'string' && o.modelProvider ? { providerID: o.modelProvider, id: typeof o.modelID === 'string' ? o.modelID : '' } : null };
     }
   } catch {}
   if (!meta) {                                  // a mirror whose first line is still being written: the file name is the id
@@ -51,7 +53,17 @@ function metadataOf(file) {
 }
 function metaOf(file) {
   const m = metadataOf(file);
-  return m ? { id: m.id, cwd: m.cwd, title: m.title } : null;
+  if (!m) return null;
+  const out = { id: m.id, cwd: m.cwd, title: m.title };
+  if (m.model) out.model = m.model;
+  // the plugin rewrites <id>.json on every event: the current title and model are there before the mirror catches up
+  try {
+    const j = JSON.parse(fs.readFileSync(file.replace(/\.jsonl$/i, '.json'), 'utf8'));
+    if (j && typeof j.title === 'string' && j.title) out.title = j.title;
+    if (j && typeof j.cwd === 'string' && j.cwd) out.cwd = j.cwd;
+    if (j && typeof j.modelProvider === 'string' && j.modelProvider) out.model = { providerID: j.modelProvider, id: typeof j.modelID === 'string' ? j.modelID : '' };
+  } catch {}
+  return out;
 }
 
 // every mirror file, newest first
