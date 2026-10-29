@@ -18,6 +18,7 @@ function recordsOf(o) {
   if (!o || typeof o !== 'object' || o.type === META) return [];
   const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
   const r = { role: o.role, t: Number.isFinite(t) ? t : Date.now() };
+  if (typeof o.uuid === 'string') { r.u = o.uuid; r.i = +o.i || 0; }   // (dedupe key for the panel's merge)
   if (typeof o.text === 'string') r.text = o.text;
   if (Array.isArray(o.items)) r.items = o.items;
   if (typeof o.mid === 'string') r.mid = o.mid;

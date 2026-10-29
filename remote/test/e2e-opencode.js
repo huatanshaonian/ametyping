@@ -17,6 +17,7 @@ const at = new Date(Date.now() - 60e3).toISOString();
 fs.writeFileSync(path.join(MIRROR, `${SID}.jsonl`),
   line({ v: 1, type: 'meta', id: SID, cwd: CWD, title: 'OpenCode 测试', timestamp: at }) +
   line({ v: 1, uuid: 'm1:user', timestamp: at, cwd: CWD, role: 'user', text: '把 opencode 接上看板', mid: 'm1' }) +
+  line({ v: 1, uuid: 'm1:user', timestamp: at, cwd: CWD, role: 'user', text: '把 opencode 接上看板', mid: 'm1' }) +   // the old multi-instance bug wrote it twice
   line({ v: 1, uuid: 'm2:tool:c1', timestamp: at, cwd: CWD, role: 'tool', items: ['运行 npm test'], x: { op: 'cmd', cmd: 'npm test' } }) +
   line({ v: 1, uuid: 'm2:text', timestamp: at, cwd: CWD, role: 'assistant', text: '接好了。', mid: 'm2' }));
 

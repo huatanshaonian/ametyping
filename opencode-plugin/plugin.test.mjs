@@ -45,11 +45,13 @@ function queue() {
   };
 }
 
-test.before(async () => { await new Promise((r) => ame.listen(0, '127.0.0.1', r)); });
+test.before(async () => {
+  await new Promise((r) => ame.listen(0, '127.0.0.1', r));
+  process.env.AME_PORT = String(ame.address().port);
+});
 test.after(() => { ame.close(); fs.rmSync(T, { recursive: true, force: true }); });
 
 test('a stand-in OpenCode server drives the real plugin', { timeout: 30000 }, async () => {
-  process.env.AME_PORT = String(ame.address().port);
   const q = queue();
   const messages = [
     { id: 'm1', type: 'user', time: { created: 1700000000000 }, text: '你好' },
@@ -138,4 +140,33 @@ test('a stand-in OpenCode server drives the real plugin', { timeout: 30000 }, as
     await cleanup();
   }
   assert.ok(!fs.existsSync(bridgeFile));
+});
+
+test('two plugin instances write one copy of each record', { timeout: 30000 }, async () => {
+  const plugin = (await import(new URL('./index.js', import.meta.url).href)).default;
+  const sessionID = 'ses_plugin0002';
+  const messages = [{ id: 'u1', type: 'user', time: { created: 1700000100000 }, text: '只说一次' }];
+  const info = { id: sessionID, title: '双实例', location: { directory: PROJ }, time: { created: 1, updated: 2 } };
+  const qa = queue(), qb = queue();
+  const mk = (q) => ({
+    location: { directory: PROJ },
+    app: { version: 'test' },
+    event: { subscribe: ({ signal }) => (async function* () { while (!signal.aborted) yield await q.next(signal); })() },
+    session: {
+      list: async () => ({ data: [] }), get: async () => info, context: async () => messages,
+      prompt: async () => {}, interrupt: async () => {}, update: async () => {},
+    },
+    permission: { reply: async () => {} },
+  });
+  const a = await plugin.setup(mk(qa)), b = await plugin.setup(mk(qb));
+  try {
+    const ev = (q) => q.push({ id: 'evt' + Math.random(), type: 'session.inbox.delivered', location: { directory: PROJ }, data: { sessionID } });
+    ev(qa); ev(qb);
+    const file = path.join(ROOT, 'sessions', `${sessionID}.jsonl`);
+    const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fn()) return true; await new Promise((r) => setTimeout(r, 40)); } return false; };
+    assert.ok(await until(() => fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes('只说一次')));
+    await new Promise((r) => setTimeout(r, 700));          // both debounced syncs have run
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(lines.filter((l) => l.role === 'user' && l.uuid === 'u1:user').length, 1, JSON.stringify(lines));
+  } finally { await a(); await b(); }
 });

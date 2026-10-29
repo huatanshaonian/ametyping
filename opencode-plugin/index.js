@@ -63,6 +63,7 @@ export default {
     const token = crypto.randomBytes(32).toString('hex');
     const bridgeId = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
     const state = new Map();          // sessionID -> per-session bookkeeping
+    const ownerCache = new Map();     // sessionID -> this instance's location owns it (events without a location)
     const childSessions = new Set();  // child sessions (subagents): their tool calls are the parent's progress
     const eventsSeen = new Set();     // de-duplicated event ids (a plugin can be loaded more than once per location)
     const eventOrder = [];
@@ -111,7 +112,43 @@ export default {
     }
 
     // ---------- the conversation mirror ----------
+    // One mirror file can be written by more than one plugin instance (a plugin loaded again, or another location's
+    // instance seeing an event that carries no location). A small lock file plus a look at the file's tail makes
+    // "append this record" idempotent: whoever gets there second sees the uuid and skips it.
     let syncing = new Map();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function lock(file, timeout = 3000) {
+      const lf = `${file}.lock`, t0 = Date.now();
+      for (;;) {
+        try {
+          const fd = fs.openSync(lf, 'wx');
+          try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+          return lf;
+        } catch (e) {
+          if (e.code !== 'EEXIST') return null;
+          try {
+            const st = fs.statSync(lf);
+            if (Date.now() - st.mtimeMs > 15000) { fs.unlinkSync(lf); continue; }   // a writer that died
+          } catch {}
+          if (Date.now() - t0 >= timeout) return null;
+          await sleep(25);
+        }
+      }
+    }
+    const unlock = (lf) => { try { fs.unlinkSync(lf); } catch {} };
+    function tailIds(file, bytes = 2e6) {
+      const ids = new Set();
+      try {
+        const st = fs.statSync(file), n = Math.min(st.size, bytes);
+        const buf = Buffer.alloc(n), fd = fs.openSync(file, 'r');
+        try { fs.readSync(fd, buf, 0, n, st.size - n); } finally { fs.closeSync(fd); }
+        for (const line of buf.toString('utf8').split('\n')) {
+          if (!line.includes('"uuid"')) continue;
+          try { const o = JSON.parse(line); if (o && typeof o.uuid === 'string') ids.add(o.uuid); } catch {}
+        }
+      } catch {}
+      return ids;
+    }
     function scheduleSync(s) {
       clearTimeout(s.timer);
       s.timer = setTimeout(() => sync(s).catch(() => {}), 220);
@@ -123,20 +160,35 @@ export default {
         try { msgs = await ctx.session.context({ sessionID: s.id }); } catch { return; }
         s.msgs = msgs;
         const file = mirrorOf(s.id);
+        const recs = recordsForMessages(msgs, s.cwd || directory).filter((r) => r.uuid && !s.seen.has(r.uuid));
+        const titleKey = s.title && s.title !== s.lastSent ? `title:${s.title}` : '';
+        s.lastSent = s.title || '';
         let empty = true;
         try { empty = fs.statSync(file).size === 0; } catch {}
-        if (empty) append(file, { v: 1, type: 'meta', id: s.id, cwd: s.cwd || directory, title: s.title || '', timestamp: new Date().toISOString() });
-        if (s.title && s.title !== s.lastSent) {
-          // a title record: the dashboard keeps the newest one (see remote/server/store.js)
-          const key = `title:${s.title}`;
-          if (!s.seen.has(key)) { s.seen.add(key); append(file, { v: 1, uuid: key, timestamp: new Date().toISOString(), cwd: s.cwd || directory, role: 'title', text: s.title }); }
+        if (!empty && !recs.length && (!titleKey || s.seen.has(titleKey))) return;
+        const lf = await lock(file);
+        if (!lf) {                                             // another instance is writing: look again in a moment
+          clearTimeout(s.retry);
+          s.retry = setTimeout(() => scheduleSync(s), 400);
+          s.retry.unref?.();
+          return;
         }
-        s.lastSent = s.title || '';
-        for (const rec of recordsForMessages(msgs, s.cwd || directory)) {
-          if (!rec.uuid || s.seen.has(rec.uuid)) continue;
-          s.seen.add(rec.uuid);
-          append(file, rec);
-        }
+        try {
+          let stillEmpty = true;
+          try { stillEmpty = fs.statSync(file).size === 0; } catch {}
+          if (stillEmpty) append(file, { v: 1, type: 'meta', id: s.id, cwd: s.cwd || directory, title: s.title || '', timestamp: new Date().toISOString() });
+          const have = tailIds(file);
+          if (titleKey && !have.has(titleKey) && !s.seen.has(titleKey)) {
+            s.seen.add(titleKey);
+            append(file, { v: 1, uuid: titleKey, timestamp: new Date().toISOString(), cwd: s.cwd || directory, role: 'title', text: s.title });
+          }
+          for (const rec of recs) {
+            if (have.has(rec.uuid)) { s.seen.add(rec.uuid); continue; }   // written by another instance meanwhile
+            append(file, rec);
+            s.seen.add(rec.uuid);
+            have.add(rec.uuid);
+          }
+        } finally { unlock(lf); }
       })();
       syncing.set(s.id, run);
       try { await run; } finally { syncing.delete(s.id); }
@@ -203,6 +255,20 @@ export default {
       const d = ev.data || {};
       const sid = d.sessionID;
       if (!sid) return;
+      // Most events carry their location; a few do not, and every plugin instance of this server would then handle
+      // them. Ask the server which location the session belongs to, and leave it to that instance.
+      if (!(ev.location && ev.location.directory)) {
+        let ours = ownerCache.get(sid);
+        if (ours === undefined) {
+          try {
+            const info = await ctx.session.get({ sessionID: sid });
+            const dir = info && info.location && info.location.directory;
+            ours = !dir || norm(dir) === location;
+            ownerCache.set(sid, ours);
+          } catch { ours = true; }                         // unknown: the mirror lock still keeps one copy
+        }
+        if (!ours) return;
+      }
       // a child session (the subagent tool): its work shows as the parent's tool line; not a session of its own
       if (ev.type === 'session.created' && d.parentID) { childSessions.add(sid); return; }
       if (childSessions.has(sid)) { if (ev.type === 'session.deleted') childSessions.delete(sid); return; }
@@ -253,6 +319,7 @@ export default {
       }
       if (mapped.name === 'quit') {
         writeSessionFile(s, true);
+        ownerCache.delete(sid);
         setTimeout(() => { if (state.get(sid) === s) state.delete(sid); }, 5000).unref?.();
       }
       if (mapped.type === 'event') {

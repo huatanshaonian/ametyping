@@ -18,9 +18,16 @@ const pad = (n) => String(n).padStart(2, '0');
 const dayOf = (t) => { const d = new Date(Number.isFinite(t) ? t : Date.now()); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 // the panel's merge (app/transcript.js mergeRecords): a reply streamed in parts is one message, consecutive
-// tool calls one group; title records are metadata
-function merge(out, recs) {
+// tool calls one group; title records are metadata. A record already seen (same u + i: the plugin was loaded more
+// than once, or two agents sent the same mirror) is skipped -- its stored duplicate would otherwise show twice.
+function merge(out, recs, seen = new Set()) {
   for (const r of recs) {
+    if (r.u) {
+      const k = r.u + '|' + (r.i || 0);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (seen.size > 50000) seen.clear();                 // (a session this long: old duplicates are long gone)
+    }
     if (r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
     const last = out[out.length - 1];
     if (r.role === 'assistant' && last && last.role === 'assistant' && last.mid && last.mid === r.mid) last.text += '\n\n' + r.text;
@@ -124,7 +131,7 @@ function createStore(dir) {
     }
     dirty = true;
     const tail = tails.get(`${m}|${d.id}`);
-    if (tail) merge(tail.msgs, recs);
+    if (tail) merge(tail.msgs, recs, tail.seen);
     // title: its new name, when this batch renamed it (a /rename, or the name Claude Code made up arriving)
     return { ok: true, changed: recs.length > 0, modeChanged, title: e.title && e.title !== named ? e.title : undefined };
   }
@@ -151,7 +158,7 @@ function createStore(dir) {
     if (!recs.length) return false;
     dirty = true;
     const tail = tails.get(`${m}|${id}`);
-    if (tail) merge(tail.msgs, recs);
+    if (tail) merge(tail.msgs, recs, tail.seen);
     return true;
   }
 
@@ -193,8 +200,8 @@ function createStore(dir) {
         chunks.unshift(recs); n += recs.length;
         if (n > TAIL * 3) break;
       }
-      t = { msgs: [], used: Date.now() };
-      for (const recs of chunks) merge(t.msgs, recs);
+      t = { msgs: [], used: Date.now(), seen: new Set() };
+      for (const recs of chunks) merge(t.msgs, recs, t.seen);
       tails.set(key, t);
       if (tails.size > MAX_TAILS) {                   // forget the least recently looked-at ones
         const old = [...tails.entries()].sort((a, b) => a[1].used - b[1].used).slice(0, tails.size - MAX_TAILS);
@@ -230,7 +237,7 @@ function createStore(dir) {
     const e = state[m] && state[m][id];
     if (!e || e.last < from || (e.first || e.last) >= to) return [];
     flush();
-    const out = [];
+    const out = [], seen = new Set();
     for (const day of e.days) {
       if (day < dayOf(from) || day > dayOf(to)) continue;
       let lines = [];
@@ -238,7 +245,10 @@ function createStore(dir) {
       for (const l of lines) {
         if (!l) continue;
         let r; try { r = JSON.parse(l); } catch { continue; }
-        if (r.t >= from && r.t < to) out.push(asRead(r));
+        if (r.t >= from && r.t < to) {
+          if (r.u) { const k = r.u + '|' + (r.i || 0); if (seen.has(k)) continue; seen.add(k); }
+          out.push(asRead(r));
+        }
       }
     }
     return out.sort((a, b) => a.t - b.t);
