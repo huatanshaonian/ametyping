@@ -124,8 +124,9 @@ function checkMachine(name, local, extraOk) {
         const head = git(['rev-parse', 'HEAD']);
         if (head !== commit) { say(`  这个工作目录在 ${head.slice(0, 7)}，不是 ${commit.slice(0, 7)}：本机 agent 用的是工作目录里的代码，先切到 ${REF} 再重启它`); continue; }
         if (DRY) { say('  （--dry-run：会重启本机 agent）'); continue; }
-        run('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'agent\\\\agent\\.js' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; Start-Sleep -Seconds 1; if ((Get-ScheduledTask -TaskName '${a.task}').State -ne 'Running') { Start-ScheduledTask -TaskName '${a.task}' }`]);
-        say('  已重启');
+        const result = run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+          path.join(__dirname, 'restart-local-agent.ps1'), '-Root', path.resolve(__dirname, '..', '..'), '-TaskName', a.task]);
+        say('  已确认新 agent 进程：' + String(result).trim());
         continue;
       }
       step(`${a.name}（${a.ssh}:${a.dir}）`);

@@ -8,7 +8,7 @@ let pass = 0, fail = 0;
 const ok = (n, c, x = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'} ${n}${c ? '' : ' ' + (typeof x === 'string' ? x : JSON.stringify(x)).slice(0, 800)}`); };
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
-const list = (f) => cp.execFileSync('tar', ['-tzf', path.basename(f)], { cwd: path.dirname(f) }).toString().split('\n').filter(Boolean).map((x) => x.replace(/\/$/, ''));
+const list = (f) => cp.execFileSync('tar', ['-tzf', path.basename(f)], { cwd: path.dirname(f) }).toString().split(/\r?\n/).filter(Boolean).map((x) => x.replace(/\/$/, ''));
 
 async function unit(T) {
   const S = path.join(T, 'srv'), D = path.join(S, 'data'), B = path.join(T, 'vol1', 'ame-backup');

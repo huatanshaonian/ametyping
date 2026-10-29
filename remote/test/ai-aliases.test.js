@@ -23,6 +23,17 @@ const stubApis = () => ({
     settings: { env: { ANTHROPIC_BASE_URL: `https://${id}.example`, ANTHROPIC_AUTH_TOKEN: `sk-${id}`, CLAUDE_CONFIG_DIR: 'C:\\other-memory' } } }),
 });
 
+test('a local entry offers its own default model, including DeepSeek bracket syntax', () => {
+  const dir = tmp(), home = tmp(); catalog(home);
+  const profiles = { ids: () => ['deepseek', 'nebula'], resolve: id => ({ id, local: true, proxy: 'direct',
+    settings: { model: id === 'deepseek' ? 'deepseek-flash[1m]' : 'opus', env: { ANTHROPIC_BASE_URL: 'https://example.invalid' } } }) };
+  const s = createAiSettings({ dataDir: dir, claudeHome: home, codexHome: tmp(), claudeApis: profiles });
+  assert.equal(s.view().models.find(m => m.slug === 'api:deepseek:default').model, 'deepseek-flash[1m]');
+  s.set({ default: { model: 'api:deepseek:default', effort: '' } });
+  assert.equal(s.pick('ask').model, 'deepseek-flash[1m]');
+  assert.equal(s.pick('ask').api, 'deepseek');
+});
+
 test('alias entries appear in the existing model list and pick keeps the alias', () => {
   const dir = tmp(), home = tmp(); catalog(home);
   const s = createAiSettings({ dataDir: dir, claudeHome: home, codexHome: tmp(), fallbackModel: 'gpt-6-luna', claudeApis: stubApis(), machine: 'nas' });

@@ -50,20 +50,21 @@ Codex 与 Claude Code 一样支持桌宠进度、完整对话与存档、终端�
 - **添加电脑**：网页里输入名字即生成令牌（只显示一次），并给出新设备上直接粘贴运行的安装命令；也可移除（令牌作废并断开）。
 - **显示属性 / 声音**：内置壁纸、本地图片（只存在浏览器）、从网址下载（由服务器下载保存，所有设备可选）；填充 / 适应 / 拉伸 / 居中 / 平铺；Win98 系统音效（启动、注销、待确认、完成、失败），可逐个关闭。
 
-### Claude Code API 别名
+### Claude Code API 入口
 
-控制面板 → **Claude Code API** 里给每套 API 起一个别名（如 `deepseek`、`nebula`），一个别名就是一份 Claude Code settings（`env` 里的 base URL、key、模型和代理方式）。共享部分写在 `aliases.<别名>.settings`；某台机器不同就写在 `aliases.<别名>.machines.<机器名>`，启动时合并，机器自动找自己的变体。每台机器也可以设默认别名。
+每台电脑使用同一套 Claude Code 程序，共享 `~/.claude` 和 `~/.claude.json` 中的通用设置、审批规则、hooks、插件、skills、记忆与历史；API 配置分别保存在 `~/cc-environments/<入口>/settings.json`。
 
-- **不用逐台 SSH**：给任意一台在线机器点「从本机 settings.json 导入」，agent 读取那台机器的 `~/.claude/settings.json`，只取 `env` / `model` / `effort` 这些 API 相关字段；key 留在群晖，不回浏览器。新机器连上后同样导入或同步已有别名即可。
-- **启动时只选别名**：我的电脑 → 在这里启动 的下拉直接是 `claude-deepseek`、`claude-nebula`、`codex`；选中后服务器按「别名 + 机器」下发，目标机器写 0600 临时 settings，用 `claude --settings` 启动。
-- **终端别名（持久保存在每台机器）**：agent 在每台机器的 `~/.local/bin` 生成 `claude-deepseek` / `claude-nebula`；命令和 `~/.ametyping/claude-apis/<别名>.json` 都留在本机，NAS 或 agent 不在时也能直接启动。命令会先执行那台机器现有的 `launch.sh` / `launch.ps1`，再按别名决定代理；也可以手动 `claude --settings ~/.ametyping/claude-apis/<别名>.json`（这条不会自动带 `AME_CLAUDE_API` 标记）。
-- **续聊**：hook 带上 `AME_CLAUDE_API`，糖糖/无头记住这次会话的别名；看板「在电脑上继续」旁边可以选这次用哪个别名（默认跟随会话记录；记录里的别名没了会让你另选，不会静默切到机器默认）。后台 `claude -p --resume` 沿用会话记录的别名。
-- **记忆目录统一**：所有别名都用默认的 `~/.claude`；导入、保存、看板启动、终端命令、后台续聊、群晖 AI 任务都会去掉 `CLAUDE_CONFIG_DIR`。hooks、会话记录、历史因此都在同一套默认目录里；hooks 仍由默认 `~/.claude/settings.json` 提供。
-- **群晖 AI 任务**：AI 模型页的模型下拉里按别名多出 `claude-deepseek · Opus 5.5` 这样的选项，不新增下拉；选它就用对应 API。
-- **代理**：`direct` 直连（DeepSeek 这类）、`inherit` 沿用机器自己的代理（Windows 的 10808、dell97 的 v2rayN、群晖的 egress），也可以写 `http(s)://` 地址。别名只区分 API，机器变体负责环境差异。
-- **密钥**：控制面板里显示为 `__UNCHANGED__`，保留就沿用原 key，改成新值就是换 key；保存 / 导入要重新输验证码，审计只记别名，不记 key。总配置在群晖的 `<dataDir>/claude-apis.json`（0600），每台机器一份解析后的 `~/.ametyping/claude-apis.local.json`（0600）。
-- **备份**：同步 / 导入前，agent 把本机 `~/.claude/settings.json`、`settings.local.json` 备份到 `~/.ametyping/backups/`（`claude-settings.original.json` 永久保留，另有最近 20 份时间戳副本）；群晖总配置保存在 `<dataDir>/backups/claude-apis/`（原始副本 + 20 份）。
-- 别名同步和远程启动一样，受那台机器 `agent.json` 的 `"control": true` 约束；只读的机器不会收到配置，也不会生成终端别名。
+| 命令 | 配置文件 | 本机默认模型 | 网络 |
+| --- | --- | --- | --- |
+| `claude-nebula` | `cc-environments/apinebula/settings.json` | `opus` | 本机已配置代理 |
+| `claude-deepseek` | `cc-environments/deepseek/settings.json` | `deepseek-flash[1m]` | 直连 |
+
+- **看板管理**：控制面板 → Claude Code API，先选电脑，再查看或编辑该电脑的入口。密钥只在目标电脑的文件中保存，密码框留空保留原密钥；保存前自动备份到该电脑的 `cc-environments/backups`。
+- **统一启动**：本机已有的 `Start-CC.ps1`、用户自建命令和源配置保留。其他电脑由 agent 安装缺失的启动命令及统一启动器；运行覆盖文件在 `cc-environments/runtime`，不反复改写共享设置。所有入口明确加载 `user,project,local`，并使用各自默认模型。
+- **项目与续聊**：从「我的电脑」所选目录启动；终端命令默认跟随当前目录，也支持 `-ProjectDir`。`claude-deepseek --resume <会话ID>` 可换入口恢复共享历史；看板也支持选择入口续聊，并拒绝重复打开仍在运行的会话。
+- **其他电脑**：使用同样的目录结构，各自配置 API Key、模型和代理，不复制另一台电脑的全局设置或密钥。新电脑在看板新增入口即可；离线或旧版 agent 会明确提示更新/重启。
+- **NAS AI 任务**：使用 NAS 自己的 `cc-environments` 入口，模型列表显示该入口实际的默认模型。
+- 旧版 NAS `claude-apis.json` 和本机 `.ametyping/claude-apis.local.json` 不再作为启动配置源；已有文件保留供回滚，不自动删除。
 
 ### 部署服务器（群晖 NAS）
 
@@ -114,7 +115,7 @@ cd app && npm install && npm start            # 糖糖开发运行
 npm run dist                                  # 打包到 ../dist/AmeTyping-win32-x64
 cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
-node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js   # API 别名
+node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js remote/test/claude-profile-requests.test.js   # 本地 API 入口
 ```
 
 国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。

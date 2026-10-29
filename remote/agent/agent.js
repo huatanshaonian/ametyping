@@ -26,7 +26,8 @@ const records = require('./records');
 const commands = require('./commands');
 const codex = require('../../app/codex-records');
 const { createFiles } = require('./files');
-const claudeApis = require('./claude-apis');
+const { createProfiles } = require('./claude-profiles');
+const claudeProfiles = createProfiles();
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
 const { createArtifacts } = require('./artifacts');
@@ -44,6 +45,8 @@ const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_MS = cfg.scanMs || 2000;
 const IDLE_DROP_MS = cfg.keepMs || 30 * 60e3;      // stop listing a session with no file changes for this long
 const CONTROL = cfg.control === true;
+if (CONTROL) { try { claudeProfiles.install(); } catch (e) { console.error('启动入口检查失败：' + e.message); } }
+const profileView = () => CONTROL ? claudeProfiles.list() : { profiles: [], aliases: [] };
 // file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured; uploads into those
 // folders only with "upload": true there (fs-upload.js)
 const browse = createFiles(cfg.files);
@@ -192,16 +195,13 @@ async function pollPet() {
 function apiOf(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const id = /^[A-Za-z0-9._-]{1,40}$/.test(String(v.id || '')) ? String(v.id) : '';
-  if (!id) return null;
-  const proxy = typeof v.proxy === 'string' && /^(direct|inherit|https?:\/\/\S{1,480})$/.test(v.proxy) ? v.proxy : 'inherit';
-  const settings = v.settings && typeof v.settings === 'object' && !Array.isArray(v.settings) ? v.settings : {};
-  if (JSON.stringify(settings).length > 256 * 1024) return null;
-  return { id, label: typeof v.label === 'string' ? v.label.slice(0, 60) : id, proxy, settings };
+  return id && v.local === true ? { id, local: true } : null;
 }
 
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
   const api = apiOf(d.api);
+  if (d.api && !api && d.tool !== 'codex' && !String(d.id || '').startsWith('codex:')) return { ok: false, msg: '启动入口格式已更新，请刷新看板后再试' };
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
@@ -270,17 +270,20 @@ let serverOff = null;
 const readers = new Map();
 const metaSent = new Set();                          // sessions whose working directory was reported on this connection
 function connect() {
-  ws = new WebSocket(cfg.server, { headers: { Authorization: 'Bearer ' + cfg.token } });
-  ws.on('open', () => {
+  const socket = ws = new WebSocket(cfg.server, { headers: { Authorization: 'Bearer ' + cfg.token } });
+  socket.on('open', () => {
+    if (socket !== ws) return;
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
-    ws.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), apis: CONTROL, files: browse.enabled, upload: browse.canUpload }));
+    socket.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), claudeProfilesVersion: 1,
+      claudeProfilesAllowed: CONTROL, claudeProfiles: profileView(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
     lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     tick(true);
   });
-  ws.on('message', (raw) => {
+  socket.on('message', (raw) => {
+    if (socket !== ws) return;
     // honoured from the server: a request to read a conversation, and (only with "control": true) send / decide
     let d; try { d = JSON.parse(raw); } catch { return; }
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
@@ -314,21 +317,16 @@ function connect() {
     else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
     // a session renamed (the server tells every machine): this one's pet shows the new name at once
     else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });
-    else if (d.t === 'claude-apis') {
-      if (!CONTROL) { try { claudeApis.clear(); } catch {} return; }   // read-only machine: never write a received key
-      try { const r = claudeApis.sync(d); if (r && r.ok === false) console.error('别名同步失败：' + r.msg); }
-      catch (e) { console.error('别名同步失败：' + e.message); }
-    }
-    else if (d.t === 'claude-apis-off') {
-      try { claudeApis.clear(); } catch {}                   // control turned off: drop this machine's synced copy
-    }
-    else if (d.t === 'read-claude-settings' && typeof d.rid === 'string') {
-      const r = CONTROL ? claudeApis.readSettings() : { ok: false, msg: '这台机器没开远程控制' };
-      sendJSON({ t: 'claude-settings', rid: d.rid, ...r });
-    }
-    else if (d.t === 'backup-claude-settings' && typeof d.rid === 'string') {
-      const r = CONTROL ? claudeApis.backupSettings() : { ok: false, msg: '这台机器没开远程控制' };
-      sendJSON({ t: 'claude-settings-backup', rid: d.rid, ...r });
+    else if (d.t === 'claude-profiles-request' && typeof d.rid === 'string') {
+      let r = { ok: false, msg: '这台电脑没开放配置管理' };
+      if (CONTROL) {
+        try {
+          r = d.action === 'list' ? { ok: true } : d.action === 'save'
+            ? claudeProfiles.save(d.profile || {}) : { ok: false, msg: '不支持的配置操作' };
+          if (r.ok) r.view = profileView();
+        } catch { r = { ok: false, msg: '读取本地启动入口失败，请检查 cc-environments 文件' }; }
+      }
+      try { socket.send(JSON.stringify({ t: 'claude-profiles-result', rid: d.rid, ...r })); } catch {}
     }
     else if (d.t === 'art-check' && typeof d.rid === 'string') {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
@@ -338,8 +336,8 @@ function connect() {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });
-  ws.on('close', () => { ws = null; fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
-  ws.on('error', () => { try { ws.close(); } catch {} });
+  socket.on('close', () => { if (socket !== ws) return; ws = null; fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
+  socket.on('error', () => { try { socket.close(); } catch {} });
 }
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
 
@@ -424,10 +422,11 @@ async function tick(force) {
     forwardBtw();
     scan();
     const list = stateList();
-    const sig = JSON.stringify([controlOn(), [...line.parked], ...list.map((s) => [s.id, s.label, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
+    const profiles = profileView();
+    const sig = JSON.stringify([controlOn(), profiles, [...line.parked], ...list.map((s) => [s.id, s.label, s.state, s.last, s.via, s.perms.map((p) => p.id), tailT(s), (s.agents || []).map((a) => a.id + a.state + (a.act || ''))])]);
     if (sig !== lastSig || force === true) {
       lastSig = sig;
-      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked] });
+      sendJSON({ t: 'state', control: controlOn(), files: browse.enabled, upload: browse.canUpload, sessions: list, parked: [...line.parked], claudeProfiles: profiles });
       for (const s of list) {
         if (sess.has(s.id)) continue;                // transcript sessions: the server builds them from the records
         const cs = `${s.last}|${tailT(s)}`;

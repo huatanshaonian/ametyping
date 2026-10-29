@@ -37,7 +37,8 @@ const { createBackup } = require('./backup');
 const { createMail } = require('./mail');
 const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
-const { createClaudeApis } = require('./claude-apis');
+const { createProfiles } = require('../agent/claude-profiles');
+const { createProfileRequests, profilesView } = require('./claude-profile-requests');
 const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
@@ -129,6 +130,12 @@ function machine(name) {
   if (!m) { m = { name, online: false, since: 0, sessions: new Map() }; machines.set(name, m); }
   return m;
 }
+function updateMachineCapabilities(m) {
+  const sockets = [...(m.sockets || [])].filter(s => s.readyState === 1);
+  m.control = sockets.some(s => s.remoteControlAllowed === true);
+  m.files = sockets.some(s => s.filesAllowed === true);
+  m.upload = sockets.some(s => s.filesAllowed === true && s.uploadAllowed === true);
+}
 // how to continue a session on its machine (Windows paths get PowerShell syntax)
 // (Codex sessions, "codex:<id>", continue with `codex resume`)
 function resumeCmd(cwd, id, api = '') {
@@ -185,38 +192,20 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
-// Claude Code API aliases (控制面板 → Claude Code API): the same alias on every machine, a machine variant where
-// its environment differs. The resolved settings are sent to the agent only when launching or when it syncs.
-const claudeApis = createClaudeApis({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
-  audit: (...a) => audit(...a), onChange: () => pushClaudeApis() });
-// a request to one agent that is not a browser action (reading its local Claude settings for an import)
-const agentReqs = new Map();       // rid -> { resolve, timer }
-function askAgent(m, obj, timeoutMs = 8000) {
-  return new Promise((resolve) => {
-    const sock = m && m.sockets && [...m.sockets].pop();
-    if (!sock) return resolve({ ok: false, msg: '这台机器不在线' });
-    const rid = crypto.randomBytes(12).toString('hex');
-    const timer = setTimeout(() => { agentReqs.delete(rid); resolve({ ok: false, msg: '机器没有回应' }); }, timeoutMs);
-    agentReqs.set(rid, { resolve, timer });
-    try { sock.send(JSON.stringify({ ...obj, rid })); } catch { agentReqs.delete(rid); clearTimeout(timer); resolve({ ok: false, msg: '发送失败' }); }
-  });
-}
+// The NAS uses its own cc-environments for AI jobs; remote machines report public entry metadata only.
+const hostProfiles = createProfiles();
+const claudeApis = { ids: () => hostProfiles.list().aliases.map(p => p.id),
+  resolve: (id) => { try { return hostProfiles.resolve(id); } catch { return null; } } };
+const profileRequests = createProfileRequests();
+const profileSocket = (m) => m && m.sockets && [...m.sockets].reverse().find(s =>
+  s.readyState === 1 && s.claudeProfilesVersion === 1 && s.claudeProfilesAllowed === true);
+const machineProfiles = (m) => profilesView((profileSocket(m) || {}).claudeProfilesView || (m && m.claudeProfilesView));
 // the machines the control panel may offer: the agents seen and the stored history
 function knownMachines() {
-  return [...new Set([...machines.keys(), ...Object.keys(store.sessions())])].sort().map((name) => ({
-    name, online: !!(machines.get(name) && machines.get(name).online),
+  return [...new Set(['nas', ...machines.keys(), ...Object.keys(store.sessions())])].sort().map((name) => ({
+    name, online: name === 'nas' || !!(machines.get(name) && machines.get(name).online),
+    profilesReady: name === 'nas' || !!profileSocket(machines.get(name)),
   }));
-}
-// every machine's agent writes a local copy (the terminal wrappers and background resumes read it)
-function pushClaudeApis() {
-  for (const m of machines.values()) {
-    if (!m.online || !m.sockets) continue;
-    const recipients = [...m.sockets].filter((s) => s.claudeApisAllowed === true);
-    if (!recipients.length) continue;   // read-only and pre-hello connections never get the keys
-    let msg;
-    try { msg = JSON.stringify({ t: 'claude-apis', ...claudeApis.forMachine(m.name) }); } catch { continue; }
-    for (const s of recipients) { try { s.send(msg); } catch {} }
-  }
 }
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
@@ -315,14 +304,23 @@ const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (d.t === 'hello') {
-    m.control = d.control === true; m.files = d.files === true; m.upload = d.upload === true;
-    ws.claudeApisAllowed = d.apis === true;
+    ws.remoteControlAllowed = d.control === true; ws.filesAllowed = d.files === true; ws.uploadAllowed = d.upload === true;
+    updateMachineCapabilities(m);
+    ws.claudeProfilesVersion = d.claudeProfilesVersion === 1 ? 1 : 0;
+    ws.claudeProfilesAllowed = d.claudeProfilesAllowed === true;
+    ws.claudeProfilesView = profilesView(d.claudeProfiles);
+    if (ws.claudeProfilesVersion === 1 && ws.claudeProfilesAllowed) m.claudeProfilesView = ws.claudeProfilesView;
+    if (ws.claudeProfilesVersion === 1 && ws.claudeProfilesAllowed) {
+      // Verify the actual request/reply path after reconnect; log counts only, never provider settings or keys.
+      profileRequests.request({ sockets: new Set([ws]) }, 'list').then(r => {
+        if (r.ok) {
+          ws.claudeProfilesView = profilesView(r.view); m.claudeProfilesView = ws.claudeProfilesView;
+          audit('claude-profiles-ready', m.name, 'entries=' + ws.claudeProfilesView.aliases.length);
+        } else audit('claude-profiles-unavailable', m.name, r.msg);
+      });
+    }
     broadcast({ t: 'sessions', data: snapshot() });
-    // Credentials are authorized per connection: another agent with the same machine identity cannot grant or
-    // revoke this socket's access. A connection that lost access is told to clear its own local copy.
-    try {
-      ws.send(JSON.stringify(ws.claudeApisAllowed ? { t: 'claude-apis', ...claudeApis.forMachine(m.name) } : { t: 'claude-apis-off' }));
-    } catch {}
+    // Provider files and keys stay on the computer. The server only keeps the public entry-point metadata.
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
@@ -369,21 +367,22 @@ function onAgentMessage(m, raw, ws) {
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
-  // the agent read the machine's ~/.claude/settings.json for an import (the server keeps the key; the browser never sees it)
-  if (d.t === 'claude-settings' && typeof d.rid === 'string') {
-    const p = agentReqs.get(d.rid);
-    if (p) { agentReqs.delete(d.rid); clearTimeout(p.timer); p.resolve({ ok: d.ok === true, settings: d.settings, msg: str(d.msg, 200) }); }
-    return;
-  }
-  if (d.t === 'claude-settings-backup' && typeof d.rid === 'string') {
-    const p = agentReqs.get(d.rid);
-    if (p) { agentReqs.delete(d.rid); clearTimeout(p.timer); p.resolve({ ok: d.ok === true, files: Array.isArray(d.files) ? d.files.slice(0, 20) : [], msg: str(d.msg, 200) }); }
+  // Only the socket that received the request can complete it.
+  if (d.t === 'claude-profiles-result' && typeof d.rid === 'string') {
+    if (profileRequests.finish(ws, d) && d.ok === true) {
+      ws.claudeProfilesView = profilesView(d.view);
+      m.claudeProfilesView = ws.claudeProfilesView;
+    }
     return;
   }
   if (d.t === 'state' && Array.isArray(d.sessions)) {
-    if (typeof d.control === 'boolean') m.control = d.control;
-    if (typeof d.files === 'boolean') m.files = d.files;
-    if (typeof d.upload === 'boolean') m.upload = d.upload;
+    if (ws.claudeProfilesVersion === 1 && ws.claudeProfilesAllowed && d.claudeProfiles) {
+      ws.claudeProfilesView = profilesView(d.claudeProfiles); m.claudeProfilesView = ws.claudeProfilesView;
+    }
+    if (typeof d.control === 'boolean') ws.remoteControlAllowed = d.control;
+    if (typeof d.files === 'boolean') ws.filesAllowed = d.files;
+    if (typeof d.upload === 'boolean') ws.uploadAllowed = d.upload;
+    updateMachineCapabilities(m);
     // terminals parked on a background session of Claude Code's: windows, not sessions (their stored history stays)
     m.parked = new Set(Array.isArray(d.parked) ? d.parked.filter((x) => typeof x === 'string' && /^[\w:-]{1,64}$/.test(x)).slice(0, 50) : []);
     const keep = new Set();
@@ -454,8 +453,7 @@ function onBrowserAction(c, d) {
   let out;
   // the alias a new launch (or a resumed one) runs with: the one asked for, the session's own, or this machine's default
   const resolveApi = (id) => {
-    const wanted = id || claudeApis.defaultFor(m.name);
-    return wanted ? claudeApis.resolve(wanted, m.name) : null;
+    return id && machineProfiles(m).aliases.some(p => p.id === id) ? { id, local: true } : null;
   };
   if (d.t === 'resume') {
     // a conversation that is over, opened again on its machine: a terminal in the folder it ran in, `claude --resume`
@@ -477,8 +475,8 @@ function onBrowserAction(c, d) {
       const wanted = explicit === 'none' ? '' : explicit || (s && s.api) || (stored && stored.api) || '';
       let api = null;
       if (wanted) {
-        api = claudeApis.resolve(wanted, m.name);
-        if (!api || !Object.keys(api.settings || {}).length) {
+        api = resolveApi(wanted);
+        if (!api) {
           return reply(false, `API 别名「${wanted}」现在不可用；请换一个别名，或恢复它后再试。`);
         }
       }
@@ -492,8 +490,8 @@ function onBrowserAction(c, d) {
     const tool = d.tool === 'codex' ? 'codex' : 'claude';
     const requested = typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '';
     const api = tool === 'codex' ? null : resolveApi(requested);
-    if (requested && tool === 'claude' && (!api || !Object.keys(api.settings || {}).length)) return reply(false, '这台机器没有这个 API 别名');
-    out = { t: 'launch', cwd, prompt, tool, api: api && Object.keys(api.settings || {}).length ? api : undefined };
+    if (requested && tool === 'claude' && !api) return reply(false, '这台电脑没有这个本地启动入口，请刷新或配置后再试');
+    out = { t: 'launch', cwd, prompt, tool, api: api || undefined };
     audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`, tool, api ? api.id : '');
   } else if (d.t === 'send') {
     const text = typeof d.text === 'string' ? d.text : '';
@@ -523,10 +521,12 @@ function onBrowserAction(c, d) {
     }
     audit('control-decide', c.ip, m.name, s.id, d.choice);
   }
+  const sock = [...m.sockets].reverse().find(s => s.readyState === 1 && s.remoteControlAllowed === true &&
+    (out.t !== 'launch' || s.filesAllowed === true) && (!out.api || (s.claudeProfilesVersion === 1 && s.claudeProfilesAllowed === true)));
+  if (!sock) return reply(false, '没有支持这次操作的 agent 连接，请更新并重启这台电脑的 agent');
   const rid = crypto.randomBytes(12).toString('hex');
   const timer = setTimeout(() => { if (pending.delete(rid)) reply(false, '机器没有回应，结果不确定，请看对话确认'); }, 20000);
   pending.set(rid, { c, crid: d.rid, machine: m.name, timer });
-  const sock = [...m.sockets].pop();                                  // the newest connection of that machine
   try { sock.send(JSON.stringify({ ...out, rid })); } catch { pending.delete(rid); clearTimeout(timer); reply(false, '发送失败'); }
 }
 
@@ -590,41 +590,30 @@ const server = http.createServer(async (req, res) => {
   }
   // Claude Code API aliases (控制面板 → Claude Code API, and the launch selector in 我的电脑)
   if (req.method === 'GET' && p === '/api/claude-apis') {
-    const machine = String(url.searchParams.get('machine') || '');
-    if (machine) return json(res, 200, claudeApis.launchList(machine));
-    return json(res, 200, { ...claudeApis.view(), known: knownMachines() });
+    const name = String(url.searchParams.get('machine') || 'nas');
+    const m = machines.get(name);
+    const view = name === 'nas' ? hostProfiles.list() : machineProfiles(m);
+    return json(res, 200, { ok: true, ...view, machine: name, known: knownMachines(),
+      online: name === 'nas' || !!(m && m.online), ready: name === 'nas' || !!profileSocket(m) });
   }
-  if (req.method === 'POST' && p === '/api/claude-apis/set') {
-    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
-    let d = {}; try { d = JSON.parse(await readBody(req, 300000)); } catch {}
-    const r = claudeApis.set(d);
-    if (r.ok) audit('claude-apis-set', ip, Object.keys(d.aliases || {}).join(',').slice(0, 300));
-    return json(res, 200, { ...r, view: r.view ? { ...r.view, known: knownMachines() } : undefined });
+  if (req.method === 'POST' && (p === '/api/claude-apis/refresh' || p === '/api/claude-apis/save')) {
+    const save = p.endsWith('/save');
+    if (save && !CONTROL) return json(res, 200, { ok: false, msg: '服务器处于只读模式' });
+    if (save && !auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
+    let d; try { d = JSON.parse(await readBody(req, 20000)); } catch { return json(res, 200, { ok: false, msg: '请求格式不正确' }); }
+    const name = typeof d.machine === 'string' ? d.machine : '', m = machines.get(name);
+    let r;
+    if (name === 'nas') {
+      r = save ? hostProfiles.save(d.profile || {}) : { ok: true };
+      if (r.ok) r.view = hostProfiles.list();
+    } else if (!m || !m.online) r = { ok: false, msg: '这台电脑不在线，请连接后刷新' };
+    else r = await profileRequests.request(m, save ? 'save' : 'list', save ? d.profile : undefined);
+    if (r.ok && name !== 'nas') m.claudeProfilesView = profilesView(r.view);
+    if (save && r.ok) audit('claude-profile-save', ip, name, String(d.profile && d.profile.id || '').slice(0, 40));
+    return json(res, 200, { ...r, machine: name });
   }
-  if (req.method === 'POST' && p === '/api/claude-apis/import') {
-    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
-    let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
-    const machine = String(d.machine || '');
-    const m = machines.get(machine);
-    if (!m || !m.online) return json(res, 200, { ok: false, msg: '这台机器不在线' });
-    if (!m.control) return json(res, 200, { ok: false, msg: '这台机器没开远程控制' });
-    const r = await askAgent(m, { t: 'read-claude-settings' });
-    if (!r.ok) return json(res, 200, { ok: false, msg: r.msg || '读不到本机 Claude 设置' });
-    const out = claudeApis.importSettings({ machine, alias: d.alias, label: d.label, proxy: d.proxy, scope: d.scope === 'shared' ? 'shared' : 'machine', settings: r.settings || {} });
-    if (out.ok) audit('claude-apis-import', ip, machine, String(d.alias || '').slice(0, 40), d.scope === 'shared' ? 'shared' : 'machine');
-    return json(res, 200, { ...out, view: out.view ? { ...out.view, known: knownMachines() } : undefined });
-  }
-  if (req.method === 'POST' && p === '/api/claude-apis/backup') {
-    if (!auth.isFresh(sess)) return json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' });
-    let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
-    const machine = String(d.machine || '');
-    const m = machines.get(machine);
-    if (!m || !m.online) return json(res, 200, { ok: false, msg: '这台机器不在线' });
-    if (!m.control) return json(res, 200, { ok: false, msg: '这台机器没开远程控制' });
-    const r = await askAgent(m, { t: 'backup-claude-settings' });
-    if (!r.ok) return json(res, 200, { ok: false, msg: r.msg || '备份失败' });
-    audit('claude-apis-backup', ip, machine);
-    return json(res, 200, { ok: true, files: Array.isArray(r.files) ? r.files.filter((x) => typeof x === 'string').slice(0, 10) : [], msg: '已备份' });
+  if (req.method === 'POST' && ['/api/claude-apis/set', '/api/claude-apis/import', '/api/claude-apis/backup'].includes(p)) {
+    return json(res, 200, { ok: false, msg: '现在直接管理每台电脑的 cc-environments 配置，请刷新页面后选择电脑和启动入口。' });
   }
   // wallpapers the server downloaded (display settings on the desktop)
   if (req.method === 'GET' && p === '/api/walls') return json(res, 200, { items: walls.list().map((w) => ({ name: w.name, url: '/wallpaper/' + w.name })) });
@@ -821,7 +810,8 @@ wssBrowser.on('connection', (ws, req, sid) => {
 wssAgent.on('connection', (ws, req, a) => {
   const m = machine(a.name);
   m.online = true; m.since = Date.now();
-  ws.claudeApisAllowed = false;   // until this socket's own hello, never send it alias keys
+  ws.claudeProfilesVersion = 0; ws.claudeProfilesAllowed = false;
+  ws.remoteControlAllowed = false; ws.filesAllowed = false; ws.uploadAllowed = false;
   if (!m.sockets) m.sockets = new Set();
   m.sockets.add(ws);
   audit('agent-online', a.name, clientIp(req));
@@ -831,7 +821,9 @@ wssAgent.on('connection', (ws, req, a) => {
   ws.on('message', (raw) => onAgentMessage(m, raw, ws));             // size capped by maxPayload
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {
+    profileRequests.drop(ws);
     clearInterval(ping); m.sockets.delete(ws);
+    updateMachineCapabilities(m);
     if (m.sockets.size === 0) { m.online = false; fsRelay.dropMachine(a.name); audit('agent-offline', a.name); broadcast({ t: 'sessions', data: snapshot() }); }
   };
   ws.on('close', down); ws.on('error', down);

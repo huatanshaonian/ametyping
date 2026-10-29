@@ -82,7 +82,17 @@ async function e2e() {
     r.end(data);
   });
   try {
-    spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
+    const srv = spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' });
+    let ready = false;
+    for (let i = 0; i < 80 && srv.exitCode === null; i++) {
+      ready = await new Promise(resolve => {
+        const r = http.get(`http://127.0.0.1:${PORT}/login`, res => { res.resume(); resolve(res.statusCode === 200); });
+        r.on('error', () => resolve(false));
+      });
+      if (ready) break;
+      await sleep(250);
+    }
+    if (!ready) throw new Error('Fixture server did not become ready');
     spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG });
     const { cookie } = await req('POST', '/api/login', { user: 'u', password: 'pw-123456789012', code: auth.totpAt(JSON.parse(fs.readFileSync(CFG)).totpSecret, Math.floor(Date.now() / 30000)) });
     for (let i = 0; i < 60; i++) { const s = (await req('GET', '/api/sessions', null, cookie)).j; const m = s && s.data.find((x) => x.machine === 'box'); if (m && m.sessions.length) break; await sleep(250); }

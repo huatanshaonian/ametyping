@@ -19,10 +19,10 @@ function claudeBin(env) {
 
 // env: the environment the session was started with (null = this service's own); onExit: the run ended;
 // codex: id is a Codex thread's; settingsFile: the alias settings for this one resume
-function resume(id, cwd, env, text, onExit, codex = false, settingsFile = '') {
-  const bin = codex ? codexBin(env) : claudeBin(env);
+function resume(id, cwd, env, text, onExit, codex = false, settingsFile = '', launchPlan = null) {
+  const bin = launchPlan ? launchPlan.exe : codex ? codexBin(env) : claudeBin(env);
   if (!bin) return { ok: false, msg: `找不到 ${codex ? 'codex' : 'claude'}，没法在后台续聊` };
-  const args = codex ? execResumeArgs(id) : [...(settingsFile ? ['--settings', settingsFile] : []), '-p', '--resume', id];
+  const args = launchPlan ? launchPlan.args : codex ? execResumeArgs(id) : [...(settingsFile ? ['--settings', settingsFile] : []), '-p', '--resume', id];
   const p = spawn(bin, args, { cwd: cwd && fs.existsSync(cwd) ? cwd : os.homedir(),
     env: env || process.env, stdio: ['pipe', 'ignore', 'ignore'] });
   p.on('error', () => {});

@@ -28,3 +28,4 @@ try {
 } catch (e) { res.push('FAIL script ' + e.stack); }
 finally { fs.rmSync(T, { recursive: true, force: true }); }
 console.log(res.join('\n'));
+process.exitCode = res.some((line) => line.startsWith('FAIL')) ? 1 : 0;

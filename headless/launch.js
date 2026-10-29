@@ -64,7 +64,7 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
     // an inherited NO_PROXY=* (from a recent direct session or launch.sh) would bypass an explicit proxy
     const explicit = api && proxy !== 'inherit' && /^https?:\/\//.test(proxy)
       ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
-    const settings = sf ? ` --settings ${q(sf.file)}` : '';
+    const settings = sf ? ' ' + sf.args.map(q).join(' ') : '';
     // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${thread ? ' resume ' + q(thread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : ''}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {

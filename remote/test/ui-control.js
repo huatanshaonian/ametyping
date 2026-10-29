@@ -17,7 +17,8 @@ fs.writeFileSync(path.join(HOME, 'models_cache.json'), JSON.stringify({ models: 
   { slug: 'gpt-6-sol', display_name: 'GPT-6-Sol', description: 'Previous generation workhorse', supported_reasoning_levels: lv('low', 'medium', 'high', 'xhigh', 'max', 'ultra'), default_reasoning_level: 'medium', visibility: 'list' },
   { slug: 'gpt-6-luna', display_name: 'GPT-6-Luna', description: 'Fast and affordable', supported_reasoning_levels: lv('low', 'medium', 'high', 'xhigh', 'max'), default_reasoning_level: 'medium', visibility: 'list' }] }));
 fs.writeFileSync(path.join(HOME, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'SECRET' }, last_refresh: '2026-09-28T20:01:56Z' }));
-const env = { ...process.env, AME_REMOTE_CONFIG: CFG, AME_SUMMARY_TICK_MS: '600000' };
+const env = { ...process.env, HOME, USERPROFILE: HOME, AME_CC_HOME: path.join(T, 'cc-environments'),
+  AME_REMOTE_CONFIG: CFG, AME_SUMMARY_TICK_MS: '600000' };
 cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...env, AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' } });
 const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
 // Claude Code: no catalog of its own yet (its main models offered), a fake that is logged in
@@ -85,7 +86,7 @@ function login() {
     chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|文献' &&
       (await evalJs("document.querySelectorAll('.cp-item img').length")) === 9 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
-    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '从本机 settings.json 导入'], ['AI 模型', '.aim', '默认']]) {
+    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '刷新电脑配置'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);
@@ -115,10 +116,17 @@ function login() {
     await shot('81-control-ai.png');
     // Claude Code API: a configured key must show as set (the row check used to pass the env object to a helper that
     // expected a settings object, always showing 未设置)
-    const capi = await evalJs("fetch('/api/claude-apis/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aliases:{deepseek:{label:'DeepSeek',proxy:'direct',settings:{env:{ANTHROPIC_BASE_URL:'https://deepseek.example',ANTHROPIC_AUTH_TOKEN:'sk-ui-test'}}}}})}).then(r=>r.json())");
+    const capi = await evalJs("fetch('/api/claude-apis/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({machine:'nas',profile:{id:'deepseek',baseUrl:'https://deepseek.example',model:'deepseek-flash[1m]',key:'sk-ui-test',network:'direct'}})}).then(r=>r.json())");
     await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('Claude Code API')).click()"); await sleep(900);
     const capiShown = await evalJs("(document.querySelector('.capi-token') || {}).textContent || ''");
     chk('Claude Code API: a configured key shows as set, not 密钥未设置', capi.ok === true && capiShown === '密钥已设置', [capi, capiShown]);
+    await evalJs("document.querySelector('.capi-row .btn').click()");
+    const editor = await evalJs("(() => { const f=document.querySelector('.capi-editor'), x=f.querySelectorAll('input'); return {shown:!f.hidden,id:x[0].value,model:x[2].value,keyType:x[3].type,keyValue:x[3].value}; })()");
+    chk('profile editor shows the local default model and an empty password field', editor.shown && editor.id === 'deepseek' && editor.model === 'deepseek-flash[1m]' && editor.keyType === 'password' && editor.keyValue === '', editor);
+    await evalJs("(() => { const f=document.querySelector('.capi-editor'); f.querySelectorAll('input')[2].value='deepseek-ui[1m]'; f.requestSubmit(); })()");
+    await sleep(900);
+    const savedProfile = await evalJs("fetch('/api/claude-apis?machine=nas').then(r=>r.json()).then(v=>({model:v.profiles[0].model,hasCredential:v.profiles[0].hasCredential,raw:JSON.stringify(v)}))");
+    chk('saving through the editor changes the local model and preserves the blank key without echoing it', savedProfile.model === 'deepseek-ui[1m]' && savedProfile.hasCredential && !savedProfile.raw.includes('sk-ui-test'), savedProfile.model);
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);
     await evalJs("[...document.querySelectorAll('.cal-g .rs-link')].find(b => b.textContent.includes('连接 Google')).click()"); await sleep(1200);

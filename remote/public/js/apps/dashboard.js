@@ -60,22 +60,28 @@ function mount(current) {
   // 「在电脑上继续」: a terminal on that machine, in the conversation's folder, `claude --resume` -- then it is live
   // here again and can be replied to (shown for a conversation that is over, on a machine that is online)
   const reopen = h('button', { class: 'btn go', type: 'button', text: '在电脑上继续', title: '在那台电脑上打开一个终端窗口（Linux：一个 tmux 会话），进到这个对话原来的文件夹并接着它', hidden: true });
+  const copyResumeButton = h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume });
   // 「在电脑上继续」用哪个 API：默认跟随这个会话的记录，也可以这次换一个（只影响这一次续聊）
   const resumeApi = h('select', { class: 'field rapi', title: '这次续聊用哪个 API 别名；默认跟随会话记录' });
   const apiWrap = h('span', { class: 'rapi-wrap' }, h('span', { text: 'API：' }), resumeApi);
   const apiCache = new Map();                    // machine -> { default, aliases }
   let apiChoice = { key: '', value: null };
+  let reopening = false;
   function ensureApis(machine) {
     if (!machine || apiCache.has(machine)) return;
-    apiCache.set(machine, { aliases: [] });
+    apiCache.set(machine, { aliases: [], loading: true });
     fetch('/api/claude-apis?machine=' + encodeURIComponent(machine)).then((r) => r.json()).then((v) => {
       apiCache.set(machine, v && Array.isArray(v.aliases) ? v : { aliases: [] });
       const s = find(sel); if (s && s.machine === machine) renderResumeApi(s);
-    }).catch(() => {});
+    }).catch(() => {
+      apiCache.set(machine, { aliases: [], ready: false });
+      const s = find(sel); if (s && s.machine === machine) renderResumeApi(s);
+    });
   }
   // the command shown/copied follows the selector too (follow-record keeps the server's command)
   function commandFor(s, pick) {
     if (!s || !s.resume || String(s.id).startsWith('codex:')) return s ? s.resume : '';
+    if (pick === '__choose__') return s.resume;
     if (pick === '') return s.resume;
     const cmd = (pick && pick !== '__none__' ? 'claude-' + pick : 'claude') + ' --resume ' + s.id;
     const at = s.resume.lastIndexOf('claude', s.resume.indexOf('--resume'));
@@ -83,36 +89,47 @@ function mount(current) {
   }
   function renderResumeApi(s) {
     if (!s) { resumeApi.replaceChildren(); return; }
+    if (String(s.id).startsWith('codex:')) { resumeApi.replaceChildren(); reopen.disabled = reopening; copyResumeButton.disabled = false; return; }
     const key = s.machine + '|' + s.id;
-    const list = (apiCache.get(s.machine) || {}).aliases || [];
+    const current = apiCache.get(s.machine) || {};
+    const list = current.aliases || [];
     const storedAvailable = !s.api || list.some((a) => a && a.id === s.api);
     const opts = [];
+    opts.push(h('option', { value: '__choose__', text: current.loading ? '正在读取启动入口…' : '请选择启动入口', disabled: true }));
     if (s.api && storedAvailable) opts.push(h('option', { value: '', text: `跟随记录（claude-${s.api}）` }));
     opts.push(h('option', { value: '__none__', text: '本机设置（不加别名）' }));
     for (const a of list) if (a && /^[A-Za-z0-9._-]{1,40}$/.test(a.id)) opts.push(h('option', { value: a.id, text: 'claude-' + a.id, title: a.label || a.id }));
-    const sig = key + '|' + (s.api || '') + '|' + list.map((a) => a.id).join(',') + '|' + storedAvailable;
+    const sig = key + '|' + (s.api || '') + '|' + list.map((a) => a.id).join(',') + '|' + storedAvailable + '|' + current.loading;
     if (resumeApi.dataset.sig === sig && opts.some((o) => o.value === resumeApi.value)) return;   // keep an open choice
     resumeApi.dataset.sig = sig;
     resumeApi.replaceChildren(...opts);
     let want = apiChoice.key === key ? apiChoice.value : null;      // only a choice the user actually made
-    if (want == null) want = s.api && storedAvailable ? '' : '__none__';
-    if (!opts.some((o) => o.value === want)) want = s.api && storedAvailable ? '' : '__none__';
+    const fallback = s.api && storedAvailable ? '' : current.ready && !list.length && !s.api ? '__none__' : '__choose__';
+    if (want == null) want = fallback;
+    if (!opts.some((o) => o.value === want)) want = fallback;
     resumeApi.value = want;
+    reopen.disabled = reopening || want === '__choose__';
+    copyResumeButton.disabled = want === '__choose__';
   }
   resumeApi.addEventListener('change', () => {
     const s = find(sel); if (!s) return;
     apiChoice = { key: s.machine + '|' + s.id, value: resumeApi.value };
+    reopen.disabled = reopening || resumeApi.value === '__choose__';
+    copyResumeButton.disabled = resumeApi.value === '__choose__';
     rcmd.textContent = commandFor(s, resumeApi.value);
   });
   reopen.addEventListener('click', async () => {
     const s = find(sel); if (!s) return;
+    if (reopening || (!String(s.id).startsWith('codex:') && resumeApi.value === '__choose__')) return;
+    reopening = true;
     reopen.disabled = true; showNote('正在那台电脑上打开…', false, 20000);
     const pick = resumeApi.value;
     const r = await net.act({ t: 'resume', machine: s.machine, id: s.id, api: pick === '' ? undefined : pick });
-    reopen.disabled = false;
+    reopening = false;
+    reopen.disabled = resumeApi.value === '__choose__';
     showNote(r.msg || (r.ok ? '已打开' : '没能打开'), !r.ok, r.ok ? 9000 : 6000);
   });
-  const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, h('button', { class: 'btn', type: 'button', text: '复制', onclick: copyResume }), apiWrap, reopen);
+  const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, copyResumeButton, apiWrap, reopen);
   // 对话摘要 (dash-notes.js): the conversation's daily notes, above it while the 摘要 button is on
   const notes = createNotes();
   const agents = createAgents();                    // the session's subagents (dash-agents.js)

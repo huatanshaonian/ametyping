@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-packager . AmeTyping --platform=win32 --arch=x64 --out=../dist --overwrite --icon=assets/app.ico --asar --asar.unpack=**/*.node --prune=true --win32metadata.ProductName=AmeTyping --win32metadata.FileDescription=AmeTyping"
+    "dist": "electron-packager . AmeTyping --platform=win32 --arch=x64 --out=../dist --overwrite --icon=assets/app.ico --asar --asar.unpack=**/*.node --extra-resource=../remote/agent/claude-profiles.js --prune=true --win32metadata.ProductName=AmeTyping --win32metadata.FileDescription=AmeTyping"
   },
   "dependencies": {
     "uiohook-napi": "^1.5.4"
@@ -18,6 +18,7 @@
   },
   "productName": "AmeTyping",
   "build": {
+    "extraResources": [{ "from": "../remote/agent/claude-profiles.js", "to": "claude-profiles.js" }],
     "appId": "local.ame.typing",
     "productName": "AmeTyping",
     "win": {

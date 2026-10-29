@@ -27,7 +27,8 @@ process.stdin.on('end', () => {
   // transcript + cwd: for the full conversation view and for resuming a closed session
   // api: the alias this session was launched with (AME_CLAUDE_API set by app/claude-api.js or the agent's wrapper),
   // so a later resume can use the same API. Anything else is not a value we accept.
-  const api = /^[A-Za-z0-9._-]{1,40}$/.test(process.env.AME_CLAUDE_API || '') ? process.env.AME_CLAUDE_API : undefined;
+  let api;
+  try { api = require('./remote/agent/claude-profiles').createProfiles().infer() || undefined; } catch {}
   const body = JSON.stringify({ session: p.session_id || null, text, title, project: p.cwd ? path.basename(p.cwd) : '',
     cwd: p.cwd || '', transcript: p.transcript_path || '', pid: process.ppid, api,
     hookEvent: p.hook_event_name, agentId: p.agent_id || '', eventAt });

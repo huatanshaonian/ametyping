@@ -38,7 +38,7 @@ const CLAUDE_KNOWN = [
 const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 
 // codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model
-// claudeApis: the Claude Code API aliases (server/claude-apis.js); machine: the name the NAS uses in them
+// claudeApis: the NAS's local cc-environments profiles; machine is retained for injected test providers.
 function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas' }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
@@ -82,6 +82,12 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     for (const id of claudeApis.ids()) {
       const a = claudeApis.resolve(id, machine);
       if (!a || !a.settings || !Object.keys(a.settings).length) continue;
+      if (a.local) {
+        const model = a.settings.model;
+        if (model) out.push({ slug: 'api:' + id + ':default', name: 'claude-' + id + ' · ' + model,
+          model, api: id, provider: 'claude', efforts: [], defaultEffort: '', note: '本机 cc-environments 的默认模型' });
+        continue;
+      }
       const mode = a.proxy === 'direct' ? '直连' : /^https?:\/\//.test(a.proxy || '') ? '指定代理' : '本机代理';
       for (const m of list) out.push({ ...m, slug: `api:${id}:${m.slug}`, name: `claude-${id} · ${m.name}`, note: `API 别名 ${id}（${mode}）`, api: id, model: m.slug });
     }
