@@ -49,7 +49,7 @@ export function createSlash({ say, machine, provider = () => 'claude', onFill })
     if (t == null) return close();
     const m = machine();
     const p = provider(), leader = say.value[0];
-    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : BUILTIN)];
+    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : p === 'opencode' ? [] : BUILTIN)];
     if (say.disabled || token() !== t || provider() !== p || machine() !== m || say.value[0] !== leader) return;
     const low = t.toLowerCase();
     const starts = all.filter((c) => c.name.toLowerCase().startsWith(low));

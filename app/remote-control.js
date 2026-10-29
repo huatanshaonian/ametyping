@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const { modeFromScreen } = require('./permission-mode');
 const { tidyScreen, plainScreen } = require('./screen-text');
 const codexCli = require('./codex-cli');
+const opencode = require('./opencode');
 const btwPanel = require('./btw-panel');
 const claudeApi = require('./claude-api');
 const { createProfiles } = claudeApi;
@@ -38,6 +39,15 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // the session's process is gone: continue it in the background; its hooks report back like any other
   // session, and the transcript it appends to is the same file the panel shows
   function resumeHeadless(s, text) {
+    if (s.provider === 'opencode') {
+      const cwd = s.cwd && fs.existsSync(s.cwd) ? s.cwd : home();
+      const p = opencode.resume(s.id, cwd, text);
+      if (!p) return { ok: false, msg: '找不到 opencode，没法在后台续聊' };
+      p.once('close', () => { s.headless = false; s.claudePid = null; s.fromPid = null; s.state = 'ended'; s.last = Date.now(); pushBubble(null); });
+      s.headless = true; s.state = 'message'; s.last = Date.now();
+      pushBubble(null);
+      return { ok: true, msg: '这个会话已经关了，在后台用 opencode run 续上（按 OpenCode 的权限规则自动允许未被明确拒绝的操作）' };
+    }
     const codex = s.provider === 'codex';
     const cwd = s.cwd && fs.existsSync(s.cwd) ? s.cwd : home();
     let p;
@@ -81,6 +91,16 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   }
 
   async function chatSend(id, text) {
+    // OpenCode: there is no terminal; the plugin answers through OpenCode's own session API (and it knows the
+    // session even when the panel has not seen it yet -- a session reopened from the dashboard's history)
+    if (String(id).startsWith('opencode:')) {
+      const s = sessions.get(id);
+      if (s && s.state === 'ended') return resumeHeadless(s, text);
+      if (s && asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（面板卡片或终端里）' };
+      const r = await opencode.prompt(id, text);
+      if (r.ok && s) { s.last = Date.now(); }
+      return r;
+    }
     const s = sessions.get(id);
     const t = await terminalOf(s);
     if (t.msg) return { ok: false, msg: t.msg };
@@ -105,6 +125,16 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // "c:text": typed as it is, without Enter -- the letter a menu takes ("s to use this session only", "2" for the
   // second), what goes into a menu's search box, a path
   async function chatKey(id, key, wantScreen = false, hl = false) {
+    // OpenCode's menus live in its terminal, not in the session API; only "interrupt" maps onto a key here
+    if (String(id).startsWith('opencode:')) {
+      if (key !== 'esc' && key !== 'btwfork') return { ok: false, msg: 'OpenCode 没有终端按键；直接发消息即可，Esc 用来中断' };
+      if (key === 'btwfork') return { ok: false, msg: '不支持' };
+      const r = await opencode.interrupt(id);
+      if (!r.ok) return r;
+      if (!wantScreen) return { ok: true };
+      const sc = await opencode.screen(id);
+      return { ok: true, screen: sc.ok ? sc.screen : undefined };
+    }
     const ch = /^c:([^\x00-\x1f\x7f]{1,200})$/.exec(key);
     if (!KEYS.has(key) && !CTRL.test(key) && !ch && key !== 'btwfork') return { ok: false, msg: '不支持的按键' };
     const t = await terminalOf(sessions.get(id));
@@ -124,6 +154,8 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // what the session's terminal shows right now (asked for by you in the dashboard, never polled): Claude Code's own
   // menus and prompts are only there
   async function chatScreen(id, hl = false) {
+    // OpenCode: the conversation the plugin mirrors, rendered as text (its TUI's own menus are not readable here)
+    if (String(id).startsWith('opencode:')) return opencode.screen(id);
     const t = await terminalOf(sessions.get(id));
     if (t.msg) return { ok: false, msg: t.msg };
     if (!t.pid) return { ok: false, msg: '这个会话已经不在终端里运行，没有画面' };
@@ -167,15 +199,44 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     pushBubble(null);
   }
 
+  // An OpenCode session opened again in a window of ours: the plugin registers it the moment it says anything.
+  // Until then the dashboard keeps it as history, where a reply goes through the plugin anyway (chatSend above).
+  async function adoptOpenCode(id, cwd) {
+    for (let n = 0; n < 20; n++) {
+      const m = opencode.metaOf(id);
+      if (m) {
+        const t = Date.now();
+        let s = sessions.get(id);
+        if (!s) { s = { id, provider: 'opencode', rawSession: opencode.rawId(id), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
+        Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: m.pid, fromPid: null, headless: false, terminal: true, transcript: m.transcript, title: s.title || m.title });
+        pushBubble(null);
+        return;
+      }
+      await sleep(500);
+    }
+  }
+
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
   // tool: 'codex' -- a new Codex session instead of Claude Code's
   async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null) {
     const thread = /^codex:/.test(resume) ? resume.slice(6) : '';
-    if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(thread || resume)) return { ok: false, msg: '无效请求' };
+    const ocThread = /^opencode:/.test(resume) ? opencode.rawId(resume) : '';
+    const openMode = !!ocThread || (!resume && tool === 'opencode');
+    if (resume && !openMode && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(thread || resume)) return { ok: false, msg: '无效请求' };
+    if (resume && openMode && !opencode.isId(ocThread)) return { ok: false, msg: '无效请求' };
     if (resume) { const s = sessions.get(resume); if (s && s.claudePid && await procAlive(s.claudePid)) return { ok: false, msg: '这个会话还开着' }; }
     let st; try { st = fs.statSync(cwd); } catch { return { ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }; }
     if (!st.isDirectory()) return { ok: false, msg: '这不是文件夹' };
+    if (openMode) {
+      // OpenCode's TUI in a new console window: -s <session> continues one, --prompt <text> starts with a message
+      const spec = opencode.launchSpec({ resume: ocThread, prompt });
+      if (!spec) return { ok: false, msg: '找不到 opencode' };
+      const pid = await bridge.launch(spec.exe, spec.args, cwd);
+      if (!pid) return { ok: false, msg: '启动失败' };
+      if (ocThread) adoptOpenCode(resume, cwd).catch(() => {});
+      return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个 OpenCode 会话（第一次有动静后出现在列表里）' : '已在这台电脑上打开一个新的命令行窗口启动 OpenCode' };
+    }
     const codex = !!thread || (!resume && tool === 'codex');
     const cx = codex ? codexCli.command() : null;
     const exe = codex ? cx && cx.exe : claudeExe();

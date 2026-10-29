@@ -6,14 +6,16 @@ const { alwaysLabel } = require('./permission-rules');
 // How long a card waits: Claude Code shows its own terminal prompt at the same time, so its hook can wait
 // long (answered either way; permission-hook.js gives up after 60 min) -- the card must not vanish while the
 // terminal still asks. Codex waits for the hook before it asks itself, so its cards stay short.
-const WAIT = { claude: 3590e3, codex: 105e3 };
+// OpenCode shows its own prompt at the same time too (the plugin watches its permission events), so its card may
+// wait as long as Claude's.
+const WAIT = { claude: 3590e3, codex: 105e3, opencode: 3590e3 };
 
 // Claude asking you something (its AskUserQuestion tool: up to four questions, each with options, some with several
 // answers allowed) comes through the same hook as a permission prompt. It is answered by handing the tool's own input
 // back with the answers filled in -- { "<the question>": "<the option's label, labels joined with ", ", or your own
 // words>" } -- which Claude Code takes exactly like an answer given in its terminal. An "allow" without answers it
 // ignores (the terminal keeps asking), so such a card has no 允许.
-const isAsk = (p) => p.provider !== 'codex' && p.tool === 'AskUserQuestion' && Array.isArray(p.input.questions) && p.input.questions.length > 0 &&
+const isAsk = (p) => p.provider === 'claude' && p.tool === 'AskUserQuestion' && Array.isArray(p.input.questions) && p.input.questions.length > 0 &&
   p.input.questions.every((q) => q && typeof q.question === 'string' && q.question);
 function answersFor(p, a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
@@ -55,8 +57,11 @@ function createPermissions(onChange, timeout = WAIT) {
       const id = randomUUID();
       const p = { id, session: d.session, provider: d.provider || 'claude', tool: d.tool, input: d.input || {},
         cwd: d.cwd || '', agentId: d.agentId || '', subagent: d.subagent || '',
-        // what 总是允许 would add (Claude Code's own "don't ask again" suggestions), as one line; '' = no such option
-        always: d.provider === 'codex' ? '' : alwaysLabel(d.suggestions),
+        // what 总是允许 would add (Claude Code's own "don't ask again" suggestions; OpenCode's saved patterns), as
+        // one line; '' = no such option
+        always: d.provider === 'codex' ? '' : d.provider === 'opencode'
+          ? (Array.isArray(d.suggestions) && d.suggestions.length ? '总是允许：' + d.suggestions.join(' ') : '')
+          : alwaysLabel(d.suggestions),
         started: Date.now(), res };
       p.ask = isAsk(p);                                              // Claude's questions: answered, not allowed
       if (p.ask) p.always = '';
@@ -87,10 +92,10 @@ function createPermissions(onChange, timeout = WAIT) {
       return ['allow', 'always', 'deny'].includes(choice) && finish(id, choice, 'decided');
     },
     advance(d) {
-      if (!['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'Interrupt'].includes(d.hookEvent)) return;
+      if (!['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'Interrupt', 'PermissionReplied'].includes(d.hookEvent)) return;
       for (const p of [...pending.values()]) {
         if (p.session !== d.session) continue;
-        if (d.hookEvent !== 'SessionEnd' && p.agentId !== (d.agentId || '')) continue;
+        if (d.hookEvent !== 'SessionEnd' && d.hookEvent !== 'PermissionReplied' && p.agentId !== (d.agentId || '')) continue;
         // Async relays can arrive out of order: the PreToolUse that preceded this prompt must not dismiss it.
         if (d.eventAt && d.eventAt < p.started) continue;
         finish(p.id, undefined, 'advanced');

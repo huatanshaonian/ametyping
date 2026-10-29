@@ -25,6 +25,7 @@ const { lineage } = require('../../app/running-sessions');
 const records = require('./records');
 const commands = require('./commands');
 const codex = require('../../app/codex-records');
+const opencode = require('../../app/opencode-records');
 const { createFiles } = require('./files');
 const { createProfiles } = require('./claude-profiles');
 const claudeProfiles = createProfiles();
@@ -138,15 +139,44 @@ function scan() {
     codexSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: codex.titleOf(m.id) });
   }
   for (const id of [...codexSess.keys()]) if (!cseen.has(id)) codexSess.delete(id);
+  // OpenCode sessions: the plugin's append-only mirror (app/opencode-records.js); the pet reports their live state
+  const oseen = new Set();
+  for (const f of opencode.recentFiles(Math.max(IDLE_DROP_MS, 6 * 3600e3))) {
+    let m = opencodeMeta.get(f.file);
+    if (!m) { m = opencode.metaOf(f.file); if (m) opencodeMeta.set(f.file, m); }
+    if (!m) continue;
+    const id = 'opencode:' + m.id;
+    if (now - f.mtime > IDLE_DROP_MS && !pet.has(id)) continue;
+    oseen.add(id);
+    opencodeSess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title, mtime: f.mtime });
+  }
+  for (const [id] of pet) {                            // still open but quiet longer than the scan window
+    if (!id.startsWith('opencode:') || oseen.has(id)) continue;
+    const file = opencode.fileOf(id);
+    const m = file && (opencodeMeta.get(file) || opencode.metaOf(file));
+    if (!m) continue;
+    oseen.add(id);
+    opencodeSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(id) || m.title, mtime: Date.now() });
+  }
+  for (const id of [...opencodeSess.keys()]) if (!oseen.has(id)) opencodeSess.delete(id);
 }
 const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
 const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
+const opencodeSess = new Map();                      // "opencode:<session id>" -> { file, project, cwd, title }
+const opencodeMeta = new Map();                      // mirror file -> { id, cwd, title }
 let codexAgentRows = new Map();
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
-const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, projectOf,
-  live: (id) => sess.has(id) || codexSess.has(id), stored: (id) => serverOff && serverOff[id] });
+const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, opencode, projectOf,
+  live: (id) => sess.has(id) || codexSess.has(id) || opencodeSess.has(id), stored: (id) => serverOff && serverOff[id] });
 // the transcript of a session id (Claude Code or "codex:<id>"), for checking which files it wrote
 function sessionFile(id) {
+  if (id.startsWith('opencode:')) {
+    const c = opencodeSess.get(id) || archive.map.get(id);
+    if (c) return { file: c.file, opencode: true, cwd: c.cwd };
+    const file = opencode.fileOf(id);
+    const m = file && opencode.metaOf(file);
+    return file ? { file, opencode: true, cwd: m && m.cwd } : null;
+  }
   if (id.startsWith('codex:')) {
     const c = codexSess.get(id) || archive.map.get(id);
     if (c) return { file: c.file, codex: true, cwd: c.cwd };
@@ -212,13 +242,13 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
-    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: d.tool === 'codex' ? 'codex' : 'claude', api: d.tool === 'codex' ? undefined : api || undefined });
-  } else if (d.t === 'resume' && typeof d.id === 'string' && /^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id)) {
+    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', api: d.tool === 'codex' || d.tool === 'opencode' ? undefined : api || undefined });
+  } else if (d.t === 'resume' && typeof d.id === 'string' && (/^opencode:ses_[A-Za-z0-9]{6,80}$/.test(d.id) || /^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id))) {
     // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);
-    const cwd = !f ? '' : f.codex ? f.cwd || '' : records.lastCwd(f.file);   // (where it was last, not where it began; Codex: its folder)
+    const cwd = !f ? '' : f.codex ? f.cwd || '' : f.opencode ? f.cwd || '' : records.lastCwd(f.file);   // (where it was last, not where it began; Codex: its folder)
     if (!cwd) return { ok: false, msg: '这台电脑上找不到这个会话的记录' };
-    r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: d.id.startsWith('codex:') ? undefined : api || undefined });
+    r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: /^(codex|opencode):/.test(d.id) ? undefined : api || undefined });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
   } else return { ok: false, msg: '无效请求' };
@@ -245,9 +275,15 @@ function stateList() {
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
     if (sess.has(id) || line.parked.has(id)) continue;
-    out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
+    out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
       lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [],
       api: typeof p.api === 'string' ? p.api : undefined });
+  }
+  // OpenCode sessions the pet has not reported (the pet restarted, or the session is idle): still list their mirror
+  for (const [id, c] of opencodeSess) {
+    if (pet.has(id) || line.parked.has(id)) continue;
+    out.push({ id, label: c.title || c.project || 'OpenCode', project: c.project || '', state: 'idle', steps: 0,
+      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: [] });
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
@@ -257,7 +293,7 @@ function convOf(id) {
   const c = sess.get(id);
   if (!c) {                                          // pet-only session: its progress lines are all there is
     const p = pet.get(id);
-    return p ? [{ role: 'sys', text: p.provider === 'codex' ? 'Codex 实时进度 · 对话请回到 Codex' : '实时进度', t: p.t0 },
+    return p ? [{ role: 'sys', text: p.provider === 'codex' ? 'Codex 实时进度 · 对话请回到 Codex' : p.provider === 'opencode' ? 'OpenCode 实时进度 · 对话见记录' : '实时进度', t: p.t0 },
       ...(p.lines || []).map((l) => ({ role: 'sys', text: l.text, t: l.t }))] : [];
   }
   return (c.msgs || []).slice(-300).map((m) => ({ role: m.role, text: m.text, items: m.items, t: m.t }));
@@ -345,20 +381,21 @@ function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify
 function pushRecords() {
   if (!serverOff || !ws || ws.readyState !== 1) return;
   archive.scan();
-  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !archive.map.has(id)) readers.delete(id);
+  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !archive.map.has(id)) readers.delete(id);
   // (a terminal parked on a background session: what it still writes is that session's, already sent as such)
-  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id) && !line.parked.has(id));
-  for (const [id, c] of [...sess, ...codexSess, ...old]) {
+  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !line.parked.has(id));
+  for (const [id, c] of [...sess, ...codexSess, ...opencodeSess, ...old]) {
     let r = readers.get(id);
     if (!r || r.file !== c.file) {
       const isCodex = id.startsWith('codex:');
-      r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : undefined); readers.set(id, r);
-      if (isCodex) r.cwd = c.cwd || null;
+      const isOpenCode = id.startsWith('opencode:');
+      r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : isOpenCode ? opencode.recordsOf : undefined); readers.set(id, r);
+      if (isCodex || isOpenCode) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
       r.sentTitle = c.title || '';
     }
-    if (id.startsWith('codex:') && r.sentTitle !== (c.title || '')) {
+    if ((id.startsWith('codex:') || id.startsWith('opencode:')) && r.sentTitle !== (c.title || '')) {
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
       r.sentTitle = c.title || '';
     }

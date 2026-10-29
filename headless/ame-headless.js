@@ -23,6 +23,8 @@ const { tidyScreen, plainScreen } = require('../app/screen-text');
 const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
 const codexSessions = require('../app/codex-sessions');
 const codexRecords = require('../app/codex-records');
+const opencode = require('../app/opencode');
+const opencodeRecords = require('../app/opencode-records');
 const { resume } = require('./resume');
 const claudeApi = require('../app/claude-api');
 const { launch } = require('./launch');
@@ -38,6 +40,7 @@ const paneIo = (s) => ({ screen: () => tmux.screen(s.target), key: (k) => tmux.k
 // ---- where does a session live: its Claude process and tmux pane (looked up from the hook's parent pid) ----
 function locate(s, pid) {
   if (!s || !pid || s.fromPid === pid) return;
+  if (s.provider === 'opencode') return;               // its pid is OpenCode's server: no terminal, the plugin is the channel
   const c = s.provider === 'codex' ? proc.findCodex(pid) : proc.findClaude(pid);
   if (!c) return;
   s.fromPid = pid;
@@ -63,6 +66,20 @@ function asking(s) {
   return s.state === 'waiting' && !!last && /确认/.test(last.text);
 }
 async function chatSend(id, text) {
+  // OpenCode: no terminal and no tmux pane; the plugin answers through OpenCode's own session API
+  if (String(id).startsWith('opencode:')) {
+    const oc = sessions.map.get(id);
+    if (oc && oc.state === 'ended') {
+      const cwd = oc.cwd && fs.existsSync(oc.cwd) ? oc.cwd : process.cwd();
+      const p = opencode.resume(id, cwd, text, oc.env || process.env);
+      if (!p) return { ok: false, msg: '找不到 opencode，没法在后台续聊' };
+      p.once('close', () => Object.assign(oc, { headless: false, claudePid: null, fromPid: null, state: 'ended', last: Date.now() }));
+      Object.assign(oc, { headless: true, state: 'message', last: Date.now() });
+      return { ok: true, msg: '这个会话已经关了，在后台用 opencode run 续上（按 OpenCode 的权限规则自动允许未被明确拒绝的操作）' };
+    }
+    if (oc && asking(oc)) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
+    return opencode.prompt(id, text);
+  }
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
   if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
@@ -92,6 +109,14 @@ async function chatSend(id, text) {
 
 // one navigation key into the session's tmux pane (menus and prompts are what it is for)
 async function chatKey(id, key, wantScreen = false, hl = false) {
+  if (String(id).startsWith('opencode:')) {
+    if (key !== 'esc') return { ok: false, msg: 'OpenCode 没有终端按键；直接发消息即可，Esc 用来中断' };
+    const r = await opencode.interrupt(id);
+    if (!r.ok) return r;
+    if (!wantScreen) return { ok: true };
+    const sc = await opencode.screen(id);
+    return { ok: true, screen: sc.ok ? sc.screen : undefined };
+  }
   if (!tmux.KEYS[key] && !tmux.CHAR.test(key) && key !== 'btwfork') return { ok: false, msg: '不支持的按键' };
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
@@ -110,6 +135,7 @@ async function chatKey(id, key, wantScreen = false, hl = false) {
 
 // what the session's tmux pane shows right now (asked for in the dashboard, never polled): Claude Code's own menus
 async function chatScreen(id, hl = false) {
+  if (String(id).startsWith('opencode:')) return opencode.screen(id);
   const s = sessions.map.get(id);
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
   if (!s.claudePid || !proc.alive(s.claudePid, s.claudeComm)) return { ok: false, msg: '这个会话已经不在终端里运行，没有画面' };
@@ -162,7 +188,7 @@ async function onControl(req, res, body) {
     const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
     const resume = typeof d.resume === 'string' ? d.resume : '';
     if (resume) { const s = sessions.map.get(resume); if (s && s.claudePid && proc.alive(s.claudePid, s.claudeComm)) return out(200, { ok: false, msg: '这个会话还开着' }); }
-    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: d.tool === 'codex' ? 'codex' : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api }));
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

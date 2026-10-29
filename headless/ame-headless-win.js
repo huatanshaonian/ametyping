@@ -111,7 +111,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await rc.launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', d.tool === 'codex' ? 'codex' : 'claude', d.api));
+    return out(200, await rc.launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', d.api));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
@@ -137,14 +137,14 @@ const server = http.createServer((req, res) => {
       if (typeof d.session !== 'string' || !d.session || typeof d.tool !== 'string' || !d.tool) { res.writeHead(400); res.end('{}'); return; }
       permissions.add(d, res);                                      // held open until decided / timed out / hook gone
       sessions.event('waiting', { ...d, text: `需要确认：${d.tool}` });
-      if (d.pid) locate(sessions.map.get(d.session), d.pid).catch(() => {});
+      if (d.pid && d.provider !== 'opencode') locate(sessions.map.get(d.session), d.pid).catch(() => {});
       return;
     }
     if (!m) { res.writeHead(404); res.end(); return; }
     permissions.advance(d);
     // the hook waits for this answer, so its parent process is still alive while we look it up (briefly: the bridge's
     // first start takes a moment, and the hook must not hold Claude Code up for it)
-    if (d.pid && m[1] !== 'quit') {
+    if (d.pid && m[1] !== 'quit' && d.provider !== 'opencode') {
       const s = sessions.ensure(d.session || 'unknown', d);
       sessions.event(m[1], d);
       await Promise.race([locate(s, d.pid).catch(() => {}), new Promise((r) => setTimeout(r, 300))]);

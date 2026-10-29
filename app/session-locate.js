@@ -11,6 +11,8 @@ const codexSessions = require('./codex-sessions');
 const { inTerminal } = require('./session-terminal');
 
 const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
+// OpenCode's server process (the plugin's host): a session's pid is that process, not a CLI of its own
+const OPENCODE_EXE = /^opencode(\.exe)?$/i;
 const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|WindowsTerminal|OpenConsole|conhost|explorer|wezterm-gui|alacritty|mintty|Tabby|Hyper|ConEmu64|ConEmuC64|ConEmu|ConEmuC|wsl|wslhost|tmux)\.exe$/i;
 
 // bridge: the console bridge (bridge.js); onChange(): a session's terminal became known (the reply box may be usable)
@@ -44,9 +46,9 @@ function createLocator({ bridge, onChange = () => {} }) {
     try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') return false; }
     const c = await bridge.ancestors(pid);
     if (!c.length) return true;
-    return CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name);   // same pid, still that process (not a reused pid)
+    return CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name) || OPENCODE_EXE.test(c[0].name);   // same pid, still that process (not a reused pid)
   }
   return { locate, procAlive };
 }
 
-module.exports = { CLAUDE_EXE, TERM_HOSTS, createLocator };
+module.exports = { CLAUDE_EXE, OPENCODE_EXE, TERM_HOSTS, createLocator };

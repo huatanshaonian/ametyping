@@ -159,6 +159,11 @@ if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path 
   & $node (Join-Path $Dir 'install-codex-hooks.js')
   $codexHooks = $true
 }
+if ((Get-Command opencode -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.config\opencode')) -or (Test-Path (Join-Path $env:USERPROFILE '.local\bin\opencode.cmd'))) {
+  Step '安装 OpenCode 插件（原配置会先备份）'
+  & $node (Join-Path $Dir 'install-opencode-plugin.js')
+  $opencodePlugin = $true
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 Step '开机自启（登录后在后台运行）'
@@ -199,3 +204,4 @@ Info ('agent：' + $(if ($agentUp) { '已启动（后台）' } else { '没有启
 Info '以后每次登录 Windows 都会自动启动；打开 https://win98.huatan.org 应能在「网上邻居」里看到这台电脑。'
 Info '已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
 if ($codexHooks) { Info 'Codex：下次打开 Codex 时会问是否信任这几条 hooks，选信任后才生效。' }
+if ($opencodePlugin) { Info 'OpenCode：插件已写进 %USERPROFILE%\.config\opencode\opencode.json，重开 OpenCode（或 /reload）后生效。' }

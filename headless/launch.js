@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { codexBin, threadOf } = require('./codex');
+const opencode = require('../app/opencode');
 const claudeApi = require('../app/claude-api');
 
 const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|LANG|LC_ALL)$/;
@@ -37,9 +38,26 @@ function claudeBin(env) {
 function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null }) {
   return new Promise((resolve) => {
     const thread = threadOf(resume);
-    if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
+    const ocThread = /^opencode:/.test(resume) ? opencode.rawId(resume) : '';
+    const openMode = !!ocThread || (!resume && tool === 'opencode');
+    if (resume && openMode) { if (!opencode.isId(ocThread)) return resolve({ ok: false, msg: '无效请求' }); }
+    else if (resume && !thread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
     let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
+    if (openMode) {
+      const oc = opencode.command(env);
+      if (!oc) return resolve({ ok: false, msg: '找不到 opencode' });
+      const tag = crypto.randomBytes(3).toString('hex');
+      const name = `opencode-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
+      const first = String(prompt || '').trim();
+      const args = [...oc.args, ...(ocThread ? ['-s', ocThread] : first ? ['--prompt', first] : [])];
+      const cmd = `exec ${q(oc.exe)}${args.map((a) => ' ' + q(a)).join('')}`;
+      newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
+        if (err) return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) });
+        resolve({ ok: true, msg: ocThread ? `已在 tmux 会话「${name}」里接着这个 OpenCode 对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动 OpenCode（ssh 上去 tmux attach -t ${name} 可接手）` });
+      });
+      return;
+    }
     const codex = !!thread || (!resume && tool === 'codex');
     const bin = codex ? codexBin(env) : claudeBin(env);
     if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : '找不到 claude' });

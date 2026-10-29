@@ -1,0 +1,10 @@
+{
+  "name": "ametyping-opencode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AmeTyping bridge for OpenCode: session progress, conversation archive, remote replies and permission cards",
+  "exports": {
+    ".": "./index.js"
+  }
+}
