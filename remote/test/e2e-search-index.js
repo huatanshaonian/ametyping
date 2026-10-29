@@ -45,6 +45,12 @@ const until = async (f, ms = 20000) => { const t0 = Date.now(); while (!f() && D
     const r2 = index.find(['网格', '加密'], {});
     chk('incremental: the new session is found right after the store wrote it', r2.some((s) => s.session === 'D'), r2);
     chk('ranking: a record with every term first (A), then the newer spread one (D)', r2[0].session === 'A' && r2[0].all && r2[1].session === 'D' && !r2[1].all, r2.map((s) => [s.session, s.all]));
+    // the same record stored/indexed twice (the old OpenCode plugin bug): one passage, not two
+    put('pc', 'E', [{ role: 'user', text: '重复搜索', t: t(22, 1), u: 'dup', i: 0 }, { role: 'user', text: '重复搜索', t: t(22, 1), u: 'dup', i: 0 }]); st.flush();
+    const rdup = index.find(['重复搜索'], {});
+    chk('a duplicate record: one hit, not two', rdup.length === 1 && rdup[0].hits.length === 1, rdup);
+    const rdupLike = index.find(['重'], {});
+    chk('the same for a one-character term (scan path)', (rdupLike.find((s) => s.session === 'E') || {}).hits.length === 1, rdupLike);
     // rebuild: deleted
     index.close(); for (const s of ['', '-wal', '-shm']) try { fs.unlinkSync(path.join(D, 'search.db' + s)); } catch {}
     index = idx.open({ dataDir: D }); index.sweep(); await until(() => index.ready());
