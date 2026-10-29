@@ -31,6 +31,9 @@ const { createProfiles } = require('./claude-profiles');
 const claudeProfiles = createProfiles();
 const { createFsServe } = require('./fs-serve');
 const { createArchive } = require('./archive');
+const { createNativeArchive } = require('./native-archive');
+const { createMemorySync } = require('./memory-sync');
+const { createOpenCodeExport } = require('./opencode-export');
 const { createArtifacts } = require('./artifacts');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
@@ -51,6 +54,11 @@ const profileView = () => CONTROL ? claudeProfiles.list() : { profiles: [], alia
 // file browsing for the dashboard (agent.json "files": { roots, exclude }); off unless configured; uploads into those
 // folders only with "upload": true there (fs-upload.js)
 const browse = createFiles(cfg.files);
+const nativeArchive=createNativeArchive({send:sendJSON,enabled:cfg.fullArchive!==false,log:console.error});
+const openCodeExport=createOpenCodeExport({log:console.error});
+const memorySync=createMemorySync({name:NAME,send:sendJSON,folder:p=>browse.writableFolder(p),
+  canWrite:()=>CONTROL&&cfg.memory!==false,confirmedDir:cfg.memory&&cfg.memory.confirmedDir||'',
+  enabled:cfg.memory!==false,autoApply:!(cfg.memory&&cfg.memory.autoApply===false)});
 const fsServe = createFsServe(browse, (o) => sendJSON(o), { sessionFile: (id) => sessionFile(id) });
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
@@ -312,16 +320,20 @@ function connect() {
     retry = 2000;
     console.log(`已连接看板服务器，机器名「${NAME}」`);
     socket.send(JSON.stringify({ t: 'hello', machine: NAME, control: controlOn(), claudeProfilesVersion: 1,
+      vaultVersion:cfg.fullArchive===false?0:1,memoryVersion:1,memoryAllowed:CONTROL&&cfg.memory!==false,
       claudeProfilesAllowed: CONTROL, claudeProfiles: profileView(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
     lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
+    nativeArchive.ready();memorySync.reset();
     tick(true);
   });
   socket.on('message', (raw) => {
     if (socket !== ws) return;
     // honoured from the server: a request to read a conversation, and (only with "control": true) send / decide
     let d; try { d = JSON.parse(raw); } catch { return; }
+    if(nativeArchive.handle(d))return;
+    if(d.t==='memory-bundle'){memorySync.handle(d).catch(e=>console.error('记忆同步失败：'+e.message));return;}
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
     else if (d.t === 'sync' && d.offsets && typeof d.offsets === 'object') {
       // where the server stands per session: (re)start streaming there
@@ -372,7 +384,7 @@ function connect() {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });
-  socket.on('close', () => { if (socket !== ws) return; ws = null; fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
+  socket.on('close', () => { if (socket !== ws) return; ws = null; nativeArchive.reset();memorySync.reset();fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
   socket.on('error', () => { try { socket.close(); } catch {} });
 }
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
@@ -474,5 +486,6 @@ async function tick(force) {
   } finally { ticking = false; }
 }
 setInterval(tick, SCAN_MS);
+setInterval(()=>{nativeArchive.tick();if(cfg.fullArchive!==false)openCodeExport.tick();memorySync.tick().catch(e=>console.error('记忆采集失败：'+e.message));},500).unref();
 connect();
 console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；文件浏览：${browse.enabled ? '开' : '关'}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);

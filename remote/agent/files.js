@@ -154,7 +154,12 @@ function createFiles(cfg) {
   }
 
   const canUpload = enabled && cfg.upload === true;
-  return { enabled, canUpload, roots, list, open, folder, target, resolve };
+  async function writableFolder(p) {
+    const dir=await folder(p),at=await rootOf(dir);
+    if(at.r.readOnly)throw new Error('这个位置只读');
+    return dir;
+  }
+  return { enabled, canUpload, roots, list, open, folder, writableFolder, target, resolve };
 }
 
 module.exports = { createFiles, denied, MAX };

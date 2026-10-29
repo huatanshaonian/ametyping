@@ -3,6 +3,8 @@
   "token": "node server/setup.js add-agent <name> 打印出来的令牌",
   "name": "本机名",
   "control": false,
+  "fullArchive": true,
+  "memory": { "autoApply": true },
   "files": {
     "roots": [
       "/home/你的用户名"

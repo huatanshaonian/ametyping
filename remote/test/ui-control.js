@@ -83,8 +83,8 @@ function login() {
       n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|文献' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 9 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the ten items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|记忆与存档|文献' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 10 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
     for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '刷新电脑配置'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
@@ -127,6 +127,13 @@ function login() {
     await sleep(900);
     const savedProfile = await evalJs("fetch('/api/claude-apis?machine=nas').then(r=>r.json()).then(v=>({model:v.profiles[0].model,hasCredential:v.profiles[0].hasCredential,raw:JSON.stringify(v)}))");
     chk('saving through the editor changes the local model and preserves the blank key without echoing it', savedProfile.model === 'deepseek-ui[1m]' && savedProfile.hasCredential && !savedProfile.raw.includes('sk-ui-test'), savedProfile.model);
+    await evalJs("[...document.querySelectorAll('.cp-item')].find(b=>b.textContent.includes('记忆与存档')).click()");await sleep(900);
+    chk('记忆与存档 opens with SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局')"));
+    await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='新增记忆').click();document.querySelector('.knowledge-editor input[placeholder=记忆名称]').value='界面记忆';document.querySelector('.knowledge-body').value='中文与 emoji 🌈';document.querySelector('.knowledge-editor').requestSubmit()");await sleep(900);
+    chk('memory form publishes Unicode text to SQLite',await evalJs("fetch('/api/knowledge').then(r=>r.json()).then(d=>d.memories.some(m=>m.name==='界面记忆'&&m.body==='中文与 emoji 🌈'))"));
+    await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='完整会话').click()");await sleep(400);
+    chk('full archive panel explains completeness and download boundaries',await evalJs("document.querySelector('.knowledge').textContent.includes('原生会话按字节保存')"));
+    await shot('84-control-knowledge.png');
     // the old ways in land on their page
     await evalJs("(async () => (await import('/js/apps/calendar.js')).open())()"); await sleep(1500);
     await evalJs("[...document.querySelectorAll('.cal-g .rs-link')].find(b => b.textContent.includes('连接 Google')).click()"); await sleep(1200);

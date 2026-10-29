@@ -52,7 +52,7 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
 
 (async () => {
   const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
-  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, FAKE_CODEX_LOG: LOG, FAKE_CODEX_VERSION: VER, FAKE_CODEX_NEXT: '0.160.0', AME_SUMMARY_TICK_MS: '600000',
+  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, AME_CC_HOME:path.join(T,'cc-environments'), FAKE_CODEX_LOG: LOG, FAKE_CODEX_VERSION: VER, FAKE_CODEX_NEXT: '0.160.0', AME_SUMMARY_TICK_MS: '600000',
     FAKE_CLAUDE_LOG: CLOG, FAKE_CLAUDE_VERSION: CVER, FAKE_CLAUDE_NEXT: '2.1.290', FAKE_CODEX_FAIL_FILE: CODEX_DOWN, FAKE_CLAUDE_FAIL_FILE: CLAUDE_DOWN };
   cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...env, AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' } });
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;

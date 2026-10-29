@@ -193,6 +193,10 @@ export default {
 
     // ---------- the event stream ----------
     async function onEvent(ev) {
+      // Full event journal includes deltas, failures and child sessions; never replay this as a command queue.
+      if(ev&&typeof ev.type==='string'&&(!ev.location?.directory||norm(ev.location.directory)===location)&&/^ses_[A-Za-z0-9]{6,100}$/.test(ev.data?.sessionID||'')){
+        append(path.join(ROOT,'events',ev.data.sessionID+'.jsonl'),ev);
+      }
       if (!ev || typeof ev.type !== 'string' || !WATCH.has(ev.type)) return;
       if (ev.location && ev.location.directory && norm(ev.location.directory) !== location) return;
       if (ev.id) {

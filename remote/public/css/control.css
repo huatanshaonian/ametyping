@@ -52,6 +52,13 @@
 .nt .nt-empty, .nt .nt-foot { color: var(--muted); font-size: 12px; }
 .nt .nt-foot { margin-top: 12px; line-height: 1.6; }
 .aim-key { flex: 1 1 180px; min-width: 0; max-width: 340px; }
+.knowledge-row { display:flex; flex-direction:column; gap:5px; padding:8px 0; border-bottom:1px dotted var(--edge); overflow-wrap:anywhere; }
+.knowledge-row small { color:var(--muted); }
+.knowledge-editor { display:flex; flex-direction:column; gap:8px; margin:10px 0; }
+.knowledge-editor label { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.knowledge-editor label .field { flex:1 1 220px; min-width:0; }
+.knowledge-body { width:100%; min-height:260px; font:12px/1.6 Consolas,monospace; resize:vertical; }
+.knowledge pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:420px; overflow:auto; }
 
 /* Claude Code API (apps/claude-apis.js) */
 .capi-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }

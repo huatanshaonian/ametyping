@@ -39,6 +39,8 @@ const { serveVendor } = require('./vendor');
 const { createEgress } = require('./egress');
 const { createProfiles } = require('../agent/claude-profiles');
 const { createProfileRequests, profilesView } = require('./claude-profile-requests');
+const { createVaultService } = require('./vault/service');
+const { attachLocal } = require('./vault/local');
 const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
 const { createPush } = require('./push');
@@ -194,6 +196,11 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
+  fresh:auth.isFresh,audit,log:console.error});
+// Opt-in for the server host so disposable/test servers never inspect the invoking user's home.
+const hostKnowledge=cfg.knowledge&&cfg.knowledge.local===true?attachLocal({service:knowledge,machine:machine('nas'),control:CONTROL,
+  archive:cfg.knowledge.archive!==false,memory:cfg.knowledge.memory!==false,confirmedDir:cfg.knowledge.confirmedDir||''}):null;
 // The NAS uses its own cc-environments for AI jobs; remote machines report public entry metadata only.
 const hostProfiles = createProfiles();
 const claudeApis = { ids: () => hostProfiles.list().aliases.map(p => p.id),
@@ -281,8 +288,9 @@ function mailAlert(alert) {
   for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) { try { sock.send(JSON.stringify({ t: 'mail-alert', alert: a })); } catch {} }
 }
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
-if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup, log: console.log });
-function flushAndExit() { try { store.flush(); } catch {} process.exit(0); }
+if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
+  before:()=>knowledge.vault.snapshot(path.join(path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),'knowledge-backup.sqlite')),log: console.log });
+function flushAndExit() { try { hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -305,6 +313,7 @@ const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
+  if(knowledge.message(m.name,d,ws))return;
   if (d.t === 'hello') {
     ws.remoteControlAllowed = d.control === true; ws.filesAllowed = d.files === true; ws.uploadAllowed = d.upload === true;
     updateMachineCapabilities(m);
@@ -581,6 +590,7 @@ const server = http.createServer(async (req, res) => {
   if (serveVendor(req, res, p, send)) return;                                   // pdf.js (its modules, character maps, fonts)
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
+  if(await knowledge.handle(req,res,url,sess,json,send,readBody))return;
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
   // the machines allowed to connect (添加电脑): listing is free, changing needs a code entered within the hour
   if (req.method === 'GET' && p === '/api/agents') return json(res, 200, { items: agentsAdmin.list() });
