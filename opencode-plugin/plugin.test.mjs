@@ -58,7 +58,7 @@ test('a stand-in OpenCode server drives the real plugin', { timeout: 30000 }, as
     { id: 'm2', type: 'assistant', time: { created: 1700000001000, completed: 1700000002000 }, finish: 'stop', content: [{ type: 'text', text: '你好呀' }] },
   ];
   const sessionID = 'ses_plugin0001';
-  const info = { id: sessionID, title: '演示会话', location: { directory: PROJ }, time: { created: 1, updated: 2 } };
+  const info = { id: sessionID, title: '演示会话', location: { directory: PROJ }, model: { providerID: 'deepseek', id: 'deepseek-chat' }, time: { created: 1, updated: 2 } };
   const ctx = {
     location: { directory: PROJ },
     app: { version: 'test' },
@@ -84,7 +84,7 @@ test('a stand-in OpenCode server drives the real plugin', { timeout: 30000 }, as
 
   // event -> Ame, and the conversation mirror
   const ev = (type, data = {}) => q.push({ id: 'evt' + Math.random(), type, location: { directory: PROJ }, data: { sessionID, ...data } });
-  ev('session.created', { title: '演示会话', location: { directory: PROJ } });
+  ev('session.created', { title: '演示会话', location: { directory: PROJ }, model: { providerID: 'deepseek', id: 'deepseek-chat' } });
   ev('session.inbox.delivered');
   ev('session.execution.started');
   ev('session.text.ended', { text: '你好呀' });
@@ -93,10 +93,12 @@ test('a stand-in OpenCode server drives the real plugin', { timeout: 30000 }, as
   assert.ok(await until(() => received.some((e) => e.url === '/event/done')), JSON.stringify(received));
   assert.ok(received.some((e) => e.url === '/event/thinking' && e.body.provider === 'opencode'));
   assert.ok(received.some((e) => e.url === '/event/message'));
+  assert.ok(received.some((e) => e.body.modelProvider === 'deepseek' && e.body.modelID === 'deepseek-chat'));
   const mirror = path.join(ROOT, 'sessions', `${sessionID}.jsonl`);
   assert.ok(await until(() => fs.existsSync(mirror) && /你好呀/.test(fs.readFileSync(mirror, 'utf8')), 5000));
   const lines = fs.readFileSync(mirror, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(lines[0].type, 'meta');
+  assert.equal(lines[0].modelProvider, 'deepseek');
   assert.ok(lines.some((l) => l.role === 'user' && l.text === '你好'));
   assert.ok(lines.some((l) => l.role === 'assistant' && l.text === '你好呀'));
 

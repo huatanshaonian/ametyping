@@ -64,6 +64,11 @@ function cleanX(x) {
 // message that always begins with this sentence. Read as the note the agent sends now (the files are left as they are).
 const COMPACTED = 'This session is being continued from a previous conversation that ran out of context.';
 const asRead = (r) => (r && r.role === 'user' && typeof r.text === 'string' && r.text.startsWith(COMPACTED) ? { ...r, role: 'sys', text: '（上下文已压缩）' } : r);
+// the model a session runs on (OpenCode): { providerID, id }, and the provider mark for its badge { slug, name }
+const cleanModel = (m) => (m && typeof m === 'object' && /^[A-Za-z0-9._-]{1,40}$/.test(String(m.providerID || ''))
+  ? { providerID: String(m.providerID).slice(0, 40), id: String(m.id == null ? '' : m.id).slice(0, 80) } : null);
+const cleanAi = (a) => (a && typeof a === 'object' && /^[a-z0-9-]{1,32}$/.test(String(a.slug || ''))
+  ? { slug: String(a.slug).slice(0, 32), name: String(a.name == null ? '' : a.name).slice(0, 48) } : null);
 
 function createStore(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -125,6 +130,8 @@ function createStore(dir) {
     if (typeof d.project === 'string' && d.project) e.project = d.project.slice(0, 60);
     if (typeof d.title === 'string' && d.title) e.title = d.title.slice(0, 80);
     if (typeof d.cwd === 'string' && d.cwd) e.cwd = d.cwd.slice(0, 500);
+    if (d.model) { const m = cleanModel(d.model); if (m) e.model = m; }
+    if (d.ai) { const a = cleanAi(d.ai); if (a) e.ai = a; }
     if (recs.length) {
       e.last = Math.max(e.last, recs[recs.length - 1].t);
       if (!e.first || recs[0].t < e.first) e.first = recs[0].t;
@@ -220,6 +227,9 @@ function createStore(dir) {
     for (const [k, n] of [['project', 60], ['title', 80], ['cwd', 500], ['api', 40]]) {
       if (typeof d[k] === 'string' && d[k] && e[k] !== d[k].slice(0, n)) { e[k] = d[k].slice(0, n); changed = true; }
     }
+    const model = cleanModel(d.model), ai = cleanAi(d.ai);
+    if (model && JSON.stringify(model) !== JSON.stringify(e.model)) { e.model = model; changed = true; }
+    if (ai && JSON.stringify(ai) !== JSON.stringify(e.ai)) { e.ai = ai; changed = true; }
     if (changed) dirty = true;
   }
   // every stored session that has said something: machine -> [{ id, project, title, cwd, first, last }]
@@ -227,7 +237,7 @@ function createStore(dir) {
     const out = {};
     for (const [m, ids] of Object.entries(state)) {
       out[m] = Object.entries(ids).filter(([, e]) => e.last > 0)
-        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null, api: e.api || '' }));
+        .map(([id, e]) => ({ id, project: e.project, title: e.title, cwd: e.cwd || '', first: e.first || e.last, last: e.last, mode: e.mode || '', ctx: e.ctx || null, api: e.api || '', model: e.model || null, ai: e.ai || null }));
     }
     return out;
   }
@@ -263,4 +273,4 @@ function createStore(dir) {
   return { accept, extra, meta, flush, tail, offsets, has, info, sessions, records, lastActivity, onAppend };
 }
 
-module.exports = { createStore };
+module.exports = { createStore, cleanModel, cleanAi };

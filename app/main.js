@@ -638,7 +638,7 @@ function pushBubble(changedId) {
   if (!bubbleWin) return;
   const list = listed().sort((x, y) => x.born - y.born).map((s) => ({   // stable order: cards never jump
     id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last, bg: sessionLineage().bg.has(s.id),
-    provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id),
+    provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id), ai: s.ai || undefined, model: s.model || undefined,
   }));
   sendPanel();
   if (!list.length && !chatMode()) { hideBubble(); return; }
@@ -680,6 +680,8 @@ function onClaudeEvent(type, d) {
   if (d.title) s.title = String(d.title).slice(0, 60);
   if (d.transcript) s.transcript = String(d.transcript);
   if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
+  if (d.model) s.model = d.model;
+  if (d.ai) s.ai = d.ai;
   if (apiId(d.api)) s.api = apiId(d.api);
   // OpenCode has no per-session process and no terminal to type into: the plugin's host (the OpenCode server) is
   // what is alive, and a reply goes through its API. `terminal` means "can be replied to from the panel".
@@ -763,6 +765,7 @@ function controlState() {
   return listed().sort((x, y) => x.born - y.born).map((s) => ({
     id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
     t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8), btw: btwList(s), api: s.api || undefined,
+    ai: s.ai || undefined, model: s.model || undefined,
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));

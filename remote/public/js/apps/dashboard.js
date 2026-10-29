@@ -1,7 +1,7 @@
 // 糖糖看板 as a desktop window: every computer's sessions (newest first, the current computer on top), the chosen
 // session's conversation, its permission cards, navigation keys for the terminal's menus, and the reply box.
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
-import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW } from '../util.js';
+import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW, aiMark } from '../util.js';
 import * as net from '../net.js';
 import * as ctxmenu from '../ctxmenu.js';
 import { inline, follow } from './dash-paths.js';
@@ -250,9 +250,12 @@ function mount(current) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
     if (s) {
-      const p = provOf(s.id);
-      hname.prepend(h('span', { class: 'prov ' + (p === 'codex' ? 'cdx' : p === 'opencode' ? 'opn' : 'cla'),
-        title: p === 'codex' ? 'Codex 的会话' : p === 'opencode' ? 'OpenCode 的会话' : 'Claude Code 的会话' }));
+      const p = provOf(s.id), ai = p === 'opencode' ? aiMark(s) : null;
+      const mark = p === 'opencode'
+        ? h('span', { class: 'provs', title: 'OpenCode' + (ai ? ' · ' + ai.name : '') },
+          h('span', { class: 'prov opn' }), ai ? h('span', { class: 'prov ai ai-' + ai.slug, title: ai.name }) : null)
+        : h('span', { class: 'prov ' + (p === 'codex' ? 'cdx' : 'cla'), title: p === 'codex' ? 'Codex 的会话' : 'Claude Code 的会话' });
+      hname.prepend(mark);
     }
     hmeta.textContent = s ? `${machine}${s.project ? ' · ' + s.project : ''}${s.online ? '' : ' · 离线'}` : '';
     // context left (from the last reply's token count); warned about when it runs low

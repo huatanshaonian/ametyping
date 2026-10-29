@@ -20,6 +20,8 @@ fs.writeFileSync(path.join(MIRROR, `${SID}.jsonl`),
   line({ v: 1, uuid: 'm1:user', timestamp: at, cwd: CWD, role: 'user', text: '把 opencode 接上看板', mid: 'm1' }) +   // the old multi-instance bug wrote it twice
   line({ v: 1, uuid: 'm2:tool:c1', timestamp: at, cwd: CWD, role: 'tool', items: ['运行 npm test'], x: { op: 'cmd', cmd: 'npm test' } }) +
   line({ v: 1, uuid: 'm2:text', timestamp: at, cwd: CWD, role: 'assistant', text: '接好了。', mid: 'm2' }));
+fs.writeFileSync(path.join(MIRROR, `${SID}.json`), JSON.stringify({ v: 1, id: SID, provider: 'opencode', pid: process.pid,
+  directory: CWD, cwd: CWD, title: 'OpenCode 测试', modelProvider: 'deepseek', modelID: 'deepseek-chat', transcript: path.join(MIRROR, `${SID}.jsonl`), updated: Date.now() }));
 
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 const PORT = 18805, PET = 18806;
@@ -84,6 +86,7 @@ async function until(fn, ms = 15000) { const t0 = Date.now(); while (Date.now() 
     ok('title from the mirror', s.label === 'OpenCode 测试', s.label);
     ok('resume with "opencode -s <id>" in its folder', typeof s.resume === 'string' && s.resume.includes('opencode -s ' + SID) && s.resume.includes('ocproj'), s.resume);
     ok('permission card keeps the OpenCode provider', (s.perms || []).some((p) => p.provider === 'opencode' && p.tool === 'bash'), JSON.stringify(s.perms));
+    ok('the session’s AI provider reaches the badge', s.ai && s.ai.slug === 'deepseek' && s.ai.name === 'DeepSeek' && s.model && s.model.providerID === 'deepseek', JSON.stringify([s.ai, s.model]));
     ws.send(JSON.stringify({ t: 'watch', machine: 'box', id: ID }));
     await until(() => convs.length > 0, 5000);
     const msgs = convs.length ? convs[convs.length - 1].msgs : [];

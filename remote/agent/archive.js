@@ -5,6 +5,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { aiOf } = require('../../app/ai-providers');
 
 // deps: claudeFiles() -> [{ id, file, mtime }], codex (app/codex-records.js), opencode (app/opencode-records.js),
 //       projectOf(file), live(id) -> bool, stored(id) -> the server's byte offset (undefined: nothing stored)
@@ -37,7 +38,7 @@ function createArchive({ days = 30, claudeFiles, codex, opencode, projectOf, liv
         if (!m) continue;
         const id = 'opencode:' + m.id;
         if (live(id) || map.has(id) || !behind(id, f.file)) continue;
-        map.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title });
+        map.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title, model: m.model || null, ai: aiOf(m.model) });
       }
     }
     return map;

@@ -81,6 +81,7 @@ function controlState() {
   return sessions.list().filter((s) => !parked.has(s.id)).map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s), bg: bg.has(s.id),
     t0: s.t0, last: s.last, lines: s.lines.slice(-8), btw: rc.btwList(s), api: s.api || undefined,
+    ai: s.ai || undefined, model: s.model || undefined,
     perms: permissions.list(s.id).map((p) => ({ id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
       input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000) })),
   }));

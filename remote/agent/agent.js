@@ -26,6 +26,7 @@ const records = require('./records');
 const commands = require('./commands');
 const codex = require('../../app/codex-records');
 const opencode = require('../../app/opencode-records');
+const { aiOf } = require('../../app/ai-providers');
 const { createFiles } = require('./files');
 const { createProfiles } = require('./claude-profiles');
 const claudeProfiles = createProfiles();
@@ -142,28 +143,26 @@ function scan() {
   // OpenCode sessions: the plugin's append-only mirror (app/opencode-records.js); the pet reports their live state
   const oseen = new Set();
   for (const f of opencode.recentFiles(Math.max(IDLE_DROP_MS, 6 * 3600e3))) {
-    let m = opencodeMeta.get(f.file);
-    if (!m) { m = opencode.metaOf(f.file); if (m) opencodeMeta.set(f.file, m); }
+    const m = opencode.metaOf(f.file);
     if (!m) continue;
     const id = 'opencode:' + m.id;
     if (now - f.mtime > IDLE_DROP_MS && !pet.has(id)) continue;
     oseen.add(id);
-    opencodeSess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title, mtime: f.mtime });
+    opencodeSess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(m.id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: f.mtime });
   }
   for (const [id] of pet) {                            // still open but quiet longer than the scan window
     if (!id.startsWith('opencode:') || oseen.has(id)) continue;
     const file = opencode.fileOf(id);
-    const m = file && (opencodeMeta.get(file) || opencode.metaOf(file));
+    const m = file && opencode.metaOf(file);
     if (!m) continue;
     oseen.add(id);
-    opencodeSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(id) || m.title, mtime: Date.now() });
+    opencodeSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: Date.now() });
   }
   for (const id of [...opencodeSess.keys()]) if (!oseen.has(id)) opencodeSess.delete(id);
 }
 const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
 const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
 const opencodeSess = new Map();                      // "opencode:<session id>" -> { file, project, cwd, title }
-const opencodeMeta = new Map();                      // mirror file -> { id, cwd, title }
 let codexAgentRows = new Map();
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
 const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, opencode, projectOf,
@@ -275,15 +274,16 @@ function stateList() {
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
     if (sess.has(id) || line.parked.has(id)) continue;
+    const oc = opencodeSess.get(id);
     out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
       lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [],
-      api: typeof p.api === 'string' ? p.api : undefined });
+      api: typeof p.api === 'string' ? p.api : undefined, model: p.model || (oc && oc.model) || undefined, ai: p.ai || (oc && oc.ai) || undefined });
   }
   // OpenCode sessions the pet has not reported (the pet restarted, or the session is idle): still list their mirror
   for (const [id, c] of opencodeSess) {
     if (pet.has(id) || line.parked.has(id)) continue;
     out.push({ id, label: c.title || c.project || 'OpenCode', project: c.project || '', state: 'idle', steps: 0,
-      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: [] });
+      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: [], model: c.model || undefined, ai: c.ai || undefined });
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
@@ -392,11 +392,11 @@ function pushRecords() {
       r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : isOpenCode ? opencode.recordsOf : undefined); readers.set(id, r);
       if (isCodex || isOpenCode) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
-      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
       r.sentTitle = c.title || '';
     }
     if ((id.startsWith('codex:') || id.startsWith('opencode:')) && r.sentTitle !== (c.title || '')) {
-      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api });
+      sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
       r.sentTitle = c.title || '';
     }
     for (let k = 0; k < 8; k++) {
@@ -404,7 +404,7 @@ function pushRecords() {
       let b; try { b = records.readNext(r); } catch { b = null; }
       if (!b) { if (archive.map.has(id) && !sess.has(id) && !codexSess.has(id)) { archive.done(id); readers.delete(id); } break; }
       sendJSON({ t: 'rec', id, from: b.from, to: b.to, reset: b.reset || undefined, recs: b.recs,
-        project: c.project || '', title: c.title || '', cwd: b.cwd || undefined });
+        project: c.project || '', title: c.title || '', cwd: b.cwd || undefined, model: c.model || undefined, ai: c.ai || undefined });
       r.offset = b.to;
       if (b.to === b.from) break;
     }

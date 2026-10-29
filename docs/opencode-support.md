@@ -62,7 +62,8 @@ node install-opencode-plugin.js --config <path/to/opencode.json(c)>
 
 - 会话 id 是 `opencode:<OpenCode 会话 id>`（`ses_...`），与 Claude 的 UUID、Codex 的 `codex:<uuid>` 区分开。
 - 会话的 `pid` 是 OpenCode server 的进程：它就是「会话还活着」的判据；回复经插件，不需要终端。
-- 面板和看板用 OpenCode 官方的方块标志（单色，跟随文字颜色）；「在电脑上继续」用 `opencode -s <id>`，在会话原来的目录打开 TUI。
+- 徽标是 **OpenCode 方框 + 会话实际在用的模型厂商**（OpenCode 支持切换模型，切换后徽标跟着变）。已内置：DeepSeek、Anthropic、OpenAI、Google / Vertex、xAI、Qwen / 阿里、Moonshot / Kimi、智谱 / Z.ai、MiniMax、Mistral、Meta、Cohere、Groq、OpenRouter、Ollama、GitHub Copilot、NVIDIA、Perplexity、Hugging Face、Cerebras、Together、小米、火山引擎、腾讯、StepFun、SiliconFlow、DeepInfra、Cloudflare、Azure、Amazon Bedrock。自定义 provider 会按模型名猜（如 `deepseek-*`、`claude-*`、`gemini-*`）；认不出的只显示 OpenCode 标志，不耽误使用。
+- 「在电脑上继续」用 `opencode -s <id>`，在会话原来的目录打开 TUI。
 - 已关闭的会话从后台续聊时用 `opencode run --auto`：`--auto` 让未被明确拒绝的操作自动允许，
   否则非交互运行会把权限请求直接拒绝掉。
 - 首次安装时插件会登记最近 10 个、7 天内有动静的会话，并在镜像落后于会话时补一次历史（只补一次，按文件时间判断）。
@@ -84,6 +85,9 @@ node --test opencode-plugin/protocol.test.mjs opencode-plugin/plugin.test.mjs
 # 桥接、会话登记、安装器（JSONC 保留注释、幂等、--remove）
 node --test app/opencode.test.js
 
+# 模型厂商 → 徽标映射（DeepSeek / Anthropic / OpenAI / … / 自定义 provider 猜模型名）
+node --test app/ai-providers.test.js
+
 # 端到端：镜像 → agent → 看板存档、恢复命令、权限 provider、在电脑上继续
 cd remote && node test/e2e-opencode.js
 ```
@@ -92,3 +96,5 @@ cd remote && node test/e2e-opencode.js
 `opencode:ses_...`、会话镜像写入完整用户/助手/工具记录、通过 `/control/send` 回复后镜像继续增长；
 另用本地假模型验证了非交互运行下 `session.execution.failed` 的错误路径和 `permission.asked → /permission`
 卡片通路。交互式 TUI 里的权限卡片允许/拒绝由插件单元测试覆盖（假 server 回答后断言 `ctx.permission.reply`）。
+
+模型厂商图标取自 [models.dev](https://models.dev) 的 provider 标志（Anthropic、OpenAI 复用仓库里已有的 Claude / OpenAI 图标），仅用于标识会话来自哪个模型厂商；各标志归其厂商所有。

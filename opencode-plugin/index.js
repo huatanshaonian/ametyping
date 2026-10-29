@@ -29,7 +29,8 @@ const WATCH = new Set([
   'session.created', 'session.inbox.delivered', 'session.execution.started', 'session.execution.succeeded',
   'session.execution.failed', 'session.execution.interrupted', 'session.compaction.started', 'session.compaction.ended',
   'session.retry.scheduled', 'session.status', 'session.text.ended', 'session.tool.called', 'session.tool.success',
-  'session.tool.failed', 'session.renamed', 'session.deleted', 'session.idle', 'permission.asked', 'permission.replied',
+  'session.tool.failed', 'session.renamed', 'session.deleted', 'session.idle', 'session.model.selected',
+  'permission.asked', 'permission.replied',
 ]);
 const norm = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -74,14 +75,14 @@ export default {
     const sessionState = (id) => {
       let s = state.get(id);
       if (s) return s;
-      s = { id, seen: new Set(), timer: null, msgs: null, lastText: '', doneAt: 0, title: '', cwd: directory, tokens: null, pending: new Map(), lastSent: '', metaAt: 0 };
+      s = { id, seen: new Set(), timer: null, msgs: null, lastText: '', doneAt: 0, title: '', cwd: directory, tokens: null, pending: new Map(), lastSent: '', metaAt: 0, model: null };
       const file = mirrorOf(id);
       try {
         for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
           if (!line.trim()) continue;
           const o = JSON.parse(line);
           if (o && typeof o.uuid === 'string') s.seen.add(o.uuid);
-          if (o && o.type === 'meta') { s.title = o.title || s.title; s.cwd = o.cwd || s.cwd; }
+          if (o && o.type === 'meta') { s.title = o.title || s.title; s.cwd = o.cwd || s.cwd; if (o.modelProvider) s.model = { providerID: o.modelProvider, id: o.modelID || '' }; }
           else if (o && o.role === 'title' && o.text) s.title = String(o.text);
         }
       } catch {}
@@ -95,7 +96,8 @@ export default {
       s.metaAt = now;
       writeJson(metaOf(s.id), {
         v: 1, id: s.id, provider: 'opencode', pid: process.pid, bridge: bridgeId, port, token,
-        directory, cwd: s.cwd || directory, title: s.title || '', transcript: mirrorOf(s.id), updated: Date.now(),
+        directory, cwd: s.cwd || directory, title: s.title || '', modelProvider: s.model && s.model.providerID, modelID: s.model && s.model.id,
+        transcript: mirrorOf(s.id), updated: Date.now(),
       });
     }
 
@@ -106,6 +108,7 @@ export default {
           if (typeof info.title === 'string') s.title = info.title;
           if (info.location && typeof info.location.directory === 'string') s.cwd = info.location.directory;
           if (info.tokens && typeof info.tokens === 'object') s.tokens = info.tokens;
+          if (info.model && typeof info.model === 'object' && typeof info.model.providerID === 'string') s.model = { providerID: info.model.providerID, id: String(info.model.id || '') };
         }
       } catch {}
       writeSessionFile(s);
@@ -176,7 +179,7 @@ export default {
         try {
           let stillEmpty = true;
           try { stillEmpty = fs.statSync(file).size === 0; } catch {}
-          if (stillEmpty) append(file, { v: 1, type: 'meta', id: s.id, cwd: s.cwd || directory, title: s.title || '', timestamp: new Date().toISOString() });
+          if (stillEmpty) append(file, { v: 1, type: 'meta', id: s.id, cwd: s.cwd || directory, title: s.title || '', modelProvider: s.model && s.model.providerID, modelID: s.model && s.model.id, timestamp: new Date().toISOString() });
           const have = tailIds(file);
           if (titleKey && !have.has(titleKey) && !s.seen.has(titleKey)) {
             s.seen.add(titleKey);
@@ -219,7 +222,7 @@ export default {
       const body = {
         provider: 'opencode', session: s.id, cwd: s.cwd || directory, project: projectOf(s.cwd || directory),
         title: s.title || undefined, transcript: mirrorOf(s.id), pid: process.pid, eventAt: Date.now(), text: extra.text || '',
-        hookEvent: extra.hookEvent,
+        hookEvent: extra.hookEvent, modelProvider: s.model && s.model.providerID, modelID: s.model && s.model.id,
       };
       ame('POST', `/event/${name}`, body, 1500).catch(() => {});
     }
@@ -286,7 +289,17 @@ export default {
       if (ev.type === 'session.created') {
         if (d.location && d.location.directory) s.cwd = d.location.directory;
         if (d.title) s.title = d.title;
+        if (d.model && typeof d.model === 'object' && typeof d.model.providerID === 'string') s.model = { providerID: d.model.providerID, id: String(d.model.id || '') };
         writeSessionFile(s, true);
+      }
+      if (ev.type === 'session.model.selected') {
+        if (d.model && typeof d.model === 'object' && typeof d.model.providerID === 'string') {
+          s.model = { providerID: d.model.providerID, id: String(d.model.id || '') };
+          writeSessionFile(s, true);
+          sendEvent(s, 'meta', {});                      // (a provider switch shows in the badge at once)
+        }
+        scheduleSync(s);
+        return;
       }
       if (ev.type === 'session.renamed' && d.title) { s.title = d.title; writeSessionFile(s, true); }
       if (ev.type === 'session.text.ended' && typeof d.text === 'string' && d.text.trim()) s.lastText = d.text;
@@ -404,6 +417,7 @@ export default {
           const s = sessionState(info.id);
           s.cwd = (info.location && info.location.directory) || s.cwd;
           if (info.title) s.title = info.title;
+          if (info.model && typeof info.model === 'object' && typeof info.model.providerID === 'string') s.model = { providerID: info.model.providerID, id: String(info.model.id || '') };
           writeSessionFile(s, true);
           let mtime = 0;
           try { mtime = fs.statSync(mirrorOf(s.id)).mtimeMs; } catch {}

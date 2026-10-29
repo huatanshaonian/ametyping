@@ -31,7 +31,7 @@ OpenCode 用 OpenCode 自己的 server 插件接入：会话事件、完整对�
 
 Codex 与 Claude Code 一样支持桌宠进度、完整对话与存档、终端回复和按键、后台续聊、远程新建与恢复会话。Codex 另支持子代理状态、压缩进度、计划模式、`/` 命令提示与 `$` 技能提示；服务重启后自动接回曾通过 hooks 识别的仍在运行的 Codex 会话。权限按钮打开 Codex 自己的 `/permissions` 菜单。功能对照、协议差异和验证方法见 [Codex 支持说明](docs/codex-support.md)。
 
-OpenCode 同样支持桌宠进度、完整对话与存档、远程回复、权限卡片、后台续聊、远程新建与恢复会话；它的回复和审批通过会话 API（不是终端输入），因此在 Windows 和 Linux 上都不需要 tmux 或控制台注入。见 [OpenCode 支持说明](docs/opencode-support.md)。
+OpenCode 同样支持桌宠进度、完整对话与存档、远程回复、权限卡片、后台续聊、远程新建与恢复会话；它的回复和审批通过会话 API（不是终端输入），因此在 Windows 和 Linux 上都不需要 tmux 或控制台注入。会话徽标是 OpenCode 标志加当前模型厂商的标志（DeepSeek、Claude、OpenAI、Gemini、Qwen、Kimi、GLM 等，切换模型会跟着变）。见 [OpenCode 支持说明](docs/opencode-support.md)。
 
 ## Windose 远程桌面
 
@@ -121,7 +121,7 @@ cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node install-opencode-plugin.js               # OpenCode 插件（写进 ~/.config/opencode）
 node --test codex-hook.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
 node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js remote/test/claude-profile-requests.test.js   # 本地 API 入口
-node --test app/opencode.test.js opencode-plugin/protocol.test.mjs opencode-plugin/plugin.test.mjs  # OpenCode 插件
+node --test app/opencode.test.js app/ai-providers.test.js opencode-plugin/protocol.test.mjs opencode-plugin/plugin.test.mjs  # OpenCode 插件
 ```
 
 国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。

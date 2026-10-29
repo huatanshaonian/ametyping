@@ -41,6 +41,42 @@
     -webkit-mask: url(assets/provider/openai.svg) center / contain no-repeat; mask: url(assets/provider/openai.svg) center / contain no-repeat; }
   .card .nm .prov.cla { background: #d97757; -webkit-mask-image: url(assets/provider/claude.svg); mask-image: url(assets/provider/claude.svg); }
   .card .nm .prov.opn { -webkit-mask-image: url(assets/provider/opencode.svg); mask-image: url(assets/provider/opencode.svg); }
+  /* OpenCode + the AI provider the session runs on */
+  .card .nm .provs { display: inline-flex; align-items: center; gap: 2px; margin-right: 5px; vertical-align: -2px; }
+  .card .nm .provs .prov { margin-right: 0; }
+  .card .nm .prov.ai { width: 12px; height: 12px; background: currentColor; -webkit-mask: none; mask: none;
+    -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center; }
+  .card .nm .prov.ai.ai-deepseek { color: #4D6BFE; -webkit-mask-image: url(assets/provider/ai/deepseek.svg); mask-image: url(assets/provider/ai/deepseek.svg); }
+  .card .nm .prov.ai.ai-google { color: #4285F4; -webkit-mask-image: url(assets/provider/ai/google.svg); mask-image: url(assets/provider/ai/google.svg); }
+  .card .nm .prov.ai.ai-xai { color: inherit; -webkit-mask-image: url(assets/provider/ai/xai.svg); mask-image: url(assets/provider/ai/xai.svg); }
+  .card .nm .prov.ai.ai-alibaba { color: #615CED; -webkit-mask-image: url(assets/provider/ai/alibaba.svg); mask-image: url(assets/provider/ai/alibaba.svg); }
+  .card .nm .prov.ai.ai-moonshotai { color: inherit; -webkit-mask-image: url(assets/provider/ai/moonshotai.svg); mask-image: url(assets/provider/ai/moonshotai.svg); }
+  .card .nm .prov.ai.ai-zhipuai { color: #3859FF; -webkit-mask-image: url(assets/provider/ai/zhipuai.svg); mask-image: url(assets/provider/ai/zhipuai.svg); }
+  .card .nm .prov.ai.ai-minimax { color: #E73562; -webkit-mask-image: url(assets/provider/ai/minimax.svg); mask-image: url(assets/provider/ai/minimax.svg); }
+  .card .nm .prov.ai.ai-mistral { color: #FA520F; -webkit-mask-image: url(assets/provider/ai/mistral.svg); mask-image: url(assets/provider/ai/mistral.svg); }
+  .card .nm .prov.ai.ai-meta { color: #0866FF; -webkit-mask-image: url(assets/provider/ai/meta.svg); mask-image: url(assets/provider/ai/meta.svg); }
+  .card .nm .prov.ai.ai-cohere { color: #39594D; -webkit-mask-image: url(assets/provider/ai/cohere.svg); mask-image: url(assets/provider/ai/cohere.svg); }
+  .card .nm .prov.ai.ai-groq { color: #F55036; -webkit-mask-image: url(assets/provider/ai/groq.svg); mask-image: url(assets/provider/ai/groq.svg); }
+  .card .nm .prov.ai.ai-openrouter { color: #6467F2; -webkit-mask-image: url(assets/provider/ai/openrouter.svg); mask-image: url(assets/provider/ai/openrouter.svg); }
+  .card .nm .prov.ai.ai-ollama-cloud { color: inherit; -webkit-mask-image: url(assets/provider/ai/ollama-cloud.svg); mask-image: url(assets/provider/ai/ollama-cloud.svg); }
+  .card .nm .prov.ai.ai-github-copilot { color: inherit; -webkit-mask-image: url(assets/provider/ai/github-copilot.svg); mask-image: url(assets/provider/ai/github-copilot.svg); }
+  .card .nm .prov.ai.ai-nvidia { color: #76B900; -webkit-mask-image: url(assets/provider/ai/nvidia.svg); mask-image: url(assets/provider/ai/nvidia.svg); }
+  .card .nm .prov.ai.ai-perplexity { color: #1FB8CD; -webkit-mask-image: url(assets/provider/ai/perplexity.svg); mask-image: url(assets/provider/ai/perplexity.svg); }
+  .card .nm .prov.ai.ai-huggingface { color: #E6A700; -webkit-mask-image: url(assets/provider/ai/huggingface.svg); mask-image: url(assets/provider/ai/huggingface.svg); }
+  .card .nm .prov.ai.ai-cerebras { color: #F15A29; -webkit-mask-image: url(assets/provider/ai/cerebras.svg); mask-image: url(assets/provider/ai/cerebras.svg); }
+  .card .nm .prov.ai.ai-togetherai { color: #0F6FFF; -webkit-mask-image: url(assets/provider/ai/togetherai.svg); mask-image: url(assets/provider/ai/togetherai.svg); }
+  .card .nm .prov.ai.ai-xiaomi { color: #FF6900; -webkit-mask-image: url(assets/provider/ai/xiaomi.svg); mask-image: url(assets/provider/ai/xiaomi.svg); }
+  .card .nm .prov.ai.ai-volcengine { color: #1664FF; -webkit-mask-image: url(assets/provider/ai/volcengine.svg); mask-image: url(assets/provider/ai/volcengine.svg); }
+  .card .nm .prov.ai.ai-tencent { color: #0052D9; -webkit-mask-image: url(assets/provider/ai/tencent.svg); mask-image: url(assets/provider/ai/tencent.svg); }
+  .card .nm .prov.ai.ai-stepfun { color: #0091FF; -webkit-mask-image: url(assets/provider/ai/stepfun.svg); mask-image: url(assets/provider/ai/stepfun.svg); }
+  .card .nm .prov.ai.ai-siliconflow { color: #6E29F6; -webkit-mask-image: url(assets/provider/ai/siliconflow.svg); mask-image: url(assets/provider/ai/siliconflow.svg); }
+  .card .nm .prov.ai.ai-deepinfra { color: #4B6BFB; -webkit-mask-image: url(assets/provider/ai/deepinfra.svg); mask-image: url(assets/provider/ai/deepinfra.svg); }
+  .card .nm .prov.ai.ai-cloudflare { color: #F38020; -webkit-mask-image: url(assets/provider/ai/cloudflare.svg); mask-image: url(assets/provider/ai/cloudflare.svg); }
+  .card .nm .prov.ai.ai-azure { color: #0078D4; -webkit-mask-image: url(assets/provider/ai/azure.svg); mask-image: url(assets/provider/ai/azure.svg); }
+  .card .nm .prov.ai.ai-amazon-bedrock { color: #FF9900; -webkit-mask-image: url(assets/provider/ai/amazon-bedrock.svg); mask-image: url(assets/provider/ai/amazon-bedrock.svg); }
+  .card .nm .prov.ai.ai-anthropic { color: #D97757; -webkit-mask-image: url(assets/provider/claude.svg); mask-image: url(assets/provider/claude.svg); }
+  .card .nm .prov.ai.ai-openai { color: inherit; -webkit-mask-image: url(assets/provider/openai.svg); mask-image: url(assets/provider/openai.svg); }
   .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
   .card .sm { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .st { font-size: 10px; line-height: 13px; }

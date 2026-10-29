@@ -49,6 +49,10 @@ export function ctxLeft(s) {
 }
 export const CTX_LOW = 20;                // the dashboard warns from here down
 
+// the AI provider mark a session's OpenCode badge shows next to OpenCode's own ({ slug, name } or null)
+export const aiMark = (s) => (s && s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || ''))
+  ? { slug: String(s.ai.slug), name: String(s.ai.name || '') } : null);
+
 // session states as the dashboard names them
 const STATE = { message: ['working', '进行中'], thinking: ['working', '进行中'], reading: ['working', '进行中'],
   error: ['working', '出错'], working: ['working', '进行中'], waiting: ['waiting', '等你确认'], done: ['done', '完成'], idle: ['idle', '空闲'], ended: ['idle', '已关闭'],

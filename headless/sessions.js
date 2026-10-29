@@ -37,6 +37,8 @@ function createSessions() {
     if (d.title) s.title = String(d.title).slice(0, 60);
     if (d.transcript) s.transcript = String(d.transcript);
     if (d.cwd && !(d.provider === 'codex' && d.agentId)) s.cwd = String(d.cwd);
+    if (d.model) s.model = d.model;
+    if (d.ai) s.ai = d.ai;
     if (typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api)) s.api = d.api;
     // OpenCode has no per-session process and no terminal to type into: the plugin's host (the OpenCode server) is
     // what is alive, and a reply goes through its API. `terminal` here means "can be replied to from the dashboard".
