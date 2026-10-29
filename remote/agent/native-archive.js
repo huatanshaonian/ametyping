@@ -15,12 +15,19 @@ function catalog(home=os.homedir()) {
   const roots=[['claude',path.join(home,'.claude','projects')],['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'sessions')],
     ['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'archived_sessions')],
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'archive')],
-    ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'events')]];
+    ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'events')],
+    ['opencode',path.join(process.env.XDG_DATA_HOME||path.join(home,'.local','share'),'opencode','tool-output')]];
   const out=[];
-  for(const [provider,root]of roots)for(const file of walk(root,p=>provider==='opencode'?/\.(json|jsonl)$/.test(p):p.endsWith('.jsonl'))){
+  for(const [provider,root]of roots)for(const file of walk(root,p=>root.endsWith('tool-output')||
+      (provider==='claude'&&/[\\/](tool-results|attachments)[\\/]/.test(p))||
+      (provider==='opencode'?/\.(json|jsonl)$/.test(p):p.endsWith('.jsonl')))){
     const rel=path.relative(root,file).split(path.sep).join('/');
     const id=path.basename(file).replace(/\.(jsonl|json)$/,'');
     let session=id,parent='',cwd='';
+    let kind=root.endsWith('events')?'events':'native';
+    if(provider==='claude'&&/[\\/](tool-results|attachments)[\\/]/.test(file)){
+      session=rel.split('/')[1]||id;kind=rel.includes('/tool-results/')?'tool-output':'attachment';
+    }else if(root.endsWith('tool-output')){session='tool-output';kind='tool-output';}
     try{
       const fd=fs.openSync(file,'r');let b;try{b=Buffer.alloc(65536);const n=fs.readSync(fd,b,0,b.length,0);b=b.subarray(0,n);}finally{fs.closeSync(fd);}
       if(provider==='codex'){
@@ -31,7 +38,7 @@ function catalog(home=os.homedir()) {
       else if(provider==='claude'){const m=/"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(b.toString('utf8'));if(m)cwd=JSON.parse(m[1]);const pm=/[\\/]([^\\/]+)[\\/]subagents[\\/]/.exec(file);if(pm)parent=pm[1];}
       else{const s=b.toString('utf8');const p=/"parentID"\s*:\s*"([^"]+)"/.exec(s),c=/"directory"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(s);parent=p?p[1]:'';cwd=c?JSON.parse(c[1]):'';}
     }catch{}
-    out.push({file,provider,session:provider==='claude'?session:provider+':'+session,parent,kind:root.endsWith('events')?'events':'native',cwd,
+    out.push({file,provider,session:provider==='claude'?session:provider+':'+session,parent,kind,cwd,
       path:file,key:hash(Buffer.from(provider+'\0'+root+'\0'+rel))});
   }
   return out;

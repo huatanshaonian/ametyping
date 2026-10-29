@@ -65,6 +65,7 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error}
           if(!s)throw Error('找不到原始存档');
           if(p.endsWith('/opencode')){
             if(!s.complete)throw Error('请等待原始存档整文件校验完成');
+            if(s.kind!=='native')throw Error('此文件是工具输出或事件附件，请下载原文件，不能单独转换为会话');
             const directory=url.searchParams.get('directory')||s.cwd;
             if(!directory||!(/^[A-Za-z]:[\\/]/.test(directory)||directory.startsWith('/')))throw Error('需要目标电脑上的绝对项目目录');
             if(s.provider==='opencode')throw Error('此会话已是 OpenCode：下载原生 JSON 后使用 session import 导入');

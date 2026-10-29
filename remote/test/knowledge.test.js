@@ -72,9 +72,10 @@ test('catalog includes all historical providers and children, excludes credentia
   const home=temp(),dir=temp(),v=openVault(dir),queue=[];
   const file=path.join(home,'.claude/projects/p/session.jsonl'),b=Buffer.from(JSON.stringify({type:'user',cwd:home,message:{content:'原始输出'.repeat(100000)}})+'\n');
   write(file,b);write(path.join(home,'.claude/projects/p/session/subagents/agent-child.jsonl'),'child\n');
+  write(path.join(home,'.claude/projects/p/session/tool-results/result.txt'),Buffer.from([0,1,255,128]));
   write(path.join(home,'.codex/sessions/2020/rollout.jsonl'),JSON.stringify({type:'session_meta',payload:{id:'thread',cwd:home,parent_thread_id:'parent'}})+'\n');
   write(path.join(home,'.codex/auth.json'),'never archive this');
-  const files=catalog(home);assert.equal(files.length,3);assert.equal(files.find(x=>x.provider==='codex').parent,'parent');
+  const files=catalog(home);assert.equal(files.length,4);assert.equal(files.find(x=>x.provider==='codex').parent,'parent');assert.equal(files.find(x=>x.kind==='tool-output').session,'session');
   const collector=createNativeArchive({home,send:d=>queue.push(d)});collector.ready();
   try{
     for(let i=0;i<80;i++){
@@ -82,9 +83,9 @@ test('catalog includes all historical providers and children, excludes credentia
       const d=queue.shift();if(!d)continue;
       const r=(d.action==='begin'?v.begin:d.action==='chunk'?v.append:v.finish)('box',d);
       collector.handle({t:'vault-result',rid:d.rid,ok:true,...r});
-      if(v.list().length===3&&v.list().every(s=>s.complete))break;
+      if(v.list().length===4&&v.list().every(s=>s.complete))break;
     }
-    assert.equal(v.list().length,3);assert.ok(v.list().every(s=>s.complete));
+    assert.equal(v.list().length,4);assert.ok(v.list().every(s=>s.complete));
     const s=v.list().find(x=>x.path===file);assert.deepEqual(Buffer.concat([...v.data('box',s.key,s.generation)]),b);
     collector.reset();collector.ready();await collector.tick();assert.equal(queue.shift().action,'begin');
   }finally{collector.reset();v.close();fs.rmSync(home,{recursive:true,force:true});fs.rmSync(dir,{recursive:true,force:true});}

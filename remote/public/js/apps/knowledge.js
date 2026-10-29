@@ -53,8 +53,8 @@ export function panel(){
         for(const s of d.items){
           const links=h('div',{class:'capi-btns'},h('a',{class:'btn',text:'下载原始记录',href:'/api/knowledge/raw?'+new URLSearchParams({machine:s.machine,key:s.key,generation:s.generation})}));
           links.append(button('文件版本',async()=>{try{const versions=await get('/versions?'+new URLSearchParams({machine:s.machine,key:s.key}));content.replaceChildren(button('返回',draw),...versions.items.map(v=>h('div',{class:'knowledge-row'},h('small',{text:new Date(v.created).toLocaleString()+' · '+v.bytes+' 字节 · '+(v.complete?'已校验':'未完成')}),h('a',{class:'btn',text:'下载此版本',href:'/api/knowledge/raw?'+new URLSearchParams({machine:v.machine,key:v.key,generation:v.generation})}))));}catch(e){say(e.message,true);}}));
-          if(s.complete&&s.provider!=='opencode'&&s.cwd)links.append(h('a',{class:'btn',text:'导出 OpenCode 接力会话',href:'/api/knowledge/opencode?'+new URLSearchParams({machine:s.machine,key:s.key,generation:s.generation})}));
-          content.append(h('div',{class:'knowledge-row'},h('b',{text:s.machine+' · '+s.provider+' · '+s.session}),h('small',{text:s.path}),h('small',{text:s.bytes+' / '+s.size+' 字节 · '+(s.complete?'整文件 SHA-256 已校验':'同步中')+(s.parent?' · 父会话 '+s.parent:'')}),links));
+          if(s.complete&&s.kind==='native'&&s.provider!=='opencode'&&s.cwd)links.append(h('a',{class:'btn',text:'导出 OpenCode 接力会话',href:'/api/knowledge/opencode?'+new URLSearchParams({machine:s.machine,key:s.key,generation:s.generation})}));
+          content.append(h('div',{class:'knowledge-row'},h('b',{text:s.machine+' · '+s.provider+' · '+s.session}),h('small',{text:s.path}),h('small',{text:s.kind+' · '+s.bytes+' / '+s.size+' 字节 · '+(s.complete?'整文件 SHA-256 已校验':'同步中')+(s.parent?' · 父会话 '+s.parent:'')}),links));
         }
         content.append(h('div',{class:'capi-btns'},button('上一页',()=>{page=Math.max(0,page-1);draw();}),h('span',{text:'第 '+(page+1)+' 页'}),button('下一页',()=>{if(d.items.length===100){page++;draw();}})));
       }catch(e){say(e.message,true);}

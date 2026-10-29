@@ -6,9 +6,9 @@ NAS 上的 `data/knowledge.sqlite` 是主库。它与可重建的 `search.db` �
 
 agent 默认启用，可用 `agent.json` 的 `"fullArchive": false` 关闭。原先的精简记录仍用于看板的实时对话，不改变旧历史。新增的独立通路采集：
 
-- Claude：`~/.claude/projects/**/*.jsonl`，含子代理和历史会话。
+- Claude：`~/.claude/projects/**/*.jsonl`，含子代理和历史会话；同时保存其中 `tool-results` 与 `attachments` 目录的原始文件，补齐落在旁文件中的长工具输出。
 - Codex：`$CODEX_HOME/sessions/**/*.jsonl` 和 `archived_sessions/**/*.jsonl`，含子线程；默认 `CODEX_HOME=~/.codex`。
-- OpenCode v2：插件记录完整事件（含运行中的文本增量、工具事件、子会话）；agent 每分钟通过只读 SQLite 查询发现历史与子会话 ID，再通过正式 `session export` 导出会话。仅依赖内部表的 ID 和更新时间；结构不兼容会明确报错并重试，不伪称完成。
+- OpenCode v2：插件记录完整事件（含运行中的文本增量、工具事件、子会话）；agent 每分钟通过只读 SQLite 查询发现历史与子会话 ID，再通过正式 `session export` 导出会话，并采集 XDG 数据目录中 OpenCode 的 `tool-output` 旁文件。仅依赖内部表的 ID 和更新时间；结构不兼容会明确报错并重试，不伪称完成。
 
 每个源文件按 512 KiB 分块，每块 SHA-256，数据库事务提交后才确认；重连先核对已保存尾块，续传后再校验整个文件。改写或截断生成新版本，旧版本保留。最近一次扫描结果每分钟更新，已有文件在下一轮传输时检测变化，不限历史天数、不截断长行。全部内容是源工具已经保存/导出的内容，不代表工具未公开的内部状态。
 
