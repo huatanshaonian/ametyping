@@ -199,7 +199,8 @@ function broadcastSoon() {
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
 const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
-  fresh:auth.isFresh,audit,log:console.error});
+  fresh:auth.isFresh,audit,log:console.error,
+  ask:(...args)=>{if(!summary)throw Error('AI 功能未启用');return summary.ai.ask(...args);},model:()=>summary?summary.ai.pick('memory'):null});
 // Opt-in for the server host so disposable/test servers never inspect the invoking user's home.
 const hostKnowledge=cfg.knowledge&&cfg.knowledge.local===true?attachLocal({service:knowledge,machine:machine('nas'),control:CONTROL,
   archive:cfg.knowledge.archive!==false,memory:cfg.knowledge.memory!==false,confirmedDir:cfg.knowledge.confirmedDir||''}):null;

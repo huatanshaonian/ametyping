@@ -63,6 +63,13 @@ function start(file,extra={}){const p=cp.spawn(process.execPath,[file],{env:{...
     await until(async()=>{const d=(await get('/sources')).value.items.find(x=>x.path===source);return d.complete&&d.bytes===Buffer.byteLength(original+'after reconnect\n');});
     check('reconnected agent continues from committed bytes without duplication',true);
     check('revision history remains queryable',(await get('/history?id='+shared.id)).value.items.length===2);
+    const target=(await post('save',{scope:'global',owner:'',name:'手动对齐测试',body:'original'})).value.item;
+    const alignment=(await post('align',{refs:[{kind:'memory',id:target.id}]})).value.item;
+    check('authenticated alignment exposes full selected text without mutating it',alignment.items[0].body==='original');
+    const draft=(await post('review/manual',{refs:alignment.items.map(x=>x.ref),groups:[{title:'合并',category:'rewrite',reason:'人工核对',operations:[{action:'update',target:'item1',scope:'global',owner:'',name:target.name,body:'merged'}]}]})).value.item;
+    check('manual alignment persists a reviewable proposal',(await get('/review?id='+draft.id)).value.item.status==='ready');
+    const applied=(await post('review/apply',{id:draft.id,groups:[0]})).value;
+    check('review application updates memory and persists the applied decision',applied.ok&&(await get('')).value.memories.find(x=>x.id===target.id).body==='merged'&&(await get('/review?id='+draft.id)).value.item.appliedGroups[0]===0);
     const d=(await get('')).value;check('deployment acknowledgements are persisted',d.deployments.some(x=>x.target==='fixture'&&x.status==='applied'));
     server.kill();console.log('\n'+count+' passed, 0 failed');
   }catch(e){console.error(e.stack);console.error(stderr.slice(-2000));process.exitCode=1;}

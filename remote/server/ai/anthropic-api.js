@@ -52,21 +52,22 @@ function explain(status, body) {
 }
 
 // POST path with a JSON body; onEvent(name, data) for every event of the answering stream. Resolves when it ends.
-async function post({ key, path, body, egress, base, timeoutMs, onEvent }) {
+async function post({ key, path, body, egress, base, timeoutMs, onEvent, routeCustomBase = false }) {
   const u = new URL(base || `https://${HOST}`);
   const lib = u.protocol === 'http:' ? http : https;
   let createConnection;
-  if (egress && !base) {
-    const proxy = await egress.pick(HOST);
+  if (egress && (!base || routeCustomBase)) {
+    const proxy = await egress.pick(u.hostname);
     if (!proxy) throw new Error('连不上 Anthropic：电脑上的代理和 AWS 备用线路都不通');
-    const sock = await tunnel(proxy, HOST);
+    if(lib!==https||(u.port&&u.port!=='443'))throw new Error('代理 API 入口目前需要使用 HTTPS 443 端口');
+    const sock = await tunnel(proxy, u.hostname);
     createConnection = () => sock;
   }
   const data = Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
     let over = false;
     const end = (e) => { if (over) return; over = true; clearTimeout(total); e ? reject(e) : resolve(); };
-    const req = lib.request({ hostname: u.hostname, port: u.port || (lib === https ? 443 : 80), ...(lib === https ? { defaultPort: 443 } : {}), path, method: 'POST', createConnection,
+    const req = lib.request({ hostname: u.hostname, port: u.port || (lib === https ? 443 : 80), ...(lib === https ? { defaultPort: 443 } : {}), path: u.pathname.replace(/\/$/,'')+path, method: 'POST', createConnection,
       headers: { 'x-api-key': key, 'anthropic-version': VERSION, 'content-type': 'application/json', 'Content-Length': data.length, 'User-Agent': 'Windose' } }, (res) => {
       res.setEncoding('utf8');
       let buf = '';
@@ -106,17 +107,17 @@ function contentOf(prompt, images, cache) {
   return [...pics, ...parts.map((text, i) => ({ type: 'text', text, ...((i === 0 || i === parts.length - 2) && i < parts.length - 1 ? { cache_control: mark } : {}) }))];
 }
 
-async function runApi({ key, model, effort = '', prompt, schema, images = [], egress = null, base = '', timeoutMs = 20 * 60e3, onUsage = null }) {
+async function runApi({ key, model, effort = '', prompt, schema, images = [], egress = null, base = '', timeoutMs = 20 * 60e3, onUsage = null, routeCustomBase = false, compat = false }) {
   if (!key) throw new Error('还没有填 Claude API 的 key（控制面板 → AI 模型 → Claude API）');
   const think = /^[a-z]{2,10}$/.test(effort);
-  const ask = async (withEffort, cache = true) => {
+  const ask = async (withEffort, cache = true, structured = true) => {
     let text = '', stop = '';
     const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
     const content = contentOf(prompt, images, cache);
-    const body = { model, max_tokens: MAX_TOKENS, stream: true, system: SYSTEM, messages: [{ role: 'user', content }],
+    const body = { model, max_tokens: MAX_TOKENS, stream: true, system: compat?SYSTEM+'\n只输出一个 JSON 对象，不要解释或 Markdown。必须符合此 JSON Schema：'+JSON.stringify(schema):SYSTEM, messages: [{ role: 'user', content }],
       ...(withEffort ? { thinking: { type: 'adaptive' } } : {}),
-      output_config: { ...(withEffort ? { effort } : {}), format: { type: 'json_schema', schema: forApi(schema) } } };
-    await post({ key, path: '/v1/messages', body, egress, base, timeoutMs, onEvent(name, d) {
+      ...(structured?{output_config: { ...(withEffort ? { effort } : {}), format: { type: 'json_schema', schema: forApi(schema) } }}:withEffort?{output_config:{effort}}:{}) };
+    await post({ key, path: '/v1/messages', body, egress, base, timeoutMs, routeCustomBase, onEvent(name, d) {
       if (name === 'content_block_delta' && d.delta && d.delta.type === 'text_delta') text += d.delta.text || '';
       else if (name === 'message_start' && d.message && d.message.usage) { const u = d.message.usage; Object.assign(usage, { input: u.input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0 }); }
       else if (name === 'message_delta' && d.delta && d.delta.stop_reason) { stop = d.delta.stop_reason; if (d.usage) usage.output = d.usage.output_tokens || 0; }
@@ -125,14 +126,20 @@ async function runApi({ key, model, effort = '', prompt, schema, images = [], eg
     if (onUsage) try { onUsage(usage); } catch {}
     if (stop === 'refusal') throw new Error('Claude 拒绝回答这个问题');
     if (stop === 'max_tokens') throw new Error('Claude 的回答太长，没写完（超过 ' + MAX_TOKENS + ' 个 token）');
-    try { const v = JSON.parse(text); if (v && typeof v === 'object') return v; } catch {}
+    const payload=compat?text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i,'$1'):text;
+    try { const v = JSON.parse(payload); if (v && typeof v === 'object') return v; } catch {}
     throw new Error('Claude API 的回答不是 JSON：' + text.slice(0, 200));
   };
-  const again = (withEffort, cache) => ask(withEffort, cache).catch((e) => {
+  const again = async (withEffort, cache) => {
+    let error;
+    try{return await ask(withEffort,cache);}catch(e){error=e;}
     // the marks for the cache refused (an hour not offered here, say): asked once more without them
-    if (cache && e.status === 400 && /cache|ttl/i.test(e.said || '')) return ask(withEffort, false);
-    throw e;
-  });
+    if(cache&&error.status===400&&/cache|ttl/i.test(error.said||'')){
+      try{return await ask(withEffort,false);}catch(e){error=e;}
+    }
+    if(compat&&error.status===400&&/output_config|json_schema|structured|unknown parameter|unsupported parameter/i.test(error.said||''))return ask(withEffort,false,false);
+    throw error;
+  };
   try { return await again(think, true); }
   catch (e) {
     // a model that does not take an effort (the catalog said it did): asked once more as it is by itself

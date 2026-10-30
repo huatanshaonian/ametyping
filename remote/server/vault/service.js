@@ -2,9 +2,11 @@
 const {openVault}=require('./database');
 const {createMemory}=require('./memory');
 const {convert}=require('./opencode');
+const {createReview}=require('./review');
 const drain=res=>new Promise(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});
-function createVaultService({dir,machines,control,fresh,audit,log=console.error}){
+function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null}){
   const vault=openVault(dir),memory=createMemory(vault);
+  const review=createReview({vault,memory,ask,model,machines:()=>[...machines.keys()]});
   const version=()=>vault.db.prepare("SELECT value FROM vault_meta WHERE key='memory_version'").get()?.value||'';
   let publishedVersion=version();
   const respond=(ws,rid,r)=>{try{ws.send(JSON.stringify({t:'vault-result',rid,...r}));}catch{}};
@@ -58,6 +60,8 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error}
         else if(p==='/api/knowledge/versions')json(res,200,{ok:true,items:vault.db.prepare('SELECT * FROM sources WHERE machine=? AND key=? ORDER BY created DESC,rowid DESC LIMIT 500').all(url.searchParams.get('machine'),url.searchParams.get('key'))});
         else if(p==='/api/knowledge/observed')json(res,200,{ok:true,item:memory.readObserved(url.searchParams.get('machine'),url.searchParams.get('path'))});
         else if(p==='/api/knowledge/history')json(res,200,{ok:true,items:memory.history(url.searchParams.get('id'))});
+        else if(p==='/api/knowledge/reviews')json(res,200,{ok:true,items:review.list()});
+        else if(p==='/api/knowledge/review')json(res,200,{ok:true,item:review.read(url.searchParams.get('id'))});
         else if(p==='/api/knowledge/preview')json(res,200,{ok:true,...memory.bundle(url.searchParams.get('machine')||'')});
         else if(p==='/api/knowledge/raw'||p==='/api/knowledge/opencode'){
           const m=url.searchParams.get('machine'),key=url.searchParams.get('key'),gen=url.searchParams.get('generation');
@@ -89,18 +93,23 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error}
       if(!fresh(sess)){json(res,200,{ok:false,need:'totp',msg:'需要再输一次验证码'});return true;}
       const d=JSON.parse(await readBody(req,2*1024*1024));let result;
       if(p==='/api/knowledge/save')result=memory.save(d);
+      else if(p==='/api/knowledge/align')result=review.alignment(d.refs);
+      else if(p==='/api/knowledge/review/start')result=review.start(d);
+      else if(p==='/api/knowledge/review/manual')result=review.manual(d);
+      else if(p==='/api/knowledge/review/apply')result=review.apply(d);
+      else if(p==='/api/knowledge/review/discard')review.discard(d.id);
       else if(p==='/api/knowledge/promote')result=memory.promoted(d);
       else if(p==='/api/knowledge/project')memory.project(d);
       else if(p==='/api/knowledge/sync'){
         if(!machines.get(d.machine)?.online)throw Error('目标电脑离线，已发布的记忆会在重连时同步');
         publish(d.machine);
       }else throw Error('未知的管理操作');
-      if(p!=='/api/knowledge/sync')publishAll();
+      if(['/api/knowledge/save','/api/knowledge/promote','/api/knowledge/project','/api/knowledge/review/apply'].includes(p))publishAll();
       audit('knowledge-change',p,String(d.id||d.machine||'').slice(0,200));
       json(res,200,{ok:true,item:result});
     }catch(e){if(!res.headersSent)json(res,200,{ok:false,msg:e.message});else res.destroy();}
     return true;
   }
-  return {vault,memory,message,handle,publish,publishAll,close:()=>{clearInterval(timer);vault.close();}};
+  return {vault,memory,review,message,handle,publish,publishAll,close:()=>{review.close();clearInterval(timer);vault.close();}};
 }
 module.exports={createVaultService};

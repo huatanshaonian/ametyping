@@ -26,9 +26,17 @@ function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis 
   const CONFIG_DIR = /^CLAUDE_CONFIG_DIR$/i;
   const keyOf = (u) => (u.api ? u.api + '|' : '') + u.model;
 
-  async function once(use, prompt, schema, images, task) {
+  async function once(use, prompt, schema, images, task, apiOnly = false) {
+    if(apiOnly&&use.provider!=='claude')throw new Error('仅 API 模式请选择 Claude API 模型或 NAS 上的 API 别名；Codex 当前走工具通道');
+    if(apiOnly&&use.api){
+      const alias=claudeApis?.resolve(use.api,machine),env=alias?.settings?.env||{};
+      const key=env.ANTHROPIC_AUTH_TOKEN||env.ANTHROPIC_API_KEY,base=env.ANTHROPIC_BASE_URL;
+      if(!key||!base)throw new Error('NAS 的 API 别名 '+use.api+' 尚未配置地址或密钥');
+      const route=alias.proxy==='direct'?null:/^https?:\/\//.test(alias.proxy||'')?{pick:async()=>alias.proxy}:egress;
+      return runApi({key,base,model:use.model,effort:use.effort,prompt,schema,images,egress:route,routeCustomBase:true,compat:true,timeoutMs:api?.timeoutMs||codex.timeoutMs});
+    }
     // an alias model is always Claude Code through that API -- the Anthropic API key path does not apply
-    if (use.provider === 'claude' && !use.api && api && api.key() && !(apiDown && now() - apiDown.at < REST_MS)) {
+    if (use.provider === 'claude' && !use.api && api && api.key() && (apiOnly || !(apiDown && now() - apiDown.at < REST_MS))) {
       try {
         // (a prompt marked for the cache: what it took, so that the log shows the cache at work)
         const onUsage = prompt.includes('\u0000') ? (u) => log(`AI：${task} 输入 ${u.input + u.cacheRead + u.cacheWrite} token（缓存读 ${u.cacheRead}、写 ${u.cacheWrite}），输出 ${u.output}`) : null;
@@ -38,9 +46,11 @@ function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis 
       } catch (e) {
         apiDown = { at: now(), error: String(e.message).slice(0, 300), task };
         if (egress) egress.forget(HOST.claude);
+        if(apiOnly)throw e;
         log(`AI：${task} 走 Claude API 出错（${String(e.message).slice(0, 200)}），改用 Claude Code（订阅用量）`);
       }
     }
+    if(apiOnly)throw new Error('还没有配置 Claude API 的 key，请打开控制面板 → AI 模型 → Claude API');
     const cli = use.provider === 'claude' ? claude : codex;
     let env = { ...process.env };
     delete env.CLAUDE_CONFIG_DIR;                        // the NAS jobs always use the default memory directory
@@ -83,21 +93,21 @@ function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis 
 
   // task: which job asks (daily, session, weekly, ask, mailTriage, mailDraft, litFeed, litRead, litReview, litVision, board, boardDesign);
   // images: files the model looks at too (文献's page images)
-  async function ask(prompt, schema, task = 'daily', { images = [] } = {}) {
+  async function ask(prompt, schema, task = 'daily', { images = [], apiOnly = false } = {}) {
     const use = pick(task);
     const list = [use, use.backup].filter((u, i) => u && u.model && (i === 0 || keyOf(u) !== keyOf(use)));
     // the one that failed lately last (still tried when the other fails too)
-    const order = [...list.filter((u) => !resting(u)), ...list.filter(resting)];
+    const order = apiOnly ? list : [...list.filter((u) => !resting(u)), ...list.filter(resting)];
     if (order[0] !== use) log(`AI：${task} 先用后备模型 ${order[0].model}（${use.model} ${Math.round((now() - down.get(keyOf(use)).at) / 60e3)} 分钟前出错）`);
     const errs = [];
     for (let i = 0; i < order.length; i++) {
       const u = order[i];
       try {
-        const v = await once(u, prompt, schema, images, task);
-        down.delete(keyOf(u));
+        const v = await once(u, prompt, schema, images, task, apiOnly);
+        if(!apiOnly)down.delete(keyOf(u));
         return v;
       } catch (e) {
-        down.set(keyOf(u), { at: now(), error: String(e.message).slice(0, 300), task });
+        if(!apiOnly)down.set(keyOf(u), { at: now(), error: String(e.message).slice(0, 300), task });
         errs.push(e);
         if (order[i + 1]) log(`AI：${task} 用 ${u.model} 出错（${String(e.message).slice(0, 200)}），改用 ${order[i + 1].model}`);
       }
