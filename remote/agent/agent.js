@@ -572,6 +572,9 @@ function startMeshBridge() {
       fs.mkdirSync(path.dirname(MESH_TOKEN_FILE), { recursive: true, mode: 0o700 });
       fs.writeFileSync(MESH_TOKEN_FILE, JSON.stringify({ port: MESH_PORT, token: MESH_TOKEN, machine: NAME }), { mode: 0o600 });
     } catch {}
+    if (CONTROL && !process.env.AME_NO_MCP_INSTALL && MESH_PORT === 3941) {
+      try { require('../../install-mesh-mcp').installAll({ quiet: true }); } catch {}
+    }
   });
   srv.unref();
 }
