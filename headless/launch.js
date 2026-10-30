@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { codexBin, threadOf } = require('./codex');
 const { agyBin, threadOf: agyThreadOf } = require('./agy');
+const { kiroBin, threadOf: kiroThreadOf } = require('./kiro');
 const opencode = require('../app/opencode');
 const claudeApi = require('../app/claude-api');
 
@@ -40,10 +41,11 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
   return new Promise((resolve) => {
     const thread = threadOf(resume);
     const agyThread = agyThreadOf(resume);
+    const kiroThread = kiroThreadOf(resume);
     const ocThread = /^opencode:/.test(resume) ? opencode.rawId(resume) : '';
     const openMode = !!ocThread || (!resume && tool === 'opencode');
     if (resume && openMode) { if (!opencode.isId(ocThread)) return resolve({ ok: false, msg: '无效请求' }); }
-    else if (resume && !thread && !agyThread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
+    else if (resume && !thread && !agyThread && !kiroThread && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(resume)) return resolve({ ok: false, msg: '无效请求' });
     let st; try { st = fs.statSync(cwd); } catch { return resolve({ ok: false, msg: resume ? '这个会话原来的文件夹已经不在了：' + cwd : '找不到这个文件夹' }); }
     if (!st.isDirectory()) return resolve({ ok: false, msg: '这不是文件夹' });
     if (openMode) {
@@ -62,14 +64,15 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
     }
     const codex = !!thread || (!resume && tool === 'codex');
     const agy = !!agyThread || (!resume && tool === 'agy');
-    const bin = codex ? codexBin(env) : agy ? agyBin(env) : claudeBin(env);
-    if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : agy ? '找不到 agy' : '找不到 claude' });
-    const api = (codex || agy) ? null : claudeApi.valid(apiArg);
-    if (!codex && !agy && apiArg && !api) return resolve({ ok: false, msg: 'API 别名配置不对' });
+    const kiro = !!kiroThread || (!resume && tool === 'kiro');
+    const bin = codex ? codexBin(env) : agy ? agyBin(env) : kiro ? kiroBin(env) : claudeBin(env);
+    if (!bin) return resolve({ ok: false, msg: codex ? '找不到 codex' : agy ? '找不到 agy' : kiro ? '找不到 kiro-cli' : '找不到 claude' });
+    const api = (codex || agy || kiro) ? null : claudeApi.valid(apiArg);
+    if (!codex && !agy && !kiro && apiArg && !api) return resolve({ ok: false, msg: 'API 别名配置不对' });
     const sf = api ? claudeApi.settingsFile(api) : null;
     if (api && !sf) return resolve({ ok: false, msg: '写 API 设置失败' });
     const tag = crypto.randomBytes(3).toString('hex');
-    const name = `${codex ? 'codex' : agy ? 'agy' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
+    const name = `${codex ? 'codex' : agy ? 'agy' : kiro ? 'kiro' : 'claude'}-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
     const envFile = path.join(os.tmpdir(), `ame-launch-${crypto.randomBytes(8).toString('hex')}.env`);
     // an alias is the authority for the API: do not carry a recent session's ANTHROPIC_* / CLAUDE_* along with it
     const lines = Object.entries(env || {}).filter(([k]) => CARRY.test(k) && !/^CLAUDE_CONFIG_DIR$/i.test(k) && (!api || !/^(ANTHROPIC_|CLAUDE_)/.test(k))).map(([k, v]) => `export ${k}=${q(v)}`);
@@ -87,11 +90,13 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
       ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
     const settings = sf ? ' ' + sf.args.map(q).join(' ') : '';
     // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
-    const tail = thread ? ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread) : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : '';
+    const tail = thread ? ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread)
+      : kiroThread ? ' chat --resume-id ' + q(kiroThread) : kiro ? ' chat' + (prompt && prompt.trim() ? ' ' + q(prompt) : '')
+      : resume ? ' --resume ' + q(resume) : prompt && prompt.trim() ? ' ' + q(prompt) : '';
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${tail}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} if (sf) sf.cleanup(); return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
-      answerTrust(name, codex);
+      answerTrust(name, codex || kiro);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
   });

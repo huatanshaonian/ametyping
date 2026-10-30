@@ -1,11 +1,11 @@
 # AmeTyping · 糖糖敲键盘桌宠 + Windose 远程桌面
 
-A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん) from *NEEDY GIRL OVERDOSE* types along with you — plus an optional self-hosted, Win98-styled web desktop to watch and drive your Claude Code / Codex / OpenCode / Antigravity (`agy`) sessions on every machine you own.
+A Bongo-Cat–style desktop pet for Windows — Ame (糖糖 / 超てんちゃん) from *NEEDY GIRL OVERDOSE* types along with you — plus an optional self-hosted, Win98-styled web desktop to watch and drive your Claude Code / Codex / OpenCode / Antigravity (`agy`) / Kiro CLI (`kiro-cli`) sessions on every machine you own.
 
 这个仓库有两部分，可以只用第一部分：
 
 1. **糖糖桌宠（Windows）**：Q 版糖糖坐在 75% 键盘后面，你按哪个键她就敲哪个键；可选接入 Claude Code / Codex / OpenCode / Antigravity (`agy`)，在她下面的 Windose 风格面板里看各会话的进度、处理权限确认、直接回复。
-2. **Windose 远程桌面（自托管网页）**：在手机或别的电脑上打开一个 Win98 风格的桌面，看每台机器上的会话、完整对话（长期存档）、浏览文件（Markdown 连同里面的图片）、远程回复 / 审批 / 在指定文件夹启动 Claude、Codex、OpenCode 或 Antigravity (`agy`)。Linux 机器用无头服务代替糖糖。
+2. **Windose 远程桌面（自托管网页）**：在手机或别的电脑上打开一个 Win98 风格的桌面，看每台机器上的会话、完整对话（长期存档）、浏览文件（Markdown 连同里面的图片）、远程回复 / 审批 / 在指定文件夹启动 Claude、Codex、OpenCode、Antigravity (`agy`) 或 Kiro CLI (`kiro-cli`)。Linux 机器用无头服务代替糖糖。
 
 ## 糖糖桌宠
 
@@ -25,7 +25,7 @@ Claude Code、Codex 与 Antigravity (`agy`) 的 hook（以及 OpenCode 插件）
 - **权限确认卡片**：显示工具、目录、命令或文件与完整参数，「允许」「拒绝」（Codex 与 Antigravity 另有「在终端中处理」）。Claude Code 与 Antigravity 在等待卡片的同时终端里也会问，任意一边回答即可；卡片最多等约 60 分钟，超时交回终端。
 - **回复**：会话在终端里就直接打进终端（`WriteConsoleInput`，不抢焦点）；会话已关闭则用 `claude -p --resume` 后台续上；IDE / 桌面 App 里的会话只能看；有待确认时回复会被拦下。Codex CLI 和 Antigravity (`agy`) 的会话同样可以回复（已关闭的分别用 `codex exec resume` / `agy --conversation <id> -p` 续上），面板里显示完整对话；Linux 上的 Claude Code / Codex / Antigravity 在 tmux 中运行即可从看板回复、按键和查看画面。OpenCode 通过它自己的会话 API 回复与审批，不需要终端或 tmux。
 
-安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任；`node install-codex-hooks.js --remove` 可移除。Codex 的 hooks、对话、标题和技能均支持自定义 `CODEX_HOME`。OpenCode：`node install-opencode-plugin.js`（写进 `~/.config/opencode/opencode.json` 的 `plugins`，原文件先备份，`--remove` 可移除；不需要 hook 进程）。Antigravity (`agy`)：`node install-agy-hooks.js`（写进 `~/.gemini/config/hooks.json` 的 `"ametyping"` 顶层分组，原文件先备份，`--remove` 可移除，支持 `$AGY_CONFIG_DIR` 和 `$AGY_HOME`）。一键部署脚本（见下）会自动做这些。
+安装 hook：`node headless/install-hooks.js`（合并进 `~/.claude/settings.json`，原文件先备份，`--remove` 可移除）；Codex：`node install-codex-hooks.js`，再在 Codex 里用 `/hooks` 信任；`node install-codex-hooks.js --remove` 可移除。Codex 的 hooks、对话、标题和技能均支持自定义 `CODEX_HOME`。OpenCode：`node install-opencode-plugin.js`（写进 `~/.config/opencode/opencode.json` 的 `plugins`，原文件先备份，`--remove` 可移除；不需要 hook 进程）。Antigravity (`agy`)：`node install-agy-hooks.js`（写进 `~/.gemini/config/hooks.json` 的 `"ametyping"` 顶层分组，原文件先备份，`--remove` 可移除，支持 `$AGY_CONFIG_DIR` 和 `$AGY_HOME`）。Kiro CLI（`kiro-cli`）：`node install-kiro-hooks.js`（把 hook 写进 agent 配置 `~/.kiro/agents/default.json` 的 `hooks` 字段，保留原有 object/array 格式与其它 hook，原文件先备份；可传 agent 名或配置文件路径，`--remove` 可移除，支持 `$KIRO_HOME`）。一键部署脚本（见下）会自动做这些。
 
 OpenCode 用 OpenCode 自己的 server 插件接入：会话事件、完整对话、权限确认和回复都走它的 API，**不读终端画面，也不用往终端里打字**。回复在面板/看板里直接发给会话（多行原样送达）；已关闭的会话用 `opencode run --auto` 续上；权限卡片和 OpenCode 终端里的提示同时有效；它没有终端按键/画面，对话直接在看板里看。功能对照、协议和验证方法见 [OpenCode 支持说明](docs/opencode-support.md)。
 
@@ -34,6 +34,8 @@ Codex 与 Claude Code 一样支持桌宠进度、完整对话与存档、终端�
 OpenCode 同样支持桌宠进度、完整对话与存档、远程回复、权限卡片、后台续聊、远程新建与恢复会话；它的回复和审批通过会话 API（不是终端输入），因此在 Windows 和 Linux 上都不需要 tmux 或控制台注入。会话徽标是 OpenCode 标志加当前模型厂商的标志（DeepSeek、Claude、OpenAI、Gemini、Qwen、Kimi、GLM 等，切换模型会跟着变）。见 [OpenCode 支持说明](docs/opencode-support.md)。
 
 Antigravity (`agy`) 支持桌宠进度、完整对话（含 `transcript.jsonl` / `transcript_full.jsonl` 按行智能回填截断字段与 `THINKING` 推理链折叠展示）、`brain/<id>/` 产物预览（`implementation_plan.md`、`walkthrough.md`、`task.md` 等）、子代理层级追踪（`.system_generated/subagents/*.json`）、`ask_question` 交互问答卡片、终端回复和按键、`agy --conversation <id> -p` 后台续聊、远程新建与恢复会话，以及 `GEMINI.md` / `.agents/rules/*.md` 记忆同步与完整字节存档。会话徽标显示 Antigravity 标志加当前模型厂商标志。功能对照、协议差异和验证方法见 [Antigravity 支持说明](docs/agy-support.md)。
+
+Kiro CLI (`kiro-cli`) 支持桌宠进度、完整对话（读取 `~/.kiro/sessions/cli/{id}.jsonl`，工具调用一行摘要、思考链与工具输出不展示）、终端回复和按键、`kiro-cli chat --resume-id <id>` 后台续聊、远程新建与恢复会话、服务重启后接回、技能提示（`~/.kiro/skills`）以及完整字节存档。会话徽标显示 Kiro 标志加当前模型厂商标志（`auto` 动态模型只显示 Kiro 标）。Kiro 的 hook 写在 agent 配置里，只有 `agentSpawn / userPromptSubmit / preToolUse / postToolUse / stop` 五个触发器：**没有 PermissionRequest hook**，所以不弹双向审批卡片（审批在 Kiro 终端处理，看板用「终端画面 + 按键」操作，或用 `--trust-all-tools` / agent 的 `allowedTools`）；子会话靠 `session_created_reason="subagent"` 识别并跳过。功能对照、协议差异和验证方法见 [Kiro 支持说明](docs/kiro-support.md)。
 
 ## Windose 远程桌面
 
@@ -48,7 +50,7 @@ Antigravity (`agy`) 支持桌宠进度、完整对话（含 `transcript.jsonl` /
 ### 能做什么
 
 - **桌面**：左边是当前电脑的桌面（壁纸、图标），右边「网上邻居」列出每台电脑的在线状态、会话数、待确认；底部任务栏、开始菜单、托盘音量。窗口可拖动、四边缩放、最大化；手机上窗口自动全屏。
-- **糖糖看板**（窗口应用）：所有电脑的会话，按最后活动时间倒序；Claude Code / Codex / OpenCode / Antigravity 退出后会话仍保留为「历史」，并给出继续命令（`claude --resume` / `codex resume` / `opencode -s` / `agy --conversation`，带正确的目录）。
+- **糖糖看板**（窗口应用）：所有电脑的会话，按最后活动时间倒序；Claude Code / Codex / OpenCode / Antigravity / Kiro 退出后会话仍保留为「历史」，并给出继续命令（`claude --resume` / `codex resume` / `opencode -s` / `agy --conversation` / `kiro-cli chat --resume-id`，带正确的目录）。
 - **对话存档**：实时看板继续使用精简格式；另有完整采集通路，将 Claude/Codex/Antigravity 原生记录、子会话及 OpenCode 正式导出和运行事件按原始字节存入 NAS SQLite，支持断线续传、整文件 SHA-256 校验和 OpenCode 历史接力导出。
 - **记忆与存档**：控制面板逐条管理共享全局、机器专属、项目三层记忆，支持搜索、原文对齐、API 智能去重和拆分；建议经审阅后按分组一次应用，保留来源与修订。SQLite 主库生成四种工具可读取的 Markdown，支持路径映射、备份和冲突检测。见[完整说明](docs/knowledge-vault.md)。
 - **远程回复与审批**：回复打进那台机器的终端；回复框为空时方向键 / 回车 / Esc / Tab 直接发给终端，用来操作 `/model`、`/resume` 这类菜单（触屏上显示按键条）。
@@ -123,9 +125,12 @@ npm run dist                                  # 打包到 ../dist/AmeTyping-win3
 cd remote && npm ci && npm run agent          # agent（需要 agent.json）
 node install-opencode-plugin.js               # OpenCode 插件（写进 ~/.config/opencode）
 node install-agy-hooks.js                     # Antigravity hooks（写进 ~/.gemini/config/hooks.json）
+node install-kiro-hooks.js                    # Kiro CLI hooks（写进 ~/.kiro/agents/default.json 的 hooks）
 node --test codex-hook.test.js agy-hook.test.js app/agy-support.test.js app/permissions.test.js app/codex-cli.test.js app/outline.test.js   # 单元测试
+node --test kiro-hook.test.js app/kiro-support.test.js        # Kiro CLI 支持（hook、记录解析、续聊、会话注册表）
 node --test remote/test/claude-apis.test.js remote/test/claude-api-launch.test.js remote/test/ai-aliases.test.js remote/test/win-launch-api.test.js remote/test/resume-api.test.js remote/test/claude-profile-requests.test.js   # 本地 API 入口
 node --test app/opencode.test.js app/ai-providers.test.js opencode-plugin/protocol.test.mjs opencode-plugin/plugin.test.mjs  # OpenCode 插件
+node remote/test/e2e-kiro.js                  # Kiro 端到端 agent<->server 流水线
 ```
 
 国内网络装 Electron 时设 `ELECTRON_GET_USE_PROXY=1`（让它的下载走 `HTTPS_PROXY`）。端到端测试在 `remote/test/`：`node remote/test/run.js` 跑全部 e2e，`ui-*.js` 是无头 Chrome 的界面测试（截图在 `remote/test/out/`，不入库）。

@@ -121,12 +121,14 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
     const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
     // (whose session it is: Codex's or Claude Code's mark, or OpenCode's / Antigravity's followed by the AI provider's)
-    const isOc = String(s.id).startsWith('opencode:'), isAgy = String(s.id).startsWith('agy:');
-    const ai = (isOc || isAgy) ? aiMark(s) : null;
+    const isOc = String(s.id).startsWith('opencode:'), isAgy = String(s.id).startsWith('agy:'), isKiro = String(s.id).startsWith('kiro:');
+    const ai = (isOc || isAgy || isKiro) ? aiMark(s) : null;
     const badge = isOc
       ? `<span class="provs" title="OpenCode${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov opn"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
       : isAgy
       ? `<span class="provs" title="Antigravity${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov agy"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : isKiro
+      ? `<span class="provs" title="Kiro${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov kiro"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
       : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
     const mn = mesh.nodeOfKey(key);
     const meshBadge = mn

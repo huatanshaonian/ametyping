@@ -5,6 +5,7 @@
 const proc = require('./proc-linux');
 const codexSessions = require('../app/codex-sessions');
 const agySessions = require('../app/agy-sessions');
+const kiroSessions = require('../app/kiro-sessions');
 
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
 const STALE_WORK_MS = 10 * 60e3, WAIT_SHOW_MS = 10 * 60e3, KEEP_MS = 12 * 3600e3;
@@ -31,6 +32,7 @@ function createSessions() {
       const q = map.get(id);
       if (q && q.provider === 'codex') codexSessions.forget(q.rawSession);
       if (q && q.provider === 'agy') agySessions.forget(q.rawSession);
+      if (q && q.provider === 'kiro') kiroSessions.forget(q.rawSession);
       if (q) Object.assign(q, { state: 'ended', claudePid: null, claudeComm: null, fromPid: null, target: null, headless: false, last: t });
       return;
     }
@@ -49,6 +51,7 @@ function createSessions() {
     }
     codexSessions.remember(s);
     agySessions.remember(s);
+    kiroSessions.remember(s);
     if (type === 'meta') { s.last = t; return; }                    // a title / folder update: no state change
     if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return; }   // SessionStart
     if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; }
@@ -79,7 +82,7 @@ function createSessions() {
   function label(s) {
     if (s.title) return s.title;
     const same = [...map.values()].filter((o) => o.provider === s.provider && o.project === s.project && !o.title);
-    const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : 'Claude');
+    const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : s.provider === 'kiro' ? 'Kiro' : 'Claude');
     return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
   }
 

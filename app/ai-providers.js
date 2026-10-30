@@ -89,6 +89,7 @@ const MODELS = [
   [/doubao|volc/i, 'volcengine', 'Volcengine'],
   [/step[-_]/i, 'stepfun', 'StepFun'],
   [/mimo/i, 'xiaomi', 'Xiaomi'],
+  [/nemotron|nvidia/i, 'nvidia', 'NVIDIA'],
 ];
 
 const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);

@@ -26,7 +26,7 @@ const PLACEHOLDER = {
   opencode: '直接回复（OpenCode 走它自己的会话 API）',
   off: '没开远程控制，只能看',
 };
-const provOf = (id) => (String(id || '').startsWith('codex:') ? 'codex' : String(id || '').startsWith('opencode:') ? 'opencode' : String(id || '').startsWith('agy:') ? 'agy' : 'claude');
+const provOf = (id) => (String(id || '').startsWith('codex:') ? 'codex' : String(id || '').startsWith('opencode:') ? 'opencode' : String(id || '').startsWith('agy:') ? 'agy' : String(id || '').startsWith('kiro:') ? 'kiro' : 'claude');
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
 // Claude Code's own Ctrl combinations (buttons only): [key, label, what it does]
 const COMBOS = [['ctrlb', '转后台', 'Ctrl+B：把正在跑的命令放到后台，Claude 接着往下做'],
@@ -250,10 +250,10 @@ function mount(current) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
     if (s) {
-      const p = provOf(s.id), ai = (p === 'opencode' || p === 'agy') ? aiMark(s) : null;
-      const mark = (p === 'opencode' || p === 'agy')
-        ? h('span', { class: 'provs', title: (p === 'agy' ? 'Antigravity' : 'OpenCode') + (ai ? ' · ' + ai.name : '') },
-          h('span', { class: 'prov ' + (p === 'agy' ? 'agy' : 'opn') }), ai ? h('span', { class: 'prov ai ai-' + ai.slug, title: ai.name }) : null)
+      const p = provOf(s.id), ai = (p === 'opencode' || p === 'agy' || p === 'kiro') ? aiMark(s) : null;
+      const mark = (p === 'opencode' || p === 'agy' || p === 'kiro')
+        ? h('span', { class: 'provs', title: (p === 'agy' ? 'Antigravity' : p === 'kiro' ? 'Kiro' : 'OpenCode') + (ai ? ' · ' + ai.name : '') },
+          h('span', { class: 'prov ' + (p === 'agy' ? 'agy' : p === 'kiro' ? 'kiro' : 'opn') }), ai ? h('span', { class: 'prov ai ai-' + ai.slug, title: ai.name }) : null)
         : h('span', { class: 'prov ' + (p === 'codex' ? 'cdx' : 'cla'), title: p === 'codex' ? 'Codex 的会话' : 'Claude Code 的会话' });
       hname.prepend(mark);
     }

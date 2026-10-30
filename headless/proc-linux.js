@@ -8,6 +8,9 @@ const CLAUDE_COMM = /^(claude|node|bun|\d+\.\d+\.\d+)$/;
 // Codex CLI's own program (an npm install starts it from a node shim: the hook's parent is the program itself)
 const CODEX_COMM = /^codex/;
 const AGY_COMM = /^agy$/;
+// Kiro CLI's own program (comm is "kiro-cli", truncated by the kernel to 15 chars as "kiro-cli"); an npm/standalone
+// install may start it from a node shim
+const KIRO_COMM = /^kiro-cli$/;
 
 function comm(pid) {
   try { return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { return null; }
@@ -55,6 +58,14 @@ function findAgy(pid) {
   }
   return found || find(pid, AGY_COMM);
 }
+function findKiro(pid) {
+  let found = null;
+  for (let p = +pid, n = 0; p > 1 && n < 16; p = ppid(p), n++) {
+    const c = comm(p);
+    if (c === 'kiro-cli') found = { pid: p, comm: c, parent: ppid(p) };
+  }
+  return found || find(pid, KIRO_COMM);
+}
 function identity(pid) {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -75,4 +86,4 @@ function alive(pid, expectComm) {
   return c != null && (!expectComm || c === expectComm);
 }
 
-module.exports = { findClaude, findCodex, findAgy, tmuxPaneOf, alive, comm, ppid, environ, identity };
+module.exports = { findClaude, findCodex, findAgy, findKiro, tmuxPaneOf, alive, comm, ppid, environ, identity };

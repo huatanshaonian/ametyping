@@ -17,6 +17,8 @@ const codexSessions = require('./codex-sessions');
 const opencodeRecords = require('./opencode-records');
 const agyRecords = require('./agy-records');
 const agySessions = require('./agy-sessions');
+const kiroRecords = require('./kiro-records');
+const kiroSessions = require('./kiro-sessions');
 const { update } = require('./update');
 const { createPermissions } = require('./permissions');
 const { normalizeSession } = require('./session-source');
@@ -600,7 +602,7 @@ let hideTimer = null;
 function sessionLabel(s) {
   if (s.title) return s.title;                                    // the conversation's name in the Claude app
   const same = [...sessions.values()].filter((o) => o.provider === s.provider && o.project === s.project && !o.title);
-  const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : 'Claude');
+  const base = s.project || (s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : s.provider === 'kiro' ? 'Kiro' : 'Claude');
   return same.length > 1 ? `${base} #${String(s.rawSession || s.id).slice(0, 4)}` : base;
 }
 // A card answered (here, on the dashboard or in the terminal) puts the session back to work. Left "waiting" with
@@ -671,6 +673,7 @@ function onClaudeEvent(type, d) {
     const q = sessions.get(id);
     if (q && q.provider === 'codex') codexSessions.forget(q.rawSession);
     if (q && q.provider === 'agy') agySessions.forget(q.rawSession);
+    if (q && q.provider === 'kiro') kiroSessions.forget(q.rawSession);
     if (chatMode() && q) { q.state = 'ended'; q.claudePid = null; q.headless = false; q.fromPid = null; q.last = t; }   // kept: can be resumed
     else sessions.delete(id);
     if (![...sessions.values()].some((s) => WORKING.has(s.state))) win.webContents.send('claude', 'idle');
@@ -693,6 +696,7 @@ function onClaudeEvent(type, d) {
   }
   codexSessions.remember(s);
   agySessions.remember(s);
+  kiroSessions.remember(s);
   if (type === 'meta') { s.last = t; pushBubble(null); return; }   // a title / folder update: no state change
   if (type === 'idle') { s.last = t; if (s.state === 'ended') s.state = 'idle'; return pushBubble(null); }   // SessionStart
   if (type === 'message' || s.state === 'done') { s.steps = 0; s.t0 = t; if (type === 'message' && s.lines.length) s.lines.push({ sep: true, t }); }
@@ -805,7 +809,7 @@ async function onControl(req, res, body) {
   }
   if (req.method === 'POST' && req.url === '/control/launch') {
     if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
-    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', ['codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude', d.api));
+    return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', d.api));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
@@ -867,10 +871,10 @@ function pushChat(force) {
   if (!s || !chatMode() || !bubbleWin || !bubbleWin.isVisible()) return;
   // a Codex session: its rollout file read like a Claude Code transcript; until that file is found, the live progress
   // (OpenCode: the conversation mirror the plugin appends to, same idea)
-  const live = s.provider === 'codex' || s.provider === 'opencode' || s.provider === 'agy';
+  const live = s.provider === 'codex' || s.provider === 'opencode' || s.provider === 'agy' || s.provider === 'kiro';
   if (live && !s.transcript && Date.now() - (s.lookedAt || 0) > 5000) {
     s.lookedAt = Date.now();
-    const rec = s.provider === 'codex' ? codexRecords : s.provider === 'opencode' ? opencodeRecords : agyRecords;
+    const rec = s.provider === 'codex' ? codexRecords : s.provider === 'opencode' ? opencodeRecords : s.provider === 'agy' ? agyRecords : kiroRecords;
     s.transcript = rec.fileOf(s.rawSession);
     const title = rec.titleOf(s.rawSession);
     if (title && !s.title) { s.title = title.slice(0, 60); pushBubble(null); }
@@ -879,7 +883,7 @@ function pushChat(force) {
     if (force || s.chatPushed !== s.last) {
       s.chatPushed = s.last;
       bubbleWin.webContents.send('chat-log', { id: s.id, msgs: [
-        { role: 'sys', text: s.provider === 'codex' ? 'Codex 实时进度' : s.provider === 'opencode' ? 'OpenCode 实时进度' : 'Antigravity 实时进度', t: s.born },
+        { role: 'sys', text: s.provider === 'codex' ? 'Codex 实时进度' : s.provider === 'opencode' ? 'OpenCode 实时进度' : s.provider === 'agy' ? 'Antigravity 实时进度' : 'Kiro 实时进度', t: s.born },
         ...s.lines.filter((l) => !l.sep).map((l) => ({ role: 'sys', text: l.text, t: l.t })),
       ] });
     }
@@ -890,7 +894,7 @@ function pushChat(force) {
   let c = chats.get(s.id);
   if (!c || c.file !== s.transcript) { c = { file: s.transcript }; chats.set(s.id, c); }
   let changed = false;
-  const parse = s.provider === 'codex' ? codexRecords.recordsOf : s.provider === 'opencode' ? opencodeRecords.recordsOf : s.provider === 'agy' ? agyRecords.recordsOf : undefined;
+  const parse = s.provider === 'codex' ? codexRecords.recordsOf : s.provider === 'opencode' ? opencodeRecords.recordsOf : s.provider === 'agy' ? agyRecords.recordsOf : s.provider === 'kiro' ? kiroRecords.recordsOf : undefined;
   try { changed = transcript.poll(c, parse); } catch (e) { console.error('transcript: ' + e.message); }
   if (c.title && !s.title) { s.title = String(c.title).slice(0, 60); pushBubble(null); }
   if ((changed || force) && c.msgs) bubbleWin.webContents.send('chat-log', { id: s.id, msgs: c.msgs.slice(-200) });

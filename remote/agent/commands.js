@@ -79,4 +79,15 @@ function scanAgy(home) {
   const seen = new Set();
   return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
 }
-module.exports = { scan, scanCodex, scanAgy };
+
+// Kiro CLI skills: global ~/.kiro/skills and workspace .kiro/skills are surfaced to the agent via skill:// resources;
+// each skill folder has a SKILL.md with name/description frontmatter (commands.js describe handles it).
+function scanKiro(home) {
+  const out = [];
+  const base = process.env.KIRO_HOME || path.join(home, '.kiro');
+  skillsIn(path.join(base, 'skills'), '', out);
+  skillsIn(path.join(home, '.agents', 'skills'), '', out);
+  const seen = new Set();
+  return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
+}
+module.exports = { scan, scanCodex, scanAgy, scanKiro };

@@ -53,10 +53,10 @@ function renderList() {
     const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
     let mark;
-    if (s.provider === 'opencode' || s.provider === 'agy') {
-      const pname = s.provider === 'agy' ? 'Antigravity' : 'OpenCode';
+    if (s.provider === 'opencode' || s.provider === 'agy' || s.provider === 'kiro') {
+      const pname = s.provider === 'agy' ? 'Antigravity' : s.provider === 'kiro' ? 'Kiro' : 'OpenCode';
       mark = document.createElement('span'); mark.className = 'provs'; mark.title = pname;
-      const oc = document.createElement('span'); oc.className = 'prov ' + (s.provider === 'agy' ? 'agy' : 'opn'); mark.append(oc);
+      const oc = document.createElement('span'); oc.className = 'prov ' + (s.provider === 'agy' ? 'agy' : s.provider === 'kiro' ? 'kiro' : 'opn'); mark.append(oc);
       if (s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || ''))) {
         const ai = document.createElement('span'); ai.className = 'prov ai ai-' + s.ai.slug; ai.title = String(s.ai.name || '');
         mark.append(ai); mark.title = pname + (ai.title ? ' · ' + ai.title : '');
@@ -67,7 +67,7 @@ function renderList() {
     nm.prepend(mark);   // whose session
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
-    st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : 'Claude'} · ${name}`;
+    st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : s.provider === 'kiro' ? 'Kiro' : 'Claude'} · ${name}`;
   });
 }
 // select on press (not click): nothing can swap the element between press and release

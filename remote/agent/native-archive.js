@@ -3,6 +3,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto');
 const {agyRoots,metaOf:agyMetaOf}=require('../../app/agy-records');
+const {SESSIONS:kiroSessionsDir,metadataOf:kiroMetadataOf}=require('../../app/kiro-records');
 const CHUNK=512*1024;
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 function walk(root,accept,out=[],depth=0) {
@@ -18,12 +19,14 @@ function catalog(home=os.homedir()) {
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'archive')],
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'events')],
     ['opencode',path.join(process.env.XDG_DATA_HOME||path.join(home,'.local','share'),'opencode','tool-output')],
+    ['kiro',kiroSessionsDir],
     ...agyRoots(home).map(r=>['agy',path.join(r,'brain')])];
   const out=[];
   for(const [provider,root]of roots)for(const file of walk(root,p=>root.endsWith('tool-output')||
       (provider==='claude'&&/[\\/](tool-results|attachments)[\\/]/.test(p))||
       (provider==='agy'&&(/[\\/]logs[\\/]transcript(?:_full)?\.jsonl$/.test(p)||/[\\/]steps[\\/]\d+[\\/]output\.txt$/.test(p)||/[\\/]subagents[\\/][^\\/]+\.json$/.test(p)||/[\\/]tasks[\\/][^\\/]+\.log$/.test(p)))||
-      (provider==='opencode'?/\.(json|jsonl)$/.test(p):provider!=='agy'&&p.endsWith('.jsonl')))){
+      (provider==='kiro'?/\.(jsonl|json)$/.test(p):
+      provider==='opencode'?/\.(json|jsonl)$/.test(p):provider!=='agy'&&p.endsWith('.jsonl')))){
     const rel=path.relative(root,file).split(path.sep).join('/');
     const id=path.basename(file).replace(/\.(jsonl|json|txt|log)$/,'');
     let session=id,parent='',cwd='';
@@ -47,6 +50,12 @@ function catalog(home=os.homedir()) {
         const tf=path.join(root,session,'.system_generated','logs','transcript.jsonl');
         const meta=agyMetaOf(fs.existsSync(tf)?tf:file);
         if(meta){if(meta.cwd)cwd=meta.cwd;if(meta.parentId)parent=meta.parentId;}
+      }
+      else if(provider==='kiro'){
+        // cwd and the sub-session marker live in the sibling {id}.json; parse it once per file
+        const jf=file.replace(/\.jsonl$/i,'.json');
+        const meta=kiroMetadataOf(fs.existsSync(jf)?jf:file);
+        if(meta){if(typeof meta.cwd==='string')cwd=meta.cwd;if(meta.session_created_reason==='subagent')parent=session;}
       }
       else{const s=b.toString('utf8');const p=/"parentID"\s*:\s*"([^"]+)"/.exec(s),c=/"directory"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(s);parent=p?p[1]:'';cwd=c?JSON.parse(c[1]):'';}
     }catch{}
