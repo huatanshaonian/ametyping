@@ -34,6 +34,7 @@ const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server
 // what an agent machine runs: remote/agent/ and headless/, plus the app/ modules they load (found by following their
 // require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there, and the OpenCode plugin
 const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
+  'agy-hook.js', 'install-agy-hooks.js',
   'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
 function depsOf(ref, roots) {
   const deps = new Set(), seen = new Set();
@@ -125,6 +126,7 @@ function checkMachine(name, local, extraOk) {
         const head = git(['rev-parse', 'HEAD']);
         if (head !== commit) { say(`  这个工作目录在 ${head.slice(0, 7)}，不是 ${commit.slice(0, 7)}：本机 agent 用的是工作目录里的代码，先切到 ${REF} 再重启它`); continue; }
         if (DRY) { say('  （--dry-run：会重启本机 agent）'); continue; }
+        try { run(process.execPath, [path.resolve(__dirname, '..', '..', 'install-agy-hooks.js')]); } catch {}
         const result = run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
           path.join(__dirname, 'restart-local-agent.ps1'), '-Root', path.resolve(__dirname, '..', '..'), '-TaskName', a.task]);
         say('  已确认新 agent 进程：' + String(result).trim());
@@ -139,6 +141,9 @@ function checkMachine(name, local, extraOk) {
       const km = DRY ? 'ok' : killModeProcess(a.ssh);
       if (DRY || !cmp.changed.length) { if (!cmp.changed.length) say('  已经是这个版本'); continue; }
       await upload(commit, cmp.changed, a.ssh, a.dir);
+      if (cmp.changed.some((p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js')) {
+        ssh(a.ssh, `cd ${a.dir} && node install-agy-hooks.js`, { allowFail: true });
+      }
       ssh(a.ssh, 'systemctl --user restart ame-agent');
       say(`  已更新，agent 已重启：${String(ssh(a.ssh, 'sleep 2; systemctl --user is-active ame-agent', { allowFail: true })).trim()}`);
       if (headless.length) {

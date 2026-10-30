@@ -7,6 +7,7 @@ const fs = require('fs');
 const CLAUDE_COMM = /^(claude|node|bun|\d+\.\d+\.\d+)$/;
 // Codex CLI's own program (an npm install starts it from a node shim: the hook's parent is the program itself)
 const CODEX_COMM = /^codex/;
+const AGY_COMM = /^agy$/;
 
 function comm(pid) {
   try { return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { return null; }
@@ -46,6 +47,14 @@ function findCodex(pid) {
   }
   return found || find(pid, CODEX_COMM);
 }
+function findAgy(pid) {
+  let found = null;
+  for (let p = +pid, n = 0; p > 1 && n < 16; p = ppid(p), n++) {
+    const c = comm(p);
+    if (c === 'agy') found = { pid: p, comm: c, parent: ppid(p) };
+  }
+  return found || find(pid, AGY_COMM);
+}
 function identity(pid) {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -66,4 +75,4 @@ function alive(pid, expectComm) {
   return c != null && (!expectComm || c === expectComm);
 }
 
-module.exports = { findClaude, findCodex, tmuxPaneOf, alive, comm, ppid, environ, identity };
+module.exports = { findClaude, findCodex, findAgy, tmuxPaneOf, alive, comm, ppid, environ, identity };

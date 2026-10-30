@@ -2,6 +2,7 @@
 // One outstanding request: a server ACK always means its SQLite transaction has committed.
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto');
+const {agyRoots,metaOf:agyMetaOf}=require('../../app/agy-records');
 const CHUNK=512*1024;
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 function walk(root,accept,out=[],depth=0) {
@@ -16,18 +17,24 @@ function catalog(home=os.homedir()) {
     ['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'archived_sessions')],
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'archive')],
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'events')],
-    ['opencode',path.join(process.env.XDG_DATA_HOME||path.join(home,'.local','share'),'opencode','tool-output')]];
+    ['opencode',path.join(process.env.XDG_DATA_HOME||path.join(home,'.local','share'),'opencode','tool-output')],
+    ...agyRoots(home).map(r=>['agy',path.join(r,'brain')])];
   const out=[];
   for(const [provider,root]of roots)for(const file of walk(root,p=>root.endsWith('tool-output')||
       (provider==='claude'&&/[\\/](tool-results|attachments)[\\/]/.test(p))||
-      (provider==='opencode'?/\.(json|jsonl)$/.test(p):p.endsWith('.jsonl')))){
+      (provider==='agy'&&(/[\\/]logs[\\/]transcript(?:_full)?\.jsonl$/.test(p)||/[\\/]steps[\\/]\d+[\\/]output\.txt$/.test(p)||/[\\/]subagents[\\/][^\\/]+\.json$/.test(p)||/[\\/]tasks[\\/][^\\/]+\.log$/.test(p)))||
+      (provider==='opencode'?/\.(json|jsonl)$/.test(p):provider!=='agy'&&p.endsWith('.jsonl')))){
     const rel=path.relative(root,file).split(path.sep).join('/');
-    const id=path.basename(file).replace(/\.(jsonl|json)$/,'');
+    const id=path.basename(file).replace(/\.(jsonl|json|txt|log)$/,'');
     let session=id,parent='',cwd='';
     let kind=root.endsWith('events')?'events':'native';
     if(provider==='claude'&&/[\\/](tool-results|attachments)[\\/]/.test(file)){
       session=rel.split('/')[1]||id;kind=rel.includes('/tool-results/')?'tool-output':'attachment';
     }else if(root.endsWith('tool-output')){session='tool-output';kind='tool-output';}
+    else if(provider==='agy'){
+      session=rel.split('/')[0]||id;
+      if(rel.includes('/steps/')||rel.includes('/tasks/'))kind='tool-output';
+    }
     try{
       const fd=fs.openSync(file,'r');let b;try{b=Buffer.alloc(65536);const n=fs.readSync(fd,b,0,b.length,0);b=b.subarray(0,n);}finally{fs.closeSync(fd);}
       if(provider==='codex'){
@@ -36,6 +43,11 @@ function catalog(home=os.homedir()) {
         session=p&&p.id||capture('id')||id;parent=p&&p.parent_thread_id||capture('parent_thread_id');cwd=p&&p.cwd||capture('cwd');
       }
       else if(provider==='claude'){const m=/"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(b.toString('utf8'));if(m)cwd=JSON.parse(m[1]);const pm=/[\\/]([^\\/]+)[\\/]subagents[\\/]/.exec(file);if(pm)parent=pm[1];}
+      else if(provider==='agy'){
+        const tf=path.join(root,session,'.system_generated','logs','transcript.jsonl');
+        const meta=agyMetaOf(fs.existsSync(tf)?tf:file);
+        if(meta){if(meta.cwd)cwd=meta.cwd;if(meta.parentId)parent=meta.parentId;}
+      }
       else{const s=b.toString('utf8');const p=/"parentID"\s*:\s*"([^"]+)"/.exec(s),c=/"directory"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(s);parent=p?p[1]:'';cwd=c?JSON.parse(c[1]):'';}
     }catch{}
     out.push({file,provider,session:provider==='claude'?session:provider+':'+session,parent,kind,cwd,

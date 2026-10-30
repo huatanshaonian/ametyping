@@ -15,14 +15,18 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
   if(!state.adopted)state.adopted={};
   if(!state.targets)state.targets={};
   function sources(){
+    const agyCfg=process.env.AGY_CONFIG_DIR||path.join(home,'.gemini','config');
     const out=[['claude',path.join(home,'.claude','CLAUDE.md')],['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'AGENTS.md')],
-      ['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'AGENTS.override.md')],['opencode',path.join(process.env.XDG_CONFIG_HOME||path.join(home,'.config'),'opencode','AGENTS.md')]]
+      ['codex',path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'AGENTS.override.md')],['opencode',path.join(process.env.XDG_CONFIG_HOME||path.join(home,'.config'),'opencode','AGENTS.md')],
+      ['agy',path.join(home,'.gemini','GEMINI.md')]]
       .map(([provider,file])=>({provider,file,scope:'machine',owner:name}));
     for(const provider of ['claude','codex']){
       const base=provider==='claude'?path.join(home,'.claude','projects'):path.join(process.env.CODEX_HOME||path.join(home,'.codex'),'memories');
       for(const file of walk(base,p=>p.endsWith('.md')&&(provider==='codex'||/[\\/]memory[\\/]/.test(p))))out.push({provider,file,scope:'machine',owner:name});
     }
     for(const file of walk(path.join(home,'.claude','rules'),p=>p.endsWith('.md')))out.push({provider:'claude',file,scope:'machine',owner:name});
+    for(const file of walk(path.join(agyCfg,'rules'),p=>p.endsWith('.md')))out.push({provider:'agy',file,scope:'machine',owner:name});
+    for(const file of walk(path.join(home,'.agents','rules'),p=>p.endsWith('.md')))out.push({provider:'agy',file,scope:'machine',owner:name});
     if(confirmedDir)for(const file of walk(confirmedDir,p=>p.endsWith('.md')))out.push({provider:'confirmed',file,scope:'global',owner:''});
     return out;
   }
@@ -31,8 +35,9 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     const list=sources();
     for(const p of bundle&&bundle.projects||[]){
       let dir;try{dir=await folder(p.path);}catch{continue;}
-      for(const [provider,rel]of [['claude','CLAUDE.md'],['claude','CLAUDE.local.md'],['codex','AGENTS.md'],['codex','AGENTS.override.md']])list.push({provider,file:path.join(dir,rel),scope:'project',owner:p.id});
+      for(const [provider,rel]of [['claude','CLAUDE.md'],['claude','CLAUDE.local.md'],['codex','AGENTS.md'],['codex','AGENTS.override.md'],['agy','GEMINI.md']])list.push({provider,file:path.join(dir,rel),scope:'project',owner:p.id});
       for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))list.push({provider:'claude',file,scope:'project',owner:p.id});
+      for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))list.push({provider:'agy',file,scope:'project',owner:p.id});
     }
     for(const p of bundle&&bundle.projects||[]){
       const encoded=p.path.replace(/[^A-Za-z0-9]/g,'-');
@@ -95,8 +100,9 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     // Explicitly adopted sources are retired only when their last observed content still matches.
     // Immutable confirmed releases are reference material and never rewritten.
     const allowed=new Set(sources().filter(s=>s.provider!=='confirmed').map(s=>s.file));
-    for(const p of bundle.projects||[]){try{const dir=await folder(p.path);for(const rel of ['CLAUDE.md','CLAUDE.local.md','AGENTS.md','AGENTS.override.md'])allowed.add(path.join(dir,rel));
-      for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))allowed.add(file);}catch{}}
+    for(const p of bundle.projects||[]){try{const dir=await folder(p.path);for(const rel of ['CLAUDE.md','CLAUDE.local.md','AGENTS.md','AGENTS.override.md','GEMINI.md'])allowed.add(path.join(dir,rel));
+      for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))allowed.add(file);
+      for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))allowed.add(file);}catch{}}
     const adoptSources=()=>{for(const a of bundle.adoptions||[]){
       const owner=a.scope==='project'?a.owner:'global';
       if(!results.some(r=>r.target===owner&&r.ok))continue;
@@ -130,10 +136,11 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
         let targets;
         if(t.target==='global'){
           const codexDir=process.env.CODEX_HOME||path.join(home,'.codex');
-          targets=[path.join(home,'.claude','CLAUDE.md'),path.join(codexDir,fs.existsSync(path.join(codexDir,'AGENTS.override.md'))?'AGENTS.override.md':'AGENTS.md'),path.join(process.env.XDG_CONFIG_HOME||path.join(home,'.config'),'opencode','AGENTS.md')];
+          targets=[path.join(home,'.claude','CLAUDE.md'),path.join(codexDir,fs.existsSync(path.join(codexDir,'AGENTS.override.md'))?'AGENTS.override.md':'AGENTS.md'),path.join(process.env.XDG_CONFIG_HOME||path.join(home,'.config'),'opencode','AGENTS.md'),path.join(home,'.gemini','GEMINI.md')];
         }else{
           const dir=await folder(t.path);targets=[path.join(dir,'CLAUDE.md'),path.join(dir,'AGENTS.md')];
           if(fs.existsSync(path.join(dir,'AGENTS.override.md')))targets.push(path.join(dir,'AGENTS.override.md'));
+          if(fs.existsSync(path.join(dir,'GEMINI.md')))targets.push(path.join(dir,'GEMINI.md'));
         }
         for(const file of targets)if(content||state.files[file]){
           let selected=content;

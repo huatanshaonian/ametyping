@@ -54,8 +54,9 @@ export function askCard(p, qs) {
       h('div', { class: 'aqh' }, q.header ? h('span', { class: 'aqt', text: q.header }) : null, h('span', { text: q.question }), q.multiSelect ? h('i', { text: '可多选' }) : null),
       h('div', { class: 'aqo' }, ...opts), own);
   });
+  const askWho = p.provider === 'agy' ? 'Antigravity' : 'Claude';
   const card = h('div', { class: 'perm ask', dataset: { id: p.id } },
-    h('div', { class: 'pt', text: `Claude 在问你${qs.length > 1 ? ` · ${qs.length} 个问题` : ''}${p.subagent ? ' · ' + p.subagent : ''}` }),
+    h('div', { class: 'pt', text: `${askWho} 在问你${qs.length > 1 ? ` · ${qs.length} 个问题` : ''}${p.subagent ? ' · ' + p.subagent : ''}` }),
     ...blocks,
     h('div', { class: 'pa' }, go,
       h('button', { class: 'btn', type: 'button', dataset: { choice: 'chat' }, text: '先聊聊', title: '先不回答：让 Claude 问你想澄清什么（终端里的 Chat about this）' }),

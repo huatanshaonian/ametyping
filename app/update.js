@@ -50,6 +50,10 @@ async function update(root, { task = 'AmeTyping Agent' } = {}) {
     const r = await npm(args, path.join(root, dir));
     if (!r.ok) notes.push(`${dir}/ 的依赖没装成（手动运行 npm install）：${tail(r.err, 200)}`);
   }
+  if (files.some((f) => f === 'install-agy-hooks.js' || f === 'agy-hook.js')) {
+    const r = await run('node', [path.join(root, 'install-agy-hooks.js')], root, 15e3);
+    if (!r.ok) notes.push(`Antigravity hooks 没装成（手动运行 node install-agy-hooks.js）：${tail(r.err, 200)}`);
+  }
   if (files.some((f) => /^(remote\/agent|headless|app)\//.test(f)) && !(await restartAgent(root, task))) notes.push('看板 agent 没有重启（没找到它的计划任务）：需要的话手动重启');
   return { ok: true, changed: true, msg: `已更新 ${log.length || 1} 项改动`, detail: [...log.slice(0, 8), log.length > 8 ? `…… 共 ${log.length} 项` : '', ...notes].filter(Boolean).join('\n') };
 }

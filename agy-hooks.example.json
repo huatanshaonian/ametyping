@@ -1,0 +1,72 @@
+{
+  "ametyping": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js SessionStart",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js PreInvocation",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js PreToolUse",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js PostToolUse",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostInvocation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js PostInvocation",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/path/to/agy-hook.js Stop",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

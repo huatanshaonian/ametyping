@@ -54,6 +54,7 @@
   -webkit-mask: url(../img/prov-openai.svg) center / contain no-repeat; mask: url(../img/prov-openai.svg) center / contain no-repeat; }
 .dash .prov.cla { background: #d97757; -webkit-mask-image: url(../img/prov-claude.svg); mask-image: url(../img/prov-claude.svg); }
 .dash .prov.opn { -webkit-mask-image: url(../img/prov-opencode.svg); mask-image: url(../img/prov-opencode.svg); }
+.dash .prov.agy { background: #4285F4; -webkit-mask-image: url(../img/prov-agy.svg); mask-image: url(../img/prov-agy.svg); }
 /* OpenCode sessions also show the AI provider they run on: OpenCode's mark, then the provider's */
 .dash .provs { display: inline-flex; align-items: center; gap: 2px; margin-right: 5px; vertical-align: -2px; flex: none; }
 .dash .provs .prov { margin-right: 0; }

@@ -23,6 +23,8 @@ const { tidyScreen, plainScreen } = require('../app/screen-text');
 const { listRunning, transcriptOf, projectOf } = require('../app/running-sessions');
 const codexSessions = require('../app/codex-sessions');
 const codexRecords = require('../app/codex-records');
+const agySessions = require('../app/agy-sessions');
+const agyRecords = require('../app/agy-records');
 const opencode = require('../app/opencode');
 const opencodeRecords = require('../app/opencode-records');
 const { resume } = require('./resume');
@@ -41,7 +43,7 @@ const paneIo = (s) => ({ screen: () => tmux.screen(s.target), key: (k) => tmux.k
 function locate(s, pid) {
   if (!s || !pid || s.fromPid === pid) return;
   if (s.provider === 'opencode') return;               // its pid is OpenCode's server: no terminal, the plugin is the channel
-  const c = s.provider === 'codex' ? proc.findCodex(pid) : proc.findClaude(pid);
+  const c = s.provider === 'codex' ? proc.findCodex(pid) : s.provider === 'agy' ? proc.findAgy(pid) : proc.findClaude(pid);
   if (!c) return;
   s.fromPid = pid;
   s.claudePid = c.pid; s.claudeComm = c.comm;
@@ -55,6 +57,7 @@ function locate(s, pid) {
     if (env.PATH) s.env = env;
   }
   codexSessions.remember(s);
+  agySessions.remember(s);
 }
 
 // ---- reply to a session ----
@@ -84,9 +87,9 @@ async function chatSend(id, text) {
   if (!s) return { ok: false, msg: '这个会话已经不在列表里了' };
   if (s.headless) return { ok: false, msg: '后台续聊还在跑，等它这一轮完成再发' };
   if (s.claudePid && proc.alive(s.claudePid, s.claudeComm)) {
-    if (!s.target) return { ok: false, msg: `这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 ${s.provider === 'codex' ? 'codex' : 'claude'} 就可以）` };
+    if (!s.target) return { ok: false, msg: `这个会话不在 tmux 里，没法从这里回复（用 tmux 启动 ${s.provider === 'codex' ? 'codex' : s.provider === 'agy' ? 'agy' : 'claude'} 就可以）` };
     if (asking(s)) return { ok: false, msg: '它在等你确认，先处理确认（卡片或终端里）' };
-    const claude = s.provider !== 'codex';
+    const claude = s.provider !== 'codex' && s.provider !== 'agy';
     if (claude) await btw.beforeSend(s, paneIo(s));                  // (an open /btw overlay would swallow the message)
     const r = await tmux.send(s.target, text);
     if (r.ok && claude && btwPanel.isBtw(text)) btw.sent(s, paneIo(s), btwPanel.questionOf(text));
@@ -94,16 +97,18 @@ async function chatSend(id, text) {
   }
   if (s.state !== 'ended' && !s.claudePid) return { ok: false, msg: '还不知道这个会话在哪个终端里（等它下一次有动静）' };
   const codex = s.provider === 'codex';
-  const plan = codex ? { ok: true, env: s.env || process.env, cleanup() {} } :
+  const agy = s.provider === 'agy';
+  const plan = (codex || agy) ? { ok: true, env: s.env || process.env, cleanup() {} } :
     claudeApi.resumePlan(s.api, s.env || process.env, { cwd: s.cwd, args: ['-p', '--resume', s.rawSession || s.id] });
   if (!plan.ok) return plan;
   const r = resume(s.rawSession || s.id, s.cwd, plan.env, text, () => {
     Object.assign(s, { headless: false, claudePid: null, claudeComm: null, fromPid: null, target: null, state: 'ended', last: Date.now() });
     plan.cleanup();
-  }, codex, '', plan.command);
+  }, agy ? 'agy' : codex, '', plan.command);
   if (!r.ok) { plan.cleanup(); return r; }
   Object.assign(s, { headless: true, state: 'message', last: Date.now() });
   return { ok: true, msg: s.provider === 'codex' ? '这个会话已经关了，在后台用 codex exec resume 续上（不会再问你确认：按 Codex 自己的沙箱设置来）'
+    : s.provider === 'agy' ? '这个会话已经关了，在后台用 agy --conversation -p 续上（按 Antigravity 权限设置自动执行）'
     : '这个会话已经关了，在后台用 claude -p --resume 续上（需要确认权限的操作会被跳过）' };
 }
 
@@ -189,7 +194,7 @@ async function onControl(req, res, body) {
     const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
     const resume = typeof d.resume === 'string' ? d.resume : '';
     if (resume) { const s = sessions.map.get(resume); if (s && s.claudePid && proc.alive(s.claudePid, s.claudeComm)) return out(200, { ok: false, msg: '这个会话还开着' }); }
-    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api }));
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });
@@ -259,6 +264,17 @@ function adoptRunning() {
     locate(s, r.pid);
     n++;
   }
-  if (n) console.log(`接回了 ${n} 个已在运行的 Claude / Codex 会话`);
+  for (const r of agySessions.list()) {
+    const id = 'agy:' + r.id;
+    if (sessions.map.has(id)) continue;
+    const c = proc.findAgy(r.pid);
+    if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { agySessions.forget(r.id); continue; }
+    const s = sessions.ensure(id, { provider: 'agy', rawSession: r.id });
+    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, title: agyRecords.titleOf(r.id) || r.title || undefined,
+      transcript: r.transcript || agyRecords.fileOf(r.id) || undefined });
+    locate(s, r.pid);
+    n++;
+  }
+  if (n) console.log(`接回了 ${n} 个已在运行的 Claude / Codex / Antigravity 会话`);
 }
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { permissions.clear(); removeToken(); process.exit(0); });

@@ -26,6 +26,7 @@ const records = require('./records');
 const commands = require('./commands');
 const codex = require('../../app/codex-records');
 const opencode = require('../../app/opencode-records');
+const agy = require('../../app/agy-records');
 const { aiOf } = require('../../app/ai-providers');
 const { createFiles } = require('./files');
 const { createProfiles } = require('./claude-profiles');
@@ -38,6 +39,7 @@ const { createOpenCodeExport } = require('./opencode-export');
 const { createArtifacts } = require('./artifacts');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
+const agyAgents = require('./agy-subagents');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -167,14 +169,36 @@ function scan() {
     opencodeSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: Date.now() });
   }
   for (const id of [...opencodeSess.keys()]) if (!oseen.has(id)) opencodeSess.delete(id);
+  // Antigravity (agy) sessions: brain/<id>/.system_generated/logs/transcript.jsonl
+  const aseen = new Set();
+  for (const f of agy.recentFiles(Math.max(IDLE_DROP_MS, 6 * 3600e3))) {
+    const m = agy.metaOf(f.file);
+    if (!m || m.sub) continue;
+    const id = 'agy:' + m.id;
+    if (now - f.mtime > IDLE_DROP_MS && !pet.has(id)) continue;
+    aseen.add(id);
+    agySess.set(id, { file: f.file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: agy.titleOf(m.id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: f.mtime });
+  }
+  for (const [id] of pet) {
+    if (!id.startsWith('agy:') || aseen.has(id)) continue;
+    const file = agy.fileOf(id);
+    const m = file && agy.metaOf(file);
+    if (!m || m.sub) continue;
+    aseen.add(id);
+    agySess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: agy.titleOf(id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: Date.now() });
+  }
+  for (const id of [...agySess.keys()]) if (!aseen.has(id)) agySess.delete(id);
+  agyAgentRows = agyAgents.scan();
 }
 const codexSess = new Map();                         // "codex:<thread id>" -> { file, project, cwd, title }
 const codexMeta = new Map();                         // rollout file -> { id, cwd, sub }
 const opencodeSess = new Map();                      // "opencode:<session id>" -> { file, project, cwd, title }
+const agySess = new Map();                           // "agy:<conversation id>" -> { file, project, cwd, title, model, ai }
 let codexAgentRows = new Map();
+let agyAgentRows = new Map();
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
-const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, opencode, projectOf,
-  live: (id) => sess.has(id) || codexSess.has(id) || opencodeSess.has(id), stored: (id) => serverOff && serverOff[id] });
+const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, opencode, agy, projectOf,
+  live: (id) => sess.has(id) || codexSess.has(id) || opencodeSess.has(id) || agySess.has(id), stored: (id) => serverOff && serverOff[id] });
 // the transcript of a session id (Claude Code or "codex:<id>"), for checking which files it wrote
 function sessionFile(id) {
   if (id.startsWith('opencode:')) {
@@ -183,6 +207,13 @@ function sessionFile(id) {
     const file = opencode.fileOf(id);
     const m = file && opencode.metaOf(file);
     return file ? { file, opencode: true, cwd: m && m.cwd } : null;
+  }
+  if (id.startsWith('agy:')) {
+    const c = agySess.get(id) || archive.map.get(id);
+    if (c) return { file: c.file, agy: true, cwd: c.cwd };
+    const file = agy.fileOf(id);
+    const m = file && agy.metaOf(file);
+    return file ? { file, agy: true, cwd: m && m.cwd } : null;
   }
   if (id.startsWith('codex:')) {
     const c = codexSess.get(id) || archive.map.get(id);
@@ -238,7 +269,7 @@ function apiOf(v) {
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
   const api = apiOf(d.api);
-  if (d.api && !api && d.tool !== 'codex' && !String(d.id || '').startsWith('codex:')) return { ok: false, msg: '启动入口格式已更新，请刷新看板后再试' };
+  if (d.api && !api && d.tool !== 'codex' && d.tool !== 'agy' && !/^(codex|agy):/.test(String(d.id || ''))) return { ok: false, msg: '启动入口格式已更新，请刷新看板后再试' };
   let r;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
@@ -249,13 +280,13 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
-    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: ['codex', 'opencode'].includes(d.tool) ? d.tool : 'claude', api: d.tool === 'codex' || d.tool === 'opencode' ? undefined : api || undefined });
-  } else if (d.t === 'resume' && typeof d.id === 'string' && (/^opencode:ses_[A-Za-z0-9]{6,80}$/.test(d.id) || /^(codex:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id))) {
+    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: ['codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude', api: ['codex', 'opencode', 'agy'].includes(d.tool) ? undefined : api || undefined });
+  } else if (d.t === 'resume' && typeof d.id === 'string' && (/^opencode:ses_[A-Za-z0-9]{6,80}$/.test(d.id) || /^(codex:|agy:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id))) {
     // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);
-    const cwd = !f ? '' : f.codex ? f.cwd || '' : f.opencode ? f.cwd || '' : records.lastCwd(f.file);   // (where it was last, not where it began; Codex: its folder)
+    const cwd = !f ? '' : (f.codex || f.opencode || f.agy) ? f.cwd || '' : records.lastCwd(f.file);   // (where it was last, not where it began; Codex: its folder)
     if (!cwd) return { ok: false, msg: '这台电脑上找不到这个会话的记录' };
-    r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: /^(codex|opencode):/.test(d.id) ? undefined : api || undefined });
+    r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: /^(codex|opencode|agy):/.test(d.id) ? undefined : api || undefined });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
   } else return { ok: false, msg: '无效请求' };
@@ -282,16 +313,21 @@ function stateList() {
   // sessions the pet knows but that have no transcript here (Codex, or a Claude session not written yet)
   for (const [id, p] of pet) {
     if (sess.has(id) || line.parked.has(id)) continue;
-    const oc = opencodeSess.get(id);
-    out.push({ id, label: codexSess.get(id)?.title || p.label || (id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : 'Claude'), project: p.project || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
-      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || [],
-      api: typeof p.api === 'string' ? p.api : undefined, model: p.model || (oc && oc.model) || undefined, ai: p.ai || (oc && oc.ai) || undefined });
+    const oc = opencodeSess.get(id), ag = agySess.get(id);
+    out.push({ id, label: codexSess.get(id)?.title || ag?.title || p.label || (id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : id.startsWith('agy:') ? 'Antigravity' : 'Claude'), project: p.project || (ag && ag.project) || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
+      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || agyAgentRows.get(id) || [],
+      api: typeof p.api === 'string' ? p.api : undefined, model: p.model || (oc && oc.model) || (ag && ag.model) || undefined, ai: p.ai || (oc && oc.ai) || (ag && ag.ai) || undefined });
   }
-  // OpenCode sessions the pet has not reported (the pet restarted, or the session is idle): still list their mirror
+  // OpenCode / Antigravity sessions the pet has not reported (the pet restarted, IDE session, or idle): still list their transcript
   for (const [id, c] of opencodeSess) {
     if (pet.has(id) || line.parked.has(id)) continue;
     out.push({ id, label: c.title || c.project || 'OpenCode', project: c.project || '', state: 'idle', steps: 0,
       t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: [], model: c.model || undefined, ai: c.ai || undefined });
+  }
+  for (const [id, c] of agySess) {
+    if (pet.has(id) || line.parked.has(id)) continue;
+    out.push({ id, label: c.title || c.project || 'Antigravity', project: c.project || '', state: 'idle', steps: 0,
+      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: agyAgentRows.get(id) || [], model: c.model || undefined, ai: c.ai || undefined });
   }
   return out.sort((a, b) => a.t0 - b.t0);
 }
@@ -301,7 +337,7 @@ function convOf(id) {
   const c = sess.get(id);
   if (!c) {                                          // pet-only session: its progress lines are all there is
     const p = pet.get(id);
-    return p ? [{ role: 'sys', text: p.provider === 'codex' ? 'Codex 实时进度 · 对话请回到 Codex' : p.provider === 'opencode' ? 'OpenCode 实时进度 · 对话见记录' : '实时进度', t: p.t0 },
+    return p ? [{ role: 'sys', text: p.provider === 'codex' ? 'Codex 实时进度 · 对话请回到 Codex' : p.provider === 'opencode' ? 'OpenCode 实时进度 · 对话见记录' : p.provider === 'agy' ? 'Antigravity 实时进度 · 对话见记录' : '实时进度', t: p.t0 },
       ...(p.lines || []).map((l) => ({ role: 'sys', text: l.text, t: l.t }))] : [];
   }
   return (c.msgs || []).slice(-300).map((m) => ({ role: m.role, text: m.text, items: m.items, t: m.t }));
@@ -350,10 +386,14 @@ function connect() {
       if (Object.keys(d.offsets).some((id) => id.startsWith('codex:'))) {
         for (const file of codex.allFiles()) { const m = codexMeta.get(file) || codex.metaOf(file); if (m && !m.sub) cfiles.set('codex:' + m.id, m); }
       }
+      const afiles = new Map();
+      if (Object.keys(d.offsets).some((id) => id.startsWith('agy:'))) {
+        for (const f of agy.allFiles()) { const file = typeof f === 'string' ? f : f.file; const m = agy.metaOf(file); if (m && !m.sub) afiles.set('agy:' + m.id, m); }
+      }
       for (const id of Object.keys(d.offsets)) {
-        if (metaSent.has(id) || readers.has(id) || (!files.has(id) && !cfiles.has(id))) continue;
+        if (metaSent.has(id) || readers.has(id) || (!files.has(id) && !cfiles.has(id) && !afiles.has(id))) continue;
         metaSent.add(id);
-        const cwd = files.has(id) ? records.firstCwd(files.get(id)) : cfiles.get(id).cwd;
+        const cwd = files.has(id) ? records.firstCwd(files.get(id)) : cfiles.has(id) ? cfiles.get(id).cwd : afiles.get(id).cwd;
         if (cwd) { const p = pet.get(id); sendJSON({ t: 'meta', id, cwd, api: p && p.api }); }
       }
       pushRecords();
@@ -393,28 +433,29 @@ function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify
 function pushRecords() {
   if (!serverOff || !ws || ws.readyState !== 1) return;
   archive.scan();
-  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !archive.map.has(id)) readers.delete(id);
+  for (const id of [...readers.keys()]) if (!sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !agySess.has(id) && !archive.map.has(id)) readers.delete(id);
   // (a terminal parked on a background session: what it still writes is that session's, already sent as such)
-  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !line.parked.has(id));
-  for (const [id, c] of [...sess, ...codexSess, ...opencodeSess, ...old]) {
+  const old = [...archive.map].filter(([id]) => !sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !agySess.has(id) && !line.parked.has(id));
+  for (const [id, c] of [...sess, ...codexSess, ...opencodeSess, ...agySess, ...old]) {
     let r = readers.get(id);
     if (!r || r.file !== c.file) {
       const isCodex = id.startsWith('codex:');
       const isOpenCode = id.startsWith('opencode:');
-      r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : isOpenCode ? opencode.recordsOf : undefined); readers.set(id, r);
-      if (isCodex || isOpenCode) r.cwd = c.cwd || null;
+      const isAgy = id.startsWith('agy:');
+      r = records.createReader(c.file, serverOff[id] || 0, isCodex ? codex.recordsOf : isOpenCode ? opencode.recordsOf : isAgy ? agy.recordsOf : undefined); readers.set(id, r);
+      if (isCodex || isOpenCode || isAgy) r.cwd = c.cwd || null;
       // what the server needs to list the session and say how to resume it, even if nothing new gets written
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
       r.sentTitle = c.title || '';
     }
-    if ((id.startsWith('codex:') || id.startsWith('opencode:')) && r.sentTitle !== (c.title || '')) {
+    if ((id.startsWith('codex:') || id.startsWith('opencode:') || id.startsWith('agy:')) && r.sentTitle !== (c.title || '')) {
       sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (pet.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
       r.sentTitle = c.title || '';
     }
     for (let k = 0; k < 8; k++) {
       if (ws.bufferedAmount > 8e6) return;                             // let the socket drain first
       let b; try { b = records.readNext(r); } catch { b = null; }
-      if (!b) { if (archive.map.has(id) && !sess.has(id) && !codexSess.has(id)) { archive.done(id); readers.delete(id); } break; }
+      if (!b) { if (archive.map.has(id) && !sess.has(id) && !codexSess.has(id) && !opencodeSess.has(id) && !agySess.has(id)) { archive.done(id); readers.delete(id); } break; }
       sendJSON({ t: 'rec', id, from: b.from, to: b.to, reset: b.reset || undefined, recs: b.recs,
         project: c.project || '', title: c.title || '', cwd: b.cwd || undefined, model: c.model || undefined, ai: c.ai || undefined });
       r.offset = b.to;
@@ -449,13 +490,14 @@ function forwardBtw() {
 // on connecting, then whenever a look every 10 minutes finds them changed
 let cmdsSig = '';
 function sendCommands(force) {
-  let list = [], codexList = [];
-  try { list = commands.scan(os.homedir()); codexList = commands.scanCodex(os.homedir()); } catch {}
-  const sig = JSON.stringify([list, codexList]);
+  let list = [], codexList = [], agyList = [];
+  try { list = commands.scan(os.homedir()); codexList = commands.scanCodex(os.homedir()); agyList = commands.scanAgy(os.homedir()); } catch {}
+  const sig = JSON.stringify([list, codexList, agyList]);
   if (!force && sig === cmdsSig) return;
   cmdsSig = sig;
   sendJSON({ t: 'cmds', list });
   sendJSON({ t: 'cmds', provider: 'codex', list: codexList });
+  sendJSON({ t: 'cmds', provider: 'agy', list: agyList });
 }
 setInterval(() => sendCommands(false), 10 * 60e3).unref();
 

@@ -26,7 +26,7 @@ const PLACEHOLDER = {
   opencode: '直接回复（OpenCode 走它自己的会话 API）',
   off: '没开远程控制，只能看',
 };
-const provOf = (id) => (String(id || '').startsWith('codex:') ? 'codex' : String(id || '').startsWith('opencode:') ? 'opencode' : 'claude');
+const provOf = (id) => (String(id || '').startsWith('codex:') ? 'codex' : String(id || '').startsWith('opencode:') ? 'opencode' : String(id || '').startsWith('agy:') ? 'agy' : 'claude');
 const KEYS = [['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'], ['enter', '回车'], ['esc', 'Esc'], ['tab', 'Tab'], ['btab', '⇧Tab']];
 // Claude Code's own Ctrl combinations (buttons only): [key, label, what it does]
 const COMBOS = [['ctrlb', '转后台', 'Ctrl+B：把正在跑的命令放到后台，Claude 接着往下做'],
@@ -82,7 +82,7 @@ function mount(current) {
   }
   // the command shown/copied follows the selector too (follow-record keeps the server's command)
   function commandFor(s, pick) {
-    if (!s || !s.resume || /^(codex|opencode):/.test(String(s.id))) return s ? s.resume : '';
+    if (!s || !s.resume || /^(codex|opencode|agy):/.test(String(s.id))) return s ? s.resume : '';
     if (pick === '__choose__') return s.resume;
     if (pick === '') return s.resume;
     const cmd = (pick && pick !== '__none__' ? 'claude-' + pick : 'claude') + ' --resume ' + s.id;
@@ -91,7 +91,7 @@ function mount(current) {
   }
   function renderResumeApi(s) {
     if (!s) { resumeApi.replaceChildren(); return; }
-    if (/^(codex|opencode):/.test(String(s.id))) { resumeApi.replaceChildren(); reopen.disabled = reopening; copyResumeButton.disabled = false; return; }
+    if (/^(codex|opencode|agy):/.test(String(s.id))) { resumeApi.replaceChildren(); reopen.disabled = reopening; copyResumeButton.disabled = false; return; }
     const key = s.machine + '|' + s.id;
     const current = apiCache.get(s.machine) || {};
     const list = current.aliases || [];
@@ -122,7 +122,7 @@ function mount(current) {
   });
   reopen.addEventListener('click', async () => {
     const s = find(sel); if (!s) return;
-    if (reopening || (!/^(codex|opencode):/.test(String(s.id)) && resumeApi.value === '__choose__')) return;
+    if (reopening || (!/^(codex|opencode|agy):/.test(String(s.id)) && resumeApi.value === '__choose__')) return;
     reopening = true;
     reopen.disabled = true; showNote('正在那台电脑上打开…', false, 20000);
     const pick = resumeApi.value;
@@ -250,10 +250,10 @@ function mount(current) {
     const [machine] = (sel || '|').split('|');
     hname.textContent = s ? s.label : '选择一个会话';
     if (s) {
-      const p = provOf(s.id), ai = p === 'opencode' ? aiMark(s) : null;
-      const mark = p === 'opencode'
-        ? h('span', { class: 'provs', title: 'OpenCode' + (ai ? ' · ' + ai.name : '') },
-          h('span', { class: 'prov opn' }), ai ? h('span', { class: 'prov ai ai-' + ai.slug, title: ai.name }) : null)
+      const p = provOf(s.id), ai = (p === 'opencode' || p === 'agy') ? aiMark(s) : null;
+      const mark = (p === 'opencode' || p === 'agy')
+        ? h('span', { class: 'provs', title: (p === 'agy' ? 'Antigravity' : 'OpenCode') + (ai ? ' · ' + ai.name : '') },
+          h('span', { class: 'prov ' + (p === 'agy' ? 'agy' : 'opn') }), ai ? h('span', { class: 'prov ai ai-' + ai.slug, title: ai.name }) : null)
         : h('span', { class: 'prov ' + (p === 'codex' ? 'cdx' : 'cla'), title: p === 'codex' ? 'Codex 的会话' : 'Claude Code 的会话' });
       hname.prepend(mark);
     }
@@ -317,6 +317,7 @@ function mount(current) {
     modeBtn.dataset.mode = m || '';
     modeBtn.title = (m ? `权限模式：${MODE[m] || m}（发消息时记录）` : '权限模式：发一条消息后才知道') + (termOk ? '；点击或 Shift+Tab 轮转' : '');
     if (s && s.id.startsWith('codex:')) modeBtn.title = '点击打开 Codex 的 /permissions 权限菜单；Shift+Tab 切换计划模式';
+    if (s && s.id.startsWith('agy:')) modeBtn.title = '点击或 Shift+Tab 切换 Antigravity 权限模式（Manual / Auto / Accept Edits / Plan）';
   }
   modeBtn.addEventListener('click', async () => {
     const s = find(sel);
@@ -384,6 +385,7 @@ function mount(current) {
       const choices = [['allow', '允许', 'btn go'], ['deny', '拒绝', 'btn no']];
       if (p.always) choices.splice(1, 0, ['always', '总是允许', 'btn']);   // Claude Code's "Yes, and don't ask again for ..."
       if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理', 'btn']);
+      if (p.provider === 'agy') choices.push(['defer', '在 Antigravity 中处理', 'btn']);
       // the buttons right under the title: still in view when the card area is squeezed (it scrolls from the top)
       const card = h('div', { class: 'perm', dataset: { id: p.id } },
         h('div', { class: 'pt', text: `需要你确认 · ${p.tool}${p.subagent ? ' · ' + p.subagent : ''}` }),
@@ -393,8 +395,8 @@ function mount(current) {
         p.always ? h('div', { class: 'pal', text: '总是允许 = 允许，并且以后不再问：' + p.always }) : null,
         h('pre', { text: [p.cwd && `工作目录：${p.cwd}`, p.provider === 'opencode' && i.message && `说明：${i.message}`,
           p.provider === 'opencode' && Array.isArray(i.resources) && i.resources.length && `对象：${i.resources.join(' · ')}`,
-          i.description, i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`,
-          (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`, p.input].filter(Boolean).join('\n') }));
+          (i.description || i.toolSummary), (i.command || i.CommandLine) && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command || i.CommandLine}`,
+          (i.file_path || i.notebook_path || i.Path || i.TargetFile) && `文件：${i.file_path || i.notebook_path || i.Path || i.TargetFile}`, p.input].filter(Boolean).join('\n') }));
       card.dataset.shown = Date.now();
       permCards.set(p.id, card); permsEl.append(card);
     }

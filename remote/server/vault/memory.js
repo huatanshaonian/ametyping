@@ -27,7 +27,7 @@ function createMemory(vault){
     return transaction(()=>{
       for(const x of d.items){
         if(!x||typeof x.path!=='string'||x.path.length>4096||typeof x.body!=='string'||Buffer.byteLength(x.body)>MAX||
-          !['machine','project','global'].includes(x.scope)||!['claude','codex','opencode','confirmed'].includes(x.provider)||typeof x.owner!=='string'||x.owner.length>200)throw Error('记忆来源格式不正确');
+          !['machine','project','global'].includes(x.scope)||!['claude','codex','opencode','agy','confirmed'].includes(x.provider)||typeof x.owner!=='string'||x.owner.length>200)throw Error('记忆来源格式不正确');
         const digest=sha(x.body),now=Date.now();
         db.prepare('INSERT INTO memory_observed VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(machine,path) DO UPDATE SET scope=excluded.scope,owner=excluded.owner,provider=excluded.provider,body=excluded.body,sha256=excluded.sha256,updated=excluded.updated')
           .run(machine,x.path,x.scope,x.scope==='machine'?machine:x.owner,x.provider,x.body,digest,now);

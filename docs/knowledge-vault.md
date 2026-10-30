@@ -9,6 +9,7 @@ agent 默认启用，可用 `agent.json` 的 `"fullArchive": false` 关闭。原
 - Claude：`~/.claude/projects/**/*.jsonl`，含子代理和历史会话；同时保存其中 `tool-results` 与 `attachments` 目录的原始文件，补齐落在旁文件中的长工具输出。
 - Codex：`$CODEX_HOME/sessions/**/*.jsonl` 和 `archived_sessions/**/*.jsonl`，含子线程；默认 `CODEX_HOME=~/.codex`。
 - OpenCode v2：插件记录完整事件（含运行中的文本增量、工具事件、子会话）；agent 每分钟通过只读 SQLite 查询发现历史与子会话 ID，再通过正式 `session export` 导出会话，并采集 XDG 数据目录中 OpenCode 的 `tool-output` 旁文件。仅依赖内部表的 ID 和更新时间；结构不兼容会明确报错并重试，不伪称完成。
+- Antigravity (`agy`)：`$AGY_HOME`、`~/.gemini/antigravity-cli`、`~/.gemini/antigravity`、`~/.gemini/antigravity-ide` 下的 `brain/<id>/` 完整对话目录，含 `.system_generated/logs/transcript.jsonl`、`transcript_full.jsonl`、`.system_generated/subagents/*.json` 以及 `brain/<id>/` 下的 Markdown 产物（如 `implementation_plan.md`、`walkthrough.md`、`task.md`）。
 
 每个源文件按 512 KiB 分块，每块 SHA-256，数据库事务提交后才确认；重连先核对已保存尾块，续传后再校验整个文件。改写或截断生成新版本，旧版本保留。最近一次扫描结果每分钟更新，已有文件在下一轮传输时检测变化，不限历史天数、不截断长行。全部内容是源工具已经保存/导出的内容，不代表工具未公开的内部状态。
 
@@ -31,6 +32,7 @@ OpenCode 正式导出只包含已稳定的消息，运行中的细节由事件�
 - Claude：`~/.claude/CLAUDE.md`；项目根 `CLAUDE.md`。
 - Codex：`$CODEX_HOME/AGENTS.override.md`（若存在），否则 `AGENTS.md`；项目根 `AGENTS.md`，若存在 `AGENTS.override.md` 也补入相同项目内容，避免 override 遮蔽。
 - OpenCode v2：`$XDG_CONFIG_HOME/opencode/AGENTS.md`（默认 `~/.config`）；项目根 `AGENTS.md`。
+- Antigravity (`agy`)：`~/.gemini/GEMINI.md`；项目根 `AGENTS.md`（与 Codex / OpenCode 共享项目指令入口），并采集项目 `.agents/rules/*.md` 与 `.agent/rules/*.md` 作为记忆来源。
 
 正文超过 16 KB 时，入口生成目录索引，全文以 Markdown 保存在 `~/.ametyping/memory/exports/`，不截断正文；索引超过 24 KB 会报告错误，要求拆分范围，不静默丢弃。工具自身的指令长度上限仍适用，原文件已经很长时应在看板整理。
 
@@ -65,7 +67,7 @@ agent 无需轮询 NAS API，使用现有已认证的出站 WebSocket。「同�
 
 ## OpenCode 接力导出
 
-已校验的 Claude/Codex 原始记录可以下载为 OpenCode v2 的导入 JSON。普通用户/助手文本保留对应角色；工具、压缩及未知事件变成明确标注的历史材料，不假造待执行调用。每次导出创建新的会话 ID，记录源机器、会话、版本和原文摘要，避免冲突覆盖。
+已校验的 Claude/Codex/Antigravity 原始记录可以下载为 OpenCode v2 的导入 JSON。普通用户/助手文本保留对应角色；工具、压缩及未知事件变成明确标注的历史材料，不假造待执行调用。每次导出创建新的会话 ID，记录源机器、会话、版本和原文摘要，避免冲突覆盖。
 
 在目标电脑恢复相应项目文件后：
 
@@ -83,9 +85,10 @@ OpenCode 的原生 JSON 直接通过相同命令导入。事件日志不是导�
 ## 验证
 
 ```sh
-node --test remote/test/knowledge.test.js
+node --test remote/test/knowledge.test.js agy-hook.test.js app/agy-support.test.js
 node --test remote/test/knowledge-review.test.js
 node remote/test/e2e-knowledge.js
+node remote/test/e2e-agy.js
 node remote/test/real-opencode-archive.js # 已安装 OpenCode 时：隔离数据目录，无模型请求
 node remote/test/ui-control.js
 ```

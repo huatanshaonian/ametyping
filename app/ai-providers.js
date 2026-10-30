@@ -75,7 +75,7 @@ const MODELS = [
   [/deepseek/i, 'deepseek', 'DeepSeek'],
   [/claude|anthropic/i, 'anthropic', 'Anthropic'],
   [/gpt|chatgpt|codex|(^|[-_/])o[1-9](-|$)|davinci/i, 'openai', 'OpenAI'],
-  [/gemini|gemma/i, 'google', 'Google'],
+  [/gemini|gemma|argon/i, 'google', 'Google'],
   [/grok/i, 'xai', 'xAI'],
   [/qwen|qwq|tongyi/i, 'alibaba', 'Qwen'],
   [/kimi|moonshot/i, 'moonshotai', 'Moonshot'],
@@ -96,16 +96,19 @@ const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 // a Model.Ref (or the raw hook fields) -> { providerID, id } | null
 function modelOf(v) {
   if (!v || typeof v !== 'object') return null;
-  const providerID = clean(v.providerID || v.provider || v.modelProvider, 40);
+  const id = clean(v.id || v.modelID || v.modelName || (typeof v.model === 'string' ? v.model : ''), 80);
+  let providerID = clean(v.providerID || v.provider || v.modelProvider, 40);
+  if (!providerID && id) {
+    for (const [re, slug] of MODELS) if (re.test(id)) { providerID = slug; break; }
+  }
   if (!/^[A-Za-z0-9._-]{1,40}$/.test(providerID)) return null;
-  const id = clean(v.id || v.modelID || (typeof v.model === 'string' ? v.model : ''), 80);
   return { providerID, id };
 }
 
 // -> { slug, name } for the badge's second mark; null when there is no separate provider mark (OpenCode itself,
 // or a provider we have no icon for)
 function aiOf(model) {
-  const m = typeof model === 'string' ? { providerID: model, id: '' } : model;
+  const m = typeof model === 'string' ? { providerID: model, id: model } : model;
   if (!m || typeof m !== 'object') return null;
   const p = clean(m.providerID, 40).toLowerCase();
   const hit = PROVIDERS[p];

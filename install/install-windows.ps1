@@ -164,6 +164,11 @@ if ((Get-Command opencode -ErrorAction SilentlyContinue) -or (Test-Path (Join-Pa
   & $node (Join-Path $Dir 'install-opencode-plugin.js')
   $opencodePlugin = $true
 }
+if ((Get-Command agy -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe')) -or (Test-Path (Join-Path $env:USERPROFILE '.gemini\antigravity-cli')) -or (Test-Path (Join-Path $env:USERPROFILE '.gemini\config'))) {
+  Step '安装 Antigravity (agy) hooks（原设置会先备份）'
+  & $node (Join-Path $Dir 'install-agy-hooks.js')
+  $agyHooks = $true
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 Step '开机自启（登录后在后台运行）'
@@ -205,3 +210,4 @@ Info '以后每次登录 Windows 都会自动启动；打开 https://win98.huata
 Info '已经开着的 Claude Code 会话要重开一次才会用上新 hooks。'
 if ($codexHooks) { Info 'Codex：下次打开 Codex 时会问是否信任这几条 hooks，选信任后才生效。' }
 if ($opencodePlugin) { Info 'OpenCode：插件已写进 %USERPROFILE%\.config\opencode\opencode.json，重开 OpenCode（或 /reload）后生效。' }
+if ($agyHooks) { Info 'Antigravity (agy)：hooks 已写进 %USERPROFILE%\.gemini\config\hooks.json，重开 agy 会话后生效。' }

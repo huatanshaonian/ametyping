@@ -8,6 +8,8 @@
 'use strict';
 const codexCli = require('./codex-cli');
 const codexSessions = require('./codex-sessions');
+const agyCli = require('./agy-cli');
+const agySessions = require('./agy-sessions');
 const { inTerminal } = require('./session-terminal');
 
 const CLAUDE_EXE = /^(claude|node|bun)\.exe$/i;
@@ -18,7 +20,7 @@ const TERM_HOSTS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|elvish|xonsh|Windo
 // bridge: the console bridge (bridge.js); onChange(): a session's terminal became known (the reply box may be usable)
 function createLocator({ bridge, onChange = () => {} }) {
   async function locate(s, pid) {
-    if (!s || !pid || (s.fromPid === pid && (s.provider !== 'codex' || s.processIdentity))) return;
+    if (!s || !pid || (s.fromPid === pid && ((s.provider !== 'codex' && s.provider !== 'agy') || s.processIdentity))) return;
     const chain = await bridge.ancestors(pid);
     if (s.provider === 'codex') {
       const c = codexCli.findCodex(chain, process.pid);
@@ -28,6 +30,16 @@ function createLocator({ bridge, onChange = () => {} }) {
       s.terminal = !c.own && !!c.parent && TERM_HOSTS.test(c.parent.name);
       s.processIdentity = bridge.identity ? await bridge.identity(c.pid) : null;
       codexSessions.remember(s);
+      return onChange();
+    }
+    if (s.provider === 'agy') {
+      const c = agyCli.findAgy(chain, process.pid);
+      if (!c) return;
+      s.fromPid = pid; s.claudePid = c.pid;
+      s.headless = c.own;                                            // an `agy --conversation <id> -p` we started ourselves
+      s.terminal = !c.own && !!c.parent && TERM_HOSTS.test(c.parent.name);
+      s.processIdentity = bridge.identity ? await bridge.identity(c.pid) : null;
+      agySessions.remember(s);
       return onChange();
     }
     const i = chain.findIndex((p) => CLAUDE_EXE.test(p.name));
@@ -46,7 +58,7 @@ function createLocator({ bridge, onChange = () => {} }) {
     try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') return false; }
     const c = await bridge.ancestors(pid);
     if (!c.length) return true;
-    return CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name) || OPENCODE_EXE.test(c[0].name);   // same pid, still that process (not a reused pid)
+    return CLAUDE_EXE.test(c[0].name) || codexCli.CODEX_EXE.test(c[0].name) || agyCli.AGY_EXE.test(c[0].name) || OPENCODE_EXE.test(c[0].name);   // same pid, still that process (not a reused pid)
   }
   return { locate, procAlive };
 }

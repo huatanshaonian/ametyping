@@ -39,7 +39,7 @@ function createPushEvents({ push }) {
         seenPerms.set(k, Date.now());
         if (first) continue;
         let input = {}; try { input = JSON.parse(p.input || '{}'); } catch {}
-        const what = input.command || input.file_path || input.notebook_path || input.description || input.url
+        const what = input.command || input.CommandLine || input.file_path || input.notebook_path || input.Path || input.TargetFile || input.description || input.toolSummary || input.url
           || (Array.isArray(input.resources) ? input.resources.join(' · ') : '') || '';
         push.notify('approval', { title: `需要确认 · ${p.tool}`, body: clip(`${s.label}（${machine}）${what ? '：' + what : ''}`, 160), tag: 'perm-' + p.id, url: at(machine, s.id) });
       }
