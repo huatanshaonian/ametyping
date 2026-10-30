@@ -563,7 +563,7 @@ function startMeshBridge() {
         const { t, rid: _r, ...rest } = reply;
         out(200, rest);
       });
-      sendJSON({ ...d, t: 'mesh-req', rid, fromMachine: NAME });
+      sendJSON({ ...d, t: 'mesh-req', rid, fromMachine: d.fromMachine || NAME });
     });
   });
   srv.on('error', () => {});

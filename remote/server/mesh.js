@@ -467,10 +467,10 @@ function createMesh({
     // Session is idle/done (or closed with auto-resume enabled): `send` injects into terminal or triggers resumeHeadless!
     const r = await sendToAgent(targetNode.machine, { t: 'send', id: targetNode.sessionId, text: envelopeText });
     if (!r.ok) {
-      // Queue on failure so message is never lost
+      // Queue on failure with needsManualWake so onMachineState does not drop it on the next tick
       targetNode.inbox = targetNode.inbox || [];
       if (targetNode.inbox.length < MAX_INBOX) {
-        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now() });
+        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now(), needsManualWake: true });
       }
       save();
       return { ok: false, queued: true, msg: r.msg || '投递失败，已暂存至节点收件箱' };
@@ -782,7 +782,8 @@ function createMesh({
       // 2. If session is now idle or done (and has no open permission prompts), flush its inbox
       const isIdle = s.state === 'idle' || s.state === 'done';
       const hasPerms = Array.isArray(s.perms) && s.perms.length > 0;
-      if (isIdle && !hasPerms) {
+      const canInject = !s.via || s.via !== 'off';
+      if (isIdle && !hasPerms && canInject) {
         const found = findBySession(machineName, s.id);
         if (found && Array.isArray(found.node.inbox) && found.node.inbox.length > 0) {
           const autoMsgs = found.node.inbox.filter((m) => !m.needsManualWake);
@@ -790,7 +791,12 @@ function createMesh({
             found.node.inbox = found.node.inbox.filter((m) => m.needsManualWake);
             const combined = autoMsgs.map((m) => m.text).join('\n\n---\n\n');
             dirty = true;
-            sendToAgent(machineName, { t: 'send', id: s.id, text: combined }).catch(() => {});
+            sendToAgent(machineName, { t: 'send', id: s.id, text: combined }).then((r) => {
+              if (!r || !r.ok) {
+                found.node.inbox = [...autoMsgs.map((m) => ({ ...m, needsManualWake: true })), ...(found.node.inbox || [])].slice(0, MAX_INBOX);
+                save();
+              }
+            }).catch(() => {});
           }
         }
       }
@@ -957,6 +963,9 @@ function createMesh({
       if (op === 'transfer') {
         const r = requestTransfer({ ...d, fromMachine: d.fromMachine || machineName });
         return reply(r);
+      }
+      if (op === 'delete-project') {
+        return reply(deleteProject(d.projectId || d.id));
       }
       return reply({ ok: false, msg: '未知的 mesh 操作：' + String(op) });
     } catch (e) {
