@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 
-const DEFAULT_PORT = +process.env.AME_MESH_PORT || 3941;
+const DEFAULT_PORT = +process.env.AME_MESH_PORT || +process.env.AME_MESH_BRIDGE_PORT || 3941;
 
 function loadAuth(port = DEFAULT_PORT, home = os.homedir()) {
   const file = path.join(home, '.ametyping', `mesh-token-${port}`);

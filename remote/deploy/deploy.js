@@ -34,7 +34,7 @@ const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server
 // what an agent machine runs: remote/agent/ and headless/, plus the app/ modules they load (found by following their
 // require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there, and the OpenCode plugin
 const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
-  'agy-hook.js', 'install-agy-hooks.js',
+  'agy-hook.js', 'install-agy-hooks.js', 'tools/ame-mesh.js',
   'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
 
 // a Linux machine's installed headless unit (filled in from headless/deploy/ame-headless.service when it was set up)

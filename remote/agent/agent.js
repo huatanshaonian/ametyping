@@ -65,7 +65,7 @@ const memorySync=createMemorySync({name:NAME,send:sendJSON,folder:p=>browse.writ
 const fsServe = createFsServe(browse, (o) => sendJSON(o), { sessionFile: (id) => sessionFile(id) });
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
-const MESH_PORT = +cfg.meshPort || 3941;
+const MESH_PORT = +process.env.AME_MESH_BRIDGE_PORT || +cfg.meshPort || 3941;
 const MESH_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `mesh-token-${MESH_PORT}`);
 
 // ---------- discover and read local transcripts ----------
