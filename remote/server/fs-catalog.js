@@ -148,6 +148,7 @@ function createFsCatalog({ dataDir, machines, onChange = () => {}, audit = () =>
       const timer = setTimeout(() => {
         if (pendingSyncs.delete(rid)) resolve({ ok: false, msg: '读取目录结构超时' });
       }, 15000);
+      if (timer.unref) timer.unref();
       pendingSyncs.set(rid, { key, machine: m, path: cleanP, resolve, timer });
       try {
         sock.send(JSON.stringify({ t: 'fs', rid, op: 'tree', path: cleanP, depth: Math.max(1, Math.min(5, +depth || 3)), maxNodes: 400 }));

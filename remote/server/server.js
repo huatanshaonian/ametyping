@@ -23,6 +23,7 @@ const { createStore, cleanModel, cleanAi } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createFsCatalog } = require('./fs-catalog');
+const { createMesh } = require('./mesh');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
@@ -233,6 +234,7 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
+const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 // phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
@@ -335,6 +337,7 @@ function onAgentMessage(m, raw, ws) {
         } else audit('claude-profiles-unavailable', m.name, r.msg);
       });
     }
+    mesh.onMachineState(m.name, [...m.sessions.values()]);
     broadcast({ t: 'sessions', data: snapshot() });
     // Provider files and keys stay on the computer. The server only keeps the public entry-point metadata.
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
@@ -363,7 +366,7 @@ function onAgentMessage(m, raw, ws) {
     }
     return;
   }
-  if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); return; }
+  if (d.t === 'meta' && typeof d.id === 'string') { store.meta(m.name, d.id, d); if (d.cwd) mesh.onSessionMeta(m.name, d.id, d.cwd); return; }
   // a /btw question and, later, its answer as the terminal showed it (Claude Code writes neither to the transcript; the
   // pet read it off the screen: app/btw-panel.js) -- into the conversation like the rest of it
   if (d.t === 'btw' && typeof d.id === 'string' && typeof d.k === 'string' && typeof d.q === 'string' && Number.isFinite(d.at)) {
@@ -385,6 +388,8 @@ function onAgentMessage(m, raw, ws) {
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if (d.t === 'fs-res' && typeof d.rid === 'string' && fsCatalog.fromAgent(m, d)) return;
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
+  if (d.t === 'mesh-req' && typeof d.rid === 'string') return mesh.fromAgentRpc(m.name, d, ws);
+  if (d.t === 'result' && typeof d.rid === 'string' && mesh.fromAgentResult(m.name, d)) return;
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   // Only the socket that received the request can complete it.
   if (d.t === 'claude-profiles-result' && typeof d.rid === 'string') {
@@ -429,6 +434,7 @@ function onAgentMessage(m, raw, ws) {
         cwd: str(p.cwd, 300), subagent: str(p.subagent, 80), always: str(p.always, 300), input: str(p.input, 8000), ask: p.ask === true || undefined })) : [];
     }
     for (const id of [...m.sessions.keys()]) if (!keep.has(id)) m.sessions.delete(id);
+    mesh.onMachineState(m.name, [...m.sessions.values()]);
     broadcast({ t: 'sessions', data: snapshot() });
     pushEvents.sessions(m.name, [...m.sessions.values()], CONTROL && !!m.control);   // approvals waiting, long tasks finished
   } else if (d.t === 'conv' && typeof d.id === 'string' && Array.isArray(d.msgs)) {
@@ -657,6 +663,7 @@ const server = http.createServer(async (req, res) => {
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/fs-catalog') && await fsCatalog.handle(req, res, url, ip, json, readBody)) return;
+  if (p.startsWith('/api/mesh/') && await mesh.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
