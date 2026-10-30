@@ -4,11 +4,13 @@
 // saves the file picked in the list to this device without opening it (download.js); a folder picked, all that is in
 // it, as one .zip (download-folder.js). 上传 (or files dropped on the window) puts files from this device into the
 // folder open, where that computer's agent allows it (upload.js).
-// Each computer has its own window; the computer list in the toolbar switches to another one (as picking it in
-// 网上邻居 does: main.js's setSwitch).
+// Each folder can also carry dual-track notes on the NAS (fs-catalog.js): a role tag (e.g. CEM求解器, 求解结果),
+// "我的备注" (user note) and "AI 备注" (AI note), plus a cached shallow directory tree for fast project planning.
 import { h, icon, prefs, $ as $q } from '../util.js';
 import * as wm from '../wm.js';
 import * as fsc from '../fs.js';
+import * as catalog from '../fs-catalog.js';
+import * as ctx from '../ctxmenu.js';
 import * as net from '../net.js';
 import * as rpath from '../rpath.js';
 import { iconOf, size } from '../filetypes.js';
@@ -23,6 +25,77 @@ let switchTo = (m) => open(m);            // main.js: pick that computer (网上
 export function setSwitch(fn) { switchTo = fn; }
 
 const when = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+// Modal dialog for editing a folder's role tag, User Note ("我的备注") and AI Note ("AI 备注")
+export function openNoteDialog(machine, folderPath) {
+  return new Promise((resolve) => {
+    const existing = catalog.get(machine, folderPath) || {};
+    const tags = catalog.tagMap();
+    const tagSel = h('select', { class: 'field' },
+      h('option', { value: '', text: '（无特定标签）' }),
+      ...Object.entries(tags).map(([k, label]) => h('option', { value: k, text: `${label} (${k})` })),
+      h('option', { value: '__custom__', text: '自定义标签…' })
+    );
+    const customTag = h('input', { class: 'field', type: 'text', maxlength: 40, placeholder: '输入自定义标签（如：FEKO模型库）', hidden: true });
+    if (existing.tag && !tags[existing.tag]) {
+      tagSel.value = '__custom__';
+      customTag.value = existing.tag;
+      customTag.hidden = false;
+    } else {
+      tagSel.value = existing.tag || '';
+    }
+    tagSel.addEventListener('change', () => {
+      customTag.hidden = tagSel.value !== '__custom__';
+      if (!customTag.hidden) customTag.focus();
+    });
+
+    const userArea = h('textarea', { class: 'field xnote-ta', rows: 3, maxlength: 2000, placeholder: '我的备注（最高优先级，AI 只读不可覆盖。例如：CEM求解器主代码库 / G盘大体积结果存放处）' });
+    userArea.value = existing.userNote || '';
+    const aiArea = h('textarea', { class: 'field xnote-ta', rows: 3, maxlength: 2000, placeholder: 'AI 备注（AI 在此目录工作后可自动总结环境、入口脚本与产物规律，你也可以手动修改）' });
+    aiArea.value = existing.aiNote || '';
+
+    const snapInfo = existing.snapshot
+      ? `已缓存目录树（${existing.snapshot.count || 0} 项${existing.snapshot.gitBranch ? ` · Git: ${existing.snapshot.gitBranch}` : ''}${existing.snapshot.freeBytes != null ? ` · 可用空间: ${size(existing.snapshot.freeBytes)}` : ''}）`
+      : '保存后将自动向群晖同步该文件夹的浅层目录结构树';
+
+    const done = (v) => { wrap.remove(); resolve(v); };
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '文件夹备注与项目标签' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: () => done(null) })),
+      h('div', { class: 'dlgb' },
+        h('div', { class: 'xnote-path', text: `${machine} : ${folderPath}` }),
+        h('label', { class: 'xnote-lbl', text: '角色标签（关联项目语义）：' }),
+        tagSel,
+        customTag,
+        h('label', { class: 'xnote-lbl', text: '我的备注（人工指令与说明）：' }),
+        userArea,
+        h('label', { class: 'xnote-lbl', text: 'AI 备注（AI 自动维护的环境与结构摘要）：' }),
+        aiArea,
+        h('div', { class: 'xnote-snap', text: snapInfo }),
+        h('div', { class: 'dlga' },
+          existing.tag || existing.userNote || existing.aiNote
+            ? h('button', { class: 'btn no', type: 'button', text: '清除备注', onclick: async () => {
+                await catalog.setNote({ machine, path: folderPath, tag: '', userNote: '', aiNote: '' });
+                done(true);
+              } })
+            : null,
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => done(null) }),
+          h('button', { class: 'btn go', type: 'submit', text: '保存并同步结构树' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const tag = tagSel.value === '__custom__' ? customTag.value.trim() : tagSel.value;
+      await catalog.setNote({ machine, path: folderPath, tag, userNote: userArea.value.trim(), aiNote: aiArea.value.trim() });
+      done(true);
+    });
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } });
+    const wrap = h('div', { class: 'dlg' }, form);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done(null); });
+    document.body.append(wrap);
+    userArea.focus();
+  });
+}
 
 // open the explorer of a machine (at a folder, or at its roots); pick: the name of an entry there to select and show
 export function open(machine, path = null, pick = null) {
@@ -52,6 +125,8 @@ function create(machine, startPath, startPick) {
   renderPcs();
   const up = h('button', { class: 'btn', type: 'button', text: '↑ 上一级', title: '上一级 (Backspace)' });
   const refresh = h('button', { class: 'btn', type: 'button', text: '刷新' });
+  const noteBtn = h('button', { class: 'btn', type: 'button', disabled: true, title: '给选中的文件夹（或当前文件夹）添加「我的备注」「AI备注」与角色标签，并同步目录结构到群晖' },
+    h('img', { src: icon('folder_tag', true), alt: '', style: 'vertical-align:-3px;margin-right:3px' }), '备注');
   const dlBtn = h('button', { class: 'btn', type: 'button', text: '下载', disabled: true, title: '把列表里选中的文件下载到这台设备（文件夹打包成 .zip）' });
   const upBtn = h('button', { class: 'btn', type: 'button', text: '上传', disabled: true, title: '把这台设备上的文件上传到这个文件夹（也可以直接把文件拖进来）' });
   const picker = h('input', { type: 'file', multiple: true, hidden: true, class: 'xupin' });
@@ -81,16 +156,39 @@ function create(machine, startPath, startPick) {
   const go = h('button', { class: 'btn go', type: 'submit', text: '启动' });
   const launchBar = h('form', { class: 'xlaunch', hidden: true, autocomplete: 'off' }, h('span', { class: 'xlh' }), tool, first, go,
     h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => { launchBar.hidden = true; } }));
+  const curBanner = h('div', { class: 'xnote-banner', hidden: true });
   const body = h('div', { class: 'xbody', tabindex: 0 });
   const status = h('div', { class: 'xstatus' });
-  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, dlBtn, upBtn, launchBtn, picker), launchBar, body, status);
-  let cur = null, parent = null, seq = 0, picked = null, job = null, upJob = null, quiet = false;
+  const root = h('div', { class: 'explorer' }, h('div', { class: 'xbar' }, h('img', { src: icon('computer_2', true), alt: '', class: 'xpci' }), pcs, up, refresh, addr, noteBtn, dlBtn, upBtn, launchBtn, picker), launchBar, curBanner, body, status);
+  let cur = null, parent = null, seq = 0, picked = null, job = null, upJob = null, quiet = false, lastEntries = [], lastTrunc = false, lastRoots = [];
 
   // (uploads: only into a folder, only where that computer's agent allows them)
   const canUp = () => cur != null && !!(net.state.sessions.find((m) => m.machine === machine) || {}).upload;
-  const syncUp = () => { upBtn.disabled = !upJob && !canUp(); };
+  const syncUp = () => {
+    upBtn.disabled = !upJob && !canUp();
+    noteBtn.disabled = cur == null && !(picked && picked.dir);
+  };
   const offUp = net.on('sessions', syncUp);
-  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; syncUp(); }
+  const offCat = catalog.subscribe(() => {
+    renderBanner();
+    if (cur == null && lastRoots.length) renderRoots(lastRoots);
+    else if (cur != null) renderList(lastEntries, lastTrunc);
+  });
+
+  function renderBanner() {
+    if (cur == null) { curBanner.hidden = true; return; }
+    const info = catalog.get(machine, cur);
+    if (!info || (!info.tag && !info.userNote && !info.aiNote)) { curBanner.hidden = true; return; }
+    curBanner.hidden = false;
+    curBanner.replaceChildren(
+      info.tag ? h('span', { class: 'xtag', text: info.tagLabel || info.tag }) : null,
+      info.userNote ? h('span', { class: 'xunote', text: '我的备注：' + info.userNote }) : null,
+      info.aiNote ? h('span', { class: 'xainote', text: 'AI备注：' + info.aiNote }) : null,
+      h('button', { class: 'btn xact', type: 'button', text: '编辑备注', onclick: () => openNoteDialog(machine, cur) })
+    );
+  }
+
+  function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; syncUp(); renderBanner(); }
   // keep: the status line left as it is (the list read again after an upload, which is telling how it goes)
   // pick: the name of an entry to select and scroll to once listed (a file shown in its folder)
   async function load(path, keep = false, pick = null) {
@@ -102,8 +200,8 @@ function create(machine, startPath, startPick) {
     if (!r.ok) { if (!keep) status.textContent = r.msg || '打不开'; return; }
     picked = null; dlBtn.disabled = !job;                 // (a download still running can still be stopped)
     const top = body.scrollTop;
-    if (path == null) { cur = null; parent = null; renderRoots(r.roots || []); }
-    else { cur = r.path; parent = r.parent; renderList(r.entries || [], r.truncated); }
+    if (path == null) { cur = null; parent = null; lastRoots = r.roots || []; renderRoots(lastRoots); }
+    else { cur = r.path; parent = r.parent; lastEntries = r.entries || []; lastTrunc = r.truncated; renderList(lastEntries, lastTrunc); }
     setTitle();
     body.scrollTop = keep ? top : 0;
     if (pick && cur != null) {
@@ -116,6 +214,7 @@ function create(machine, startPath, startPick) {
     el.classList.add('sel');
     picked = entry;
     if (!job) dlBtn.disabled = !picked;
+    syncUp();
   }
   function activate(el, fn, entry = null) {
     el.entry = entry;
@@ -123,10 +222,32 @@ function create(machine, startPath, startPick) {
     el.addEventListener('click', () => { choose(el, entry); if (touch) fn(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') fn(); });
   }
+  function badgeNodes(folderPath) {
+    const info = catalog.get(machine, folderPath);
+    if (!info) return [];
+    const out = [];
+    if (info.tag) out.push(h('span', { class: 'xtag', text: info.tagLabel || info.tag }));
+    if (info.userNote) out.push(h('span', { class: 'xunote', text: info.userNote, title: '我的备注：' + info.userNote }));
+    if (info.aiNote) out.push(h('span', { class: 'xainote', text: 'AI: ' + info.aiNote, title: 'AI 备注：' + info.aiNote }));
+    return out;
+  }
   function renderRoots(roots) {
     const grid = h('div', { class: 'xroots' }, ...roots.map((r) => {
-      const el = h('div', { class: 'xroot', tabindex: 0, title: r.path }, h('img', { src: icon('hard_disk_drive'), alt: '' }), h('span', { text: r.name }));
-      activate(el, () => load(r.path));
+      const info = catalog.get(machine, r.path);
+      const el = h('div', { class: 'xroot', tabindex: 0, title: r.path + (info && info.userNote ? '\n我的备注：' + info.userNote : '') },
+        h('img', { src: icon('hard_disk_drive'), alt: '' }),
+        h('span', { text: r.name }),
+        info && info.tag ? h('small', { class: 'xtag', text: info.tagLabel || info.tag }) : null
+      );
+      activate(el, () => load(r.path), { name: r.name, dir: true, fullPath: r.path });
+      el.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        choose(el, { name: r.name, dir: true, fullPath: r.path });
+        ctx.show(ev.clientX, ev.clientY, [
+          { label: '打开', onClick: () => load(r.path) },
+          { label: '备注与项目标签…', onClick: () => openNoteDialog(machine, r.path) },
+        ]);
+      });
       return el;
     }));
     body.replaceChildren(roots.length ? grid : h('div', { class: 'notice', text: '这台电脑没有可浏览的位置。' }));
@@ -134,18 +255,41 @@ function create(machine, startPath, startPick) {
   }
   function renderList(entries, truncated) {
     const rows = entries.map((e) => {
+      const full = cur ? rpath.join(cur, e.name) : e.name;
+      const notes = e.dir ? badgeNodes(full) : [];
       const tr = h('tr', { tabindex: 0 },
-        h('td', { class: 'xn' }, h('div', {}, h('img', { src: icon(iconOf(e), true), alt: '' }), h('span', { text: e.name, title: e.name }))),
+        h('td', { class: 'xn' }, h('div', {}, h('img', { src: icon(notes.length ? 'folder_tag' : iconOf(e), true), alt: '' }), h('span', { text: e.name, title: e.name }))),
+        h('td', { class: 'xrem' }, h('div', { class: 'xrem-box' }, ...notes)),
         h('td', { class: 'xs', text: e.dir ? '' : size(e.size) }),
         h('td', { class: 'xt', text: when(e.mtime) }));
-      activate(tr, () => (e.dir ? load(rpath.join(cur, e.name)) : openFile(machine, rpath.join(cur, e.name), e, openPath)), e);
+      activate(tr, () => (e.dir ? load(full) : openFile(machine, full, e, openPath)), e);
+      if (e.dir) {
+        tr.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault();
+          choose(tr, e);
+          ctx.show(ev.clientX, ev.clientY, [
+            { label: '打开文件夹', onClick: () => load(full) },
+            { label: '备注与项目标签…', onClick: () => openNoteDialog(machine, full) },
+            { label: '同步结构树到群晖', onClick: async () => {
+              status.textContent = `正在同步 ${e.name} 的目录结构树…`;
+              const r = await catalog.syncTree(machine, full);
+              status.textContent = r.ok ? `已同步 ${e.name} 的目录结构树` : (r.msg || '同步失败');
+            } },
+          ]);
+        });
+      }
       return tr;
     });
     body.replaceChildren(h('table', { class: 'xlist' },
-      h('thead', {}, h('tr', {}, h('th', { text: '名称' }), h('th', { class: 'xs', text: '大小' }), h('th', { class: 'xt', text: '修改时间' }))),
+      h('thead', {}, h('tr', {}, h('th', { text: '名称' }), h('th', { class: 'xrem', text: '标签 / 备注' }), h('th', { class: 'xs', text: '大小' }), h('th', { class: 'xt', text: '修改时间' }))),
       h('tbody', {}, ...rows)));
     if (!quiet) status.textContent = `${entries.length} 个项目${truncated ? '（太多了，只显示前 5000 个）' : ''}`;
   }
+
+  noteBtn.addEventListener('click', () => {
+    const targetPath = picked && picked.dir ? (picked.fullPath || (cur ? rpath.join(cur, picked.name) : null)) : cur;
+    if (targetPath) openNoteDialog(machine, targetPath);
+  });
 
   launchBtn.addEventListener('click', async () => {
     if (cur == null) return;
@@ -199,13 +343,14 @@ function create(machine, startPath, startPick) {
     if (files.length < e.dataTransfer.files.length) status.textContent = '文件夹不能上传，只上传了里面拖进来的文件';
     startUpload(files);
   });
-  up.addEventListener('click', () => load(parent));      // the parent of a root is the root list (null)
+
+  up.addEventListener('click', () => { if (cur != null) load(parent); });
   refresh.addEventListener('click', () => load(cur));
-  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = addr.value.trim(); load(p || null); } });
+  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const v = addr.value.trim(); load(v || null); } });
   body.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && cur != null) { e.preventDefault(); load(parent); } });
 
-  const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), content: root, width: 720, height: 460,
-    onClose: () => { views.delete(machine); offPcs(); offUp(); if (job) job.cancel(); if (upJob) upJob.cancel(); } });
+  const win = wm.open({ id, title: `${machine} — 我的电脑`, icon: icon('computer_explorer', true), width: 680, height: 460, content: root,
+    onClose: () => { if (job) job.cancel(); if (upJob) upJob.cancel(); offPcs(); offUp(); offCat(); views.delete(machine); } });
   load(startPath, false, startPick);
   return { id, load };
 }

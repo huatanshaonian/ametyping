@@ -26,6 +26,8 @@ const MAX = 100 * 1024 * 1024;            // larger files cannot be opened from 
 const MAX_ENTRIES = 5000;
 const DENY_DIRS = new Set(['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.ametyping', '.password-store', '.codex']);   // (.codex: its auth.json is the login)
 const DENY_FILE = /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.env(\..*)?|\.netrc|\.pgpass|\.git-credentials|\.npmrc|\.pypirc|\.credentials\.json|agent\.json|control-token-.*|ntuser.(dat|ini|pol)(..*)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks))$/i;
+// bloated build/dependency directories skipped when building a shallow VFS structure tree
+const SKIP_TREE_DIRS = new Set(['node_modules', '.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache', '.tox', 'dist', 'build', 'target', '.next', '.nuxt', '.idea', '.vscode']);
 
 const denied = (name) => DENY_DIRS.has(WIN ? name.toLowerCase() : name) || DENY_FILE.test(name);
 const norm = (p) => (WIN ? p.toLowerCase() : p);                // (Windows names: the case does not matter)
@@ -159,7 +161,66 @@ function createFiles(cfg) {
     if(at.r.readOnly)throw new Error('这个位置只读');
     return dir;
   }
-  return { enabled, canUpload, roots, list, open, folder, writableFolder, target, resolve };
+
+  // Shallow directory structure snapshot for the NAS VFS catalog (no file contents read).
+  // Returns { path, sep, freeBytes, totalBytes, gitBranch, tree, count, truncated, scannedAt }.
+  async function tree(p, { maxDepth = 3, maxNodes = 400 } = {}) {
+    const real = await folder(p);
+    const at = await rootOf(real);
+    const depthCap = Math.max(1, Math.min(5, +maxDepth || 3));
+    const nodeCap = Math.max(20, Math.min(1500, +maxNodes || 400));
+    let count = 0, truncated = false;
+
+    let freeBytes = null, totalBytes = null;
+    if (typeof fsp.statfs === 'function') {
+      try {
+        const sf = await fsp.statfs(real);
+        if (sf && Number.isFinite(sf.bavail) && Number.isFinite(sf.bsize)) {
+          freeBytes = sf.bavail * sf.bsize;
+          totalBytes = sf.blocks * sf.bsize;
+        }
+      } catch {}
+    }
+    let gitBranch = null;
+    try {
+      const head = await fsp.readFile(path.join(real, '.git', 'HEAD'), 'utf8');
+      const m = /^ref:\s*refs\/heads\/(.+)$/m.exec(head.trim());
+      gitBranch = m ? m[1].trim().slice(0, 80) : head.trim().slice(0, 12);
+    } catch {}
+
+    async function walk(dir, relFromRoot, depth) {
+      let ents;
+      try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return []; }
+      const items = [];
+      for (const e of ents) {
+        const rel = relFromRoot ? path.join(relFromRoot, e.name) : e.name;
+        if (denied(e.name) || (at && hidden(at.r, rel))) continue;
+        if (e.isSymbolicLink()) continue;
+        let st;
+        try { st = await fsp.stat(path.join(dir, e.name)); } catch { continue; }
+        items.push({ name: e.name, dir: st.isDirectory(), size: st.isDirectory() ? 0 : st.size, mtime: Math.round(st.mtimeMs), rel });
+      }
+      items.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'zh'));
+      const out = [];
+      for (const it of items) {
+        if (count >= nodeCap) { truncated = true; break; }
+        count++;
+        const node = { name: it.name, dir: it.dir, size: it.size, mtime: it.mtime };
+        if (it.dir) {
+          const skip = SKIP_TREE_DIRS.has(WIN ? it.name.toLowerCase() : it.name);
+          if (skip) node.skipped = true;
+          else if (depth < depthCap) node.children = await walk(path.join(dir, it.name), it.rel, depth + 1);
+        }
+        out.push(node);
+      }
+      return out;
+    }
+
+    const children = await walk(real, at ? at.rel : '', 1);
+    return { path: real, sep: path.sep, freeBytes, totalBytes, gitBranch, tree: children, count, truncated, scannedAt: Date.now() };
+  }
+
+  return { enabled, canUpload, roots, list, open, folder, writableFolder, target, resolve, tree };
 }
 
 module.exports = { createFiles, denied, MAX };

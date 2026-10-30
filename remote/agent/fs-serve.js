@@ -1,5 +1,6 @@
 // Answers the server's file requests for the dashboard's explorer (files.js does the access checks):
 //   {t:'fs', rid, op:'roots'|'list'}      -> {t:'fs-res', rid, ok, ...}
+//   {t:'fs', rid, op:'tree', path, depth?} -> {t:'fs-res', rid, ok, path, tree, freeBytes, ...} (shallow VFS structure)
 //   {t:'fs', rid, op:'read', path}         -> {t:'fs-res', rid, ok, size, mtime, from, path}, then {t:'fs-chunk', rid, i, data(base64)}...,
 //                                             then {t:'fs-end', rid}
 //      dl:true   a download to disk: no 100 MB limit;   from:n   start at byte n (said back in from)
@@ -53,6 +54,7 @@ function createFsServe(files, send, { sessionFile = () => null } = {}) {
     try {
       if (d.op === 'roots') send({ t: 'fs-res', rid: d.rid, ok: true, roots: await files.roots(true) });   // (looked up now: a drive put in since is there)
       else if (d.op === 'list') send({ t: 'fs-res', rid: d.rid, ok: true, ...(await files.list(d.path)) });
+      else if (d.op === 'tree') send({ t: 'fs-res', rid: d.rid, ok: true, ...(await files.tree(d.path, { maxDepth: d.depth, maxNodes: d.maxNodes })) });
       else if (d.op === 'read') await read(d.rid, d.path, { big: d.dl === true, from: d.from });
       else if (d.op === 'locate') send({ t: 'fs-res', rid: d.rid, ...(await locate({ files, sessionFile }, { p: d.path, session: d.session, at: d.at })) });
       else fail(d.rid, '无效请求');

@@ -22,6 +22,7 @@ const auth = require('./auth');
 const { createStore, cleanModel, cleanAi } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
+const { createFsCatalog } = require('./fs-catalog');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
@@ -220,6 +221,7 @@ function knownMachines() {
   }));
 }
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
+const fsCatalog = createFsCatalog({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, onChange: () => broadcast({ t: 'fs-catalog' }), audit: (...a) => audit(...a) });
 const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
@@ -336,6 +338,7 @@ function onAgentMessage(m, raw, ws) {
     broadcast({ t: 'sessions', data: snapshot() });
     // Provider files and keys stay on the computer. The server only keeps the public entry-point metadata.
     pushEvents.reset(m.name);                                        // (its first report is taken in, not told)
+    if (d.files === true) fsCatalog.onMachineOnline(m.name);
     const n = summary && summary.latestNote(); if (n) withAgenda(n).then((x) => sendNote(ws, x));   // the pet may have missed it while off
     return;
   }
@@ -380,6 +383,7 @@ function onAgentMessage(m, raw, ws) {
     return;
   }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
+  if (d.t === 'fs-res' && typeof d.rid === 'string' && fsCatalog.fromAgent(m, d)) return;
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   // Only the socket that received the request can complete it.
@@ -652,6 +656,7 @@ const server = http.createServer(async (req, res) => {
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;
   if (p.startsWith('/api/todos') && await todos.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
+  if (p.startsWith('/api/fs-catalog') && await fsCatalog.handle(req, res, url, ip, json, readBody)) return;
   if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
