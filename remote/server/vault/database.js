@@ -41,9 +41,12 @@ function openVault(dir) {
     CREATE TABLE IF NOT EXISTS memory_source_links(machine TEXT NOT NULL,path TEXT NOT NULL,sha256 TEXT NOT NULL,
       memory_id TEXT NOT NULL,PRIMARY KEY(machine,path),FOREIGN KEY(memory_id) REFERENCES memory(id));`);
   if (db.prepare("SELECT value FROM vault_meta WHERE key='version'").get().value !== '1') throw new Error('不支持的记忆数据库版本');
+  let transactionDepth=0;
   function transaction(fn) {
+    if(transactionDepth)return fn();
     db.exec('BEGIN IMMEDIATE');
-    try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+    transactionDepth++;
+    try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } finally { transactionDepth--; }
   }
   const source = (m, key, gen) => db.prepare('SELECT * FROM sources WHERE machine=? AND key=? AND generation=?').get(m, key, gen);
   const latest = (m, key) => db.prepare('SELECT * FROM sources WHERE machine=? AND key=? ORDER BY created DESC,rowid DESC LIMIT 1').get(m, key);

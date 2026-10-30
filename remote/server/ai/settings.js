@@ -18,6 +18,7 @@ const TASKS = [
   { id: 'session', name: '长对话摘要', note: '写日报前，先把特别长的对话单独总结一遍' },
   { id: 'weekly', name: '周报', note: '周日根据七天的日报写周报' },
   { id: 'ask', name: '问一问', note: '找资料、回答你在日报窗口里问的问题' },
+  { id: 'memory', name: '记忆智能整理', note: '逐条拆分、去重、冲突核对和归属建议，审阅后应用' },
   { id: 'mailTriage', name: '邮件把关', note: '每封新邮件：要不要提醒你、有没有值得看的文献' },
   { id: 'mailDraft', name: '邮件起草', note: '写信时「让 AI 起草」' },
   { id: 'litFeed', name: '文献推送', note: '起草画像、每天挑文献并写推荐理由、复习题、速读卡' },

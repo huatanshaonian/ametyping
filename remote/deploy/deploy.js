@@ -15,7 +15,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { git, ssh, run, upload, treeOf, remoteFiles, compare } = require('./deploy-lib');
+const { git, ssh, run, upload, treeOf, depsOf, remoteFiles, compare } = require('./deploy-lib');
 
 const argv = process.argv.slice(2);
 const flag = (f) => argv.includes(f);
@@ -36,19 +36,6 @@ const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server
 const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
   'agy-hook.js', 'install-agy-hooks.js',
   'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
-function depsOf(ref, roots) {
-  const deps = new Set(), seen = new Set();
-  const visit = (file) => {
-    if (seen.has(file)) return; seen.add(file);
-    let src = ''; try { src = git(['show', `${ref}:${file}`]); } catch { return; }
-    for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
-      const p = path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1])).replace(/(\.js)?$/, '.js');
-      if (/^(app|headless|remote\/agent)\//.test(p)) { deps.add(p); visit(p); }
-    }
-  };
-  for (const [p] of treeOf(ref, roots)) { deps.add(p); if (p.endsWith('.js')) visit(p); }
-  return deps;
-}
 
 // a Linux machine's installed headless unit (filled in from headless/deploy/ame-headless.service when it was set up)
 // made to stop only its own node process on a restart: the default, control-group, killed tmux and every Claude
@@ -93,8 +80,10 @@ function checkMachine(name, local, extraOk) {
   // ---- 2. the NAS ----
   step(`群晖（${NAS.ssh}:${NAS.dir}）`);
   const tree = treeOf(commit, ['remote']);
+  const nasExtra = [...depsOf(commit, ['remote/server', 'remote/agent'])].filter((p) => !p.startsWith('remote/'));
+  for (const [p, id] of treeOf(commit, nasExtra)) if (nasExtra.includes(p)) tree.set(p, id);
   for (const p of [...tree.keys()]) if (p.startsWith('remote/test/')) tree.delete(p);   // (tests stay here)
-  const onNas = remoteFiles(NAS.ssh, NAS.dir, ['remote'], [...NAS_EXCLUDE, 'remote/test']);
+  const onNas = remoteFiles(NAS.ssh, NAS.dir, ['remote', ...nasExtra], [...NAS_EXCLUDE, 'remote/test']);
   const nas = compare(onNas, tree);
   checkMachine('群晖', nas.local, nas.extra);
   const pkgChanged = onNas.get('remote/package.json') !== tree.get('remote/package.json');
@@ -103,9 +92,10 @@ function checkMachine(name, local, extraOk) {
   if (DRY) say('  （--dry-run：到此为止）');
   else if (nas.changed.length) {
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-    ssh(NAS.ssh, `cd ${NAS.dir} && tar -czf code-backup-${stamp}.tar.gz ${NAS_EXCLUDE.map((e) => `--exclude='${e}'`).join(' ')} remote && ls -1t code-backup-*.tar.gz | tail -n +6 | xargs -r rm -f`);
+    const backupPaths = ['remote', ...nasExtra.filter((p) => onNas.has(p))];
+    ssh(NAS.ssh, `cd ${NAS.dir} && tar -czf code-backup-${stamp}.tar.gz ${NAS_EXCLUDE.map((e) => `--exclude='${e}'`).join(' ')} ${backupPaths.join(' ')} && ls -1t code-backup-*.tar.gz | tail -n +6 | xargs -r rm -f`);
     say(`  备份：code-backup-${stamp}.tar.gz（保留最近 5 个）`);
-    await upload(commit, ['remote', ':(exclude)remote/test'], NAS.ssh, NAS.dir);
+    await upload(commit, ['remote', ':(exclude)remote/test', ...nasExtra], NAS.ssh, NAS.dir);
     say('  已上传');
     if (pkgChanged) { say('  npm install …'); say(String(ssh(NAS.ssh, `cd ${NAS.dir}/remote && ${NAS.node} ${NAS.npm} install --omit=dev --no-audit --no-fund 2>&1 | tail -3`)).trim()); }
     const out = String(ssh(NAS.ssh, `cd ${NAS.dir} && sh run.sh restart >/dev/null && sleep 8 && sh run.sh status && tail -n 6 remote/server/server.log`));

@@ -73,7 +73,7 @@ const req = (method, p, body, cookie) => new Promise((resolve) => {
     list: { type: 'array', items: { type: 'object', properties: { a: { type: 'string', enum: ['x', 'y'] } }, required: ['a'], additionalProperties: false } }, one: { type: 'array', minItems: 1, items: { type: 'string' } } }, required: ['title'], additionalProperties: false }), s);
 
   const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
-  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, FAKE_CODEX_LOG: LOG, FAKE_CLAUDE_LOG: CLOG, FAKE_CLAUDE_FAIL_FILE: CC_DOWN, AME_SUMMARY_TICK_MS: '600000' };
+  const env = { ...process.env, AME_REMOTE_CONFIG: CFG, AME_CC_HOME:path.join(T,'cc-environments'), FAKE_CODEX_LOG: LOG, FAKE_CLAUDE_LOG: CLOG, FAKE_CLAUDE_FAIL_FILE: CC_DOWN, AME_SUMMARY_TICK_MS: '600000' };
   cp.execFileSync(process.execPath, [R + '/server/setup.js', 'init'], { env: { ...env, AME_USER: 'u', AME_PASSWORD: 'pw-123456789012' } });
   const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
   cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME,

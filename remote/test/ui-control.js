@@ -7,7 +7,14 @@ const WebSocket = require(R + '/node_modules/ws');
 const auth = require(R + '/server/auth');
 const OUT = path.join(__dirname, 'out', 'shots'); fs.mkdirSync(OUT, { recursive: true });
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-uictl-'));
-const PORT = 18890, CDP = 9343;
+const PORT = 18890, CDP = 9343, API = 18891;
+const memoryApi=http.createServer((req,res)=>{
+  if(req.method==='GET'){res.setHeader('Content-Type','application/json');return res.end('{"data":[{"id":"fixture"}]}');}
+  let body='';req.on('data',d=>body+=d);req.on('end',()=>{
+    const output={summary:'界面 API 整理建议',groups:[{title:'整理所选记忆',category:'rewrite',reason:'保留原有事实并改善表达',operations:[{action:'update',target:'item1',scope:'global',owner:'',name:'界面 AI 整理',body:'API 建议正文 🌈'}]}]};
+    res.writeHead(200,{'Content-Type':'text/event-stream'});res.end('event: content_block_delta\ndata: '+JSON.stringify({delta:{type:'text_delta',text:JSON.stringify(output)}})+'\n\nevent: message_delta\ndata: {"delta":{"stop_reason":"end_turn"}}\n\n');
+  });
+}).listen(API,'127.0.0.1');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 const HOME = path.join(T, 'codexhome'); fs.mkdirSync(HOME);
@@ -24,7 +31,7 @@ const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
 // Claude Code: no catalog of its own yet (its main models offered), a fake that is logged in
 const CHOME = path.join(T, 'claudehome'); fs.mkdirSync(CHOME);
 cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME,
-  claude: [process.execPath, path.join(__dirname, 'fake-claude.js')], claudeHome: CHOME };
+  claude: [process.execPath, path.join(__dirname, 'fake-claude.js')], claudeHome: CHOME,claudeApiBase:'http://127.0.0.1:'+API };
 fs.writeFileSync(CFG, JSON.stringify(cfg));
 fs.mkdirSync(path.join(T, 'srv', 'data'), { recursive: true });
 fs.writeFileSync(path.join(T, 'srv', 'data', 'codex-check.json'), JSON.stringify({ version: '0.160.0', at: Date.now() - 2 * 86400e3, error: '' }));
@@ -49,14 +56,16 @@ function login() {
     const [cname, cval] = await login();
     chrome = cp.spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', `--remote-debugging-port=${CDP}`,
       `--user-data-dir=${path.join(T, 'chrome')}`, '--no-first-run', '--no-proxy-server', 'about:blank'], { stdio: 'ignore' });
-    await sleep(2000);
+    let debugReady=false;
+    for(let n=0;n<100;n++){try{await getJSON(`http://127.0.0.1:${CDP}/json/version`);debugReady=true;break;}catch{await sleep(100);}}
+    if(!debugReady)throw new Error('isolated Chrome debugging endpoint did not start');
     const tab = await getJSON(`http://127.0.0.1:${CDP}/json/new?about:blank`, 'PUT');
     const ws = new WebSocket(tab.webSocketDebuggerUrl); await new Promise((r) => ws.on('open', r));
     let id = 0; const pending = new Map();
     ws.on('message', (m) => {
       const o = JSON.parse(m);
       if (o.id && pending.has(o.id)) { pending.get(o.id)(o); pending.delete(o.id); }
-      if (o.method === 'Runtime.exceptionThrown') errors.push('exception: ' + JSON.stringify(o.params.exceptionDetails.exception && o.params.exceptionDetails.exception.description || o.params.exceptionDetails.text).slice(0, 300));
+      if (o.method === 'Runtime.exceptionThrown') errors.push('exception: ' + JSON.stringify(o.params.exceptionDetails).slice(0, 1000));
       if (o.method === 'Runtime.consoleAPICalled' && o.params.type === 'error') errors.push('console: ' + o.params.args.map((a) => a.value || a.description).join(' ').slice(0, 300));
       if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') errors.push('log: ' + o.params.entry.text.slice(0, 300) + ' ' + (o.params.entry.url || ''));
     });
@@ -95,7 +104,7 @@ function login() {
     // both tools' state
     await sleep(800);
     const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
-    chk('AI 模型: default + backup rows and the twelve jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 14 &&
+    chk('AI 模型: default + backup rows and the thirteen jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 15 &&
       ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude|OpenAI（Codex）' &&
       /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
@@ -112,7 +121,7 @@ function login() {
     await evalJs("(() => { const m = document.querySelector('.aim-bak select'); m.value = 'claude-opus-5-5'; m.dispatchEvent(new Event('change')); })()"); await sleep(1500);
     const bak = await evalJs("fetch('/api/ai').then(r => r.json()).then(v => JSON.stringify(v.backup))");
     const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
-    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 12 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
+    chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 13 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
     // Claude Code API: a configured key must show as set (the row check used to pass the env object to a helper that
     // expected a settings object, always showing 未设置)
@@ -131,6 +140,25 @@ function login() {
     chk('记忆与存档 opens with SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局')"));
     await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='新增记忆').click();document.querySelector('.knowledge-editor input[placeholder=记忆名称]').value='界面记忆';document.querySelector('.knowledge-body').value='中文与 emoji 🌈';document.querySelector('.knowledge-editor').requestSubmit()");await sleep(900);
     chk('memory form publishes Unicode text to SQLite',await evalJs("fetch('/api/knowledge').then(r=>r.json()).then(d=>d.memories.some(m=>m.name==='界面记忆'&&m.body==='中文与 emoji 🌈'))"));
+    await evalJs("[...document.querySelectorAll('.knowledge-fact button')].find(b=>b.textContent==='编辑').click()");
+    chk('editing an existing memory preloads its complete body',await evalJs("document.querySelector('.knowledge-editor textarea').value==='中文与 emoji 🌈'"));
+    await evalJs("[...document.querySelectorAll('.knowledge-editor button')].find(b=>b.textContent==='取消').click()");
+    await evalJs("fetch('/api/knowledge/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:'global',owner:'',name:'界面副本',body:'中文与 emoji 🌈'})})");
+    await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='刷新').click()");await sleep(500);
+    await evalJs("(() => {const s=document.querySelector('.knowledge input[placeholder=\"搜索名称、正文或归属\"]');s.value='副本';s.dispatchEvent(new Event('input'));})()");
+    chk('memory list supports body/name search and per-entry content',await evalJs("document.querySelectorAll('.knowledge-fact').length===1 && document.querySelector('.knowledge-fact').textContent.includes('中文与 emoji 🌈')"));
+    await evalJs("(() => {const s=document.querySelector('.knowledge input[placeholder=\"搜索名称、正文或归属\"]');s.value='';s.dispatchEvent(new Event('input'));[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='勾选当前列表').click();[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='对齐所选').click();})()");await sleep(500);
+    await evalJs("[...document.querySelectorAll('.knowledge-review button')].find(b=>b.textContent==='核对所选原文').click()");await sleep(500);
+    chk('alignment compares selected entries with full originals and duplicate evidence',await evalJs("document.querySelector('.knowledge-review').textContent.includes('100%') && document.querySelector('.knowledge-review').textContent.includes('正文相同') && document.querySelectorAll('.knowledge-diff').length===2"));
+    await evalJs("fetch('/api/ai/api/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'sk-ant-memory-ui-fixture-1234567890'})}).then(r=>r.json())");
+    await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='对齐与智能整理').click()");await sleep(500);
+    await evalJs("[...document.querySelectorAll('.knowledge-review button')].find(b=>b.textContent==='智能整理所选').click()");
+    for(let n=0;n<80;n++){if(await evalJs("document.querySelectorAll('.knowledge-proposal').length===1"))break;await sleep(100);}
+    const proposalState=await evalJs("({count:document.querySelectorAll('.knowledge-proposal').length,body:document.querySelector('.knowledge-proposal textarea')?.value,checked:document.querySelector('.knowledge-proposal input[type=checkbox]')?.checked})");
+    chk('API smart analysis creates an editable proposal without publishing it',proposalState.count===1&&proposalState.body==='API 建议正文 🌈'&&!proposalState.checked&&await evalJs("fetch('/api/knowledge').then(r=>r.json()).then(d=>!d.memories.some(m=>m.name==='界面 AI 整理'))"),proposalState);
+    await shot('85-control-memory-review.png');
+    await evalJs("document.querySelector('.knowledge-proposal textarea').value='人工审阅后的正文 🌈';document.querySelector('.knowledge-proposal input[type=checkbox]').click();[...document.querySelectorAll('.knowledge-review button')].find(b=>b.textContent==='应用勾选分组').click()");await sleep(800);
+    chk('only selected proposal groups apply and preserve the human edit and provenance',await evalJs("fetch('/api/knowledge').then(r=>r.json()).then(d=>d.memories.some(m=>m.name==='界面 AI 整理'&&m.body==='人工审阅后的正文 🌈'&&m.source.startsWith('memory-review:')))")&&await evalJs("document.querySelector('.knowledge-review').textContent.includes('已应用')"));
     await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='完整会话').click()");await sleep(400);
     chk('full archive panel explains completeness and download boundaries',await evalJs("document.querySelector('.knowledge').textContent.includes('原生会话按字节保存')"));
     await shot('84-control-knowledge.png');
@@ -168,7 +196,7 @@ function login() {
     await shot('83-control-phone-ai.png');
     ws.close();
   } catch (e) { errors.push('test: ' + e.stack); }
-  finally { try { chrome && chrome.kill(); } catch {} srv.kill(); }
+  finally { try { chrome && chrome.kill(); } catch {} srv.kill();memoryApi.close(); }
   for (const r of res) console.log(r);
   console.log(errors.length ? 'page errors:\n' + errors.join('\n') : 'no page errors');
   await sleep(800);

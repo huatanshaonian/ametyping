@@ -59,6 +59,18 @@
 .knowledge-editor label .field { flex:1 1 220px; min-width:0; }
 .knowledge-body { width:100%; min-height:260px; font:12px/1.6 Consolas,monospace; resize:vertical; }
 .knowledge pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:420px; overflow:auto; }
+.knowledge-toolbar { display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0; }
+.knowledge-toolbar .field { min-width:0;flex:1 1 140px; }
+.knowledge-row label,.knowledge-proposal > label { display:flex;gap:7px;align-items:center; }
+.knowledge-preview { margin:2px 0;white-space:pre-wrap; }
+.knowledge-instruction { width:100%;min-height:80px;resize:vertical; }
+.knowledge-columns { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:8px 0; }
+.knowledge-columns > * { min-width:0;overflow-wrap:anywhere; }
+.knowledge-diff-only { background:#fff0b3;color:#482e00; }
+.knowledge-proposal { padding:10px;margin:10px 0;border:1px solid var(--edge); }
+.knowledge-proposal .knowledge-body { min-height:130px; }
+.knowledge-review > div:last-child .btn { margin:3px; }
+.cp.narrow .knowledge-columns { grid-template-columns:1fr; }
 
 /* Claude Code API (apps/claude-apis.js) */
 .capi-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
