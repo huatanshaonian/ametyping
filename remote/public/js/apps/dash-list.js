@@ -6,6 +6,8 @@
 import { $, h, esc, ago, stateName, prefs, ctxLeft, CTX_LOW, plain, aiMark } from '../util.js';
 import * as net from '../net.js';
 import * as marks from '../marks.js';
+import * as mesh from '../mesh.js';
+import * as projects from './projects.js';
 import * as ctx from '../ctxmenu.js';
 import { askText } from '../dialog.js';
 import { createFilter } from './dash-filter.js';
@@ -64,8 +66,9 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     for (const g of groups) {
       const sk = 'g:' + g.id, items = inGroup.get(g.id).sort(byLast).sort(pinnedFirst), hd = head(sk);
       if (!items.length && !allView) continue;                         // an empty group only under 全部
+      const proj = mesh.byGroup(g.id);
       hd.className = 'mc grp' + (collapsed.has(sk) ? ' fold' : ''); hd.dataset.sec = sk; hd.dataset.group = g.id;
-      setText(hd, `${g.name} · ${items.length} ${unit}`, 'gi');
+      setText(hd, `${g.name} · ${items.length} ${unit}`, 'gi', proj);
       section(sk, hd, items, true);
     }
     for (const m of machines) {
@@ -94,10 +97,16 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     order.forEach((x, i) => { if (el.children[i] !== x) el.insertBefore(x, el.children[i] || null); });
     while (el.children.length > order.length) el.lastElementChild.remove();
   }
-  function setText(hd, text, mark) {
-    if (hd.dataset.t === text) return;
-    hd.dataset.t = text;
-    hd.replaceChildren(h('span', { class: 'fd', text: '' }), h('span', { class: mark }), text);
+  function setText(hd, text, mark, proj) {
+    const key = text + '|' + (proj ? proj.id : '');
+    if (hd.dataset.t === key) return;
+    hd.dataset.t = key;
+    hd.replaceChildren(
+      h('span', { class: 'fd', text: '' }),
+      h('span', { class: mark }),
+      h('span', { class: 'mct', text }),
+      proj ? h('button', { class: 'pm-jump', type: 'button', dataset: { proj: proj.id }, title: `在「项目管理」中查看 ${proj.name} 拓扑`, text: '🌐 拓扑' }) : null
+    );
   }
   // running subagents of the session (dash-agents.js)
   const agentHtml = (s) => { const t = agentTag(s); return t ? `<span class="agb" title="${esc(t.title)}">${esc(t.text)}</span>` : ''; };
@@ -119,7 +128,12 @@ export function createList({ el, current, selected, onSelect, onNote }) {
       : isAgy
       ? `<span class="provs" title="Antigravity${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov agy"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
       : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
-    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + badge + esc(s.label) + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
+    const mn = mesh.nodeOfKey(key);
+    const meshBadge = mn
+      ? `<span class="mrole ${esc(mn.node.role)}" title="所属项目：${esc(mn.project.name)}">${mn.node.role === 'master' ? 'Master' : mn.node.role === 'cowork' ? 'Cowork' : 'Worker'}</span>` +
+        (mn.node.reviewStatus === 'waiting_review' ? '<span class="mrole rev" title="已达成阶段目标，等待检视">待检视</span>' : '')
+      : '';
+    const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + badge + esc(s.label) + meshBadge + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
     if ($('.nm', c).innerHTML !== nmHtml) $('.nm', c).innerHTML = nmHtml;
     // while searching, the passage found in its conversation
@@ -133,6 +147,8 @@ export function createList({ el, current, selected, onSelect, onNote }) {
 
   // ---- clicks: a session, "more", a section head (fold), the hidden ones ----
   el.addEventListener('click', (e) => {
+    const pm = e.target.closest('.pm-jump');
+    if (pm) { e.stopPropagation(); projects.open(pm.dataset.proj); return; }
     const cm = e.target.closest('.cm');
     if (cm) {                                                         // ⋯: the session's menu, under the button
       const r = cm.getBoundingClientRect();
@@ -167,8 +183,10 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     if (sub.length) sub.push('-');
     sub.push({ label: '新建群组…', onClick: () => newGroup(key) });
     if (mk.group) sub.push({ label: '移出群组', onClick: () => marks.set(key, { group: '' }).then(done) });
+    const mn = mesh.nodeOfKey(key);
     return [
       { label: '打开', onClick: () => onSelect(key) },
+      ...(mn ? [{ label: `打开所属项目拓扑（${mn.project.name}）`, onClick: () => projects.open(mn.project.id) }] : []),
       '-',
       { label: mk.pinned ? '取消置顶' : '置顶', onClick: () => marks.set(key, { pinned: !mk.pinned }).then(done) },
       { label: mk.starred ? '取消星标' : '星标', onClick: () => marks.set(key, { starred: !mk.starred }).then(done) },
@@ -187,8 +205,10 @@ export function createList({ el, current, selected, onSelect, onNote }) {
   function groupMenu(id, sk) {
     const g = marks.groups().find((x) => x.id === id);
     if (!g) return null;
+    const proj = mesh.byGroup(id);
     return [
       { label: collapsed.has(sk) ? '展开' : '折叠', onClick: () => fold(sk) },
+      ...(proj ? [{ label: `在「项目管理」中打开拓扑（${proj.name}）`, onClick: () => projects.open(proj.id) }] : []),
       '-',
       { label: '重命名…', onClick: async () => { const n = await askText({ title: '重命名群组', value: g.name }); if (n && n !== g.name) done(await marks.renameGroup(id, n)); } },
       { label: '删除群组（会话回到各自电脑下）', onClick: () => marks.removeGroup(id).then(done) },
@@ -209,11 +229,12 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     return listMenu();
   });
 
-  const off = marks.subscribe(render);
+  const offMarks = marks.subscribe(render);
+  const offMesh = mesh.subscribe(render);
   return {
     tool: filter.el,
     render,
     setCurrent(c) { current = c; render(); el.scrollTop = 0; },
-    destroy() { off(); },
+    destroy() { offMarks(); offMesh(); },
   };
 }

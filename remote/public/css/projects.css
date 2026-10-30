@@ -1,0 +1,97 @@
+/* 项目管理 (AmeMesh Project & Topology Manager) styles */
+.pm-app { position: absolute; inset: 0; display: flex; background: var(--surface); color: var(--ink); font-size: 12.5px; }
+.pm-side { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--edge); background: var(--gamepink); }
+.pm-side-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); }
+.pm-side-list { flex: 1; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+.pm-item { padding: 6px 8px; border: 1px solid transparent; cursor: pointer; background: var(--surface); }
+.pm-item:hover { background: var(--tint-soft); border-color: var(--edge); }
+.pm-item.sel { background: var(--fill); color: var(--on-fill); border-color: var(--border); }
+.pm-item-title { display: flex; align-items: center; gap: 6px; font-weight: bold; }
+.pm-item-title img { width: 16px; height: 16px; flex: none; }
+.pm-item-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; font-size: 11px; opacity: 0.85; }
+
+.pm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pm-main-head { padding: 6px 10px; border-bottom: 1px solid var(--edge); background: var(--gamepink); }
+.pm-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pm-title-row img { width: 16px; height: 16px; }
+.pm-tabs { display: flex; gap: 4px; padding: 4px 10px 0; border-bottom: 1px solid var(--edge); background: var(--head-bg); }
+.pm-tab { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border: 1px solid var(--edge); border-bottom: none; background: var(--gamepink); cursor: pointer; font-size: 12px; color: var(--ink); }
+.pm-tab img { width: 14px; height: 14px; }
+.pm-tab.active { background: var(--surface); font-weight: bold; color: var(--border); border-top: 2px solid var(--border); }
+
+.pm-main-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.pm-status { flex: none; padding: 3px 10px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--edge); background: var(--gamepink); }
+.pm-empty { padding: 24px 14px; color: var(--muted); text-align: center; }
+
+.pm-act-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: var(--head-bg); border: 1px solid var(--edge); }
+.pm-hint { font-size: 11.5px; color: var(--muted); flex: 1 1 260px; }
+.pm-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; cursor: pointer; }
+
+/* Topology Graph Lanes & Node Cards */
+.pm-graph-box { display: flex; flex-direction: column; gap: 10px; }
+.pm-edges-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: var(--tint-soft); border: 1px dashed var(--border); font-size: 12px; }
+.pm-edge-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; background: var(--surface); border: 1px solid var(--edge); }
+.pm-edge-arrow { color: var(--border); font-weight: bold; }
+.pm-edge-del { border: none; background: transparent; color: var(--bad, #c00); cursor: pointer; font-weight: bold; padding: 0 3px; }
+
+.pm-lanes { display: flex; flex-direction: column; gap: 12px; }
+.pm-lane { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--edge); background: var(--head-bg); }
+.pm-lane-hd { font-weight: bold; color: var(--border); font-size: 12px; border-bottom: 1px solid var(--edge); padding-bottom: 3px; }
+
+.pm-node { padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
+.pm-node.role-master { border-left: 4px solid var(--border); }
+.pm-node.role-worker { border-left: 4px solid #2b7a78; }
+.pm-node.role-peer { border-left: 4px solid #9b5de5; }
+.pm-node-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pm-role-tag { padding: 1px 6px; font-size: 11px; font-weight: bold; background: var(--fill); color: var(--on-fill); }
+.pm-node-mach { font-size: 11.5px; color: var(--muted); }
+.pm-node-cwd { font: 11.5px Consolas, monospace; color: var(--muted); }
+.pm-contract { padding: 5px 8px; background: var(--tint-soft); border-left: 2px solid var(--edge); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.pm-node-rep { padding: 4px 8px; background: var(--quote-bg, #fff9db); border: 1px dashed var(--border); font-size: 12px; }
+.pm-node-act { font-size: 11.5px; color: var(--muted); }
+.pm-node-inbox { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: var(--tint); border: 1px solid var(--border); font-size: 12px; }
+.pm-node-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+
+.pm-rev-badge, .pm-badge { display: inline-block; padding: 0 5px; font-size: 11px; border: 1px solid var(--edge); }
+.pm-rev-badge.run { background: var(--tint); color: var(--ink); }
+.pm-rev-badge.wait, .pm-badge.warn { background: #ffd166; color: #3a2000; border-color: #b57c00; font-weight: bold; }
+.pm-rev-badge.done { background: #c7f9cc; color: #0b4f19; border-color: #2d8a3e; }
+.pm-rev-badge.err, .pm-badge.err { background: #ffccd5; color: #800f2f; border-color: #c9184a; font-weight: bold; }
+
+/* Workspaces & VFS Tree */
+.pm-ws-list { display: flex; flex-direction: column; gap: 8px; }
+.pm-ws-card, .pm-xfer-card { padding: 8px 10px; background: var(--surface); border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 6px; }
+.pm-ws-head, .pm-xfer-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pm-ws-head img, .pm-xfer-head img { width: 16px; height: 16px; }
+.pm-ws-mode { padding: 1px 4px; font-size: 11.5px; }
+.pm-ws-free, .pm-ws-git { font-size: 11px; padding: 0 5px; background: var(--head-bg); border: 1px solid var(--edge); color: var(--muted); }
+.pm-ws-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px; }
+.pm-ws-notes { padding: 4px 8px; background: var(--head-bg); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+
+.pm-tree-box { padding: 6px 10px; background: var(--tint-soft); border: 1px inset var(--edge); max-height: 240px; overflow: auto; font: 12px/1.45 Consolas, "Microsoft YaHei UI", monospace; }
+.pm-tree-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.pm-tree-ul { list-style: none; margin: 0; padding-left: 16px; }
+.pm-tree-box > .pm-tree-ul { padding-left: 0; }
+.pm-tree-dir { font-weight: bold; color: var(--border); }
+.pm-tree-skip { color: var(--muted); font-style: italic; }
+
+.pm-unbound-sec { margin-top: 8px; padding: 8px; background: var(--head-bg); border: 1px dashed var(--edge); display: flex; flex-direction: column; gap: 6px; }
+.pm-sec-title { font-weight: bold; font-size: 12px; color: var(--border); }
+.pm-unbound-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px; background: var(--surface); border: 1px solid var(--edge); }
+.pm-unbound-note { flex: 1; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pm-xfer-card.pending { border-left: 4px solid #d97706; }
+.pm-xfer-card.done { border-left: 4px solid #2d8a3e; opacity: 0.88; }
+.pm-xfer-paths { font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.pm-xfer-note { font-size: 12px; color: var(--ink); background: var(--head-bg); padding: 3px 6px; }
+.pm-xfer-time { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+/* 糖糖看板 group header button & topology role badges */
+.mc .pm-jump { margin-left: auto; padding: 0 6px; font-size: 11px; line-height: 1.4; cursor: pointer; }
+.card .nm .mrole { display: inline-block; margin-left: 4px; padding: 0 4px; font-size: 10.5px; background: var(--tint); color: var(--border); border: 1px solid var(--edge); vertical-align: 1px; }
+.card .nm .mrole.wait { background: #ffd166; color: #3a2000; border-color: #b57c00; }
+
+@media (max-width: 700px) {
+  .pm-app { flex-direction: column; }
+  .pm-side { width: 100%; max-height: 130px; border-right: none; border-bottom: 1px solid var(--edge); }
+}

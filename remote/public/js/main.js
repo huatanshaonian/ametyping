@@ -9,6 +9,7 @@ import * as netpanel from './netpanel.js';
 import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
+import * as projects from './apps/projects.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
@@ -41,6 +42,7 @@ function openMyComputer() {
 
 const APPS = [
   { id: 'dashboard', label: '糖糖看板', icon: '/asset/icon256.png', open: openDashboard },
+  { id: 'projects', label: '项目管理', icon: icon('projects'), open: () => projects.open(), hint: '跨机协同拓扑、目标契约、目录结构树与大文件摆渡' },
   { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '浏览这台电脑的文件' },
   { id: 'reports', label: '工作日报', icon: icon('history'), open: reports.open, hint: '每天早上自动总结前一天做了什么' },
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
