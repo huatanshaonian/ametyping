@@ -50,6 +50,24 @@ function treeOf(ref, paths) {
   return m;
 }
 
+// Include tracked relative module dependencies even when they cross the remote/app boundary.
+function depsOf(ref, roots) {
+  const files = treeOf(ref, []), deps = new Set();
+  function visit(file) {
+    if (deps.has(file)) return;
+    deps.add(file);
+    if (!/\.[cm]?js$/.test(file)) return;
+    const src = git(['show', `${ref}:${file}`]);
+    for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
+      const p = path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1]));
+      const target = [p, p + '.js', p + '/index.js'].find((f) => files.has(f));
+      if (target) visit(target);
+    }
+  }
+  for (const p of treeOf(ref, roots).keys()) visit(p);
+  return deps;
+}
+
 // a tar of a machine's files, unpacked into a temp folder: path -> blob id
 function remoteFiles(host, dir, paths, excludes = []) {
   const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ame-deploy-'));
@@ -84,4 +102,4 @@ function compare(machine, tree) {
   return { changed, local, extra };
 }
 
-module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, remoteFiles, compare };
+module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, depsOf, remoteFiles, compare };

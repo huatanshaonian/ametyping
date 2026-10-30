@@ -2,7 +2,7 @@
 // (updated), a version git never had (edited on the machine: stops the deploy), files the commit does not have.
 // (No ssh here: the machine's files are made up.)
 const fs = require('fs'), path = require('path'), os = require('os');
-const { blobId, treeOf, compare, git } = require('../deploy/deploy-lib');
+const { blobId, treeOf, depsOf, compare, git } = require('../deploy/deploy-lib');
 const res = []; const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
 
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-deploy-t-'));
@@ -25,6 +25,16 @@ try {
   chk('compare: the same file is left alone', !c.changed.includes(p1), c);
   chk('compare: files the commit does not have are listed apart', c.extra.includes('remote/deploy/notes.txt'), c);
   chk('compare: files missing on the machine are uploaded', [...tree2.keys()].filter((p) => !machine.has(p)).every((p) => c.changed.includes(p)), c);
+  // Load the actual NAS archive entry point from only its deployment files, with no repository fallback.
+  const deps = depsOf('HEAD', ['remote/server/vault/local.js']);
+  for (const p of deps) {
+    const dest = path.join(T, p);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, git(['show', `HEAD:${p}`]));
+  }
+  require(path.join(T, 'remote/server/vault/local.js'));
+  chk('NAS deployment includes transitive AGY archive dependencies and loads in isolation',
+    deps.has('app/agy-records.js') && deps.has('app/ai-providers.js') && deps.has('agy-hook.js'), [...deps]);
 } catch (e) { res.push('FAIL script ' + e.stack); }
 finally { fs.rmSync(T, { recursive: true, force: true }); }
 console.log(res.join('\n'));
