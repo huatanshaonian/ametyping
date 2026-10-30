@@ -24,20 +24,17 @@ function createPushEvents({ push }) {
   const seenPerms = new Map();             // "machine|perm id" -> when seen (an approval is told once)
   const work = new Map();                  // "machine|session" -> { since, state }
   const lowCtx = new Set();                // "machine|session" told about its context
-  const primed = new Set();                // machines whose first report after connecting was taken in (not told)
   const prune = () => { const old = Date.now() - 86400e3; for (const [k, t] of seenPerms) if (t < old) seenPerms.delete(k); };
 
   function sessions(machine, list, control) {
-    const first = !primed.has(machine);
-    primed.add(machine);
     for (const s of list) {
       const key = machine + '|' + s.id;
-      // approval: new prompts (on the first report after a connection they are only noted: told before, or stale)
+      // These are live, answerable cards, including on reconnect. Keep seen IDs across reconnects
+      // so an already announced card is quiet, while one created during the outage is still delivered.
       for (const p of control ? s.perms || [] : []) {
         const k = machine + '|' + p.id;
         if (seenPerms.has(k)) continue;
         seenPerms.set(k, Date.now());
-        if (first) continue;
         let input = {}; try { input = JSON.parse(p.input || '{}'); } catch {}
         const what = input.command || input.CommandLine || input.file_path || input.notebook_path || input.Path || input.TargetFile || input.description || input.toolSummary || input.url
           || (Array.isArray(input.resources) ? input.resources.join(' · ') : '') || '';
@@ -74,8 +71,8 @@ function createPushEvents({ push }) {
       tag: 'mail-' + (alert.id || alert.key), url: '/#mail=' + encodeURIComponent(alert.key || '') });
   }
 
-  // a machine disconnected: its next report is a fresh start
-  const reset = (machine) => primed.delete(machine);
+  // Start work-duration tracking afresh, but retain approval IDs to avoid duplicate notifications.
+  const reset = (machine) => { for (const k of work.keys()) if (k.startsWith(machine + '|')) work.delete(k); };
   return { sessions, ctx, mail, reset, ctxLeft };
 }
 
