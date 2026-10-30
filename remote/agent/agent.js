@@ -65,6 +65,8 @@ const memorySync=createMemorySync({name:NAME,send:sendJSON,folder:p=>browse.writ
 const fsServe = createFsServe(browse, (o) => sendJSON(o), { sessionFile: (id) => sessionFile(id) });
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
+const MESH_PORT = +cfg.meshPort || 3941;
+const MESH_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `mesh-token-${MESH_PORT}`);
 
 // ---------- discover and read local transcripts ----------
 // state per session id: transcript cache (transcript.js) + derived display fields
@@ -420,6 +422,10 @@ function connect() {
       if (cfg.artifacts === false) sendJSON({ t: 'art-res', rid: d.rid, items: [], off: true });
       else artifacts.handle(d).catch(() => sendJSON({ t: 'art-res', rid: d.rid, items: [], error: true }));
     }
+    else if (d.t === 'mesh-res' && typeof d.rid === 'string') {
+      const f = meshPending.get(d.rid);
+      if (f) { meshPending.delete(d.rid); f(d); }
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
@@ -529,5 +535,46 @@ async function tick(force) {
 }
 setInterval(tick, SCAN_MS);
 setInterval(()=>{nativeArchive.tick();if(cfg.fullArchive!==false)openCodeExport.tick();memorySync.tick().catch(e=>console.error('记忆采集失败：'+e.message));},500).unref();
+const crypto = require('crypto');
+// Local loopback bridge (127.0.0.1:3941) for AmeMesh CLI / MCP tools running inside local coding agent sessions
+const meshPending = new Map();
+const MESH_TOKEN = crypto.randomBytes(24).toString('hex');
+function startMeshBridge() {
+  const srv = http.createServer((req, res) => {
+    const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (req.headers.origin || req.headers['x-ame-mesh'] !== MESH_TOKEN) return out(403, { ok: false, msg: 'unauthorized' });
+    if (req.method === 'GET' && req.url === '/mesh/local-info') {
+      return out(200, { ok: true, machine: NAME, online: !!(ws && ws.readyState === 1), sessions: stateList().map((s) => ({ id: s.id, label: s.label, project: s.project, state: s.state })) });
+    }
+    if (req.method !== 'POST' || req.url !== '/mesh/rpc') return out(404, { ok: false });
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (c) => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on('end', () => {
+      if (!ws || ws.readyState !== 1) return out(200, { ok: false, msg: '本机 agent 尚未连接上群晖服务器' });
+      let d = {}; try { d = JSON.parse(body || '{}'); } catch { return out(400, { ok: false, msg: 'invalid json' }); }
+      const rid = 'mrpc-' + crypto.randomBytes(8).toString('hex');
+      const timer = setTimeout(() => {
+        if (meshPending.delete(rid)) out(200, { ok: false, msg: '群晖服务器响应超时' });
+      }, 20000);
+      if (timer.unref) timer.unref();
+      meshPending.set(rid, (reply) => {
+        clearTimeout(timer);
+        const { t, rid: _r, ...rest } = reply;
+        out(200, rest);
+      });
+      sendJSON({ ...d, t: 'mesh-req', rid, fromMachine: NAME });
+    });
+  });
+  srv.on('error', () => {});
+  srv.listen(MESH_PORT, '127.0.0.1', () => {
+    try {
+      fs.mkdirSync(path.dirname(MESH_TOKEN_FILE), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(MESH_TOKEN_FILE, JSON.stringify({ port: MESH_PORT, token: MESH_TOKEN, machine: NAME }), { mode: 0o600 });
+    } catch {}
+  });
+  srv.unref();
+}
+startMeshBridge();
 connect();
 console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；文件浏览：${browse.enabled ? '开' : '关'}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);

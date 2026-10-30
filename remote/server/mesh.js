@@ -943,15 +943,15 @@ function createMesh({
         return reply(r);
       }
       if (op === 'spawn') {
-        const r = await spawnWorker({ ...d, fromMachine: d.fromMachine || machineName });
+        const r = await spawnWorker({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
         return reply(r);
       }
       if (op === 'send') {
-        const r = await sendMessage({ ...d, fromMachine: d.fromMachine || machineName });
+        const r = await sendMessage({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
         return reply(r);
       }
       if (op === 'report') {
-        const r = await reportResult({ ...d, fromMachine: d.fromMachine || machineName });
+        const r = await reportResult({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
         return reply(r);
       }
       if (op === 'transfer') {
