@@ -53,6 +53,7 @@
 .dash .card .mrole.master { background: var(--fill); color: var(--on-fill); }
 .dash .card .mrole.cowork { border-color: var(--ok-text); color: var(--ok-text); }
 .dash .card .mrole.rev { border-color: var(--warn); color: var(--on-fill); background: var(--warn); }
+.dash .card .mrole.wd-alert { border-color: #d90429; color: #fff; background: #d90429; font-weight: bold; }
 .dash .mc { display: flex; align-items: center; }
 .dash .mc .mct { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash .mc .pm-jump { flex: none; margin-left: 6px; padding: 0 6px; font-size: 10.5px; border: 1px solid var(--border); background: var(--surface); color: var(--border); cursor: pointer; }

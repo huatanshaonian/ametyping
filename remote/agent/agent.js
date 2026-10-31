@@ -398,6 +398,7 @@ function connect() {
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     nativeArchive.ready();memorySync.reset();
     tick(true);
+    flushPendingMeshEvents();
   });
   socket.on('message', (raw) => {
     if (socket !== ws) return;
@@ -462,6 +463,9 @@ function connect() {
     else if (d.t === 'mesh-res' && typeof d.rid === 'string') {
       const f = meshPending.get(d.rid);
       if (f) { meshPending.delete(d.rid); f(d); }
+    }
+    else if (d.t === 'mesh-triggers' && Array.isArray(d.triggers)) {
+      updateMeshFolderTriggers(d.triggers);
     }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
@@ -590,8 +594,14 @@ function startMeshBridge() {
     req.setEncoding('utf8');
     req.on('data', (c) => { body += c; if (body.length > 65536) req.destroy(); });
     req.on('end', () => {
-      if (!ws || ws.readyState !== 1) return out(200, { ok: false, msg: '本机 agent 尚未连接上群晖服务器' });
       let d = {}; try { d = JSON.parse(body || '{}'); } catch { return out(400, { ok: false, msg: 'invalid json' }); }
+      if (!ws || ws.readyState !== 1) {
+        if (d.op === 'event') {
+          savePendingMeshEvent(d);
+          return out(200, { ok: true, queued: true, msg: 'agent 离线，事件已加入暂存队列，将在重新连接时自动上报' });
+        }
+        return out(200, { ok: false, msg: '本机 agent 尚未连接上群晖服务器' });
+      }
       const rid = 'mrpc-' + crypto.randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
         if (meshPending.delete(rid)) out(200, { ok: false, msg: '群晖服务器响应超时' });
@@ -620,3 +630,151 @@ function startMeshBridge() {
 startMeshBridge();
 connect();
 console.log(`Ame 看板 agent 启动，扫描 ${PROJECTS}；文件浏览：${browse.enabled ? '开' : '关'}；远程控制：${CONTROL ? `开（经本机糖糖 127.0.0.1:${PET_PORT}，糖糖菜单里还要勾「允许远程控制」）` : '关'}`);
+
+// ---- AmeMesh Folder Watcher & Offline Event Queue ----
+let meshFolderTriggers = [];
+const folderWatchState = new Map(); // triggerId -> { initialized: boolean, files: Map<relPath, { size, mtimeMs, stableCount }> }
+
+function savePendingMeshEvent(evt) {
+  try {
+    const dir = path.join(os.homedir(), '.ametyping');
+    fs.mkdirSync(dir, { recursive: true });
+    const pendingFile = path.join(dir, 'pending-mesh-events.json');
+    let list = [];
+    try {
+      const raw = fs.readFileSync(pendingFile, 'utf8');
+      list = JSON.parse(raw);
+      if (!Array.isArray(list)) list = [];
+    } catch {}
+    list.push(evt);
+    fs.writeFileSync(pendingFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+  } catch {}
+}
+
+function flushPendingMeshEvents() {
+  const pendingFile = path.join(os.homedir(), '.ametyping', 'pending-mesh-events.json');
+  if (!fs.existsSync(pendingFile)) return;
+  try {
+    const raw = fs.readFileSync(pendingFile, 'utf8');
+    const events = JSON.parse(raw);
+    if (Array.isArray(events) && events.length > 0) {
+      for (const evt of events) {
+        const rid = 'evt_' + crypto.randomBytes(4).toString('hex');
+        sendJSON({ ...evt, t: 'mesh-req', rid, op: 'event', fromMachine: NAME });
+      }
+    }
+    fs.unlinkSync(pendingFile);
+  } catch {}
+}
+
+function globToRegex(glob = '*') {
+  if (!glob || glob === '*') return /^.*$/;
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                      .replace(/\*/g, '.*')
+                      .replace(/\?/g, '.');
+  return new RegExp('^' + escaped + '$', 'i');
+}
+
+function scanDirFiles(dirPath, globRe) {
+  const result = [];
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const ent of entries) {
+      const fullPath = path.join(dirPath, ent.name);
+      if (ent.isFile()) {
+        if (globRe.test(ent.name)) {
+          try {
+            const st = fs.statSync(fullPath);
+            result.push({ relPath: ent.name, size: st.size, mtimeMs: st.mtimeMs });
+          } catch {}
+        }
+      } else if (ent.isDirectory()) {
+        try {
+          const subEntries = fs.readdirSync(fullPath, { withFileTypes: true });
+          for (const sub of subEntries) {
+            if (sub.isFile() && globRe.test(sub.name)) {
+              try {
+                const subFullPath = path.join(fullPath, sub.name);
+                const st = fs.statSync(subFullPath);
+                result.push({ relPath: path.join(ent.name, sub.name), size: st.size, mtimeMs: st.mtimeMs });
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  return result;
+}
+
+function pollFolderTriggers() {
+  for (const trig of meshFolderTriggers) {
+    if (!trig || !trig.path) continue;
+    let state = folderWatchState.get(trig.id);
+    if (!state) {
+      state = { initialized: false, files: new Map() };
+      folderWatchState.set(trig.id, state);
+    }
+    const globRe = globToRegex(trig.glob || '*');
+    const scanned = scanDirFiles(trig.path, globRe);
+    const scannedKeys = new Set();
+    const readyFiles = [];
+
+    if (!state.initialized) {
+      for (const f of scanned) {
+        state.files.set(f.relPath, { size: f.size, mtimeMs: f.mtimeMs, stableCount: 2 });
+      }
+      state.initialized = true;
+      continue;
+    }
+
+    for (const f of scanned) {
+      scannedKeys.add(f.relPath);
+      const prev = state.files.get(f.relPath);
+      if (!prev) {
+        state.files.set(f.relPath, { size: f.size, mtimeMs: f.mtimeMs, stableCount: 1 });
+      } else if (prev.size !== f.size || prev.mtimeMs !== f.mtimeMs) {
+        state.files.set(f.relPath, { size: f.size, mtimeMs: f.mtimeMs, stableCount: 1 });
+      } else {
+        if (prev.stableCount === 1) {
+          prev.stableCount = 2;
+          readyFiles.push(f.relPath);
+        }
+      }
+    }
+
+    for (const key of state.files.keys()) {
+      if (!scannedKeys.has(key)) state.files.delete(key);
+    }
+
+    if (readyFiles.length > 0) {
+      const rid = 'evt_' + crypto.randomBytes(4).toString('hex');
+      sendJSON({
+        t: 'mesh-req',
+        rid,
+        op: 'event',
+        fromMachine: NAME,
+        projectId: trig.projectId,
+        triggerId: trig.id,
+        source: 'folder',
+        kind: 'files_ready',
+        path: trig.path,
+        files: readyFiles,
+        label: trig.label,
+      });
+    }
+  }
+}
+
+function updateMeshFolderTriggers(triggers) {
+  meshFolderTriggers = Array.isArray(triggers) ? triggers : [];
+  const curIds = new Set(meshFolderTriggers.map((t) => t.id));
+  for (const id of folderWatchState.keys()) {
+    if (!curIds.has(id)) folderWatchState.delete(id);
+  }
+}
+
+const FOLDER_POLL_MS = +process.env.AME_FOLDER_POLL_MS || 15000;
+const folderPollTimer = setInterval(pollFolderTriggers, FOLDER_POLL_MS);
+if (folderPollTimer.unref) folderPollTimer.unref();
+

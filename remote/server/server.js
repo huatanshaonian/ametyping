@@ -236,12 +236,13 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
-const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a) });
+let push;
+const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 // phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
 const pushEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
-const push = createPush({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), subject: /^https:\/\//.test(cfg.origin || '') ? cfg.origin : 'mailto:windose@localhost',
+push = createPush({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), subject: /^https:\/\//.test(cfg.origin || '') ? cfg.origin : 'mailto:windose@localhost',
   request: (url, opts) => googleHttp.request(url, opts, pushEgress), log: console.log, audit: (...a) => audit(...a) });
 const pushEvents = createPushEvents({ push });
 const google = createGoogle({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), origin: cfg.origin, notes, todos, reports: () => summary && summary.reports,

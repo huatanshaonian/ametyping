@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const child_process = require('child_process');
 
 const DEFAULT_PORT = +process.env.AME_MESH_PORT || +process.env.AME_MESH_BRIDGE_PORT || 3941;
 
@@ -51,6 +52,180 @@ function callLocal(method, urlPath, body, opts = {}) {
     req.on('error', (e) => resolve({ ok: false, msg: '无法连接本机 agent：' + e.message }));
     req.end(data);
   });
+}
+
+function savePendingMeshEvent(evt, home = os.homedir()) {
+  try {
+    const dir = path.join(home, '.ametyping');
+    fs.mkdirSync(dir, { recursive: true });
+    const pendingFile = path.join(dir, 'pending-mesh-events.json');
+    let list = [];
+    try {
+      const raw = fs.readFileSync(pendingFile, 'utf8');
+      list = JSON.parse(raw);
+      if (!Array.isArray(list)) list = [];
+    } catch {}
+    list.push(evt);
+    fs.writeFileSync(pendingFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+  } catch {}
+}
+
+function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId, opts = {} }) {
+  const startMs = Date.now();
+  const logDir = path.dirname(logFile);
+  try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+  const outStream = fs.createWriteStream(logFile, { flags: 'a' });
+  const rollingLines = [];
+
+  const isBatch = /\.(cmd|bat)$/i.test(commandArgs[0]);
+  const useShell = commandArgs.length === 1 || isBatch;
+  const child = child_process.spawn(commandArgs[0], commandArgs.slice(1), {
+    cwd: cwd || process.cwd(),
+    shell: useShell,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  function handleChunk(chunk) {
+    outStream.write(chunk);
+    const str = chunk.toString('utf8');
+    const lines = str.split(/\r?\n/);
+    for (const l of lines) {
+      if (l.trim()) {
+        rollingLines.push(l);
+        if (rollingLines.length > 40) rollingLines.shift();
+      }
+    }
+  }
+
+  if (child.stdout) child.stdout.on('data', handleChunk);
+  if (child.stderr) child.stderr.on('data', handleChunk);
+
+  return new Promise((resolve) => {
+    child.on('close', async (exitCode) => {
+      outStream.end();
+      const durationMs = Date.now() - startMs;
+      const code = exitCode !== null ? exitCode : 1;
+      const tail = rollingLines.join('\n');
+      const evt = {
+        source: 'run',
+        kind: code === 0 ? 'exit_ok' : 'exit_err',
+        label: label || commandArgs[0],
+        exitCode: code,
+        durationMs,
+        tail,
+        cwd: cwd || process.cwd(),
+        logFile,
+        projectId: projectId || '',
+        nodeId: nodeId || '',
+        sessionId: sessionId || '',
+      };
+      try {
+        const r = await rpc('event', evt, opts);
+        if (!r || !r.ok) {
+          savePendingMeshEvent(evt);
+        }
+      } catch {
+        savePendingMeshEvent(evt);
+      }
+      resolve({ ok: code === 0, exitCode: code, durationMs, logFile });
+    });
+    child.on('error', async (err) => {
+      outStream.end();
+      const durationMs = Date.now() - startMs;
+      const tail = '启动进程失败: ' + err.message;
+      const evt = {
+        source: 'run',
+        kind: 'exit_err',
+        label: label || commandArgs[0],
+        exitCode: 1,
+        durationMs,
+        tail,
+        cwd: cwd || process.cwd(),
+        logFile,
+        projectId: projectId || '',
+        nodeId: nodeId || '',
+        sessionId: sessionId || '',
+      };
+      try {
+        const r = await rpc('event', evt, opts);
+        if (!r || !r.ok) savePendingMeshEvent(evt);
+      } catch {
+        savePendingMeshEvent(evt);
+      }
+      resolve({ ok: false, exitCode: 1, durationMs, error: err.message, logFile });
+    });
+  });
+}
+
+function watchPidWorker({ pid, label, cwd, projectId, nodeId, sessionId, intervalMs = 2000, opts = {} }) {
+  const startMs = Date.now();
+  const targetPid = +pid;
+  return new Promise((resolve) => {
+    const timer = setInterval(async () => {
+      let alive = false;
+      try {
+        process.kill(targetPid, 0);
+        alive = true;
+      } catch (e) {
+        alive = e.code === 'EPERM';
+      }
+      if (!alive) {
+        clearInterval(timer);
+        const durationMs = Date.now() - startMs;
+        const evt = {
+          source: 'run',
+          kind: 'pid_exit',
+          label: label || ('进程 PID ' + targetPid),
+          exitCode: 0,
+          durationMs,
+          cwd: cwd || process.cwd(),
+          projectId: projectId || '',
+          nodeId: nodeId || '',
+          sessionId: sessionId || '',
+        };
+        try {
+          const r = await rpc('event', evt, opts);
+          if (!r || !r.ok) savePendingMeshEvent(evt);
+        } catch {
+          savePendingMeshEvent(evt);
+        }
+        resolve({ ok: true, exited: true, pid: targetPid, durationMs });
+      }
+    }, intervalMs);
+  });
+}
+
+async function runBgMcp(args = {}, opts = {}) {
+  const cmdStr = args.command;
+  if (!cmdStr || typeof cmdStr !== 'string') return { ok: false, msg: '缺少 command 参数' };
+  const cwd = args.cwd || process.cwd();
+  const logFile = args.logFile || path.join(cwd, '.ame-run-' + Date.now() + '.log');
+  const label = args.label || cmdStr.slice(0, 60);
+  const sessionId = args.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
+  const projectId = args.projectId || '';
+
+  const workerPayload = {
+    commandArgs: [cmdStr],
+    label,
+    logFile,
+    cwd,
+    projectId,
+    nodeId: args.targetNodeId || args.nodeId || '',
+    sessionId,
+  };
+  const child = child_process.spawn(
+    process.execPath,
+    [__filename, '__run_worker', JSON.stringify(workerPayload)],
+    { detached: true, stdio: 'ignore', cwd }
+  );
+  child.unref();
+  return {
+    ok: true,
+    pid: child.pid,
+    label,
+    logFile,
+    msg: '计算作业「' + label + '」已在后台脱离运行 (PID ' + child.pid + ')。日志写入 ' + logFile + '。计算结束后看门狗将自动向会话发送就绪事件唤醒。可随时调用 mesh_report(reviewStatus="blocked") 等待计算完成。',
+  };
 }
 
 function rpc(op, params = {}, opts = {}) {
@@ -177,6 +352,8 @@ async function handleMcpCall(name, args = {}, opts = {}) {
     case 'mesh_send': return rpc('send', args, opts);
     case 'mesh_report': return rpc('report', args, opts);
     case 'mesh_transfer': return rpc('transfer', args, opts);
+    case 'mesh_run': return runBgMcp(args, opts);
+    case 'mesh_trigger': return rpc('trigger', args, opts);
     default: return { ok: false, msg: '未知的工具：' + name };
   }
 }
@@ -247,6 +424,76 @@ function parseCliFlags(argv) {
 async function runCli(argv = process.argv.slice(2)) {
   const flags = parseCliFlags(argv);
   const cmd = flags._[0] || 'status';
+  if (cmd === '__run_worker') {
+    const payload = JSON.parse(argv[1]);
+    await executeCommandWorker(payload);
+    return;
+  }
+  if (cmd === '__watch_worker') {
+    const payload = JSON.parse(argv[1]);
+    await watchPidWorker(payload);
+    return;
+  }
+  if (cmd === 'run') {
+    const dashDashIdx = argv.indexOf('--');
+    const subArgv = dashDashIdx >= 0 ? argv.slice(0, dashDashIdx) : argv;
+    const runFlags = parseCliFlags(subArgv);
+    const commandArgs = dashDashIdx >= 0 ? argv.slice(dashDashIdx + 1) : runFlags._.slice(1);
+    if (!commandArgs.length) {
+      console.error('缺少要执行的命令。用法: node tools/ame-mesh.js run [options] -- <cmd> [args...]');
+      process.exitCode = 1;
+      return;
+    }
+    const cwd = runFlags.cwd || process.cwd();
+    const label = runFlags.label || path.basename(commandArgs[0]);
+    const logFile = runFlags.log || path.join(cwd, '.ame-run-' + Date.now() + '.log');
+    const projectId = runFlags.projectId || '';
+    const nodeId = runFlags.nodeId || '';
+    const sessionId = runFlags.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
+    const isFg = Boolean(runFlags.fg);
+    if (isFg) {
+      const r = await executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId });
+      console.log(JSON.stringify(r, null, 2));
+      if (!r.ok) process.exitCode = r.exitCode || 1;
+      return;
+    }
+    const child = child_process.spawn(
+      process.execPath,
+      [__filename, '__run_worker', JSON.stringify({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId })],
+      { detached: true, stdio: 'ignore', cwd }
+    );
+    child.unref();
+    console.log(JSON.stringify({ ok: true, bg: true, pid: child.pid, label, logFile }, null, 2));
+    return;
+  }
+  if (cmd === 'watch-pid') {
+    const pid = +flags.pid;
+    if (!pid) {
+      console.error('缺少 --pid 参数。用法: node tools/ame-mesh.js watch-pid --pid <pid> [--label <name>]');
+      process.exitCode = 1;
+      return;
+    }
+    const cwd = flags.cwd || process.cwd();
+    const label = flags.label || ('PID ' + pid);
+    const projectId = flags.projectId || '';
+    const nodeId = flags.nodeId || '';
+    const sessionId = flags.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
+    const intervalMs = +flags.intervalMs || 2000;
+    const isFg = Boolean(flags.fg);
+    if (isFg) {
+      const r = await watchPidWorker({ pid, label, cwd, projectId, nodeId, sessionId, intervalMs });
+      console.log(JSON.stringify(r, null, 2));
+      return;
+    }
+    const child = child_process.spawn(
+      process.execPath,
+      [__filename, '__watch_worker', JSON.stringify({ pid, label, cwd, projectId, nodeId, sessionId, intervalMs })],
+      { detached: true, stdio: 'ignore', cwd }
+    );
+    child.unref();
+    console.log(JSON.stringify({ ok: true, bg: true, pid: child.pid, watchingPid: pid }, null, 2));
+    return;
+  }
   if (cmd === 'mcp') return startMcpStdio();
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log([
@@ -278,4 +525,4 @@ if (require.main === module) {
   runCli();
 }
 
-module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal };
+module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal, savePendingMeshEvent, executeCommandWorker, watchPidWorker, runBgMcp };

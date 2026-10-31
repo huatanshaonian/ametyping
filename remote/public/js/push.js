@@ -80,12 +80,13 @@ function here() {
 // what a link points at
 export function route(handlersIn) { Object.assign(handlers, handlersIn); openHash(location.hash); }
 function openHash(hash) {
-  const m = /^#(s|mail)=(.+)$/.exec(hash || '');
+  const m = /^#(s|mail|proj)=(.+)$/.exec(hash || '');
   if (!m) return;
   const v = decodeURIComponent(m[2]);
   history.replaceState(null, '', location.pathname);              // (a reload does not open it again)
   if (m[1] === 's' && handlers.s) { const i = v.indexOf('|'); if (i > 0) handlers.s(v.slice(0, i), v.slice(i + 1)); }
   if (m[1] === 'mail' && handlers.mail) handlers.mail(v);
+  if (m[1] === 'proj' && handlers.proj) handlers.proj(v);
 }
 
 export async function start() {

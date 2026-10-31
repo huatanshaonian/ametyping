@@ -117,6 +117,7 @@ function mount(initialProjectId) {
       ['topo', '协同拓扑与契约', icon('projects', true), reviewCount ? ` (${reviewCount})` : ''],
       ['vfs', '跨机目录与结构树', icon('tree', true), ` (${(proj.workspaces || []).length})`],
       ['xfer', '文件协同与硬盘摆渡', icon('handoff', true), xferCount ? ` (${xferCount})` : ''],
+      ['events', '⚡ 触发器与看门狗', icon('clock', true), (proj.triggers || []).length ? ` (${(proj.triggers || []).length})` : ''],
     ];
     tabBar.replaceChildren(...tabs.map(([k, label, ic, suffix]) =>
       h('button', {
@@ -191,6 +192,12 @@ function mount(initialProjectId) {
         n.asking ? h('span', { class: 'pm-badge err', text: '等你确认权限' }) : null
       ),
       n.cwd ? h('div', { class: 'pm-node-cwd', text: `📁 目录：${n.cwd}` }) : null,
+      n.watchdogAlert ? h('div', { class: 'pm-node-wd' },
+        h('span', { class: 'pm-wd-badge', text: `⚠️ 看门狗告警：${n.watchdogAlert.label}${n.watchdogAlert.detail ? ' (' + n.watchdogAlert.detail + ')' : ''}` }),
+        h('button', { class: 'btn xact', type: 'button', text: '忽略告警', onclick: async () => {
+          await mesh.dismissWatchdog(proj.id, n.id);
+        } })
+      ) : null,
       h('div', { class: 'pm-contract' },
         h('div', {}, h('b', { text: '目标 (Goal)：' }), h('span', { text: n.goal || '（未设定明确目标）' })),
         h('div', {}, h('b', { text: '停机检视边界 (Stop Gate)：' }), h('span', { text: n.stopCondition || '（完成本轮或遇阻塞即停）' }))

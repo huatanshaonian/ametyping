@@ -90,7 +90,7 @@ function api(cookie, method, p, body) {
   try {
     spawn([R + '/server/server.js']);
     for (let i = 0; i < 60 && (await api('', 'GET', '/login')).status !== 200; i++) await sleep(250);
-    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG, AME_MESH_BRIDGE_PORT: String(MESH_PORT) });
+    spawn([R + '/agent/agent.js'], { USERPROFILE: HOME, HOME, AME_AGENT_CONFIG: ACFG, AME_MESH_BRIDGE_PORT: String(MESH_PORT), AME_FOLDER_POLL_MS: '250' });
     await sleep(2500);
 
     const cookie = await login();
@@ -197,6 +197,59 @@ function api(cookie, method, p, body) {
     ok('POST /api/mesh/transfer-confirm completes sneakernet handoff',
       cfmRes.json && cfmRes.json.ok && cfmRes.json.transfer.status === 'completed',
       cfmRes.json);
+
+
+    // 7. Test ame-mesh run --fg background solver command
+    const runRes = JSON.parse(cp.execFileSync(process.execPath, [
+      path.resolve(R, '..', 'tools', 'ame-mesh.js'),
+      'run', '--fg', '--label', '测试求解', '--projectId', projId, '--nodeId', n2.json.node.id,
+      '--', process.execPath, '-e', "console.log('result=42'); process.exit(0)",
+    ], { env: cliEnv, encoding: 'utf8' }));
+    ok('tools/ame-mesh.js run executes command and delivers event to mesh', runRes.ok && runRes.exitCode === 0, runRes);
+
+    await sleep(400);
+    const pAfterRun = (await api(cookie, 'GET', '/api/mesh/projects')).json.projects.find((p) => p.id === projId);
+    ok('run event recorded in proj.events', pAfterRun && pAfterRun.events && pAfterRun.events.some((e) => e.source === 'run' && e.kind === 'exit_ok'), (pAfterRun || {}).events);
+    const workerAfterRun = (pAfterRun && pAfterRun.nodes) ? pAfterRun.nodes.find((n) => n.id === n2.json.node.id) : null;
+    ok('run completion event delivered to worker node inbox', workerAfterRun && workerAfterRun.inbox && workerAfterRun.inbox.some((m) => m.text.includes('计算进程结束事件') && m.text.includes('测试求解')), (workerAfterRun || {}).inbox);
+
+    // 8. Test folder trigger end-to-end (AME_FOLDER_POLL_MS=250)
+    const trigRes = await api(cookie, 'POST', '/api/mesh/trigger-upsert', {
+      projectId: projId,
+      type: 'folder',
+      machine: 'dell97',
+      path: path.join(SHARE, 'CEM_Results'),
+      glob: '*.ffe',
+      label: '远场结果文件监听',
+      targetNodeId: n2.json.node.id,
+    });
+    ok('POST /api/mesh/trigger-upsert registers folder trigger', trigRes.json && trigRes.json.ok, trigRes.json);
+
+    // Allow folder watcher to initialize its baseline scan
+    await sleep(350);
+
+    // Write a new .ffe file
+    fs.writeFileSync(path.join(SHARE, 'CEM_Results', 'output_1.ffe'), 'FFE DATA 1\n');
+    // Wait ~900ms for 2 stable polls
+    await sleep(900);
+
+    const pAfterFolder = (await api(cookie, 'GET', '/api/mesh/projects')).json.projects.find((p) => p.id === projId);
+    ok('folder files_ready event recorded in proj.events', pAfterFolder && pAfterFolder.events && pAfterFolder.events.some((e) => e.source === 'folder' && e.kind === 'files_ready'), (pAfterFolder || {}).events);
+    const workerAfterFolder = (pAfterFolder && pAfterFolder.nodes) ? pAfterFolder.nodes.find((n) => n.id === n2.json.node.id) : null;
+    ok('folder trigger event delivered to worker node inbox', workerAfterFolder && workerAfterFolder.inbox && workerAfterFolder.inbox.some((m) => m.text.includes('目录文件就绪事件') && m.text.includes('output_1.ffe')), (workerAfterFolder || {}).inbox);
+
+    // 9. Test Kiro tool spawn/node registration
+    const nKiro = await api(cookie, 'POST', '/api/mesh/node', {
+      projectId: projId,
+      machine: 'dell97',
+      sessionId: 's-kiro',
+      tool: 'kiro',
+      role: 'worker',
+      label: 'Kiro求解节点',
+      cwd: path.join(SHARE, 'CEM_Solver'),
+      goal: '运行Kiro测试',
+    });
+    ok('POST /api/mesh/node registers Kiro tool node', nKiro.json && nKiro.json.ok && nKiro.json.node.tool === 'kiro', nKiro.json);
 
     ws.close();
   } catch (e) {

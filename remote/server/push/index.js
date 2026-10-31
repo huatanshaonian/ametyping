@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const wp = require('./webpush');
 
-const KINDS = ['approval', 'done', 'ctx', 'mail'];
+const KINDS = ['approval', 'done', 'ctx', 'mail', 'mesh'];
 const MAX_SUBS = 20;
 const VISIBLE_MS = 45e3;                  // a page that said "I am on screen" counts as such this long (it repeats every 20 s)
 
@@ -57,7 +57,7 @@ function createPush({ dataDir, request, subject = 'mailto:windose@localhost', lo
     const to = data.subs.filter((s) => (only ? s.id === only : s.kinds[kind] !== false) && (force || !((visible.get(s.id) || 0) > Date.now())));
     const results = await Promise.all(to.map(async (s) => {
       let r;
-      try { r = await wp.send(s, { kind, ...msg }, { keys: data.keys, subject, request, urgency: kind === 'approval' ? 'high' : 'normal' }); }
+      try { r = await wp.send(s, { kind, ...msg }, { keys: data.keys, subject, request, urgency: (kind === 'approval' || kind === 'mesh') ? 'high' : 'normal' }); }
       catch (e) { r = { ok: false, status: 0, detail: e.message }; }
       s.last = { at: Date.now(), ok: r.ok, status: r.status, err: r.ok ? '' : String(r.detail || '').slice(0, 120) };
       if (r.gone) { log(`推送：${s.name} 的订阅已失效，删除`); data.subs = data.subs.filter((x) => x !== s); }
