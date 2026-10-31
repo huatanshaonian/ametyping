@@ -400,7 +400,8 @@ function mount(initialProjectId) {
       h('option', { value: 'claude', text: 'Claude Code' }),
       h('option', { value: 'agy', text: 'Antigravity (agy)' }),
       h('option', { value: 'codex', text: 'Codex' }),
-      h('option', { value: 'opencode', text: 'OpenCode' })
+      h('option', { value: 'opencode', text: 'OpenCode' }),
+      h('option', { value: 'kiro', text: 'Kiro CLI' })
     );
     const aliasIn = h('input', { class: 'field', type: 'text', placeholder: '如：电脑B-FEKO求解Worker' });
     const goalIn = h('input', { class: 'field', type: 'text', placeholder: '如：从 GitHub 拉取最新代码并跑完球体双站 RCS 误差对比' });

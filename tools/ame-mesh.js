@@ -101,7 +101,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'mesh_spawn',
-    description: '在目标电脑的指定文件夹启动一个新的 Worker 协同会话（支持 claude / codex / opencode / agy），自动加入当前项目拓扑与糖糖看板分组，并下发包含「执行目标 Goal」与「停机检视条件 Stop Gate」的任务契约。',
+    description: '在目标电脑的指定文件夹启动一个新的 Worker 协同会话（支持 claude / codex / opencode / agy / kiro），自动加入当前项目拓扑与糖糖看板分组，并下发包含「执行目标 Goal」与「停机检视条件 Stop Gate」的任务契约。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -109,7 +109,7 @@ const MCP_TOOLS = [
         projectName: { type: 'string', description: '若尚未创建项目，自动新建的项目名' },
         machine: { type: 'string', description: '目标电脑名称' },
         cwd: { type: 'string', description: '目标电脑上的工作目录绝对路径（需在项目允许访问范围内）' },
-        tool: { type: 'string', enum: ['claude', 'codex', 'opencode', 'agy'], description: '启动的 Coding Agent 类型' },
+        tool: { type: 'string', enum: ['claude', 'codex', 'opencode', 'agy', 'kiro'], description: '启动的 Coding Agent 类型' },
         alias: { type: 'string', description: '给该节点起一个易读别名（如：FEKO求解节点）' },
         goal: { type: 'string', description: '本阶段明确的执行目标（Goal）' },
         stopCondition: { type: 'string', description: '停机与检视边界（Stop & Review Gate）：达成何种状态必须停下等待 Review' },
@@ -255,7 +255,7 @@ async function runCli(argv = process.argv.slice(2)) {
       '  node tools/ame-mesh.js status [--projectId <id>] [--sessionId <id>]',
       '  node tools/ame-mesh.js tree --path <dir> [--machine <pc>] [--refresh]',
       '  node tools/ame-mesh.js note --path <dir> --aiNote <text> [--machine <pc>] [--tag <tag>]',
-      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy] [--alias <name>]',
+      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy|kiro] [--alias <name>]',
       '  node tools/ame-mesh.js send --toNodeId <node> --text <msg> [--goal <goal>] [--stopCondition <gate>]',
       '  node tools/ame-mesh.js report --summary <text> [--reviewStatus waiting_review|done|blocked] [--artifacts a.png,b.csv]',
       '  node tools/ame-mesh.js transfer --fromMachine <pc1> --fromPath <p1> --toMachine <pc2> --toPath <p2> [--size <bytes>] [--mode auto|manual_disk] [--note <text>]',

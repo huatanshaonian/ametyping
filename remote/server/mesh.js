@@ -12,6 +12,7 @@ const MAX_EDGES = 120;
 const MAX_INBOX = 30;
 const MAX_TRANSFERS = 100;
 const AUTO_FILE_LIMIT = 50 * 1024 * 1024; // 50 MB threshold before suggesting manual disk handoff
+const TOOLS = ['claude', 'codex', 'opencode', 'agy', 'kiro']; // coding agents a node / spawn may be
 
 const cleanStr = (v, n) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim().slice(0, n) : '');
 const idGen = (prefix = 'p') => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
@@ -351,7 +352,7 @@ function createMesh({
         sessionId,
         alias: cleanStr(d.alias, 60) || cleanStr(d.role === 'master' ? '主控会话' : '协作节点', 60),
         role: ['master', 'worker', 'peer'].includes(d.role) ? d.role : 'worker',
-        tool: ['claude', 'codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude',
+        tool: TOOLS.includes(d.tool) ? d.tool : 'claude',
         cwd: cleanStr(d.cwd, 500),
         goal: cleanStr(d.goal, 1000),
         stopCondition: cleanStr(d.stopCondition, 1000),
@@ -368,6 +369,7 @@ function createMesh({
       if (sessionId) node.sessionId = sessionId;
       if (typeof d.alias === 'string' && d.alias.trim()) node.alias = cleanStr(d.alias, 60);
       if (['master', 'worker', 'peer'].includes(d.role)) node.role = d.role;
+      if (TOOLS.includes(d.tool)) node.tool = d.tool;
       if (typeof d.cwd === 'string' && d.cwd.trim()) node.cwd = cleanStr(d.cwd, 500);
       if (typeof d.goal === 'string') node.goal = cleanStr(d.goal, 1000);
       if (typeof d.stopCondition === 'string') node.stopCondition = cleanStr(d.stopCondition, 1000);
@@ -560,7 +562,7 @@ function createMesh({
       t: 'launch',
       cwd,
       prompt: fullPrompt,
-      tool: ['codex', 'opencode', 'agy'].includes(tool) ? tool : 'claude',
+      tool: TOOLS.includes(tool) ? tool : 'claude',
       api: api ? { id: api, local: true } : undefined,
     });
     if (!launchRes.ok) {

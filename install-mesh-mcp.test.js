@@ -10,6 +10,8 @@ const {
   mergeAgyJson,
   mergeCodexToml,
   mergeOpenCodeJson,
+  mergeKiroJson,
+  installKiro,
   installAll,
 } = require('./install-mesh-mcp');
 
@@ -237,6 +239,92 @@ describe('install-mesh-mcp', () => {
     });
   });
 
+  describe('mergeKiroJson', () => {
+    it('installs into an empty object', () => {
+      const res = mergeKiroJson({}, { node, script });
+      assert.deepEqual(res, {
+        mcpServers: {
+          'ame-mesh': {
+            command: node,
+            args: [script, 'mcp'],
+          },
+        },
+      });
+    });
+
+    it('preserves other top-level keys and existing mcpServers', () => {
+      const initial = {
+        name: 'default',
+        mcpServers: {
+          fetch: {
+            command: 'fetch-mcp',
+          },
+        },
+      };
+      const res = mergeKiroJson(initial, { node, script });
+      assert.equal(res.name, 'default');
+      assert.deepEqual(res.mcpServers.fetch, { command: 'fetch-mcp' });
+      assert.deepEqual(res.mcpServers['ame-mesh'], {
+        command: node,
+        args: [script, 'mcp'],
+      });
+    });
+
+    it('is idempotent and removes when remove: true', () => {
+      const installed = mergeKiroJson({}, { node, script });
+      const again = mergeKiroJson(installed, { node, script });
+      assert.deepEqual(installed, again);
+
+      const removed = mergeKiroJson(installed, { remove: true });
+      assert.equal(removed.mcpServers['ame-mesh'], undefined);
+    });
+  });
+
+  describe('installKiro', () => {
+    let tmpHome;
+    let origKiroHome;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-test-kiro-mcp-'));
+      origKiroHome = process.env.KIRO_HOME;
+      delete process.env.KIRO_HOME;
+    });
+
+    afterEach(() => {
+      if (origKiroHome !== undefined) process.env.KIRO_HOME = origKiroHome;
+      else delete process.env.KIRO_HOME;
+      try {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      } catch {}
+    });
+
+    it('skips when ~/.kiro does not exist', () => {
+      const res = installKiro({ home: tmpHome, node, script });
+      assert.equal(res.status, 'skipped');
+    });
+
+    it('installs when ~/.kiro exists, backs up, and removes cleanly', () => {
+      fs.mkdirSync(path.join(tmpHome, '.kiro'), { recursive: true });
+      const mcpPath = path.join(tmpHome, '.kiro', 'settings', 'mcp.json');
+
+      const res1 = installKiro({ home: tmpHome, node, script });
+      assert.equal(res1.status, 'updated');
+      assert.ok(fs.existsSync(mcpPath));
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
+      assert.equal(parsed.mcpServers['ame-mesh'].command, node);
+
+      // Idempotent
+      const res2 = installKiro({ home: tmpHome, node, script });
+      assert.equal(res2.status, 'unchanged');
+
+      // Remove
+      const resRem = installKiro({ home: tmpHome, node, script, remove: true });
+      assert.equal(resRem.status, 'updated');
+      const afterRem = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
+      assert.equal(afterRem.mcpServers['ame-mesh'], undefined);
+    });
+  });
+
   describe('installAll end-to-end in isolated tmp home', () => {
     let tmpHome;
     let origEnv;
@@ -248,11 +336,13 @@ describe('install-mesh-mcp', () => {
         CODEX_HOME: process.env.CODEX_HOME,
         OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
         XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+        KIRO_HOME: process.env.KIRO_HOME,
       };
       delete process.env.AGY_CONFIG_DIR;
       delete process.env.CODEX_HOME;
       delete process.env.OPENCODE_CONFIG_DIR;
       delete process.env.XDG_CONFIG_HOME;
+      delete process.env.KIRO_HOME;
     });
 
     afterEach(() => {
@@ -268,14 +358,15 @@ describe('install-mesh-mcp', () => {
     it('skips targets when tool directories do not exist', () => {
       const res = installAll({ home: tmpHome, quiet: true });
       assert.equal(res.updated.length, 0);
-      assert.equal(res.skipped.length, 4);
+      assert.equal(res.skipped.length, 5);
       assert.ok(res.skipped.includes('claude'));
       assert.ok(res.skipped.includes('agy'));
       assert.ok(res.skipped.includes('codex'));
       assert.ok(res.skipped.includes('opencode'));
+      assert.ok(res.skipped.includes('kiro'));
     });
 
-    it('installs to all 4 tools, creates .ame-backup-mcp, remains idempotent, and uninstalls cleanly', () => {
+    it('installs to all 5 tools, creates .ame-backup-mcp, remains idempotent, and uninstalls cleanly', () => {
       // 1. Setup mock directories and files
       // Claude: ~/.claude dir + ~/.claude.json
       fs.mkdirSync(path.join(tmpHome, '.claude'), { recursive: true });
@@ -297,9 +388,14 @@ describe('install-mesh-mcp', () => {
       const openCodeFile = path.join(tmpHome, '.config', 'opencode', 'opencode.json');
       fs.writeFileSync(openCodeFile, JSON.stringify({ provider: 'anthropic' }, null, 2));
 
-      // First run: all 4 should be updated
+      // Kiro: ~/.kiro dir + settings/mcp.json
+      fs.mkdirSync(path.join(tmpHome, '.kiro', 'settings'), { recursive: true });
+      const kiroFile = path.join(tmpHome, '.kiro', 'settings', 'mcp.json');
+      fs.writeFileSync(kiroFile, JSON.stringify({ mcpServers: { existing: { command: 'ex' } } }, null, 2));
+
+      // First run: all 5 should be updated
       const res1 = installAll({ home: tmpHome, node, script, quiet: true });
-      assert.equal(res1.updated.length, 4);
+      assert.equal(res1.updated.length, 5);
       assert.equal(res1.unchanged.length, 0);
       assert.equal(res1.skipped.length, 0);
 
@@ -320,25 +416,30 @@ describe('install-mesh-mcp', () => {
       assert.equal(openCodeObj.provider, 'anthropic');
       assert.equal(openCodeObj.mcp['ame-mesh'].enabled, true);
 
+      const kiroObj = JSON.parse(fs.readFileSync(kiroFile, 'utf8'));
+      assert.deepEqual(kiroObj.mcpServers.existing, { command: 'ex' });
+      assert.equal(kiroObj.mcpServers['ame-mesh'].command, node);
+
       // Verify backup files were created with .ame-backup-mcp
       assert.ok(fs.existsSync(claudeFile + '.ame-backup-mcp'));
       assert.ok(fs.existsSync(agyFile + '.ame-backup-mcp'));
       assert.ok(fs.existsSync(codexFile + '.ame-backup-mcp'));
       assert.ok(fs.existsSync(openCodeFile + '.ame-backup-mcp'));
+      assert.ok(fs.existsSync(kiroFile + '.ame-backup-mcp'));
 
       // Verify backup contents match original
       const claudeBackup = JSON.parse(fs.readFileSync(claudeFile + '.ame-backup-mcp', 'utf8'));
       assert.equal(claudeBackup.mcpServers['ame-mesh'], undefined);
       assert.deepEqual(claudeBackup.mcpServers.pycharm, { command: 'pycharm' });
 
-      // Second run: idempotent, updated.length === 0, unchanged.length === 4
+      // Second run: idempotent, updated.length === 0, unchanged.length === 5
       const res2 = installAll({ home: tmpHome, node, script, quiet: true });
       assert.equal(res2.updated.length, 0);
-      assert.equal(res2.unchanged.length, 4);
+      assert.equal(res2.unchanged.length, 5);
 
       // Uninstall test with remove: true
       const resRemove = installAll({ home: tmpHome, node, script, remove: true, quiet: true });
-      assert.equal(resRemove.updated.length, 4);
+      assert.equal(resRemove.updated.length, 5);
 
       const claudeObjAfterRemove = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
       assert.equal(claudeObjAfterRemove.mcpServers['ame-mesh'], undefined);
@@ -348,10 +449,14 @@ describe('install-mesh-mcp', () => {
       assert.ok(!codexTextAfterRemove.includes('ame-mesh'));
       assert.ok(codexTextAfterRemove.includes('# codex config'));
 
-      // Second uninstall run: unchanged.length === 4
+      const kiroObjAfterRemove = JSON.parse(fs.readFileSync(kiroFile, 'utf8'));
+      assert.equal(kiroObjAfterRemove.mcpServers['ame-mesh'], undefined);
+      assert.deepEqual(kiroObjAfterRemove.mcpServers.existing, { command: 'ex' });
+
+      // Second uninstall run: unchanged.length === 5
       const resRemove2 = installAll({ home: tmpHome, node, script, remove: true, quiet: true });
       assert.equal(resRemove2.updated.length, 0);
-      assert.equal(resRemove2.unchanged.length, 4);
+      assert.equal(resRemove2.unchanged.length, 5);
     });
 
     it('skips opencode.json if it contains unparseable comments (JSONC)', () => {
