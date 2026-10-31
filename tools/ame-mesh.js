@@ -341,6 +341,41 @@ const MCP_TOOLS = [
       required: ['fromMachine', 'fromPath', 'toMachine', 'toPath'],
     },
   },
+  {
+    name: 'mesh_run',
+    description: '在后台脱离当前会话启动长时间计算或跑批命令（如 FEKO / CEM 求解器），进程退出时自动捕获退出码与日志末尾并向目标会话发送完成事件唤醒，无需占着会话轮询。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: '要执行的完整命令字符串' },
+        label: { type: 'string', description: '作业易读名称（如：FEKO球体扫频）' },
+        cwd: { type: 'string', description: '执行工作目录（默认当前目录）' },
+        logFile: { type: 'string', description: '可选，输出日志文件路径' },
+        projectId: { type: 'string', description: '可选，所属项目 ID' },
+        targetNodeId: { type: 'string', description: '可选，完成后唤醒的目标节点 ID' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'mesh_trigger',
+    description: '管理项目的外部事件触发器（如监听指定文件夹内新生成的仿真结果文件，文件写入稳定后自动唤醒节点处理）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'list', 'remove', 'pause', 'resume'], description: '触发器操作' },
+        projectId: { type: 'string', description: '项目 ID' },
+        triggerId: { type: 'string', description: '触发器 ID（remove/pause/resume 时必填）' },
+        type: { type: 'string', enum: ['folder', 'process'], description: '触发器类型（默认 folder）' },
+        machine: { type: 'string', description: '监听的目标电脑名称' },
+        path: { type: 'string', description: '监听的文件夹绝对路径（需在项目授权工作区内）' },
+        glob: { type: 'string', description: '文件名匹配通配符（如 *.ffe, *.out, *.csv，默认 *）' },
+        targetNodeId: { type: 'string', description: '触发后通知的目标节点 ID（不填则通知主控节点）' },
+        label: { type: 'string', description: '触发器说明标签' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 async function handleMcpCall(name, args = {}, opts = {}) {

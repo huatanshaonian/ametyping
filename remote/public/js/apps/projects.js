@@ -382,6 +382,118 @@ function mount(initialProjectId) {
     );
   }
 
+  // ---- Tab 4: External Triggers & Watchdog Event Timeline ----
+  function renderEventsTab(proj) {
+    const trigs = proj.triggers || [];
+    const evts = [...(proj.events || [])].reverse().slice(0, 30);
+
+    const bar = h('div', { class: 'pm-act-bar' },
+      h('button', { class: 'btn go', type: 'button', text: '＋ 添加目录文件触发器…', onclick: () => openAddTriggerDialog(proj) }),
+      h('span', { class: 'pm-hint', text: '说明：看门狗自动巡检各节点状态（未汇报、权限超时、卡死、错误循环、意外退出恢复）；目录触发器与 ame-mesh run 进程结束事件会自动唤醒目标节点。' })
+    );
+
+    const trigCards = trigs.map((t) => {
+      const targetNode = (proj.nodes || []).find((n) => n.id === t.targetNodeId);
+      const isEnabled = t.enabled !== false;
+      return h('div', { class: 'pm-ws-card' },
+        h('div', { class: 'pm-ws-head' },
+          h('span', { class: `pm-rev-badge ${isEnabled ? 'run' : 'wait'}`, text: isEnabled ? '监听中' : '已暂停' }),
+          h('b', { text: `${t.label || '目录触发器'} (${t.machine} : ${t.path})` }),
+          h('code', { text: `匹配: ${t.glob || '*'}` }),
+          h('span', { text: `→ 唤醒: ${targetNode ? (targetNode.alias || targetNode.id) : 'Master 主控节点'}` }),
+          t.lastTriggeredAt ? h('span', { class: 'pm-ws-free', text: `最近触发: ${ago(t.lastTriggeredAt)}` }) : null,
+          h('div', { class: 'pm-ws-actions' },
+            h('button', { class: 'btn', type: 'button', text: isEnabled ? '暂停' : '启用', onclick: async () => {
+              await mesh.trigger({ projectId: proj.id, id: t.id, enabled: !isEnabled });
+            } }),
+            h('button', { class: 'btn no', type: 'button', text: '删除', onclick: async () => {
+              await mesh.trigger({ op: 'delete', projectId: proj.id, triggerId: t.id });
+            } })
+          )
+        )
+      );
+    });
+
+    const evtRows = evts.map((ev) => {
+      const srcName = ev.source === 'watchdog' ? '🛡️ 看门狗' : ev.source === 'run' ? '⚙️ 计算结束' : '📁 目录触发';
+      return h('div', { class: 'pm-unbound-row' },
+        h('span', { class: 'xtag', text: srcName }),
+        h('b', { text: ev.kind || ev.source }),
+        ev.machine ? h('code', { text: ev.machine }) : null,
+        h('span', { class: 'pm-unbound-note', text: ev.summary || '' }),
+        h('span', { style: 'margin-left:auto;color:#555;font-size:11px', text: ago(ev.ts) })
+      );
+    });
+
+    mainBody.replaceChildren(
+      bar,
+      h('div', { class: 'pm-sec-title', text: `目录文件触发器（${trigs.length}）：` }),
+      trigCards.length ? h('div', { class: 'pm-ws-list' }, ...trigCards) : h('div', { class: 'pm-empty', text: '尚未配置目录触发器。点击上方「＋ 添加目录文件触发器」监听仿真输出目录。' }),
+      h('div', { class: 'pm-sec-title', style: 'margin-top:10px', text: `最近看门狗与触发器事件流水（${evts.length}）：` }),
+      evtRows.length ? h('div', { class: 'pm-unbound-sec' }, ...evtRows) : h('div', { class: 'pm-empty', text: '暂无看门狗告警或外部触发事件记录。' })
+    );
+  }
+
+  function openAddTriggerDialog(proj) {
+    const machines = net.state.sessions.map((m) => m.machine);
+    const machSel = h('select', { class: 'field' }, ...machines.map((m) => h('option', { value: m, text: m })));
+    const pathIn = h('input', { class: 'field', type: 'text', placeholder: '需在项目授权工作区内，如 /data/cem_results' });
+    const wsQuick = (proj.workspaces || []).length ? h('select', {
+      class: 'field',
+      onchange: (e) => {
+        if (!e.target.value) return;
+        const [m, p] = e.target.value.split('|');
+        machSel.value = m;
+        pathIn.value = p;
+      },
+    },
+      h('option', { value: '', text: '— 从项目已授权文件夹快选 —' }),
+      ...(proj.workspaces || []).map((w) => h('option', { value: `${w.machine}|${w.path}`, text: `${w.machine} : ${w.path}` }))
+    ) : null;
+    const globIn = h('input', { class: 'field', type: 'text', value: '*.ffe', placeholder: '如 *.ffe, *.out, *.csv 或 *' });
+    const labelIn = h('input', { class: 'field', type: 'text', placeholder: '如：FEKO 远场结果生成触发' });
+    const nodeSel = h('select', { class: 'field' },
+      h('option', { value: '', text: '（默认通知 Master 主控节点）' }),
+      ...(proj.nodes || []).map((n) => h('option', { value: n.id, text: `${n.alias || n.id} (${n.machine})` }))
+    );
+
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '添加跨机目录文件触发器' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        wsQuick ? h('label', { class: 'xnote-lbl', text: '从项目授权工作区选择：' }) : null,
+        wsQuick,
+        h('label', { class: 'xnote-lbl', text: '监听电脑与目录路径：' }),
+        h('div', { style: 'display:flex;gap:6px' }, machSel, pathIn),
+        h('label', { class: 'xnote-lbl', text: '文件名匹配通配符与触发器名称：' }),
+        h('div', { style: 'display:flex;gap:6px' }, globIn, labelIn),
+        h('label', { class: 'xnote-lbl', text: '文件就绪后唤醒的目标节点：' }),
+        nodeSel,
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '保存并开启监听' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!machSel.value || !pathIn.value.trim()) return;
+      done();
+      const r = await mesh.trigger({
+        projectId: proj.id,
+        type: 'folder',
+        machine: machSel.value,
+        path: pathIn.value.trim(),
+        glob: globIn.value.trim() || '*',
+        label: labelIn.value.trim(),
+        targetNodeId: nodeSel.value || '',
+      });
+      say(r.ok ? '已添加目录文件触发器' : (r.msg || '添加失败'));
+    });
+    const wrap = h('div', { class: 'dlg' }, form);
+    document.body.append(wrap);
+  }
+
   // ---- Dialogs for Spawning, Linking, Sending, and Workspace Binding ----
   function openSpawnDialog(proj) {
     const machines = net.state.sessions.map((m) => m.machine);
@@ -759,6 +871,7 @@ function mount(initialProjectId) {
     renderTabs(proj);
     if (activeTab === 'topo') renderTopologyTab(proj);
     else if (activeTab === 'vfs') renderVfsTab(proj);
+    else if (activeTab === 'events') renderEventsTab(proj);
     else renderTransfersTab(proj);
   }
 
