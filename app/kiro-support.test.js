@@ -93,14 +93,20 @@ test('metaOf/titleOf/fileOf/recentFiles read the sibling .json', () => {
   });
 });
 
-test('a sub-session (session_created_reason "subagent") is marked sub', () => {
+test('session_created_reason "subagent" alone does NOT hide a top-level session; a real parent does', () => {
   const { home, dir } = makeStore();
-  fs.writeFileSync(path.join(dir, SID + '.json'), JSON.stringify({ session_id: SID, cwd: 'D:/p', title: 't', session_created_reason: 'subagent' }));
   const prev = process.env.KIRO_HOME; process.env.KIRO_HOME = path.join(home, '.kiro');
   delete require.cache[require.resolve('./kiro-records')];
   try {
     const kiro = require('./kiro-records');
-    assert.equal(kiro.metaOf(path.join(dir, SID + '.jsonl')).sub, true);
+    // Kiro tags many top-level sessions "subagent" with parent_id null -- these MUST still be listed
+    fs.writeFileSync(path.join(dir, SID + '.json'), JSON.stringify({ session_id: SID, cwd: 'D:/p', title: 't', session_created_reason: 'subagent', parent_id: null }));
+    assert.equal(kiro.metaOf(path.join(dir, SID + '.jsonl')).sub, false, 'subagent + parent_id:null is a root session');
+    // only a real parent pointer marks it as a nested sub-session
+    const CHILD = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    fs.writeFileSync(path.join(dir, CHILD + '.jsonl'), '');
+    fs.writeFileSync(path.join(dir, CHILD + '.json'), JSON.stringify({ session_id: CHILD, cwd: 'D:/p', title: 'c', session_created_reason: 'subagent', parent_id: SID }));
+    assert.equal(kiro.metaOf(path.join(dir, CHILD + '.jsonl')).sub, true, 'a real parent_id makes it a sub-session');
   } finally {
     if (prev === undefined) delete process.env.KIRO_HOME; else process.env.KIRO_HOME = prev;
     delete require.cache[require.resolve('./kiro-records')];

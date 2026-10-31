@@ -104,31 +104,48 @@ function recordsOf(o) {
 }
 
 // ---- metadata from the sibling {id}.json ----
+// The {id}.json of an active session carries a huge session_state (the whole conversation metadata), so it is never
+// parsed whole -- that blocks the scan loop. The fields the dashboard needs (id, cwd, title, reason, the parent
+// pointer, the latest model) all sit near the top, so only the first chunk is read and matched with regexes.
 function jsonPath(file) { return file.replace(/\.jsonl$/i, '.json'); }
-function metadataOf(file) {
+const HEAD_BYTES = 16384;
+function readHead(file, bytes = HEAD_BYTES) {
+  let fd;
   try {
-    const o = JSON.parse(fs.readFileSync(jsonPath(file), 'utf8'));
-    if (!o || typeof o.session_id !== 'string') return null;
-    return o;
-  } catch { return null; }
+    fd = fs.openSync(file, 'r');
+    const b = Buffer.alloc(bytes);
+    const n = fs.readSync(fd, b, 0, bytes, 0);
+    return b.toString('utf8', 0, n);
+  } catch { return null; } finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
 }
-// the last turn's model and context usage, from conversation_metadata.user_turn_metadatas
-function lastTurn(meta) {
-  try {
-    const turns = meta.session_state.conversation_metadata.user_turn_metadatas;
-    return Array.isArray(turns) && turns.length ? turns[turns.length - 1] : null;
-  } catch { return null; }
+const strField = (s, k) => { const m = new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(s); if (!m) return ''; try { return JSON.parse('"' + m[1] + '"'); } catch { return m[1]; } };
+// light metadata: { session_id, cwd, title, session_created_reason, parentId, model } or null
+function metadataOf(file) {
+  const s = readHead(jsonPath(file));
+  if (s == null) return null;
+  const id = strField(s, 'session_id');
+  if (!id) return null;
+  // a real parent pointer, if any: top-level parent_id / parent_session_id, or the first turn's agent_id.parent_id.
+  // "null" / absent means this is a top-level session (session_created_reason alone does NOT make it a sub-session).
+  let parentId = '';
+  const pm = /"parent_id"\s*:\s*"([0-9a-f-]{36})"/.exec(s) || /"parent_session_id"\s*:\s*"([0-9a-f-]{36})"/.exec(s);
+  if (pm) parentId = pm[1];
+  // the most recent model mentioned near the top (best-effort; the badge degrades to just the Kiro mark if absent)
+  const models = [...s.matchAll(/"model"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+  return { session_id: id, cwd: strField(s, 'cwd'), title: strField(s, 'title'),
+    session_created_reason: strField(s, 'session_created_reason'), parentId, model: models.length ? models[models.length - 1] : '' };
 }
 // a model name ("claude-sonnet-4.5") -> { id } so ai-providers aiOf can find the vendor
 function modelRef(name) { return typeof name === 'string' && name ? { providerID: '', id: name } : null; }
 
-// { id, cwd, title, sub, model } -- sub: a sub-session (session_created_reason "subagent"), skipped as a root
+// { id, cwd, title, sub, model } -- sub is true ONLY when a real parent session is referenced. Kiro tags many
+// top-level sessions with session_created_reason "subagent" even though their parent_id is null; those are real
+// sessions and must be listed, so the reason string alone is NOT used to hide them.
 function metaOf(file) {
   const o = metadataOf(file);
   if (!o) return null;
-  const turn = lastTurn(o);
   return { id: o.session_id, cwd: typeof o.cwd === 'string' ? o.cwd : '', title: typeof o.title === 'string' ? o.title : '',
-    sub: o.session_created_reason === 'subagent', model: turn ? modelRef(turn.model) : null };
+    sub: !!o.parentId, model: modelRef(o.model) };
 }
 function titleOf(id) {
   const file = fileOf(id);

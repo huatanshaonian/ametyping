@@ -33,9 +33,10 @@ fs.writeFileSync(path.join(CLI, MAIN + '.json'), JSON.stringify({
   session_created_reason: 'user_prompt',
   session_state: { version: 'v1', conversation_metadata: { user_turn_metadatas: [{ model: 'claude-sonnet-4.5', context_usage_percentage: 9 }] } },
 }));
-// a sub-session: must not be listed as a root
+// a real sub-session (a genuine parent pointer): must not be listed as a root. Note session_created_reason alone is
+// NOT enough -- Kiro tags many top-level sessions "subagent" with parent_id null, and those must still be listed.
 fs.writeFileSync(path.join(CLI, SUB + '.jsonl'), L({ version: 1, kind: 'Prompt', data: { message_id: 'x', content: [{ kind: 'text', data: 'sub' }], meta: { timestamp: 1700000001 } } }));
-fs.writeFileSync(path.join(CLI, SUB + '.json'), JSON.stringify({ session_id: SUB, cwd: CWD, title: 'sub', session_created_reason: 'subagent' }));
+fs.writeFileSync(path.join(CLI, SUB + '.json'), JSON.stringify({ session_id: SUB, cwd: CWD, title: 'sub', session_created_reason: 'subagent', parent_id: MAIN }));
 // a Kiro skill, and a Claude-only command, to prove command suggestions are isolated by provider
 fs.mkdirSync(path.join(KIRO_HOME, 'skills', 'kiro-check'), { recursive: true });
 fs.writeFileSync(path.join(KIRO_HOME, 'skills', 'kiro-check', 'SKILL.md'), '---\nname: kiro-check\ndescription: Kiro skill\n---');
