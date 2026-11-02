@@ -49,9 +49,14 @@ export function ctxLeft(s) {
 }
 export const CTX_LOW = 20;                // the dashboard warns from here down
 
-// the AI provider mark a session's OpenCode badge shows next to OpenCode's own ({ slug, name } or null)
-export const aiMark = (s) => (s && s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || ''))
-  ? { slug: String(s.ai.slug), name: String(s.ai.name || '') } : null);
+// the AI provider mark a session's OpenCode badge shows next to OpenCode's own ({ slug, name } or null); the name
+// carries the session's model too when it is known ("Anthropic · Claude Opus 5.5 (Medium)"), for the tooltips
+const modelName = (s) => String((s && s.model && typeof s.model === 'object' ? s.model.id : s && s.model) || '').trim().slice(0, 80);
+export const aiMark = (s) => {
+  if (!(s && s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || '')))) return null;
+  const name = String(s.ai.name || ''), model = modelName(s);
+  return { slug: String(s.ai.slug), name: model && model.toLowerCase() !== name.toLowerCase() ? (name ? name + ' · ' : '') + model : name };
+};
 
 // session states as the dashboard names them
 const STATE = { message: ['working', '进行中'], thinking: ['working', '进行中'], reading: ['working', '进行中'],

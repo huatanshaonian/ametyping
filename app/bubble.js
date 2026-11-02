@@ -59,6 +59,8 @@ function renderList() {
       const oc = document.createElement('span'); oc.className = 'prov ' + (s.provider === 'agy' ? 'agy' : s.provider === 'kiro' ? 'kiro' : 'opn'); mark.append(oc);
       if (s.ai && /^[a-z0-9-]{1,32}$/.test(String(s.ai.slug || ''))) {
         const ai = document.createElement('span'); ai.className = 'prov ai ai-' + s.ai.slug; ai.title = String(s.ai.name || '');
+        const model = String((s.model && typeof s.model === 'object' ? s.model.id : s.model) || '').trim().slice(0, 80);
+        if (model && model.toLowerCase() !== ai.title.toLowerCase()) ai.title = (ai.title ? ai.title + ' · ' : '') + model;
         mark.append(ai); mark.title = pname + (ai.title ? ' · ' + ai.title : '');
       }
     } else {

@@ -688,6 +688,11 @@ function onClaudeEvent(type, d) {
   if (d.cwd && !((d.provider === 'codex' || d.provider === 'agy') && d.agentId)) s.cwd = String(d.cwd);
   if (d.model) s.model = d.model;
   if (d.ai) s.ai = d.ai;
+  // AGY's hooks rarely carry the model; its transcript notes every Model Selection switch (re-read at most every 15 s)
+  if (s.provider === 'agy' && !d.model && s.transcript && !(s.modelReadAt > t - 15000)) {
+    s.modelReadAt = t;
+    try { const m = agyRecords.metaOf(s.transcript); if (m && m.model) { s.model = m.model; s.ai = m.ai || s.ai; } } catch {}
+  }
   if (apiId(d.api)) s.api = apiId(d.api);
   // OpenCode has no per-session process and no terminal to type into: the plugin's host (the OpenCode server) is
   // what is alive, and a reply goes through its API. `terminal` means "can be replied to from the panel".

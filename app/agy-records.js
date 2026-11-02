@@ -248,6 +248,33 @@ function providerOfModel(modelName) {
 }
 
 const metaCache = new Map();
+// The model the conversation runs on now: AGY tells the model about every switch in the user's turn, as
+// "<USER_SETTINGS_CHANGE> The user changed setting `Model Selection` from X to Y. No need to comment..." -- the last
+// such turn wins (the name keeps its dots: "Claude Opus 5.5 (Medium)"). Only USER_INPUT steps count: the same words
+// in a reply or a tool's output are not a switch. Head and tail are read, not the whole (long) transcript.
+const SELECTION_RE = /changed setting `Model Selection` from [\s\S]{0,120}? to ([\s\S]{1,120}?)\.(?:\s|\\[rn])+No need/g;
+function selectedModel(file, size, head) {
+  const lastIn = (text) => {
+    let last = '';
+    for (const line of text.split('\n')) {
+      if (!line.includes('Model Selection') || !/"type"\s*:\s*"USER_INPUT"/.test(line)) continue;
+      let m; SELECTION_RE.lastIndex = 0;
+      while ((m = SELECTION_RE.exec(line))) last = m[1];
+    }
+    return last.replace(/\\[rnt]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  };
+  let tail = '';
+  if (size > 131072) {
+    try {
+      const fd = fs.openSync(file, 'r');
+      const len = Math.min(262144, size - 131072), buf = Buffer.alloc(len);
+      try { fs.readSync(fd, buf, 0, len, size - len); } finally { fs.closeSync(fd); }
+      tail = buf.toString('utf8');
+    } catch {}
+  }
+  return lastIn(tail) || lastIn(head);
+}
+
 function metadataOf(file, home) {
   let st;
   try { st = fs.statSync(file); } catch { return null; }
@@ -271,8 +298,10 @@ function metadataOf(file, home) {
     const head = buf.toString('utf8', 0, n);
     const reqM = /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/.exec(head);
     if (reqM) fileTitle = reqM[1].replace(/\s+/g, ' ').trim().slice(0, 80);
-    const modM = /Model Selection[^\r\n]*to ([^\r\n.<>]+)/i.exec(head) || /\bModel:\s*([^\s\r\n"\\]+)/i.exec(head);
+    const modM = /\bModel:\s*([^\s\r\n"\\]+)/i.exec(head);
     if (modM) modelName = modM[1].trim();
+    const picked = selectedModel(file, st.size, head);
+    if (picked) modelName = picked;
     const cwdM = /Active Workspaces:\r?\n-\s*([^\r\n]+)/.exec(head);
     if (cwdM) fileCwd = cwdM[1].trim();
   } catch {}
