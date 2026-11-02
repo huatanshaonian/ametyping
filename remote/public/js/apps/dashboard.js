@@ -82,7 +82,7 @@ function mount(current) {
   }
   // the command shown/copied follows the selector too (follow-record keeps the server's command)
   function commandFor(s, pick) {
-    if (!s || !s.resume || /^(codex|opencode|agy):/.test(String(s.id))) return s ? s.resume : '';
+    if (!s || !s.resume || provOf(s.id) !== 'claude') return s ? s.resume : '';
     if (pick === '__choose__') return s.resume;
     if (pick === '') return s.resume;
     const cmd = (pick && pick !== '__none__' ? 'claude-' + pick : 'claude') + ' --resume ' + s.id;
@@ -91,7 +91,7 @@ function mount(current) {
   }
   function renderResumeApi(s) {
     if (!s) { resumeApi.replaceChildren(); return; }
-    if (/^(codex|opencode|agy):/.test(String(s.id))) { resumeApi.replaceChildren(); reopen.disabled = reopening; copyResumeButton.disabled = false; return; }
+    if (provOf(s.id) !== 'claude') { resumeApi.replaceChildren(); delete resumeApi.dataset.sig; reopen.disabled = reopening; copyResumeButton.disabled = false; return; }
     const key = s.machine + '|' + s.id;
     const current = apiCache.get(s.machine) || {};
     const list = current.aliases || [];
@@ -106,7 +106,9 @@ function mount(current) {
     resumeApi.dataset.sig = sig;
     resumeApi.replaceChildren(...opts);
     let want = apiChoice.key === key ? apiChoice.value : null;      // only a choice the user actually made
-    const fallback = s.api && storedAvailable ? '' : current.ready && !list.length && !s.api ? '__none__' : '__choose__';
+    // no recorded entry (an ordinary `claude` conversation): plain `claude --resume`, as before entries existed;
+    // only a recorded entry that this machine no longer has asks for an explicit choice
+    const fallback = !s.api ? '__none__' : storedAvailable ? '' : '__choose__';
     if (want == null) want = fallback;
     if (!opts.some((o) => o.value === want)) want = fallback;
     resumeApi.value = want;
@@ -122,13 +124,14 @@ function mount(current) {
   });
   reopen.addEventListener('click', async () => {
     const s = find(sel); if (!s) return;
-    if (reopening || (!/^(codex|opencode|agy):/.test(String(s.id)) && resumeApi.value === '__choose__')) return;
+    const claude = provOf(s.id) === 'claude';
+    if (reopening || (claude && resumeApi.value === '__choose__')) return;
     reopening = true;
     reopen.disabled = true; showNote('正在那台电脑上打开…', false, 20000);
-    const pick = resumeApi.value;
+    const pick = claude ? resumeApi.value : '';
     const r = await net.act({ t: 'resume', machine: s.machine, id: s.id, api: pick === '' ? undefined : pick });
     reopening = false;
-    reopen.disabled = resumeApi.value === '__choose__';
+    reopen.disabled = claude && resumeApi.value === '__choose__';
     showNote(r.msg || (r.ok ? '已打开' : '没能打开'), !r.ok, r.ok ? 9000 : 6000);
   });
   const resume = h('div', { class: 'resume', hidden: true }, h('span', { text: '继续：' }), rcmd, copyResumeButton, apiWrap, reopen);
