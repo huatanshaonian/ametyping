@@ -2,6 +2,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),http=require('http'),cp=require('child_process'),assert=require('node:assert/strict');
 const {openVault,hash}=require('../server/vault/database');
+const {createResearchStore}=require('../server/research/database');
 const auth=require('../server/auth'),{cases}=require('./fixtures/research');
 const R=path.resolve(__dirname,'..'),T=fs.mkdtempSync(path.join(os.tmpdir(),'ame-research-e2e-')),CFG=path.join(T,'config.json');
 const PORT=18864,CDP=9364,env={...process.env,AME_REMOTE_CONFIG:CFG,HOME:path.join(T,'home'),USERPROFILE:path.join(T,'home')};
@@ -44,6 +45,14 @@ async function browser(project){
     await evaluate("(async()=>{(await import('/js/wm.js')).focus('projects');document.querySelector('.pr-root details').open=false;})()");
     const out=path.join(__dirname,'out','shots');fs.mkdirSync(out,{recursive:true});
     const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,'research-pilot.png'),Buffer.from(shot.result.data,'base64'));
+    await evaluate("[...document.querySelectorAll('.pm-side button')].find(x=>x.textContent==='查看首轮整理结果').click()");
+    await until(()=>evaluate("document.querySelector('.pr-pilots')?.textContent.includes('历史计算候选')"));
+    assert.ok(!(await evaluate("document.querySelector('.pr-pilots').textContent")).includes('SYNTHETIC-CONTROL-DO-NOT-SHOW'));
+    await evaluate("document.querySelector('.pr-pilots details').open=true;[...document.querySelectorAll('.pr-pilots button')].find(x=>x.textContent==='查看原文与前后文').click()");
+    await until(()=>evaluate("!!document.querySelector('.pr-pilots dialog[open]')"));
+    assert.ok(await evaluate("document.querySelector('.pr-pilots dialog').textContent.includes('扫频')"));
+    await evaluate("document.querySelector('.pr-pilots dialog button').click()");
+    const pilotShot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,'research-pilot-results.png'),Buffer.from(pilotShot.result.data,'base64'));
     assert.deepEqual(errors,[]);console.log('PASS headless project page, evidence dialog and settings survive live project updates');
   }finally{socket.close();}
 }
@@ -60,11 +69,29 @@ async function browser(project){
     const cfg=JSON.parse(fs.readFileSync(CFG));cfg.web.port=PORT;cfg.agent={host:'127.0.0.1',port:PORT+1};cfg.summary={enabled:false};cfg.research={key:'fake-private-key',base:'http://127.0.0.1:'+fake.address().port,model:'deepseek-flash'};fs.writeFileSync(CFG,JSON.stringify(cfg));
     const v=openVault(path.join(T,'data')),raw=Buffer.from(cases[0].rows.map(x=>JSON.stringify(x)).join('\n')),key=hash('fixture');
     const b=v.begin('win',{key,path:'G:/feko_data/CEM_PO/session.jsonl',provider:'claude',session:'fixture',parent:'',kind:'native',cwd:'G:/feko_data/CEM_PO',size:raw.length,mtime:1});
-    v.append('win',{key,generation:b.generation,start:0,data:raw.toString('base64'),sha256:hash(raw)});v.finish('win',{key,generation:b.generation,sha256:hash(raw)});v.close();
+    v.append('win',{key,generation:b.generation,start:0,data:raw.toString('base64'),sha256:hash(raw)});v.finish('win',{key,generation:b.generation,sha256:hash(raw)});
+    const store=createResearchStore(v),d=store.importSource('pilot-cem-po',{machine:'win',key}),event=[...store.events(d.id)][0];
+    const fakeKey=hash('synthetic-control');const fb=v.begin('test',{key:fakeKey,path:'/controls/source.jsonl',provider:'claude',session:'synthetic',parent:'',kind:'native',cwd:'/controls',size:raw.length,mtime:1});
+    v.append('test',{key:fakeKey,generation:fb.generation,start:0,data:raw.toString('base64'),sha256:hash(raw)});v.finish('test',{key:fakeKey,generation:fb.generation,sha256:hash(raw)});
+    const control=store.importSource('pilot-cem-po',{machine:'test',key:fakeKey}),controlEvent=[...store.events(control.id)][0];
+    const pilotFolder=path.join(T,'data','research-pilots','first-round');fs.mkdirSync(pilotFolder,{recursive:true});
+    await v.snapshot(path.join(pilotFolder,'knowledge.sqlite'));
+    const visible={id:'candidate',title:'历史计算候选',objective:'核对已有研究工作',state:'reported_complete',runs:[],findings:[],open_questions:[],evidence:[{event_id:event.id,quote:event.text,start:0}]};
+    fs.writeFileSync(path.join(pilotFolder,'report.json'),JSON.stringify({at:new Date().toISOString(),provider:{model:'test'},scope:'isolated test',samples:[
+      {synthetic:false,name:'historical',state:'succeeded',document:d.id,work:[visible]},
+      {synthetic:true,name:'control',state:'succeeded',document:control.id,work:[{...visible,title:'SYNTHETIC-CONTROL-DO-NOT-SHOW',evidence:[{event_id:controlEvent.id,quote:controlEvent.text,start:0}]}]}
+    ]}));v.close();
     server=cp.spawn(process.execPath,[R+'/server/server.js'],{env,stdio:'ignore',windowsHide:true});
     await until(async()=>!!(await api('GET','/login')).status);
     assert.equal((await api('GET','/api/research?project=x',null,true)).status,401);console.log('PASS research endpoints refuse anonymous access');
+    assert.equal((await api('GET','/api/research/pilots',null,true)).status,401);
     const login=await api('POST','/api/login',{user:'u',password:'fixture-password-long',code:auth.totpAt(cfg.totpSecret,Math.floor(Date.now()/30000))});cookie=String(login.headers['set-cookie']||'').split(';')[0];assert.ok(cookie);
+    assert.equal((await api('GET','/api/mesh/projects')).value.projects.length,0);
+    const pilots=(await api('GET','/api/research/pilots')).value;assert.equal(pilots.items[0].count,1);
+    const pilot=(await api('GET','/api/research/pilot?id=first-round')).value.item;assert.equal(pilot.samples.length,1);assert.ok(!JSON.stringify(pilot).includes('SYNTHETIC-CONTROL-DO-NOT-SHOW'));
+    assert.ok((await api('GET','/api/research/pilot/evidence?id=first-round&event='+event.id)).value.item.text.includes('扫频'));
+    assert.equal((await api('GET','/api/research/pilot/evidence?id=first-round&event='+controlEvent.id)).value.ok,false);
+    console.log('PASS saved pilots are visible without project binding; synthetic controls and their evidence stay excluded');
     const p=(await api('POST','/api/mesh/project',{name:'CEM_PO',workspaces:[{machine:'win',path:'G:/feko_data/CEM_PO',mode:'ro'}]})).value.project.id;
     const sources=(await api('GET','/api/research/sources?project='+p)).value;assert.equal(sources.items.length,1);
     assert.equal((await api('POST','/api/research/import',{project:p,refs:[{machine:'win',key}]},false,'https://wrong.invalid')).status,403);
@@ -85,6 +112,7 @@ async function browser(project){
     assert.equal(JSON.parse(fs.readFileSync(path.join(T,'data','research-api.json'))).key,'updated-private-key');
     assert.ok(!JSON.stringify((await api('GET','/api/research?project='+p)).value).includes('updated-private-key'));console.log('PASS NAS API settings persist without exposing keys');
     if(process.argv.includes('--browser'))await browser(p);
+    assert.equal(calls,1); // Viewing saved pilot results never asks the model again.
   }catch(e){console.error(e);process.exitCode=1;}
   finally{if(chrome)chrome.kill();if(server){server.kill();await new Promise(r=>server.once('exit',r));}await new Promise(r=>fake.close(r));}
 })();

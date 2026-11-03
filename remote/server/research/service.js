@@ -3,10 +3,12 @@ const { createResearchStore } = require('./database');
 const { resolveDeepseek, runDeepseek } = require('../ai/deepseek-api');
 const { SCHEMA, promptFor, validateResult, VERSION } = require('./extract');
 const fs = require('fs'), path = require('path');
+const {createPilots}=require('./pilots');
 
 function createResearch({ vault, config = {}, getProject = () => null, control = false, fresh = () => false,
   audit = () => {}, log = () => {}, call = runDeepseek, resolve = null }) {
   const store = createResearchStore(vault), db = vault.db;
+  const pilots=createPilots(path.dirname(vault.file));
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));
@@ -91,6 +93,11 @@ function createResearch({ vault, config = {}, getProject = () => null, control =
     res.setHeader('Cache-Control','no-store');
     try {
       if (req.method === 'GET') {
+        if(url.pathname==='/api/research/pilots'){json(res,200,{ok:true,...pilots.list()});return true;}
+        if(url.pathname==='/api/research/pilot'){json(res,200,{ok:true,item:pilots.read(url.searchParams.get('id'))});return true;}
+        if(url.pathname==='/api/research/pilot/evidence'){
+          json(res,200,{ok:true,item:pilots.evidence(url.searchParams.get('id'),url.searchParams.get('event'),url.searchParams.get('offset')||0)});return true;
+        }
         const project = checkProject(url.searchParams.get('project'));
         if (url.pathname === '/api/research') json(res,200,{ok:true,provider:publicConfig(),...store.list(project)});
         else if (url.pathname === '/api/research/search') json(res,200,{ok:true,items:store.search(project,url.searchParams.get('q'))});

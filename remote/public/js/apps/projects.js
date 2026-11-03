@@ -16,6 +16,7 @@ import { confirmBox, askText } from '../dialog.js';
 import { openNoteDialog, open as openExplorer } from './explorer.js';
 import * as dashboard from './dashboard.js';
 import { researchTab } from './project-research.js';
+import { open as openResearchPilots } from './research-pilots.js';
 
 let inst = null;
 
@@ -61,6 +62,7 @@ function mount(initialProjectId) {
   const newProjBtn = h('button', { class: 'btn go', type: 'button', text: '＋ 新建项目', onclick: createNewProject });
   const side = h('aside', { class: 'pm-side' },
     h('div', { class: 'pm-side-bar' }, h('b', { text: '协同项目' }), newProjBtn),
+    h('div',{class:'pm-side-bar'},h('button',{class:'btn',type:'button',text:'查看首轮整理结果',onclick:openResearchPilots})),
     sideList
   );
   const main = h('section', { class: 'pm-main' }, mainHead, tabBar, mainBody, statusLine);

@@ -24,6 +24,8 @@ Windose 项目管理 → **研究与计算** → **DeepSeek API 设置** 可修�
 
 在项目中登记各设备工作区，选择已完成校验的历史来源导入，再运行小批抽取。页面显示任务、研究成果和逐字引用，支持读取前后文及下载固定版本原文。新索引覆盖已导入资料，不替换原有精简搜索，也不宣称覆盖全部完整存档。
 
+已保存的首轮结果可从 **项目管理 → 查看首轮整理结果** 直接打开，不需要先创建或绑定协同项目。该窗口只读展示 `data/research-pilots/<id>/` 中真实历史片段的候选工作，并从同目录的只读快照查阅原文；人工对照样例及其证据不会进入该窗口。候选结果不写入正式项目档案，也不会触发新的模型请求。
+
 接口：`GET /api/research?project=...`；`GET /api/research/sources|search|evidence?project=...`；`POST /api/research/import|enqueue|retry|config`。POST 均带 project。import 每批最多 10 份，enqueue 默认最多 3 段。
 
 ## MCP 与测试
