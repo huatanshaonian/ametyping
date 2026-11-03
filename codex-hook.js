@@ -59,7 +59,8 @@ function decision(d) {
 
 function run() {
   const eventAt = Date.now();
-  let finished = false, guard;
+  const deadline = eventAt + 2000;
+  let finished = false, handled = false, guard;
   const finish = (output = {}) => {
     if (finished) return;
     finished = true; clearTimeout(guard);
@@ -68,14 +69,28 @@ function run() {
   guard = setTimeout(finish, 2000);
   let raw = '';
   process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (c) => { raw += c; if (raw.length > 2e6) finish(); });
+  process.stdin.on('data', (c) => {
+    if (handled || finished) return;
+    raw += c;
+    if (raw.length > 2e6) return finish();
+    // The protocol carries one JSON object. A shell may keep stdin open after writing it.
+    // Dispatch when the complete object arrives instead of spending the budget waiting for EOF.
+    consume(false);
+  });
   process.stdin.on('error', () => finish());
-  process.stdin.on('end', () => {
-    let p; try { p = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch { return finish(); }
+  process.stdin.on('end', () => consume(true));
+  function consume(ended) {
+    if (handled || finished) return;
+    let p; try { p = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch { if (ended) finish(); return; }
+    handled = true;
     const mapped = mapHook(p, eventAt);
     if (!mapped) return finish();
     const permission = mapped.route === '/permission';
-    clearTimeout(guard); guard = setTimeout(finish, permission ? 110000 : 700);
+    const remaining = deadline - Date.now();
+    if (!permission && remaining <= 0) return finish();
+    // Notifications share the original deadline; late input must not add another 700 ms.
+    // Permission decisions retain their independent long-poll budget.
+    clearTimeout(guard); guard = setTimeout(finish, permission ? 110000 : Math.min(700, remaining));
     const body = JSON.stringify(mapped.body);
     const req = http.request({ host: '127.0.0.1', port: Number(process.env.AME_PORT) || 3940,
       path: mapped.route, method: 'POST',
@@ -91,7 +106,7 @@ function run() {
     });
     req.on('error', () => finish());
     req.end(body);
-  });
+  }
 }
 if (require.main === module) run();
 module.exports = { mapHook, decision };

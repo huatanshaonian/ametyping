@@ -52,17 +52,18 @@ test('the command runs in PowerShell too: never begins with a quoted path; an ea
   for (const event of EVENTS) assert.deepEqual(after.hooks[event].map((g) => g.hooks[0].command), ['node D:/ametyping/codex-hook.js']);
 });
 
-function child(port, input) {
+function child(port, input, { writeInput = null, timeoutMs = 4000 } = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(process.execPath, [path.join(__dirname, 'codex-hook.js')], {
       env: { ...process.env, AME_PORT: String(port) }, windowsHide: true,
     });
     let stdout = '', stderr = '';
-    const timeout = setTimeout(() => { p.kill(); reject(new Error('hook timed out')); }, 4000);
+    const timeout = setTimeout(() => { p.kill(); reject(new Error('hook timed out')); }, timeoutMs);
     p.stdout.on('data', (c) => stdout += c); p.stderr.on('data', (c) => stderr += c);
     p.on('error', reject);
     p.on('exit', (code) => { clearTimeout(timeout); resolve({ code, stdout, stderr }); });
-    p.stdin.end(typeof input === 'string' ? input : JSON.stringify(input));
+    const raw = typeof input === 'string' ? input : JSON.stringify(input);
+    if (writeInput) writeInput(p, raw); else p.stdin.end(raw);
   });
 }
 test('real hook process -> HTTP long poll -> panel decision -> Codex protocol', async (t) => {
@@ -101,4 +102,51 @@ test('real hook process -> HTTP long poll -> panel decision -> Codex protocol', 
   server.closeAllConnections(); await new Promise((r) => server.close(r));
   const absent = await child(port, input);
   assert.equal(absent.code, 0); assert.deepEqual(JSON.parse(absent.stdout), {});
+});
+
+test('complete or fragmented hook JSON is dispatched once without waiting for stdin EOF', async (t) => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => { requests++; setTimeout(() => res.end('{}'), 80); });
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const input = { session_id: 'isolated-hook-input', hook_event_name: 'PreToolUse', tool_name: 'isolated_probe' };
+  const port = server.address().port;
+  const open = await child(port, input, { writeInput: (p, raw) => p.stdin.write(raw) });
+  assert.equal(open.code, 0); assert.equal(open.stderr, ''); assert.equal(open.stdout, '{}');
+  assert.equal(requests, 1); // The old EOF-only implementation timed out without sending this event.
+  const split = await child(port, input, { writeInput: (p, raw) => {
+    p.stdin.write('\uFEFF' + raw.slice(0, 20));
+    setTimeout(() => p.stdin.write(raw.slice(20)), 20);
+    setTimeout(() => p.stdin.end('\n'), 40);
+  } });
+  assert.equal(split.code, 0); assert.equal(split.stderr, ''); assert.equal(split.stdout, '{}');
+  assert.equal(requests, 2); // Additional whitespace and EOF cannot send a second request.
+});
+
+test('a delayed permission decision keeps its long-poll budget with stdin left open', async (t) => {
+  const server = http.createServer((req, res) => {
+    req.resume(); req.on('end', () => setTimeout(() => res.end('{"choice":"allow"}'), 2200));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const r = await child(server.address().port, { session_id: 'isolated-permission', hook_event_name: 'PermissionRequest' },
+    { writeInput: (p, raw) => p.stdin.write(raw), timeoutMs: 6000 });
+  assert.equal(r.code, 0); assert.equal(r.stderr, '');
+  assert.deepEqual(JSON.parse(r.stdout), decision({ choice: 'allow' }));
+});
+
+test('late notification input does not restart the original two-second deadline', async (t) => {
+  let received = false;
+  const server = http.createServer((req) => { received = true; req.resume(); });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const started = Date.now();
+  const r = await child(server.address().port, { session_id: 'isolated-late-notification', hook_event_name: 'Stop' },
+    { writeInput: (p, raw) => setTimeout(() => p.stdin.end(raw), 1900) });
+  assert.equal(r.code, 0); assert.equal(r.stdout, '{}'); assert.equal(received, true);
+  // The old per-request timer needed at least 1900 + 700 ms, before process teardown.
+  assert.ok(Date.now() - started < 2450, 'notification exceeded its original deadline plus startup allowance');
 });
