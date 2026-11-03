@@ -3,7 +3,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto');
 const {agyRoots,metaOf:agyMetaOf}=require('../../app/agy-records');
-const {SESSIONS:kiroSessionsDir,metadataOf:kiroMetadataOf}=require('../../app/kiro-records');
+const {metadataOf:kiroMetadataOf}=require('../../app/kiro-records');
 const CHUNK=512*1024;
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 function walk(root,accept,out=[],depth=0) {
@@ -19,7 +19,7 @@ function catalog(home=os.homedir()) {
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'archive')],
     ['opencode',path.join(process.env.OPENCODE_AME_HOME||path.join(home,'.ametyping','opencode'),'events')],
     ['opencode',path.join(process.env.XDG_DATA_HOME||path.join(home,'.local','share'),'opencode','tool-output')],
-    ['kiro',kiroSessionsDir],
+    ['kiro',path.join(process.env.KIRO_HOME||path.join(home,'.kiro'),'sessions','cli')],
     ...agyRoots(home).map(r=>['agy',path.join(r,'brain')])];
   const out=[];
   for(const [provider,root]of roots)for(const file of walk(root,p=>root.endsWith('tool-output')||

@@ -15,6 +15,7 @@ import { size } from '../filetypes.js';
 import { confirmBox, askText } from '../dialog.js';
 import { openNoteDialog, open as openExplorer } from './explorer.js';
 import * as dashboard from './dashboard.js';
+import { researchTab } from './project-research.js';
 
 let inst = null;
 
@@ -48,6 +49,7 @@ const REVIEW_NAMES = {
 function mount(initialProjectId) {
   let selId = initialProjectId;
   let activeTab = 'topo'; // 'topo' | 'vfs' | 'xfer'
+  let researchView = null;
   let expandedTreeKey = null;
 
   const sideList = h('div', { class: 'pm-side-list' });
@@ -114,6 +116,7 @@ function mount(initialProjectId) {
     const reviewCount = (proj.nodes || []).filter((n) => n.reviewStatus === 'waiting_review').length;
     const xferCount = (proj.transfers || []).filter((t) => t.status === 'pending').length;
     const tabs = [
+      ['research', '研究与计算', icon('projects', true), ''],
       ['topo', '协同拓扑与契约', icon('projects', true), reviewCount ? ` (${reviewCount})` : ''],
       ['vfs', '跨机目录与结构树', icon('tree', true), ` (${(proj.workspaces || []).length})`],
       ['xfer', '文件协同与硬盘摆渡', icon('handoff', true), xferCount ? ` (${xferCount})` : ''],
@@ -717,6 +720,7 @@ function mount(initialProjectId) {
 
   function renderMain() {
     const proj = currentProject();
+    if(researchView&&(!proj||activeTab!=='research'||researchView.projectId!==proj.id)){researchView.destroy();researchView=null;}
     if (!proj) {
       mainHead.replaceChildren(h('b', { text: '尚未选择项目' }));
       tabBar.replaceChildren();
@@ -749,7 +753,8 @@ function mount(initialProjectId) {
       )
     );
     renderTabs(proj);
-    if (activeTab === 'topo') renderTopologyTab(proj);
+    if (activeTab === 'research') { if(!researchView){researchView=researchTab(proj);mainBody.replaceChildren(researchView.root);} }
+    else if (activeTab === 'topo') renderTopologyTab(proj);
     else if (activeTab === 'vfs') renderVfsTab(proj);
     else renderTransfersTab(proj);
   }
@@ -766,6 +771,6 @@ function mount(initialProjectId) {
   return {
     root,
     select(id) { selId = id; render(); },
-    destroy() { offMesh(); offCat(); offSess(); },
+    destroy() { if(researchView)researchView.destroy();offMesh(); offCat(); offSess(); },
   };
 }

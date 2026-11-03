@@ -689,7 +689,8 @@ function createMesh({
     if (!cleanFromM || !cleanFromP || !cleanToM || !cleanToP) return { ok: false, msg: '源路径和目标路径不能为空' };
 
     // Check workspace write permission on destination
-    const dstCheck = checkWorkspaceAccess(proj, cleanToM, path.dirname(cleanToP), true);
+    const remotePath = /^[A-Za-z]:[\\/]/.test(cleanToP) || /^\\\\/.test(cleanToP) ? path.win32 : path.posix;
+    const dstCheck = checkWorkspaceAccess(proj, cleanToM, remotePath.dirname(cleanToP), true);
     if (!dstCheck.ok) return dstCheck;
 
     const numSize = +size || 0;

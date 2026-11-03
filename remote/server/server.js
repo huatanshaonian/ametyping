@@ -24,6 +24,7 @@ const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createFsCatalog } = require('./fs-catalog');
 const { createMesh } = require('./mesh');
+const { createResearch } = require('./research/service');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
 const { createArtifacts } = require('./artifacts');
@@ -237,6 +238,8 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a) });
+const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
+  control:CONTROL,fresh:auth.isFresh,audit,log:console.error});
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 // phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
@@ -299,7 +302,7 @@ function mailAlert(alert) {
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
   before:()=>knowledge.vault.snapshot(path.join(path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),'knowledge-backup.sqlite')),log: console.log });
-function flushAndExit() { try { hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -610,6 +613,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p.startsWith('/asset/')) return serveAsset(res, p.slice('/asset/'.length));
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if(await knowledge.handle(req,res,url,sess,json,send,readBody))return;
+  if(await research.handle(req,res,url,sess,json,readBody))return;
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
   // the machines allowed to connect (添加电脑): listing is free, changing needs a code entered within the hour
   if (req.method === 'GET' && p === '/api/agents') return json(res, 200, { items: agentsAdmin.list() });
