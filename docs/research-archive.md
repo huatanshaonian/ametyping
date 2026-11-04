@@ -12,7 +12,7 @@
 
 程序先把事件切成较短且带偏移的证据单元，模型仅选择 E4U2 这样的编号，不负责抄写引文；程序回填精确原文、持久化事件 ID 与字符跨度。不存在的编号、无来源数值仍被拒绝。读取记忆/README 等文档不能自动算本次实测。被拒绝的结构化输出保留在 research_attempts 供核查，不发布为成果。资料记录导入时的原始长度与摘要；即使同一原生 generation 后续继续追加，也能下载当时长度的精确前缀。首轮同步解析单来源上限 64 MiB，超限明确拒绝且不标记完成，避免长事务阻塞 NAS；更大来源的后台解析尚未实现。
 
-第一轮逐片段抽取，保留历史版本；尚未实现跨片段自动合并、全设备 Git/worktree 盘点、自动判定旧结论被替代。旧版/同内容会话的重复归并需要独立验证，不能把本轮试点当作全量工作目录。
+抽取按片段保留历史版本，人工核对支持跨片段合并。全设备 Git/worktree 盘点与旧结论替代关系留待后续接入。
 
 已确定为文件/记忆读取且没有测量指标的工具调用，若被模型混入 runs，程序移入 support_activities，页面折叠为资料查阅，不计作计算运行；原始模型响应仍保留供核对。
 
@@ -22,11 +22,17 @@
 
 Windose 项目管理 → **研究与计算** → **DeepSeek API 设置** 可修改地址、模型和密钥。保存到 NAS 数据目录 `research-api.json`，权限 600，密钥留空保留现有值；GET 只返回是否配置，不回显密钥。沿用现有登录、只读模式和管理操作的近期验证规则。配置、会话、试点数据库和报告不提交 Git。
 
-在项目中登记各设备工作区，选择已完成校验的历史来源导入，再运行小批抽取。页面显示任务、研究成果和逐字引用，支持读取前后文及下载固定版本原文。新索引覆盖已导入资料，不替换原有精简搜索，也不宣称覆盖全部完整存档。
+项目管理默认打开“研究与计算”，上方显示项目工作事项，下方“导入与抽取”用于选择历史资料、运行抽取和修改 API 设置。引用可打开原文及附近记录。
 
-已保存的首轮结果可从 **项目管理 → 查看首轮整理结果** 直接打开，不需要先创建或绑定协同项目。该窗口只读展示 `data/research-pilots/<id>/` 中真实历史片段的候选工作，并从同目录的只读快照查阅原文；人工对照样例及其证据不会进入该窗口。候选结果不写入正式项目档案，也不会触发新的模型请求。
+启动时从已保存的历史整理结果及后续抽取结果建立工作事项，按会话目录关联现有项目；没有匹配项目时按目录名创建，例如 `CEM_PO`。左侧 **项目目录** 可选择项目，**整理工作事项** 打开跨项目整理窗口。每个项目显示设备名、目录路径和“查看目录”入口；历史观察目录单独存储，不修改设备的工作区授权。
+
+事项支持 **确认、修改、忽略、恢复待核对、合并选中、撤销**。修改可调整标题、项目归属、类型、状态、工作说明和结论；合并保留各事项的原文引用及关联目录，并可撤销。确认状态与计算进展分别保存。修改、合并和核对操作写入 NAS 主库的 `research_review_items/history`，目录写入 `research_project_directories`；刷新和重启后保留。版本号检查防止旧页面覆盖新修改。上述核对操作使用已有资料，无需调用模型。
+
+真实历史整理结果的原文从 `data/research-pilots/<id>/knowledge.sqlite` 快照读取，人工对照样例单独保留在测试报告中。
 
 接口：`GET /api/research?project=...`；`GET /api/research/sources|search|evidence?project=...`；`POST /api/research/import|enqueue|retry|config`。POST 均带 project。import 每批最多 10 份，enqueue 默认最多 3 段。
+
+核对接口：`GET /api/research/review/projects`，`GET /api/research/review/items?project=...`，`POST /api/research/review`。写操作包含 action、事项 ID 和 revisions，沿用登录、同源校验及只读模式控制。
 
 ## MCP 与测试
 
@@ -40,7 +46,9 @@ node remote/server/research/mcp.js /NAS实际数据路径/knowledge.sqlite
 
 ```sh
 node --test remote/test/research.test.js
+node --test remote/test/research-review.test.js remote/test/research-pilots.test.js
 node remote/test/e2e-research.js
+node remote/test/e2e-research.js --browser
 node --test remote/test/knowledge.test.js
 node remote/test/e2e-knowledge.js
 node remote/test/real-opencode-archive.js
@@ -48,4 +56,4 @@ node remote/test/real-opencode-archive.js
 node remote/test/research-pilot.js --live --source-db /NAS实际数据路径/knowledge.sqlite --out /独立试点目录
 ```
 
-试点包含四个有预期判据的人工对照样例，以及最多两份真实 CEM 会话的选定片段。输出 report.json/report.md 和隔离 knowledge.sqlite；不向生产项目发布模型结论。真实样本的语义质量仍需检查原文。
+试点包含四个人工对照样例和两份 CEM 会话选定片段，输出 report.json/report.md 和独立 knowledge.sqlite。服务将其中真实历史工作导入项目待核对列表，保留原始报告及快照。

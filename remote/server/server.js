@@ -239,6 +239,7 @@ const exporter = createExport({ store, resumeCmd });     // 导出: one conversa
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a) });
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
+  listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),
   control:CONTROL,fresh:auth.isFresh,audit,log:console.error});
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];

@@ -4,11 +4,14 @@ const { resolveDeepseek, runDeepseek } = require('../ai/deepseek-api');
 const { SCHEMA, promptFor, validateResult, VERSION } = require('./extract');
 const fs = require('fs'), path = require('path');
 const {createPilots}=require('./pilots');
+const {createReview}=require('./review');
 
-function createResearch({ vault, config = {}, getProject = () => null, control = false, fresh = () => false,
+function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
   audit = () => {}, log = () => {}, call = runDeepseek, resolve = null }) {
   const store = createResearchStore(vault), db = vault.db;
   const pilots=createPilots(path.dirname(vault.file));
+  const review=createReview({vault,pilots,listProjects,saveProject});
+  if(control)review.seed();
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));
@@ -71,6 +74,7 @@ function createResearch({ vault, config = {}, getProject = () => null, control =
       }
       if (closed) return;
       store.finish(job,result,usage);
+      if(control)review.seed();
       log('研究抽取完成：'+job.id.slice(0,12)+'，工作 '+result.work_items.length+' 项');
     } catch (e) {
       if (!closed) db.prepare("UPDATE research_jobs SET state='failed',error=?,usage=?,updated=? WHERE id=?")
@@ -93,6 +97,8 @@ function createResearch({ vault, config = {}, getProject = () => null, control =
     res.setHeader('Cache-Control','no-store');
     try {
       if (req.method === 'GET') {
+        if(url.pathname==='/api/research/review/projects'){json(res,200,{ok:true,items:review.catalog()});return true;}
+        if(url.pathname==='/api/research/review/items'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,items:review.items(project)});return true;}
         if(url.pathname==='/api/research/pilots'){json(res,200,{ok:true,...pilots.list()});return true;}
         if(url.pathname==='/api/research/pilot'){json(res,200,{ok:true,item:pilots.read(url.searchParams.get('id'))});return true;}
         if(url.pathname==='/api/research/pilot/evidence'){
@@ -117,16 +123,21 @@ function createResearch({ vault, config = {}, getProject = () => null, control =
           // Filter candidate sources by registered workspace, using machine + path boundaries rather than folder names.
           const p = getProject(project), norm = x => String(x||'').replace(/\\/g,'/').replace(/\/$/,'');
           const inside = (a,b) => { a=norm(a); b=norm(b); if (/^[A-Za-z]:/.test(a)) { a=a.toLowerCase(); b=b.toLowerCase(); } return a===b || a.startsWith(b+'/'); };
+          const roots=[...(p.workspaces||[]),...(review.catalog().find(x=>x.id===project)?.directories||[])];
           const sources = vault.db.prepare(`SELECT s.* FROM sources s WHERE complete=1 AND kind='native'
             AND rowid=(SELECT rowid FROM sources t WHERE t.machine=s.machine AND t.key=s.key ORDER BY created DESC,rowid DESC LIMIT 1)
             ORDER BY updated DESC`).all().filter(s => (s.provider==='opencode'||/\.jsonl$/i.test(s.path)) &&
-              (p.workspaces||[]).some(w=>w.machine===s.machine&&inside(s.cwd,w.path)));
+              roots.some(w=>w.machine===s.machine&&inside(s.cwd,w.path)));
           json(res,200,{ok:true,items:sources.slice(0,500),total:sources.length});
         } else json(res,404,{ok:false,msg:'找不到研究接口'});
         return true;
       }
       if (req.method !== 'POST') { json(res,405,{ok:false}); return true; }
       if (!control) throw Error('服务器处于只读模式');
+      if(url.pathname==='/api/research/review'){
+        const body=JSON.parse(await readBody(req,256*1024)),items=review.change(body);
+        audit('research-review',body.action,items.map(i=>i.id).join(','));json(res,200,{ok:true,items});return true;
+      }
       if (!fresh(sess)) { json(res,200,{ok:false,need:'totp',msg:'需要再输一次验证码'}); return true; }
       const body = JSON.parse(await readBody(req,128*1024)), project = checkProject(body.project); let item;
       if (url.pathname === '/api/research/config') item=saveSettings(body);
@@ -141,7 +152,7 @@ function createResearch({ vault, config = {}, getProject = () => null, control =
     } catch (e) { if(res.headersSent)res.destroy();else json(res,200,{ok:false,msg:e.message}); }
     return true;
   }
-  return { store, tick, enqueue, retry, handle, publicConfig, saveSettings, idle:()=>!active,
+  return { store, review,tick, enqueue, retry, handle, publicConfig, saveSettings, idle:()=>!active,
     close() { closed=true; clearInterval(timer); if(abort)abort.abort(); } };
 }
 module.exports = { createResearch };

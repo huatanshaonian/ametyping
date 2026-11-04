@@ -1,5 +1,6 @@
 import { h } from '../util.js';
 import { post } from '../net.js';
+import {reviewPanel} from './research-review.js';
 
 const STATES={queued:'排队中',running:'抽取中',succeeded:'已完成',failed:'失败',interrupted:'已中断',
   planned:'计划',started:'已启动',reported_complete:'报告完成',reported_failed:'报告失败',unknown:'待确认'};
@@ -7,6 +8,7 @@ const KINDS={calculation:'计算',validation:'验证',exploration:'探索',analy
 
 export function researchTab(project) {
   const root=h('div',{class:'pr-root'}),status=h('div',{class:'pm-status',text:'读取 NAS 研究档案…'});
+  const review=reviewPanel(project.id);
   const settings=h('details',{class:'pr-card'},h('summary',{text:'DeepSeek API 设置（保存在 NAS）'}));
   const model=h('input',{class:'field',placeholder:'模型名称'}),base=h('input',{class:'field',placeholder:'API 地址'});
   const key=h('input',{class:'field',type:'password',autocomplete:'new-password',placeholder:'密钥：留空保留现有值'});
@@ -22,13 +24,14 @@ export function researchTab(project) {
     const r=await post('/api/research/import',{project:project.id,refs:[{machine:s.machine,key:s.key,generation:s.generation}]});
     status.textContent=r.ok?'已建立清洁事件；原始存档仍完整保留':r.msg;await refresh();
   }}),h('button',{class:'btn',text:'刷新',onclick:()=>refresh(true)}));
-  root.append(h('p',{text:'按研究目标记录计算、验证与探索。同一份代码上的不同计算可分别产生工作成果；报告完成仍需结合证据核对。'}),settings,status,
+  const processing=h('details',{},h('summary',{text:'导入与抽取'}),status,
     h('h3',{text:'历史资料'}),toolbar,docs,h('h3',{text:'抽取任务'}),jobs,h('h3',{text:'研究与计算成果'}),work,
     h('h3',{text:'查阅原文'}),h('div',{class:'pr-toolbar'},query,h('button',{class:'btn',text:'搜索',onclick:async()=>{
       const r=await get('/search&q='+encodeURIComponent(query.value));
       hits.replaceChildren(...(r.items||[]).map(e=>h('div',{class:'pr-card'},h('b',{text:e.machine+' · '+e.kind}),h('pre',{text:e.text}),evidenceButton(e.id))));
       if(!r.ok)status.textContent=r.msg;
     }})),hits);
+  root.append(review.root,settings,processing);
   let sources=[],closed=false,initialized=false;
   async function get(suffix=''){const i=suffix.indexOf('&'),route=i<0?suffix:suffix.slice(0,i),extra=i<0?'':suffix.slice(i);
     try{return await(await fetch('/api/research'+route+'?project='+encodeURIComponent(project.id)+extra)).json();}catch{return{ok:false,msg:'无法读取 NAS 研究档案'};}}
@@ -44,7 +47,7 @@ export function researchTab(project) {
   async function refresh(reloadSources=false){
     const r=await get();if(closed)return;if(!r.ok){status.textContent=r.msg;return;}
     if(!initialized){model.value=r.provider.model||'';base.value=r.provider.base||'';initialized=true;}
-    status.textContent=`NAS · ${r.provider.model||'DeepSeek 未配置'} · ${r.provider.configured?'API 已配置':'请配置 API'} · ${r.documents.length} 份资料 · ${r.totals.work} 项工作`;
+    status.textContent=`${r.provider.model||'DeepSeek 未配置'} · ${r.documents.length} 份已导入资料 · ${r.totals.work} 个抽取结果`;
     if(!sources.length||reloadSources){const sr=await get('/sources');if(closed)return;sources=sr.items||[];
       sourceSelect.replaceChildren(...sources.map(s=>h('option',{value:JSON.stringify([s.machine,s.key]),text:s.machine+' · '+s.provider+' · '+s.session+' · '+s.path.split(/[\\/]/).pop()})));}
     docs.replaceChildren(...r.documents.map(d=>h('div',{class:'pr-card'},h('b',{text:d.machine+' · '+d.provider+' · '+d.session}),
@@ -67,5 +70,5 @@ export function researchTab(project) {
     if(!r.work.length)work.append(h('p',{text:'尚无抽取成果。先导入历史会话，再运行小批抽取。'}));
   }
   refresh();const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);return;}refresh();},5000);
-  return {root,projectId:project.id,destroy(){closed=true;clearInterval(timer);root.querySelectorAll('dialog').forEach(d=>d.close());}};
+  return {root,projectId:project.id,destroy(){closed=true;review.destroy();clearInterval(timer);root.querySelectorAll('dialog').forEach(d=>d.close());}};
 }

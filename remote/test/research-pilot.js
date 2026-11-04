@@ -52,7 +52,7 @@ async function main(){
     }
     while(v.db.prepare("SELECT count(*) n FROM research_jobs WHERE state IN ('queued','running')").get().n){await service.tick();await new Promise(r=>setTimeout(r,25));}
     const list=service.store.list(project),report={at:new Date().toISOString(),provider:{model:cfg.model,base:cfg.base},project,
-      scope:(args.includes('--historical-only')?'历史样本复测':'四个人工对照样例与最多两份历史会话的选定片段')+'；不代表全量历史质量',samples:[],totals:{jobs:list.jobs.length,work:list.work.length,input:0,output:0},issues:[]};
+      scope:args.includes('--historical-only')?'历史工作整理':'四组对照样例与两份历史会话的工作整理',samples:[],totals:{jobs:list.jobs.length,work:list.work.length,input:0,output:0},issues:[]};
     for(const sample of samples){const job=list.jobs.find(j=>j.id===sample.job),work=list.work.filter(w=>w.job===sample.job);
       const issues=job?.state==='succeeded'?(sample.synthetic?assess(sample.name,{work_items:work.map(w=>w.body)}):['历史样本语义质量仍需人工核对']):[job?.error||'任务缺失'];
       report.samples.push({...sample,state:job?.state,attempts:job?.attempts,usage:job?.usage,work:work.map(w=>({id:w.id,...w.body})),issues});

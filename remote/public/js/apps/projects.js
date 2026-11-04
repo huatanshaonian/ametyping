@@ -49,7 +49,7 @@ const REVIEW_NAMES = {
 
 function mount(initialProjectId) {
   let selId = initialProjectId;
-  let activeTab = 'topo'; // 'topo' | 'vfs' | 'xfer'
+  let activeTab = 'research';
   let researchView = null;
   let expandedTreeKey = null;
 
@@ -61,8 +61,8 @@ function mount(initialProjectId) {
 
   const newProjBtn = h('button', { class: 'btn go', type: 'button', text: '＋ 新建项目', onclick: createNewProject });
   const side = h('aside', { class: 'pm-side' },
-    h('div', { class: 'pm-side-bar' }, h('b', { text: '协同项目' }), newProjBtn),
-    h('div',{class:'pm-side-bar'},h('button',{class:'btn',type:'button',text:'查看首轮整理结果',onclick:openResearchPilots})),
+    h('div', { class: 'pm-side-bar' }, h('b', { text: '项目目录' }), newProjBtn),
+    h('div',{class:'pm-side-bar'},h('button',{class:'btn',type:'button',text:'整理工作事项',onclick:openResearchPilots})),
     sideList
   );
   const main = h('section', { class: 'pm-main' }, mainHead, tabBar, mainBody, statusLine);
@@ -106,7 +106,7 @@ function mount(initialProjectId) {
           h('span', { text: p.name })
         ),
         h('div', { class: 'pm-item-meta' },
-          h('span', { text: `${(p.nodes || []).length} 节点 · ${(p.workspaces || []).length} 目录` }),
+          h('span', { text: `${(p.nodes || []).length} 个会话 · ${(p.workspaces || []).length} 个工作区` }),
           reviewCount ? h('span', { class: 'pm-badge warn', text: `待检视 ${reviewCount}` }) : null,
           xferCount ? h('span', { class: 'pm-badge err', text: `待拷盘 ${xferCount}` }) : null
         )

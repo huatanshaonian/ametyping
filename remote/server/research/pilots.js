@@ -46,6 +46,13 @@ function createPilots(dataDir){
       return {...e,text,offset:start,total,truncated:start>0||text.length<total,details:JSON.parse(e.details),around};
     }finally{db.close();}
   }
-  return{list,read,evidence};
+  function documents(id){
+    const report=read(id),ids=[...new Set(report.samples.map(s=>s.document))];if(!ids.length)return[];
+    const file=path.join(folder(id),'knowledge.sqlite');if(fs.realpathSync(file)!==file)throw Error('整理快照路径无效');
+    const db=new DatabaseSync(file,{readOnly:true});
+    try{return db.prepare('SELECT id,machine,session,cwd,provider FROM research_documents WHERE id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);}
+    finally{db.close();}
+  }
+  return{list,read,evidence,documents};
 }
 module.exports={createPilots};
