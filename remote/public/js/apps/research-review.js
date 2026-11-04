@@ -1,7 +1,7 @@
 import {h,icon} from '../util.js';
 import {post} from '../net.js';
 import * as wm from '../wm.js';
-import {open as openExplorer} from './explorer.js';
+import {directoryPanel} from './directory-summary.js';
 const states={planned:'计划',started:'进行中',reported_complete:'已完成',reported_failed:'失败',unknown:'待整理'};
 const kinds={calculation:'计算',validation:'验证',exploration:'探索',analysis:'分析',implementation:'实现',other:'其他'};
 const reviews={pending:'待核对',confirmed:'已确认',ignored:'已忽略',merged:'已合并'};
@@ -13,23 +13,21 @@ export function reviewPanel(initialProject=null){
   const filter=h('select',{class:'field'},...Object.entries({pending:'待核对',confirmed:'已确认',all:'全部',ignored:'已忽略',merged:'已合并'}).map(([value,text])=>h('option',{value,text})));
   const search=h('input',{class:'field',placeholder:'搜索工作标题和内容'});
   const merge=h('button',{class:'btn rr-action',text:'合并选中',disabled:true,onclick:mergeDialog});
-  const directories=h('details',{class:'rr-directories',open:true},h('summary',{text:'项目目录'}));
+  const directoryView=directoryPanel(),directories=directoryView.root;
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},h('div',{class:'pr-toolbar'},title,h('button',{class:'btn',text:'刷新',onclick:reload})),directories,
-      h('div',{class:'pr-toolbar'},filter,search,merge),status,list));
+      h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
   function say(text){status.textContent=text;}
   function drawCatalog(){
-    side.replaceChildren(h('b',{text:'项目目录'}),...projects.map(p=>h('button',{class:'rr-project'+(project===p.id?' sel':''),type:'button',text:p.name+' · '+p.counts.pending+' 待核对',onclick:()=>{project=p.id;selected.clear();reload();}})));
-    const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 工作事项':'工作事项';
-    directories.replaceChildren(h('summary',{text:'项目目录'+(p?' · '+p.directories.length:'')}),...(p?.directories||[]).map(d=>h('div',{class:'rr-directory'},h('b',{text:d.machine}),h('code',{text:d.path}),h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(d.machine,d.path)}))));
-    if(p&&!p.directories.length)directories.append(h('p',{text:'在“跨机目录与结构树”中添加项目目录。'}));
+    side.replaceChildren(h('b',{text:'项目目录'}),...projects.map(p=>h('button',{class:'rr-project'+(project===p.id?' sel':''),type:'button',text:p.name+' · '+p.directories.length+' 个目录',onclick:()=>{project=p.id;selected.clear();reload();}})));
+    const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 目录工作总结':'目录工作总结';
   }
   async function reload(){
     try{const r=await get('/api/research/review/projects');if(closed)return;if(!r.ok){say(r.msg);return;}projects=r.items;
       if(!projects.some(p=>p.id===project))project=projects[0]?.id||null;
       drawCatalog();if(!project){items=[];list.replaceChildren();say('先创建一个项目，即可整理工作事项。');return;}
       const requested=project,data=await get('/api/research/review/items?project='+encodeURIComponent(project));if(closed||requested!==project)return;
-      if(!data.ok){say(data.msg);return;}items=data.items;selected.clear();render();
+      if(!data.ok){say(data.msg);return;}items=data.items;selected.clear();render();await directoryView.load(project);
     }catch{if(!closed)say('读取项目工作失败');}
   }
   async function change(body,feedback=null){
@@ -83,9 +81,9 @@ export function reviewPanel(initialProject=null){
     form.append(h('div',{class:'pr-toolbar'},h('button',{class:'btn rr-action',text:'合并',onclick:async()=>{const ok=await change({action:'merge',ids:rows.map(r=>r.id),revisions:Object.fromEntries(rows.map(r=>[r.id,r.revision])),title:title.value},feedback);if(ok)dialog.close();}}),h('button',{class:'btn',text:'取消',onclick:()=>dialog.close()})));
   }
   filter.addEventListener('change',()=>{selected.clear();render();});search.addEventListener('input',()=>{selected.clear();render();});reload();
-  return{root,projectId:initialProject,destroy(){closed=true;root.querySelectorAll('dialog').forEach(d=>d.close());}};
+  return{root,projectId:initialProject,destroy(){closed=true;directoryView.destroy();root.querySelectorAll('dialog').forEach(d=>d.close());}};
 }
 export function open(){
   if(instance){wm.open({id:'research-pilots'});return;}
-  instance=reviewPanel();wm.open({id:'research-pilots',title:'项目工作整理',icon:icon('projects',true),width:1000,height:700,content:instance.root,onClose:()=>{instance.destroy();instance=null;}});
+  instance=reviewPanel();wm.open({id:'research-pilots',title:'目录工作总结',icon:icon('projects',true),width:1000,height:700,content:instance.root,onClose:()=>{instance.destroy();instance=null;}});
 }

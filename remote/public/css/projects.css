@@ -129,4 +129,12 @@
 .rr-item-meta { color:var(--muted); }
 .rr-item pre { white-space:pre-wrap;overflow-wrap:anywhere; }
 .rr-editor .pr-form textarea { width:100%;box-sizing:border-box; }
+.rd-card { margin:10px 0 18px;padding:12px; }
+.rd-overview { white-space:pre-wrap;line-height:1.7; }
+.rd-work { padding:6px 0 10px;border-bottom:1px solid var(--edge);line-height:1.6; }
+.rd-work h4 { margin:8px 0 4px; }
+.rd-work ul { margin:4px 0 8px;padding-left:22px; }
+.rd-work blockquote { white-space:pre-wrap; }
+.rd-editor fieldset { display:grid;gap:8px; }
+.rr-raw>summary { cursor:pointer;padding:10px 0; }
 @media(max-width:700px){.rr-root{grid-template-columns:135px minmax(0,1fr)}.rr-main{padding:7px}.rr-item-head{flex-wrap:wrap}}

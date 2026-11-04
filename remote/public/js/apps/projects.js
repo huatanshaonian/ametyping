@@ -62,7 +62,7 @@ function mount(initialProjectId) {
   const newProjBtn = h('button', { class: 'btn go', type: 'button', text: '＋ 新建项目', onclick: createNewProject });
   const side = h('aside', { class: 'pm-side' },
     h('div', { class: 'pm-side-bar' }, h('b', { text: '项目目录' }), newProjBtn),
-    h('div',{class:'pm-side-bar'},h('button',{class:'btn',type:'button',text:'整理工作事项',onclick:openResearchPilots})),
+    h('div',{class:'pm-side-bar'},h('button',{class:'btn',type:'button',text:'目录工作总结',onclick:openResearchPilots})),
     sideList
   );
   const main = h('section', { class: 'pm-main' }, mainHead, tabBar, mainBody, statusLine);

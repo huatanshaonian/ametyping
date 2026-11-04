@@ -5,6 +5,7 @@ const { SCHEMA, promptFor, validateResult, VERSION } = require('./extract');
 const fs = require('fs'), path = require('path');
 const {createPilots}=require('./pilots');
 const {createReview}=require('./review');
+const {createDirectories}=require('./directories');
 
 function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
   audit = () => {}, log = () => {}, call = runDeepseek, resolve = null }) {
@@ -12,6 +13,7 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
   const pilots=createPilots(path.dirname(vault.file));
   const review=createReview({vault,pilots,listProjects,saveProject});
   if(control)review.seed();
+  const directories=createDirectories({vault,review});
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));
@@ -97,6 +99,7 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
     res.setHeader('Cache-Control','no-store');
     try {
       if (req.method === 'GET') {
+        if(url.pathname==='/api/research/directories'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,items:directories.list(project)});return true;}
         if(url.pathname==='/api/research/review/projects'){json(res,200,{ok:true,items:review.catalog()});return true;}
         if(url.pathname==='/api/research/review/items'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,items:review.items(project)});return true;}
         if(url.pathname==='/api/research/pilots'){json(res,200,{ok:true,...pilots.list()});return true;}
@@ -134,6 +137,10 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
       }
       if (req.method !== 'POST') { json(res,405,{ok:false}); return true; }
       if (!control) throw Error('服务器处于只读模式');
+      if(url.pathname==='/api/research/directory'){
+        const body=JSON.parse(await readBody(req,300*1024));checkProject(body.project);const item=directories.change(body);
+        audit('research-directory',body.action,body.id);json(res,200,{ok:true,item});return true;
+      }
       if(url.pathname==='/api/research/review'){
         const body=JSON.parse(await readBody(req,256*1024)),items=review.change(body);
         audit('research-review',body.action,items.map(i=>i.id).join(','));json(res,200,{ok:true,items});return true;
@@ -152,7 +159,7 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
     } catch (e) { if(res.headersSent)res.destroy();else json(res,200,{ok:false,msg:e.message}); }
     return true;
   }
-  return { store, review,tick, enqueue, retry, handle, publicConfig, saveSettings, idle:()=>!active,
+  return { store, review,directories,tick, enqueue, retry, handle, publicConfig, saveSettings, idle:()=>!active,
     close() { closed=true; clearInterval(timer); if(abort)abort.abort(); } };
 }
 module.exports = { createResearch };

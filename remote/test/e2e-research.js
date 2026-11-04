@@ -33,6 +33,14 @@ async function browser(project){
     await until(()=>evaluate("!![...document.querySelectorAll('.pm-tab')].find(x=>x.textContent.includes('研究与计算'))"));
     await evaluate("[...document.querySelectorAll('.pm-tab')].find(x=>x.textContent.includes('研究与计算')).click()");
     await until(()=>evaluate("document.querySelector('.pr-root')?.textContent.includes('Windows 扫频')"));
+    await until(()=>evaluate("document.querySelector('.rr-embedded .rd-overview')?.textContent.includes('跨会话')"));
+    assert.equal(await evaluate("document.querySelectorAll('.rr-embedded .rd-card').length"),1);
+    assert.equal(await evaluate("document.querySelector('.rr-embedded .rr-raw').open"),false);
+    await evaluate("[...document.querySelectorAll('.rr-embedded .rd-card button')].find(b=>b.textContent==='确认目录总结').click()");
+    await until(()=>evaluate("document.querySelector('.rr-embedded .rd-card .rr-badge').textContent==='已确认'"));
+    await evaluate("[...document.querySelectorAll('.rr-embedded .rd-card button')].find(b=>b.textContent==='修改目录总结').click();document.querySelector('.rd-editor textarea').value='跨会话汇总后的目录工作总览';[...document.querySelectorAll('.rd-editor button')].find(b=>b.textContent==='保存总结').click()");
+    await until(()=>evaluate("document.querySelector('.rr-embedded .rd-overview').textContent==='跨会话汇总后的目录工作总览'"));
+    await evaluate("document.querySelector('.rr-embedded .rr-raw').open=true");
     await evaluate("[...document.querySelectorAll('.pr-root details')].find(d=>d.querySelector('input[type=password]')).open=true;document.querySelector('.pr-form input[type=password]').value='draft-secret-not-saved'");
     await api('POST','/api/mesh/project',{id:project,name:'CEM_PO',desc:'trigger project refresh'});
     await sleep(400);
@@ -44,8 +52,9 @@ async function browser(project){
     await evaluate("[...document.querySelectorAll('.pr-root details')].find(d=>d.querySelector('input[type=password]')).open=false");
     const out=path.join(__dirname,'out','shots');fs.mkdirSync(out,{recursive:true});
     const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,'research-pilot.png'),Buffer.from(shot.result.data,'base64'));
-    await evaluate("[...document.querySelectorAll('.pm-side button')].find(x=>x.textContent==='整理工作事项').click()");
+    await evaluate("[...document.querySelectorAll('.pm-side button')].find(x=>x.textContent==='目录工作总结').click()");
     await until(()=>evaluate("document.querySelector('.rr-root:not(.rr-embedded)')?.textContent.includes('历史计算候选')"));
+    await evaluate("document.querySelector('.rr-root:not(.rr-embedded) .rr-raw').open=true");
     await evaluate("window.reviewRoot=()=>document.querySelector('.rr-root:not(.rr-embedded)');window.reviewCard=t=>[...reviewRoot().querySelectorAll('.rr-item')].find(c=>c.querySelector('.rr-item-head b').textContent===t);window.reviewClick=(t,b)=>[...reviewCard(t).querySelectorAll('button')].find(x=>x.textContent===b).click()");
     const initialText=await evaluate("reviewRoot().textContent");
     assert.ok(initialText.includes('CEM_PO')&&initialText.includes('G:/feko_data/CEM_PO'));
@@ -73,8 +82,9 @@ async function browser(project){
     await until(()=>evaluate("!reviewCard('Windows 扫频')"));
     await evaluate("reviewRoot().querySelector('.rr-main select').value='pending';reviewRoot().querySelector('.rr-main select').dispatchEvent(new Event('change'))");
     await until(()=>evaluate("reviewRoot().querySelectorAll('.rr-item').length===2"));
+    await evaluate("reviewRoot().querySelector('.rr-raw').open=false");
     const pilotShot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,'research-pilot-results.png'),Buffer.from(pilotShot.result.data,'base64'));
-    assert.deepEqual(errors,[]);console.log('PASS headless project directories, confirm, edit, merge, undo, ignore, restore and evidence');
+    assert.deepEqual(errors,[]);console.log('PASS directory summaries, confirm/edit, collapsed source details and review evidence actions');
   }catch(error){
     console.error('BROWSER REVIEW STATE',await evaluate("JSON.stringify({text:document.querySelector('.rr-root:not(.rr-embedded)')?.textContent,errors:"+JSON.stringify(errors)+"})"));throw error;
   }finally{socket.close();}
@@ -130,6 +140,9 @@ async function browser(project){
     const data=(await api('GET','/api/research?project='+p)).value;assert.equal(data.work.length,2);assert.equal(calls,1);
     assert.equal((await api('POST','/api/research/enqueue',{project:p,document})).value.item.ids.length,0);
     const hit=(await api('GET','/api/research/search?project='+p+'&q='+encodeURIComponent('扫频'))).value.items[0];assert.ok(hit);
+    const folder=(await api('GET','/api/research/directories?project='+p)).value.items[0];assert.equal(folder.sessions,1);
+    const folderSaved=await api('POST','/api/research/directory',{project:p,id:folder.id,revision:folder.revision,action:'save',body:{overview:'跨会话归并本目录的扫频与网格验证，保留不同目标。',work:[{title:'扫频与网格验证',description:'围绕同一目录整理计算进展。',results:['扫频完成，网格验证进行中'],outputs:[],questions:[],evidence:[{event_id:hit.id,quote:hit.text.slice(0,30)}]}],next_steps:['完成网格验证']}});assert.ok(folderSaved.value.ok,folderSaved.raw);
+    assert.equal((await api('POST','/api/research/directory',{project:p,id:folder.id,revision:0,action:'confirm'})).value.ok,false);
     const evidence=(await api('GET','/api/research/evidence?project='+p+'&id='+hit.id)).value.item;assert.ok(evidence.text.includes('扫频'));assert.equal(evidence.digest,hash(raw));
     // A generation can grow by appending. The research snapshot must still download its original exact prefix.
     const growing=openVault(path.join(T,'data')),tail=Buffer.from('\n'+JSON.stringify({type:'user',message:{content:'后续新增内容'}})),all=Buffer.concat([raw,tail]);
