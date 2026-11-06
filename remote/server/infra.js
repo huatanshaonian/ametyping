@@ -24,8 +24,8 @@ const DEFAULT_NODES = [
     watched: ['sing-box', 'tailscaled', 'dnsmasq'],
   },
   {
-    id: '这台电脑',
-    label: '主力工作站 (Windows)',
+    id: 'huatanshaonian',
+    label: '主力工作站 (huatanshaonian)',
     role: 'workstation',
     host: 'LAN / Tailscale',
     tier: 0,
@@ -66,8 +66,8 @@ const DEFAULT_NODES = [
 ];
 
 const DEFAULT_LINKS = [
-  { id: 'l_pc_openwrt', from: '这台电脑', to: 'openwrt', label: 'LAN 网关 / Sing-box', service: 'sing-box', probeHost: '192.168.114.1', probePort: 9090 },
-  { id: 'l_pc_nas', from: '这台电脑', to: 'nas', label: 'LAN / Windose :8787', service: 'ame-remote', probeHost: '192.168.114.6', probePort: 8787 },
+  { id: 'l_pc_openwrt', from: 'huatanshaonian', to: 'openwrt', label: 'LAN 网关 / Sing-box', service: 'sing-box', probeHost: '192.168.114.1', probePort: 9090 },
+  { id: 'l_pc_nas', from: 'huatanshaonian', to: 'nas', label: 'LAN / Windose :8787', service: 'ame-remote', probeHost: '192.168.114.6', probePort: 8787 },
   { id: 'l_dell_nas', from: 'dell97', to: 'nas', label: 'Tailscale :8788', service: 'tailscaled', probeHost: '100.65.10.90', probePort: 8788 },
   { id: 'l_nas_aws_egress', from: 'nas', to: 'aws1', label: 'SSH -D :1058 (egress.sh)', service: 'egress-tunnel', probeHost: '127.0.0.1', probePort: 1057, standby: true },
   { id: 'l_nas_aws_socks', from: 'nas', to: 'aws1', label: 'Tailscale SOCKS5 :1080', service: 'danted', probeHost: '100.120.53.46', probePort: 1080 },
