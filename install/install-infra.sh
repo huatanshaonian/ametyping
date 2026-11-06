@@ -15,18 +15,9 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Auto-pick best server URL if not explicitly set:
-# 1. LAN NAS (192.168.114.6:8787) for OpenWrt / LAN hosts
-# 2. Tailscale NAS (100.65.10.90:8788) if Tailscale is reachable
-# 3. Public HTTPS (https://win98.huatan.org)
+# Default to the public HTTPS endpoint behind DSM reverse proxy unless AME_SERVER is explicitly set
 if [ -z "$SERVER" ]; then
-  if [ -f /etc/openwrt_release ]; then
-    SERVER="http://192.168.114.6:8787"
-  elif curl -fsSL -m 3 "http://100.65.10.90:8788/api/infra/poll" -H "Authorization: Bearer $TOKEN" -m 1 >/dev/null 2>&1; then
-    SERVER="http://100.65.10.90:8788"
-  else
-    SERVER="https://win98.huatan.org"
-  fi
+  SERVER="https://win98.huatan.org"
 fi
 
 ROLE="${AME_ROLE:-}"
