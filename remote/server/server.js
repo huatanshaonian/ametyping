@@ -24,6 +24,7 @@ const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
 const { createFsCatalog } = require('./fs-catalog');
 const { createMesh } = require('./mesh');
+const { createInfra } = require('./infra');
 const { createResearch } = require('./research/service');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
@@ -226,7 +227,17 @@ function knownMachines() {
 }
 const fsRelay = createFsRelay({ machines, audit: (...a) => audit(...a), fresh: (c) => auth.isFresh(auth.checkSessionQuiet(c.sid)) });
 const fsCatalog = createFsCatalog({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, onChange: () => broadcast({ t: 'fs-catalog' }), audit: (...a) => audit(...a) });
-const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, audit: (...a) => audit(...a) });
+let push;
+const infra = createInfra({
+  dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
+  getAgents: () => { reloadAgents(); return cfg.agents || []; },
+  machines,
+  control: CONTROL,
+  onChange: () => broadcast({ t: 'infra' }),
+  audit: (...a) => audit(...a),
+  notify: (msg) => push && push.notify('infra', msg),
+});
+const agentsAdmin = createAgentsAdmin({ configFile: CONFIG, machines, isOnline: (name) => infra.isNodeOnline(name), audit: (...a) => audit(...a) });
 const walls = createWalls(path.resolve(path.dirname(CONFIG), cfg.wallDir || path.join(cfg.dataDir || 'data', 'wall')));
 const artifacts = createArtifacts({ dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'artifacts'), machines, log: console.log });
 // 重要计划: every open browser refreshes its list / desktop widget on a change
@@ -237,7 +248,6 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
-let push;
 const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
   listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),
@@ -304,7 +314,7 @@ function mailAlert(alert) {
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
   before:()=>knowledge.vault.snapshot(path.join(path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),'knowledge-backup.sqlite')),log: console.log });
-function flushAndExit() { try { research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -327,6 +337,7 @@ const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
+  if (infra.fromAgentMessage(m.name, d)) return;
   if(knowledge.message(m.name,d,ws))return;
   if (d.t === 'hello') {
     ws.remoteControlAllowed = d.control === true; ws.filesAllowed = d.files === true; ws.uploadAllowed = d.upload === true;
@@ -584,6 +595,8 @@ const server = http.createServer(async (req, res) => {
   // Google's consent screen sends the browser back here without the (SameSite=Strict) login cookie: the one-time
   // state it carries is the check (google/account.js)
   if (req.method === 'GET' && p === '/api/google/callback') return google.handleCallback(req, res, url, send);
+  // lightweight infra probes authenticate with their agent Bearer token (no browser cookie or Origin header)
+  if (await infra.handleProbe(req, res, url, ip, json, readBody)) return;
 
   // --- state-changing API: same-origin only ---
   if (req.method === 'POST' && p.startsWith('/api/') && !sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
@@ -672,6 +685,7 @@ const server = http.createServer(async (req, res) => {
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/fs-catalog') && await fsCatalog.handle(req, res, url, ip, json, readBody)) return;
   if (p.startsWith('/api/mesh/') && await mesh.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
+  if (p.startsWith('/api/infra/') && await infra.handleBrowser(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
@@ -878,7 +892,11 @@ server.listen(port, host, () => console.log(`Ame 看板监听 http://${host}:${p
 if (AGENT_SPLIT) {
   const ah = cfg.agent.host || '127.0.0.1';
   if (ah === '0.0.0.0' || ah === '::') console.warn('警告：agent 监听在所有网卡上，建议改成 VPN 地址（如 Tailscale 的 100.x.x.x）');
-  const agentServer = http.createServer((req, res) => { res.writeHead(404); res.end(); });
+  const agentServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (await infra.handleProbe(req, res, url, clientIp(req), json, readBody)) return;
+    res.writeHead(404); res.end();
+  });
   agentServer.on('upgrade', (req, socket, head) => {
     if (new URL(req.url, 'http://localhost').pathname === '/agent') return agentUpgrade(req, socket, head);
     socket.write('HTTP/1.1 404 Not Found\r\n\r\n'); socket.destroy();

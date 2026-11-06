@@ -62,7 +62,8 @@ export function panel() {
       copyRow('Windows（PowerShell）', `$env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; irm ${RAW}/install-windows.ps1 | iex`),
       // no pet on screen, no Electron: only the hooks and the dashboard's replies / cards / launches (a work machine)
       copyRow('Windows 无头（不显示糖糖，省资源）', `$env:AME_MODE='headless'; $env:AME_NAME=${psq(r.name)}; $env:AME_TOKEN=${psq(r.token)}; irm ${RAW}/install-windows.ps1 | iex`),
-      copyRow('Linux', `curl -fsSL ${RAW}/install-linux.sh | AME_NAME='${r.name}' AME_TOKEN='${r.token}' bash`));
+      copyRow('Linux（开发机，带 Claude/Codex 会话控制）', `curl -fsSL ${RAW}/install-linux.sh | AME_NAME='${r.name}' AME_TOKEN='${r.token}' bash`),
+      copyRow('Linux / OpenWrt 轻量监控探针（AWS / GCP / 软路由，零依赖）', `curl -fsSL ${RAW}/install-infra.sh | AME_NAME='${r.name}' AME_TOKEN='${r.token}' sh`));
     refresh();
   });
 

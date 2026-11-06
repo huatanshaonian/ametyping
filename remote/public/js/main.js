@@ -10,6 +10,7 @@ import * as wallpaper from './wallpaper.js';
 import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
 import * as projects from './apps/projects.js';
+import * as infra from './apps/infra.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
@@ -43,6 +44,7 @@ function openMyComputer() {
 const APPS = [
   { id: 'dashboard', label: '糖糖看板', icon: '/asset/icon256.png', open: openDashboard },
   { id: 'projects', label: '项目管理', icon: icon('projects'), open: () => projects.open(), hint: '跨机协同拓扑、目标契约、目录结构树与大文件摆渡' },
+  { id: 'infra', label: '网络与设备', icon: icon('network_cool_two_pcs'), open: () => infra.open(), hint: '远程服务器（AWS/GCP）、OpenWrt、群晖 Docker 与网络互联拓扑监控' },
   { id: 'mycomputer', label: '我的电脑', icon: icon('computer_explorer'), open: openMyComputer, hint: '浏览这台电脑的文件' },
   { id: 'reports', label: '工作日报', icon: icon('history'), open: reports.open, hint: '每天早上自动总结前一天做了什么' },
   { id: 'notepad', label: '记事本', icon: icon('notepad'), open: notepad.open, hint: '存在群晖上的笔记' },
@@ -109,6 +111,7 @@ openDashboard();
   if (ml) { mail.open(decodeURIComponent(ml[1])); history.replaceState(null, '', location.pathname); }
   // #lit: the day's papers (糖糖's morning bubble)
   if (location.hash === '#lit') { literature.open('feed'); history.replaceState(null, '', location.pathname); }
+  if (location.hash === '#infra') { infra.open(); history.replaceState(null, '', location.pathname); }
   // back from Google's consent screen (google/index.js handleCallback)
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }

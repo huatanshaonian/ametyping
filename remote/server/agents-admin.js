@@ -7,7 +7,7 @@ const auth = require('./auth');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
-function createAgentsAdmin({ configFile, machines, audit }) {
+function createAgentsAdmin({ configFile, machines, isOnline = () => false, audit }) {
   const load = () => JSON.parse(fs.readFileSync(configFile, 'utf8'));
   function save(c) {
     fs.writeFileSync(configFile + '.tmp', JSON.stringify(c, null, 2), { mode: 0o600 });
@@ -17,7 +17,7 @@ function createAgentsAdmin({ configFile, machines, audit }) {
   // [{ name, added, online }]
   function list() {
     const c = load();
-    return (c.agents || []).map((a) => ({ name: a.name, added: a.added || '', online: !!(machines.get(a.name) && machines.get(a.name).online) }))
+    return (c.agents || []).map((a) => ({ name: a.name, added: a.added || '', online: !!((machines.get(a.name) && machines.get(a.name).online) || isOnline(a.name)) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 

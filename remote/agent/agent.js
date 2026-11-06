@@ -41,6 +41,24 @@ const { createArtifacts } = require('./artifacts');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
+const { createCollector, stateSignature } = require('./infra-probe');
+const infraCollector = createCollector({ isNas: false });
+let infraIntervalMs = 60000, infraWatched = [], infraTargets = [], lastInfraAt = 0, lastInfraSig = '', infraBusy = false;
+async function pushInfra(force = false) {
+  if (infraBusy || !ws || ws.readyState !== 1) return;
+  infraBusy = true;
+  try {
+    const rep = await infraCollector.collect({ watched: infraWatched, probeTargets: infraTargets });
+    const sig = stateSignature(rep);
+    const now = Date.now();
+    if (force || sig !== lastInfraSig || now - lastInfraAt >= infraIntervalMs) {
+      lastInfraSig = sig;
+      lastInfraAt = now;
+      sendJSON({ t: 'infra', report: rep });
+    }
+  } catch {} finally { infraBusy = false; }
+}
+setInterval(() => pushInfra(false), 10000).unref();
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -398,6 +416,7 @@ function connect() {
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     nativeArchive.ready();memorySync.reset();
     tick(true);
+    pushInfra(true);
     flushPendingMeshEvents();
   });
   socket.on('message', (raw) => {
@@ -466,6 +485,19 @@ function connect() {
     }
     else if (d.t === 'mesh-triggers' && Array.isArray(d.triggers)) {
       updateMeshFolderTriggers(d.triggers);
+    }
+    else if (d.t === 'infra-cfg') {
+      if (Number.isFinite(+d.intervalSec) && +d.intervalSec >= 5) infraIntervalMs = +d.intervalSec * 1000;
+      if (Array.isArray(d.watched)) infraWatched = d.watched;
+      if (Array.isArray(d.probeTargets)) infraTargets = d.probeTargets;
+      if (d.collectNow) pushInfra(true);
+    }
+    else if (d.t === 'infra-ctl' && typeof d.rid === 'string') {
+      if (!controlOn()) sendJSON({ t: 'infra-ctl-res', rid: d.rid, ok: false, msg: '这台电脑没开远程控制' });
+      else infraCollector.executeControl(d).then(async (r) => {
+        const rep = await infraCollector.collect({ watched: infraWatched, probeTargets: infraTargets }).catch(() => null);
+        sendJSON({ t: 'infra-ctl-res', rid: d.rid, ...r, report: rep || undefined });
+      });
     }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));

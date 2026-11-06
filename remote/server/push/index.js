@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const wp = require('./webpush');
 
-const KINDS = ['approval', 'done', 'ctx', 'mail', 'mesh'];
+const KINDS = ['approval', 'done', 'ctx', 'mail', 'mesh', 'infra'];
 const MAX_SUBS = 20;
 const VISIBLE_MS = 45e3;                  // a page that said "I am on screen" counts as such this long (it repeats every 20 s)
 
