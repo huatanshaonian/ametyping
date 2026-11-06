@@ -72,3 +72,13 @@ export const reportResult = (d) => post('report', d);
 export const flushInbox = (projectId, nodeId) => post('flush', { projectId, nodeId });
 export const requestTransfer = (d) => post('transfer', d);
 export const confirmTransfer = (projectId, transferId, opts = {}) => post('transfer-confirm', { projectId, transferId, ...opts });
+export const trigger = (d) => post(d && d.op === 'remove' ? 'trigger-remove' : 'trigger-upsert', d);
+export const dismissWatchdog = (projectId, nodeId) => post('watchdog-dismiss', { projectId, nodeId });
+export async function getConfig() {
+  try {
+    const r = await fetch('/api/mesh/config');
+    if (r.ok) return await r.json();
+  } catch {}
+  return { ok: false };
+}
+export const saveConfig = (d) => post('config', d);

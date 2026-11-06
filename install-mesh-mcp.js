@@ -98,6 +98,61 @@ function mergeOpenCodeJson(existingObj, { node = process.execPath, script = path
   return out;
 }
 
+function mergeKiroJson(existingObj, { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
+  const out = existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)
+    ? JSON.parse(JSON.stringify(existingObj))
+    : {};
+  if (remove) {
+    if (out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)) {
+      delete out.mcpServers['ame-mesh'];
+    }
+  } else {
+    out.mcpServers = out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)
+      ? out.mcpServers
+      : {};
+    out.mcpServers['ame-mesh'] = {
+      command: node,
+      args: [script, 'mcp'],
+    };
+  }
+  return out;
+}
+
+function installKiro({
+  home = os.homedir(),
+  node = process.execPath,
+  script = path.join(__dirname, 'tools', 'ame-mesh.js'),
+  remove = false,
+} = {}) {
+  const kiroBaseDir = process.env.KIRO_HOME || path.join(home, '.kiro');
+  const kiroSettingsDir = path.join(kiroBaseDir, 'settings');
+  const kiroPath = path.join(kiroSettingsDir, 'mcp.json');
+  if (!Boolean(process.env.KIRO_HOME) && !fs.existsSync(kiroBaseDir)) {
+    return { status: 'skipped', path: kiroPath };
+  }
+  let existing = {};
+  let oldRaw = '';
+  if (fs.existsSync(kiroPath)) {
+    try {
+      oldRaw = fs.readFileSync(kiroPath, 'utf8');
+      const clean = oldRaw.replace(/^\uFEFF/, '').trim();
+      existing = clean ? JSON.parse(clean) : {};
+    } catch {
+      return { status: 'skipped', path: kiroPath, error: 'json_parse_error' };
+    }
+  }
+  if (!fs.existsSync(kiroPath) && remove) {
+    return { status: 'unchanged', path: kiroPath };
+  }
+  const nextObj = mergeKiroJson(existing, { node, script, remove });
+  const nextRaw = JSON.stringify(nextObj, null, 2) + '\n';
+  if (fs.existsSync(kiroPath) && oldRaw === nextRaw) {
+    return { status: 'unchanged', path: kiroPath };
+  }
+  safeAtomicWrite(kiroPath, nextRaw);
+  return { status: 'updated', path: kiroPath };
+}
+
 function safeAtomicWrite(filePath, content) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
@@ -255,13 +310,23 @@ function installAll({
     skipped.push('opencode');
   }
 
+  // 5. Kiro CLI
+  const kiroRes = installKiro({ home, node, script, remove });
+  if (kiroRes.status === 'updated') {
+    updated.push('kiro');
+  } else if (kiroRes.status === 'unchanged') {
+    unchanged.push('kiro');
+  } else {
+    skipped.push('kiro');
+  }
+
   if (!quiet) {
     if (updated.length) console.log(`[ame-mesh-mcp] updated: ${updated.join(', ')}`);
     if (unchanged.length) console.log(`[ame-mesh-mcp] unchanged: ${unchanged.join(', ')}`);
     if (skipped.length) console.log(`[ame-mesh-mcp] skipped: ${skipped.join(', ')}`);
   }
 
-  return { updated, unchanged, skipped };
+  return { updated, unchanged, skipped, kiro: kiroRes };
 }
 
 if (require.main === module) {
@@ -275,5 +340,7 @@ module.exports = {
   mergeAgyJson,
   mergeCodexToml,
   mergeOpenCodeJson,
+  mergeKiroJson,
+  installKiro,
   installAll,
 };

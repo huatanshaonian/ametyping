@@ -3,7 +3,7 @@
 import { h } from '../util.js';
 import * as push from '../push.js';
 
-const KIND_LABEL = { approval: '有确认在等你（审批卡片）', done: '长任务做完了（工作超过 2 分钟后停下）', ctx: '会话的上下文快满了（剩 10%）', mail: '邮件提醒（要办的事、推荐文献）' };
+const KIND_LABEL = { approval: '有确认在等你（审批卡片）', done: '长任务做完了（工作超过 2 分钟后停下）', ctx: '会话的上下文快满了（剩 10%）', mail: '邮件提醒（要办的事、推荐文献）', mesh: '协同项目告警（看门狗异常、计算完成唤醒）' };
 const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 export function panel() {

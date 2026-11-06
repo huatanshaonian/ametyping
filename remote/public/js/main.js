@@ -115,6 +115,6 @@ openDashboard();
 }
 // the installable app and phone notifications (js/push.js); a notification's link opens that session / message
 push.start();
-push.route({ s: (machine, id) => dashboard.openSession(machine, id), mail: (key) => mail.open(key) });
+push.route({ s: (machine, id) => dashboard.openSession(machine, id), mail: (key) => mail.open(key), proj: (val) => projects.open(val ? val.split('&')[0] : null) });
 // just logged in (the login page leaves a mark): the start-up sound, once
 try { if (sessionStorage.getItem('ame.fresh')) { sessionStorage.removeItem('ame.fresh'); sound.play('startup'); } } catch {}

@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createWatchdog, loadMeshConfig } = require('./mesh-watchdog');
 
 const MAX_PROJECTS = 50;
 const MAX_NODES = 60;
@@ -12,6 +13,7 @@ const MAX_EDGES = 120;
 const MAX_INBOX = 30;
 const MAX_TRANSFERS = 100;
 const AUTO_FILE_LIMIT = 50 * 1024 * 1024; // 50 MB threshold before suggesting manual disk handoff
+const TOOLS = ['claude', 'codex', 'opencode', 'agy', 'kiro']; // coding agents a node / spawn may be
 
 const cleanStr = (v, n) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim().slice(0, n) : '');
 const idGen = (prefix = 'p') => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
@@ -71,6 +73,7 @@ function createMesh({
   dispatchControl = null, // async (machineName, payload) => { ok, msg }
   onChange = () => {},
   audit = () => {},
+  notify = null,
 }) {
   const file = path.join(dataDir, 'mesh-projects.json');
   let data = { projects: [] };
@@ -88,6 +91,28 @@ function createMesh({
       fs.renameSync(file + '.tmp', file);
     } catch {}
     onChange();
+  }
+
+  function recordEvent(proj, evt) {
+    if (!proj) return null;
+    proj.events = proj.events || [];
+    const fullEvt = {
+      id: evt.id || idGen('evt'),
+      projectId: proj.id,
+      ts: evt.ts || Date.now(),
+      source: evt.source || 'watchdog',
+      kind: evt.kind || '',
+      machine: evt.machine || '',
+      nodeId: evt.nodeId || null,
+      summary: evt.summary || '',
+      payload: evt.payload || {},
+    };
+    proj.events.push(fullEvt);
+    if (proj.events.length > 200) {
+      proj.events = proj.events.slice(-200);
+    }
+    save();
+    return fullEvt;
   }
 
   // Send a control command (`send` / `launch` / `resume`) to a machine's agent
@@ -209,7 +234,7 @@ function createMesh({
         last: (live && live.last) || n.updatedAt || proj.createdAt,
       };
     });
-    return { ...proj, workspaces, nodes };
+    return { ...proj, workspaces, nodes, triggers: proj.triggers || [], events: (proj.events || []).slice(-50) };
   }
 
   function listProjects() {
@@ -278,6 +303,8 @@ function createMesh({
         nodes: [],
         edges: [],
         transfers: [],
+        triggers: [],
+        events: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -351,7 +378,7 @@ function createMesh({
         sessionId,
         alias: cleanStr(d.alias, 60) || cleanStr(d.role === 'master' ? '主控会话' : '协作节点', 60),
         role: ['master', 'worker', 'peer'].includes(d.role) ? d.role : 'worker',
-        tool: ['claude', 'codex', 'opencode', 'agy'].includes(d.tool) ? d.tool : 'claude',
+        tool: TOOLS.includes(d.tool) ? d.tool : 'claude',
         cwd: cleanStr(d.cwd, 500),
         goal: cleanStr(d.goal, 1000),
         stopCondition: cleanStr(d.stopCondition, 1000),
@@ -368,6 +395,7 @@ function createMesh({
       if (sessionId) node.sessionId = sessionId;
       if (typeof d.alias === 'string' && d.alias.trim()) node.alias = cleanStr(d.alias, 60);
       if (['master', 'worker', 'peer'].includes(d.role)) node.role = d.role;
+      if (TOOLS.includes(d.tool)) node.tool = d.tool;
       if (typeof d.cwd === 'string' && d.cwd.trim()) node.cwd = cleanStr(d.cwd, 500);
       if (typeof d.goal === 'string') node.goal = cleanStr(d.goal, 1000);
       if (typeof d.stopCondition === 'string') node.stopCondition = cleanStr(d.stopCondition, 1000);
@@ -475,10 +503,24 @@ function createMesh({
       save();
       return { ok: false, queued: true, msg: r.msg || '投递失败，已暂存至节点收件箱' };
     }
+    if (watchdog) watchdog.onNodeCommand(proj.id, targetNode.id);
     targetNode.updatedAt = Date.now();
     save();
     return { ok: true, delivered: true, msg: isClosed ? '目标会话已关闭，已在后台自动唤醒并注入消息' : '已直接注入目标会话终端' };
   }
+
+  const watchdog = createWatchdog({
+    dataDir,
+    getProjects: () => data.projects,
+    getMachines: () => (machines || new Map()),
+    liveSessionOf,
+    deliverToNode,
+    sendToAgent,
+    recordEvent: (p, e) => recordEvent(p, e),
+    notify: typeof notify === 'function' ? notify : async () => ({ sent: 0 }),
+    save,
+  });
+  watchdog.start(15000);
 
   // Spawn a new Worker session on a remote machine in an allowed folder and bind it to the project topology
   async function spawnWorker({
@@ -532,6 +574,7 @@ function createMesh({
       cat && cat.aiNote ? `- AI 历史备注：${cat.aiNote}` : null,
       goal ? `- 本阶段目标（Goal）：${goal}` : null,
       stopCondition ? `- 停机与检视边界（Stop & Review Gate）：${stopCondition}` : `- 停机与检视边界：完成指定目标或遇到阻塞时停下，汇报结果并等待主控会话 Review`,
+      '- 长时间计算约定：预计耗时超过 10 分钟的求解或跑批任务，请使用 mesh_run 工具或 `node tools/ame-mesh.js run --label "任务名" -- <命令>` 在后台脱离运行，随后可调用 mesh_report(reviewStatus="blocked") 等待计算结束自动唤醒。',
       prompt ? `\n具体执行指令：\n${prompt}` : null,
     ].filter(Boolean);
     const fullPrompt = contextLines.join('\n').slice(0, 7800);
@@ -560,7 +603,7 @@ function createMesh({
       t: 'launch',
       cwd,
       prompt: fullPrompt,
-      tool: ['codex', 'opencode', 'agy'].includes(tool) ? tool : 'claude',
+      tool: TOOLS.includes(tool) ? tool : 'claude',
       api: api ? { id: api, local: true } : undefined,
     });
     if (!launchRes.ok) {
@@ -647,6 +690,9 @@ function createMesh({
       workerNode.artifacts = artifacts.map((a) => cleanStr(a, 400)).filter(Boolean).slice(0, 20);
     }
     workerNode.updatedAt = Date.now();
+    if (watchdog) {
+      watchdog.onNodeReport(proj.id, workerNode.id, workerNode.reviewStatus);
+    }
 
     // Locate upstream master node via edges or role === 'master'
     const inEdge = proj.edges.find((e) => e.to === workerNode.id && e.type === 'master-worker');
@@ -803,6 +849,8 @@ function createMesh({
       }
     }
     if (dirty) save();
+    syncAgentTriggers(machineName);
+    if (watchdog) watchdog.tick();
   }
 
   // Also bind pending spawns when agent sends `meta` with `cwd`
@@ -823,6 +871,202 @@ function createMesh({
       syncMarksGroup(proj);
       save();
     }
+  }
+
+  function syncAgentTriggers(machineName) {
+    if (!machineName) return;
+    const triggers = [];
+    for (const p of data.projects) {
+      for (const t of p.triggers || []) {
+        if (t.machine === machineName && t.type === 'folder' && t.enabled !== false) {
+          triggers.push({
+            id: t.id,
+            projectId: p.id,
+            machine: t.machine,
+            path: t.path,
+            glob: t.glob,
+            label: t.label,
+          });
+        }
+      }
+    }
+    const m = machines && machines.get(machineName);
+    if (m && m.sockets) {
+      for (const ws of m.sockets) {
+        try { ws.send(JSON.stringify({ t: 'mesh-triggers', triggers })); } catch {}
+      }
+    }
+  }
+
+  function upsertTrigger(projectId, d = {}) {
+    const proj = data.projects.find((x) => x.id === projectId);
+    if (!proj) return { ok: false, msg: '项目不存在' };
+    if (d.type === 'folder' && d.path) {
+      const acc = checkWorkspaceAccess(proj, d.machine, d.path, false);
+      if (!acc.ok) return { ok: false, msg: acc.msg };
+    }
+    proj.triggers = proj.triggers || [];
+    let trig = d.id || d.triggerId ? proj.triggers.find((t) => t.id === (d.id || d.triggerId)) : null;
+    if (!trig) {
+      if (proj.triggers.length >= 50) return { ok: false, msg: '触发器数量已达上限 (50)' };
+      trig = {
+        id: idGen('trig'),
+        projectId: proj.id,
+        type: d.type === 'process' ? 'process' : 'folder',
+        machine: cleanStr(d.machine, 60),
+        targetNodeId: cleanStr(d.targetNodeId, 40) || null,
+        label: cleanStr(d.label, 80) || cleanStr(d.path, 120) || '触发器',
+        path: cleanStr(d.path, 500),
+        glob: cleanStr(d.glob, 80) || '*',
+        enabled: d.enabled !== false,
+        createdAt: Date.now(),
+        lastTriggeredAt: null,
+        fireTimestamps: [],
+      };
+      proj.triggers.push(trig);
+    } else {
+      if (d.type) trig.type = d.type === 'process' ? 'process' : 'folder';
+      if (d.machine) trig.machine = cleanStr(d.machine, 60);
+      if (d.targetNodeId !== undefined) trig.targetNodeId = cleanStr(d.targetNodeId, 40) || null;
+      if (d.label) trig.label = cleanStr(d.label, 80);
+      if (d.path) trig.path = cleanStr(d.path, 500);
+      if (d.glob) trig.glob = cleanStr(d.glob, 80);
+      if (d.enabled !== undefined) trig.enabled = !!d.enabled;
+    }
+    save();
+    syncAgentTriggers(trig.machine);
+    return { ok: true, trigger: trig, project: enrichProject(proj) };
+  }
+
+  function removeTrigger(projectId, triggerId) {
+    const proj = data.projects.find((x) => x.id === projectId);
+    if (!proj) return { ok: false, msg: '项目不存在' };
+    const trig = (proj.triggers || []).find((t) => t.id === triggerId);
+    const m = trig ? trig.machine : null;
+    proj.triggers = (proj.triggers || []).filter((t) => t.id !== triggerId);
+    save();
+    if (m) syncAgentTriggers(m);
+    return { ok: true, project: enrichProject(proj) };
+  }
+
+  const recentEventDebounce = new Map();
+  async function emitEvent(d) {
+    if (!d || typeof d !== 'object') return { ok: false, msg: '无效事件' };
+    const nowTs = Date.now();
+    // Fast-path deduplication (5 seconds)
+    const dedupeKey = `${d.projectId || ''}|${d.triggerId || ''}|${d.source || ''}|${d.machine || ''}|${d.sessionId || ''}|${d.nodeId || ''}|${d.kind || ''}|${d.label || ''}|${(d.files || []).join(',')}`;
+    const lastSeen = recentEventDebounce.get(dedupeKey) || 0;
+    if (nowTs - lastSeen < 5000) {
+      return { ok: true, deduped: true };
+    }
+    recentEventDebounce.set(dedupeKey, nowTs);
+    if (recentEventDebounce.size > 500) {
+      for (const [k, v] of recentEventDebounce.entries()) {
+        if (nowTs - v > 60000) recentEventDebounce.delete(k);
+      }
+    }
+
+    // Locate target project
+    let proj = d.projectId ? data.projects.find((p) => p.id === d.projectId) : null;
+    if (!proj && d.sessionId && d.machine) {
+      proj = data.projects.find((p) => (p.nodes || []).some((n) => n.machine === d.machine && n.sessionId === d.sessionId));
+    }
+    if (!proj && d.cwd && d.machine) {
+      const normCwd = normFolderPath(d.cwd);
+      proj = data.projects.find((p) =>
+        (p.nodes || []).some((n) => n.machine === d.machine && normFolderPath(n.cwd) === normCwd) ||
+        (p.workspaces || []).some((w) => w.machine === d.machine && normFolderPath(w.path) === normCwd)
+      );
+    }
+    if (!proj && data.projects.length === 1) {
+      proj = data.projects[0];
+    }
+    if (!proj) return { ok: false, msg: '未找到匹配的项目' };
+
+    // Rate-limit if bound to trigger
+    let trig = null;
+    if (d.triggerId) {
+      trig = (proj.triggers || []).find((t) => t.id === d.triggerId);
+      if (trig) {
+        if (trig.enabled === false) return { ok: false, msg: '触发器已禁用' };
+        const maxPerHour = (watchdog && watchdog.getConfig().triggerMaxPerHour) || 6;
+        trig.fireTimestamps = (trig.fireTimestamps || []).filter((t) => nowTs - t <= 3600e3);
+        if (trig.fireTimestamps.length >= maxPerHour) {
+          return { ok: false, msg: `触发器已达每小时上限 (${maxPerHour}次)` };
+        }
+        trig.fireTimestamps.push(nowTs);
+        trig.lastTriggeredAt = nowTs;
+      }
+    }
+
+    // Locate target node
+    let targetNode = null;
+    if (d.targetNodeId) {
+      targetNode = (proj.nodes || []).find((n) => n.id === d.targetNodeId);
+    }
+    if (!targetNode && d.nodeId) {
+      targetNode = (proj.nodes || []).find((n) => n.id === d.nodeId);
+    }
+    if (!targetNode && trig && trig.targetNodeId) {
+      targetNode = (proj.nodes || []).find((n) => n.id === trig.targetNodeId);
+    }
+    if (!targetNode && d.sessionId && d.machine) {
+      targetNode = (proj.nodes || []).find((n) => n.machine === d.machine && n.sessionId === d.sessionId);
+    }
+    if (!targetNode) {
+      targetNode = (proj.nodes || []).find((n) => n.role === 'master') ||
+                   (proj.nodes || []).find((n) => n.machine === d.machine) ||
+                   (proj.nodes || [])[0];
+    }
+
+    // Record event
+    const summary = d.summary || (d.source === 'run'
+      ? `计算作业「${d.label || '后台作业'}」退出 (${d.exitCode})`
+      : d.source === 'folder'
+      ? `目录「${d.path || ''}」检测到文件就绪 (${(d.files || []).join(', ')})`
+      : '外部事件');
+    const evt = {
+      id: idGen('evt'),
+      projectId: proj.id,
+      ts: nowTs,
+      source: d.source || 'run',
+      kind: d.kind || '',
+      machine: d.machine || (targetNode ? targetNode.machine : ''),
+      nodeId: targetNode ? targetNode.id : null,
+      summary,
+      payload: { ...d },
+    };
+    recordEvent(proj, evt);
+
+    // Format envelope
+    let envelopeText = '';
+    const machLabel = d.machine || (targetNode ? targetNode.machine : '');
+    if (d.source === 'run') {
+      envelopeText = `[AmeMesh 计算进程结束事件 | 项目：${proj.name} | 机器：${machLabel}]\n作业名称：${d.label || '后台作业'}\n退出码：${d.exitCode}（耗时 ${Math.round((d.durationMs || 0) / 1000)}s）\n${d.tail ? '日志末尾：\n' + d.tail + '\n' : ''}请检查计算结果并继续后续处理或调用 mesh_report 汇报。`;
+    } else if (d.source === 'folder') {
+      envelopeText = `[AmeMesh 目录文件就绪事件 | 项目：${proj.name} | 机器：${machLabel}]\n监听目录：${d.path}\n新增/变更文件：${(d.files || []).join(', ')}\n请读取上述文件继续任务。`;
+    } else {
+      envelopeText = `[AmeMesh 外部事件 | 项目：${proj.name}]\n${summary}`;
+    }
+
+    if (targetNode) {
+      if (targetNode.reviewStatus === 'blocked') {
+        targetNode.reviewStatus = 'running';
+      }
+      await deliverToNode(proj, targetNode, envelopeText);
+    }
+
+    if (d.source === 'run' && d.exitCode !== 0 && typeof notify === 'function') {
+      notify({
+        title: `后台作业异常退出 (${d.exitCode}) · ${d.label || '后台作业'}`,
+        body: `${proj.name} (${machLabel})`,
+        tag: `run-${evt.id}`,
+        url: `/#proj=${proj.id}`,
+      });
+    }
+
+    save();
+    return { ok: true, event: evt, delivered: !!targetNode };
   }
 
   // Flush manual-wake or queued inbox messages on user demand
@@ -849,6 +1093,10 @@ function createMesh({
       const machine = url.searchParams.get('machine') || '';
       const sessionId = url.searchParams.get('sessionId') || '';
       json(res, 200, scopedViewFor({ projectId, machine, sessionId }));
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/config') {
+      json(res, 200, { ok: true, config: watchdog.getConfig() });
       return true;
     }
     if (req.method !== 'POST' || !p.startsWith('/api/mesh/')) return false;
@@ -912,6 +1160,26 @@ function createMesh({
       json(res, 200, r);
       return true;
     }
+    if (p === '/api/mesh/config') {
+      json(res, 200, { ok: true, config: watchdog.updateConfig(d) });
+      return true;
+    }
+    if (p === '/api/mesh/watchdog-dismiss') {
+      json(res, 200, watchdog.dismissAlert(d.projectId, d.nodeId));
+      return true;
+    }
+    if (p === '/api/mesh/trigger-upsert') {
+      json(res, 200, upsertTrigger(d.projectId, d));
+      return true;
+    }
+    if (p === '/api/mesh/trigger-remove') {
+      json(res, 200, removeTrigger(d.projectId, d.triggerId));
+      return true;
+    }
+    if (p === '/api/mesh/event') {
+      json(res, 200, await emitEvent(d));
+      return true;
+    }
     return false;
   }
 
@@ -968,6 +1236,29 @@ function createMesh({
       if (op === 'delete-project') {
         return reply(deleteProject(d.projectId || d.id));
       }
+      if (op === 'event') {
+        return reply(await emitEvent({ ...d, fromMachine: d.fromMachine || machineName }));
+      }
+      if (op === 'trigger') {
+        if (d.action === 'list') {
+          const proj = d.projectId ? data.projects.find((p) => p.id === d.projectId) : null;
+          const trigs = proj ? (proj.triggers || []) : data.projects.flatMap((p) => p.triggers || []);
+          return reply({ ok: true, triggers: trigs });
+        }
+        if (d.action === 'add') {
+          return reply(upsertTrigger(d.projectId, d));
+        }
+        if (d.action === 'remove') {
+          return reply(removeTrigger(d.projectId, d.triggerId));
+        }
+        if (d.action === 'pause') {
+          return reply(upsertTrigger(d.projectId, { id: d.triggerId, enabled: false }));
+        }
+        if (d.action === 'resume') {
+          return reply(upsertTrigger(d.projectId, { id: d.triggerId, enabled: true }));
+        }
+        return reply({ ok: false, msg: '未知的 trigger 操作：' + String(d.action) });
+      }
       return reply({ ok: false, msg: '未知的 mesh 操作：' + String(op) });
     } catch (e) {
       return reply({ ok: false, msg: String((e && e.message) || '内部错误').slice(0, 200) });
@@ -996,7 +1287,13 @@ function createMesh({
     fromAgentResult,
     fromAgentRpc,
     handle,
+    upsertTrigger,
+    removeTrigger,
+    syncAgentTriggers,
+    emitEvent,
+    recordEvent,
+    watchdog,
   };
 }
 
-module.exports = { createMesh, isSubPath, formatEnvelope };
+module.exports = { createMesh, isSubPath, formatEnvelope, createWatchdog, loadMeshConfig };

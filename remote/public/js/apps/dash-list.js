@@ -131,9 +131,11 @@ export function createList({ el, current, selected, onSelect, onNote }) {
       ? `<span class="provs" title="Kiro${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov kiro"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
       : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
     const mn = mesh.nodeOfKey(key);
+    const wdBadge = mn && mn.node.watchdogAlert ? `<span class="mrole wd-alert" title="看门狗告警：${esc(mn.node.watchdogAlert.label)}">⚠️ ${esc(mn.node.watchdogAlert.label)}</span>` : '';
     const meshBadge = mn
       ? `<span class="mrole ${esc(mn.node.role)}" title="所属项目：${esc(mn.project.name)}">${mn.node.role === 'master' ? 'Master' : mn.node.role === 'cowork' ? 'Cowork' : 'Worker'}</span>` +
-        (mn.node.reviewStatus === 'waiting_review' ? '<span class="mrole rev" title="已达成阶段目标，等待检视">待检视</span>' : '')
+        (mn.node.reviewStatus === 'waiting_review' ? '<span class="mrole rev" title="已达成阶段目标，等待检视">待检视</span>' : '') +
+        wdBadge
       : '';
     const nmHtml = (mk.starred ? '<span class="star">★</span>' : '') + badge + esc(s.label) + meshBadge + (s.bg ? '<span class="bgb" title="Claude Code 的后台会话：不依赖终端窗口，关掉窗口也继续运行">后台</span>' : '') + (mk.pinned ? '<span class="pin">置顶</span>' : '') + agentHtml(s) +
       (left != null && left <= CTX_LOW ? `<span class="cxb">上下文 ${left}%</span>` : '') + (n ? `<span class="pb">待确认 ${n}</span>` : '');
@@ -186,6 +188,7 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     sub.push({ label: '新建群组…', onClick: () => newGroup(key) });
     if (mk.group) sub.push({ label: '移出群组', onClick: () => marks.set(key, { group: '' }).then(done) });
     const mn = mesh.nodeOfKey(key);
+    const wdBadge = mn && mn.node.watchdogAlert ? `<span class="mrole wd-alert" title="看门狗告警：${esc(mn.node.watchdogAlert.label)}">⚠️ ${esc(mn.node.watchdogAlert.label)}</span>` : '';
     return [
       { label: '打开', onClick: () => onSelect(key) },
       ...(mn ? [{ label: `打开所属项目拓扑（${mn.project.name}）`, onClick: () => projects.open(mn.project.id) }] : []),
