@@ -218,4 +218,51 @@ describe('infra monitor & topology', () => {
     assert.equal(s1, s2);
     assert.notEqual(s1, s3);
   });
+
+  it('compensates event-loop stalls and records node-online recovery after real offline', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
+    try {
+      const notifications = [];
+      const infra = createInfra({
+        dataDir: tmp,
+        localNas: false,
+        offlineMs: 60000,
+        notify: (msg) => notifications.push(msg),
+      });
+
+      infra.ingestReport('aws1', {
+        uptimeSec: 1000,
+        services: [{ name: 'danted', state: 'running' }],
+      });
+
+      const t0 = Date.now();
+      // Simulate a 180s server event-loop stall (e.g. heavy SQLite backup):
+      // sweepOffline should compensate lastSeen and NOT trigger a false node-offline alarm
+      const stalled = infra.sweepOffline(t0 + 180000);
+      assert.equal(stalled, false);
+      assert.equal(notifications.length, 0);
+
+      // Now advance in normal 15s increments past offlineMs (60s) without new heartbeats
+      let cur = t0 + 180000;
+      for (let i = 0; i < 5; i++) {
+        cur += 15000;
+        infra.sweepOffline(cur);
+      }
+      assert.equal(notifications.length, 1);
+      assert.match(notifications[0].body, /心跳超时离线/);
+
+      // Next report from aws1 should record node-online recovery event even though prev.report existed
+      infra.ingestReport('aws1', {
+        uptimeSec: 1200,
+        services: [{ name: 'danted', state: 'running' }],
+      });
+      const events = infra.snapshot().events;
+      assert.equal(events[0].kind, 'node-online');
+      assert.match(events[0].summary, /已恢复在线/);
+
+      infra.close();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

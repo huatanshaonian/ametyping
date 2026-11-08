@@ -368,12 +368,16 @@ execute_action() {
 
 parse_server_response() {
   resp="$1"
+  from_poll="${2:-}"
   [ -z "$resp" ] && return
   iv=$(printf '%s' "$resp" | sed -n 's/.*"intervalSec":\([0-9]*\).*/\1/p' | head -n 1)
   [ -n "$iv" ] && [ "$iv" -ge 5 ] 2>/dev/null && echo "$iv" > "$INTERVAL_FILE"
 
   if printf '%s' "$resp" | grep -q '"collectNow":true'; then
     echo 1 > "$FORCE_FILE"
+    if [ "$from_poll" = "1" ]; then
+      send_report >/dev/null 2>&1 || true
+    fi
   fi
 
   # Extract single-action if present: {"kind":"...","target":"...","op":"...","rid":"..."}
@@ -391,11 +395,13 @@ parse_server_response() {
 send_report() {
   rep=$(build_report_json)
   payload="{\"role\":\"$(json_escape "$ROLE")\",\"report\":$rep}"
-  resp=$(curl -fsSL -m 10 -X POST "$SERVER/api/infra/report" \
+  resp=$(curl -fsSL --connect-timeout 6 -m 15 --retry 1 --retry-delay 2 -X POST "$SERVER/api/infra/report" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d "$payload" 2>/dev/null)
-  parse_server_response "$resp"
+    -d "$payload" 2>/dev/null) || return 1
+  printf '%s' "$resp" | grep -q '"ok":true' || return 1
+  parse_server_response "$resp" "0"
+  return 0
 }
 
 if [ "$ONCE" -eq 1 ]; then
@@ -407,9 +413,9 @@ fi
 # Background long-poll loop for instant (<1s) remote control & fast-mode wakeup
 (
   while :; do
-    resp=$(curl -fsSL -m 30 "$SERVER/api/infra/poll" -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+    resp=$(curl -fsSL --connect-timeout 6 -m 32 "$SERVER/api/infra/poll" -H "Authorization: Bearer $TOKEN" 2>/dev/null)
     if [ -n "$resp" ]; then
-      parse_server_response "$resp"
+      parse_server_response "$resp" "1"
     else
       sleep 5
     fi
@@ -435,9 +441,13 @@ while :; do
   fi
 
   if [ "$force" -eq 1 ] || [ "$cur_sig" != "$PREV_SIG" ] || [ $((now - LAST_SENT_AT)) -ge "$interval" ]; then
-    PREV_SIG="$cur_sig"
-    LAST_SENT_AT=$now
-    send_report
+    if send_report; then
+      PREV_SIG="$cur_sig"
+      LAST_SENT_AT=$(date +%s)
+    else
+      # On transient failure, retry after ~10s instead of waiting a full heartbeat cycle
+      LAST_SENT_AT=$((now - interval + 10))
+    fi
   fi
-  sleep 5
+  sleep 15
 done

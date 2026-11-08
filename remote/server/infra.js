@@ -10,7 +10,8 @@ const crypto = require('crypto');
 const auth = require('./auth');
 const { createCollector, stateSignature } = require('../agent/infra-probe');
 
-const OFFLINE_MS = 150 * 1000;      // 2.5 heartbeats (60s * 2.5) without report -> offline
+const OFFLINE_MS = 5 * 60 * 1000;   // 5 heartbeats (60s * 5) without report -> offline
+const STALL_MS = 45 * 1000;         // event-loop stall threshold (e.g. SQLite backup pause)
 const ALERT_COOLDOWN_MS = 10 * 60e3; // 10 min cooldown per alert key
 const MAX_EVENTS = 80;
 
@@ -90,6 +91,7 @@ function createInfra({
   notify = null,
   localNas = process.platform === 'linux',
   nasRoot = '/volume2/docker/ame-remote',
+  offlineMs = OFFLINE_MS,
 } = {}) {
   const file = path.join(dataDir, 'infra.json');
   let cfg = { nodes: DEFAULT_NODES.map((n) => ({ ...n, watched: [...n.watched] })), links: DEFAULT_NODES ? DEFAULT_LINKS.map((l) => ({ ...l })) : [], events: [] };
@@ -284,6 +286,10 @@ function createInfra({
     const prevRep = prev && prev.report;
     const wasOnline = prev ? prev.online : false;
 
+    if (!wasOnline && prev && prev.lastSeen > 0) {
+      recordEvent(nodeId, 'node-online', `节点 ${nodeCfg.label || nodeId} 已恢复在线`, 'ok');
+    }
+
     // Detect state transitions on watched services & containers
     if (prevRep) {
       const prevSvc = new Map((prevRep.services || []).map((s) => [s.name, s.state]));
@@ -310,8 +316,6 @@ function createInfra({
           }
         }
       }
-    } else if (!wasOnline && prev && prev.lastSeen > 0) {
-      recordEvent(nodeId, 'node-online', `节点 ${nodeCfg.label || nodeId} 已恢复在线`, 'ok');
     }
 
     const sig = stateSignature(rep);
@@ -324,12 +328,25 @@ function createInfra({
     onChange();
   }
 
+  function touchNode(nodeId) {
+    const rt = runtime.get(nodeId);
+    if (!rt) return;
+    const wasOnline = rt.online;
+    rt.lastSeen = Date.now();
+    rt.online = true;
+    if (!wasOnline && rt.lastSeen > 0) {
+      const nodeCfg = ensureNode(nodeId);
+      recordEvent(nodeId, 'node-online', `节点 ${nodeCfg.label || nodeId} 已恢复在线`, 'ok');
+      onChange();
+    }
+  }
+
   function isNodeOnline(nodeId) {
     const m = machines.get(nodeId);
     if (m && m.online) return true;
     const rt = runtime.get(nodeId);
     if (!rt || !rt.lastSeen) return false;
-    return Date.now() - rt.lastSeen <= OFFLINE_MS;
+    return Date.now() - rt.lastSeen <= offlineMs;
   }
 
   // Local NAS collector
@@ -346,19 +363,35 @@ function createInfra({
     } catch {}
   }
 
-  // Periodic sweep: check offline transitions and run local NAS collector
-  const sweepTimer = setInterval(() => {
-    const now = Date.now();
+  // Periodic sweep: check offline transitions with event-loop stall compensation
+  let lastSweepAt = Date.now();
+  function sweepOffline(now = Date.now()) {
+    const elapsed = now - lastSweepAt;
+    lastSweepAt = now;
+    if (elapsed > STALL_MS) {
+      for (const rt of runtime.values()) {
+        if (rt.online && rt.lastSeen > 0) {
+          rt.lastSeen = Math.min(now, rt.lastSeen + elapsed);
+        }
+      }
+      return false;
+    }
     let changed = false;
     for (const [id, rt] of runtime.entries()) {
-      if (rt.online && now - rt.lastSeen > OFFLINE_MS && !(machines.get(id) && machines.get(id).online)) {
+      if (rt.online && now - rt.lastSeen > offlineMs && !(machines.get(id) && machines.get(id).online)) {
         rt.online = false;
         const n = cfg.nodes.find((x) => x.id === id);
-        recordEvent(id, 'node-offline', `节点 ${(n && n.label) || id} 心跳超时离线`, 'err');
+        const level = (n && n.role === 'workstation') ? 'warn' : 'err';
+        recordEvent(id, 'node-offline', `节点 ${(n && n.label) || id} 心跳超时离线`, level);
         changed = true;
       }
     }
     if (changed) onChange();
+    return changed;
+  }
+
+  const sweepTimer = setInterval(() => {
+    setImmediate(() => sweepOffline(Date.now()));
   }, 15000);
   if (sweepTimer.unref) sweepTimer.unref();
 
@@ -634,6 +667,7 @@ function createInfra({
     }
 
     if (req.method === 'GET' && p === '/api/infra/poll') {
+      touchNode(nodeId);
       const queued = queuedActions.get(nodeId);
       if (queued && queued.length) {
         queuedActions.delete(nodeId);
@@ -643,9 +677,10 @@ function createInfra({
       if (!longPolls.has(nodeId)) longPolls.set(nodeId, new Set());
       const polls = longPolls.get(nodeId);
       const waiter = {
-        send: (payload) => { try { json(res, 200, payload); } catch {} },
+        send: (payload) => { touchNode(nodeId); try { json(res, 200, payload); } catch {} },
         timer: setTimeout(() => {
           polls.delete(waiter);
+          touchNode(nodeId);
           const nodeCfg = ensureNode(nodeId);
           try {
             json(res, 200, {
@@ -837,8 +872,9 @@ function createInfra({
     probeTargetsFor,
     ensureNode,
     collectNasNow,
+    sweepOffline,
     close,
   };
 }
 
-module.exports = { createInfra, DEFAULT_NODES, DEFAULT_LINKS };
+module.exports = { createInfra, DEFAULT_NODES, DEFAULT_LINKS, OFFLINE_MS };
