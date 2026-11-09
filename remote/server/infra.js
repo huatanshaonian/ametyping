@@ -22,7 +22,7 @@ const DEFAULT_NODES = [
     role: 'router',
     host: '192.168.114.1',
     tier: 1,
-    watched: ['sing-box', 'tailscaled', 'dnsmasq'],
+    watched: ['sing-box', 'singbox-watchdog', 'tailscale', 'dnsmasq'],
   },
   {
     id: 'huatanshaonian',
@@ -76,8 +76,35 @@ const DEFAULT_LINKS = [
   { id: 'l_nas_gcp_claude', from: 'nas', to: 'gcp1', label: 'Claude HTTP :18888', service: 'claude-gcp-proxy', probeHost: '100.104.233.112', probePort: 18888 },
   { id: 'l_nas_gcp_socks', from: 'nas', to: 'gcp1', label: 'Tailscale SOCKS5 :1080', service: 'danted', probeHost: '100.104.233.112', probePort: 1080 },
   { id: 'l_openwrt_aws', from: 'openwrt', to: 'aws1', label: 'Sing-box / Tailscale', service: 'sing-box', probeHost: '100.120.53.46', probePort: 1080 },
-  { id: 'l_openwrt_gcp', from: 'openwrt', to: 'gcp1', label: 'Tailscale 互联', service: 'tailscaled', probeHost: '100.104.233.112', probePort: 1080 },
+  { id: 'l_openwrt_gcp', from: 'openwrt', to: 'gcp1', label: 'Tailscale 互联', service: 'tailscale', probeHost: '100.104.233.112', probePort: 1080 },
 ];
+
+// Display metadata for discovered services. Probes report raw unit names only; the
+// server owns labels and ports so they can change without redeploying probes.
+const SERVICE_META = {
+  danted: { label: 'Dante SOCKS5 代理 (danted)', port: 1080 },
+  'claude-gcp-proxy': { label: 'Claude HTTP 代理 (tinyproxy)', port: 18888 },
+  frps: { label: 'FRP 穿透服务端 (frps)', port: 7000 },
+  'rustdesk-hbbs': { label: 'RustDesk ID 服务 (hbbs)', port: 21116 },
+  'rustdesk-hbbr': { label: 'RustDesk 中继服务 (hbbr)', port: 21117 },
+  nginx: { label: 'Nginx Web/反代', port: 443 },
+  tailscaled: { label: 'Tailscale 节点服务' },
+  vnstat: { label: 'vnStat 流量统计' },
+  magpie: { label: 'Magpie Web 服务', port: 3430 },
+  'ame-probe': { label: 'AmeTyping 监控探针' },
+  'sing-box': { label: 'Sing-box 代理', port: 9090 },
+  'singbox-watchdog': { label: 'Sing-box 断流自愈守护' },
+  tailscale: { label: 'Tailscale 路由节点' },
+  dnsmasq: { label: 'Dnsmasq (DHCP/DNS)', port: 53 },
+  odhcpd: { label: 'odhcpd (DHCPv6/RA)' },
+  uhttpd: { label: 'LuCI 管理界面 (uhttpd)', port: 443 },
+  dropbear: { label: 'Dropbear SSH', port: 22 },
+  wpad: { label: 'Wi-Fi (hostapd)' },
+  firewall: { label: '防火墙 (fw4)' },
+  'adblock-fast': { label: '广告拦截 (adblock-fast)' },
+  sysntpd: { label: 'NTP 时间同步' },
+  cron: { label: '计划任务 (cron)' },
+};
 
 const str = (v, n = 80) => String(v == null ? '' : v).trim().slice(0, n);
 
@@ -109,6 +136,18 @@ function createInfra({
       };
     }
   } catch {}
+  // The OpenWrt probe now reports procd service names; its init service is "tailscale".
+  for (const n of cfg.nodes) {
+    if (n.role !== 'router') continue;
+    for (const list of [n.watched, n.muted]) {
+      const i = list.indexOf('tailscaled');
+      if (i >= 0) { if (list.includes('tailscale')) list.splice(i, 1); else list[i] = 'tailscale'; }
+    }
+  }
+  for (const l of cfg.links) {
+    const from = cfg.nodes.find((n) => n.id === l.from);
+    if (l.service === 'tailscaled' && from && from.role === 'router') l.service = 'tailscale';
+  }
 
   function save() {
     try {
@@ -182,14 +221,19 @@ function createInfra({
 
   function sanitizeReport(d) {
     if (!d || typeof d !== 'object') return {};
-    const services = Array.isArray(d.services) ? d.services.slice(0, 60).map((s) => ({
-      name: str(s && s.name, 64),
-      label: str((s && s.label) || (s && s.name), 80),
-      state: ['running', 'stopped', 'degraded'].includes(s && s.state) ? s.state : 'stopped',
-      kind: str((s && s.kind) || 'service', 20),
-      port: +(s && s.port) || undefined,
-      detail: s && s.detail ? str(s.detail, 120) : undefined,
-    })).filter((s) => s.name) : [];
+    const services = Array.isArray(d.services) ? d.services.slice(0, 60).map((s) => {
+      const name = str(s && s.name, 64);
+      const meta = Object.prototype.hasOwnProperty.call(SERVICE_META, name) ? SERVICE_META[name] : null;
+      const rawLabel = str(s && s.label, 80);
+      return {
+        name,
+        label: (rawLabel && rawLabel !== name) ? rawLabel : ((meta && meta.label) || name),
+        state: ['running', 'stopped', 'degraded'].includes(s && s.state) ? s.state : 'stopped',
+        kind: str((s && s.kind) || 'service', 20),
+        port: +(s && s.port) || (meta && meta.port) || undefined,
+        detail: s && s.detail ? str(s.detail, 120) : undefined,
+      };
+    }).filter((s) => s.name) : [];
 
     const containers = Array.isArray(d.containers) ? d.containers.slice(0, 50).map((c) => ({
       name: str(c && c.name, 64),
@@ -283,7 +327,8 @@ function createInfra({
           cntMap.set(cname, item);
         }
       } else if (w && !svcMap.has(w)) {
-        const item = { name: w, label: w, state: 'stopped', kind: 'service' };
+        const meta = Object.prototype.hasOwnProperty.call(SERVICE_META, w) ? SERVICE_META[w] : null;
+        const item = { name: w, label: (meta && meta.label) || w, state: 'stopped', kind: 'service', port: (meta && meta.port) || undefined };
         rep.services.push(item);
         svcMap.set(w, item);
       }

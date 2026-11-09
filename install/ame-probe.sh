@@ -37,12 +37,106 @@ WATCHED_FILE="$TMP_DIR/watched"
 TARGETS_FILE="$TMP_DIR/targets"
 FORCE_FILE="$TMP_DIR/force"
 echo "60" > "$INTERVAL_FILE"
-echo "" > "$WATCHED_FILE"
+# The server delivers the watch list on each report/poll; AME_WATCHED seeds it (e.g. for --once).
+echo "${AME_WATCHED:-}" > "$WATCHED_FILE"
 echo "" > "$TARGETS_FILE"
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/ /g' | tr -d '\r\n'
 }
+
+valid_unit_name() {
+  case "$1" in ""|*[!A-Za-z0-9._@-]*|.*) return 1 ;; esac
+  return 0
+}
+
+# Generic systemd noise filter (OS plumbing, not user services)
+sd_ignored() {
+  case "$1" in
+    systemd-*|dbus*|getty@*|serial-getty@*|multipathd|ModemManager|networkd-*|polkit|rsyslog|snapd*|udisks2|unattended-*|user@*|user-runtime-dir@*|accounts-daemon|cron|irqbalance|packagekit|acpid|chrony|fwupd*|blk-availability|console-setup|dmesg|finalrd|grub-*|keyboard-setup|lvm2-*|open-iscsi|pollinate|setvtrgb|ua-*|uuidd|vgauth|apport*|ec2-*|google-guest-*|google-osconfig-*|snap.amazon-ssm*|ssh|sshd|pipewire*|wireplumber|xdg-*|gpg-agent*|at-spi*|gvfs*|evolution-*|tracker-*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Users whose systemd user manager keeps running without a login session
+linger_users() {
+  command -v loginctl >/dev/null 2>&1 || return 0
+  if [ "$(id -u)" -ne 0 ]; then
+    [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = "yes" ] && id -un
+    return 0
+  fi
+  for lu in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    valid_unit_name "$lu" || continue
+    [ "$(loginctl show-user "$lu" -p Linger --value 2>/dev/null)" = "yes" ] && echo "$lu"
+  done
+}
+
+user_systemctl() {
+  lu="$1"; shift
+  if [ "$(id -u)" -eq 0 ]; then systemctl --machine="$lu@" --user "$@"
+  else systemctl --user "$@"; fi
+}
+
+# procd backend (OpenWrt): reads `ubus call service list` on stdin, prints name|state|detail.
+# Duplicate = a process with an instance's exact command line that is neither the instance
+# nor a descendant of it (or of another duplicate), i.e. an orphan left outside procd.
+PROCD_UC="$TMP_DIR/procd.uc"
+if command -v ubus >/dev/null 2>&1 && command -v ucode >/dev/null 2>&1; then
+cat > "$PROCD_UC" <<'UC'
+import * as fs from "fs";
+let svc = json(fs.stdin.read("all") || "{}") || {};
+let watched = {};
+for (let w in split(getenv("AME_WATCHED") || "", /[ \t\r\n]+/)) if (length(w)) watched[w] = true;
+let ppid = {}, cmd = {};
+for (let e in (fs.lsdir("/proc") || [])) {
+	if (!match(e, /^[0-9]+$/)) continue;
+	let st = fs.readfile("/proc/" + e + "/stat");
+	let c = fs.readfile("/proc/" + e + "/cmdline");
+	if (!st || !c) continue;
+	let f = split(substr(st, rindex(st, ")") + 2), " ");
+	ppid[e] = f[1];
+	cmd[e] = join(" ", filter(split(c, "\0"), (x) => length(x) > 0));
+}
+function has_ancestor(pid, set) {
+	let p = ppid[pid], n = 0;
+	while (p && p != "0" && n < 64) {
+		if (set[p]) return true;
+		p = ppid[p];
+		n++;
+	}
+	return false;
+}
+for (let name in sort(keys(svc))) {
+	let inst = svc[name]?.instances || {};
+	let ids = keys(inst);
+	if (!length(ids)) {
+		if (watched[name]) print(name, "|-|\n");
+		continue;
+	}
+	let run = 0, roots = {}, cmds = {}, bad = [];
+	for (let k in ids) {
+		let i = inst[k];
+		if (i.running) { run++; roots["" + i.pid] = true; }
+		else if (i.exit_code != null && i.exit_code != 0) push(bad, k + " exit " + i.exit_code);
+		if (type(i.command) == "array") cmds[join(" ", i.command)] = true;
+	}
+	if (!run && !length(bad) && !watched[name]) continue;
+	let same = {};
+	for (let p in keys(cmd)) if (cmds[cmd[p]]) same[p] = true;
+	let dup = 0;
+	for (let p in keys(same))
+		if (!roots[p] && !has_ancestor(p, roots) && !has_ancestor(p, same)) dup++;
+	let state = "running", notes = [];
+	if (!run && !length(bad)) push(notes, "一次性任务已完成");
+	else if (!run) state = "stopped";
+	else if (run < length(ids)) { state = "degraded"; push(notes, run + "/" + length(ids) + " 个实例运行"); }
+	if (dup) { state = (state == "stopped") ? state : "degraded"; push(notes, dup + " 个重复实例运行中"); }
+	for (let b in bad) push(notes, b);
+	print(name, "|", state, "|", join("，", notes), "\n");
+}
+UC
+fi
 
 # Sample CPU % delta over /proc/stat
 PREV_IDLE=0
@@ -132,76 +226,62 @@ collect_services_json() {
     if [ -z "$out" ]; then out="$item"; else out="$out,$item"; fi
   }
 
-  if [ -f /etc/openwrt_release ]; then
-    # OpenWrt router discovery
-    ps_out=$(ps w 2>/dev/null || ps 2>/dev/null)
-    if printf '%s\n' "$ps_out" | grep -v grep | grep -q '/usr/bin/sing-box'; then
-      add_svc "sing-box" "Sing-box 透明代理" "running" "init" 9090
-    else
-      add_svc "sing-box" "Sing-box 透明代理" "stopped" "init" 9090
-    fi
-    # Count top-level instances only: the script's pipeline/subshells share its cmdline.
-    wd_pids=$(pgrep -f '/etc/sing-box/watchdog.sh' 2>/dev/null)
-    wd_cnt=0
-    for wd_p in $wd_pids; do
-      wd_pp=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$wd_p/status" 2>/dev/null)
-      [ -n "$wd_pp" ] || continue
-      case " $(echo $wd_pids) " in *" $wd_pp "*) ;; *) wd_cnt=$((wd_cnt + 1)) ;; esac
-    done
-    if [ "$wd_cnt" -gt 1 ]; then
-      add_svc "singbox-watchdog" "Sing-box 断流自愈守护" "degraded" "script" 0 "${wd_cnt} 个重复实例运行中"
-    elif [ "$wd_cnt" -eq 1 ]; then
-      add_svc "singbox-watchdog" "Sing-box 断流自愈守护" "running" "script" 0
-    else
-      add_svc "singbox-watchdog" "Sing-box 断流自愈守护" "stopped" "script" 0
-    fi
-    if printf '%s\n' "$ps_out" | grep -v grep | grep -q 'tailscaled'; then
-      add_svc "tailscaled" "Tailscale 路由节点" "running" "init" 0
-    else
-      add_svc "tailscaled" "Tailscale 路由节点" "stopped" "init" 0
-    fi
-    if printf '%s\n' "$ps_out" | grep -v grep | grep -q 'dnsmasq'; then
-      add_svc "dnsmasq" "Dnsmasq (DHCP/DNS)" "running" "init" 53
-    else
-      add_svc "dnsmasq" "Dnsmasq (DHCP/DNS)" "stopped" "init" 53
-    fi
-  elif command -v systemctl >/dev/null 2>&1; then
-    # Systemd Linux server discovery
-    units=$(systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | awk '{print $1}' | sed 's/\.service$//')
-    for u in $units; do
-      case "$u" in
-        systemd-*|dbus*|getty@*|serial-getty@*|multipathd|ModemManager|networkd-*|polkit|rsyslog|snapd*|udisks2|unattended-*|user@*|user-runtime-dir@*|accounts-daemon|cron|irqbalance|packagekit|acpid|chrony|fwupd*|blk-availability|console-setup|dmesg|finalrd|grub-*|keyboard-setup|lvm2-*|open-iscsi|pollinate|setvtrgb|ua-*|uuidd|vgauth|apport*|ec2-*|google-guest-*|google-osconfig-*|snap.amazon-ssm*|ssh|sshd)
-          continue ;;
-      esac
-      port=0
-      label="$u"
-      case "$u" in
-        danted) label="Dante SOCKS5 代理 (danted)"; port=1080 ;;
-        claude-gcp-proxy) label="Claude HTTP 代理 (tinyproxy)"; port=18888 ;;
-        frps) label="FRP 穿透服务端 (frps)"; port=7000 ;;
-        rustdesk-hbbs) label="RustDesk ID 服务 (hbbs)"; port=21116 ;;
-        rustdesk-hbbr) label="RustDesk 中继服务 (hbbr)"; port=21117 ;;
-        nginx) label="Nginx Web/反代"; port=443 ;;
-        tailscaled) label="Tailscale 节点服务" ;;
-        vnstat) label="vnStat 流量统计" ;;
-      esac
-      add_svc "$u" "$label" "running" "systemd" "$port"
-    done
-    # Discover user-space listeners like magpie via ps
-    ps_all=$(ps -ef 2>/dev/null)
-    if printf '%s\n' "$ps_all" | grep -v grep | grep -q 'magpie serve'; then
-      add_svc "magpie" "Magpie Web 服务 (:3430)" "running" "process" 3430
-    fi
+  # Service discovery is backend-based; labels and ports come from the server's service metadata.
+  if command -v ubus >/dev/null 2>&1 && [ -f "$PROCD_UC" ]; then
+    # procd (OpenWrt): every init service with its instances, partial runs and orphan duplicates
+    procd_lines=$(ubus call service list 2>/dev/null | AME_WATCHED="$watched" ucode "$PROCD_UC" 2>/dev/null)
+    while IFS='|' read -r p_name p_state p_detail; do
+      [ -n "$p_name" ] || continue
+      valid_unit_name "$p_name" || continue
+      if [ "$p_state" = "-" ]; then
+        # No long-running instance (e.g. firewall, adblock-fast): judge by boot enablement
+        if "/etc/init.d/$p_name" enabled 2>/dev/null; then
+          add_svc "$p_name" "" "running" "procd" 0 "已启用（无常驻进程）"
+        else
+          add_svc "$p_name" "" "stopped" "procd" 0 "未启用"
+        fi
+      else
+        add_svc "$p_name" "" "$p_state" "procd" 0 "$p_detail"
+      fi
+    done <<EOF
+$procd_lines
+EOF
   fi
 
-  # Ensure watched services are checked even if stopped
+  if command -v systemctl >/dev/null 2>&1; then
+    # systemd: running and failed system units
+    sd_lines=$(systemctl list-units --type=service --state=running,failed --no-pager --no-legend --plain 2>/dev/null | awk '{print $1 "|" $4}')
+    for line in $sd_lines; do
+      u="${line%%|*}"; u="${u%.service}"; sub="${line#*|}"
+      sd_ignored "$u" && continue
+      if [ "$sub" = "running" ]; then add_svc "$u" "" "running" "systemd" 0
+      else add_svc "$u" "" "stopped" "systemd" 0 "failed"; fi
+    done
+    # systemd user units of lingering users (e.g. a gateway installed with systemctl --user)
+    for lu in $(linger_users); do
+      ul=$(user_systemctl "$lu" list-units --type=service --state=running,failed --no-pager --no-legend --plain 2>/dev/null | awk '{print $1 "|" $4}')
+      for line in $ul; do
+        u="${line%%|*}"; u="${u%.service}"; sub="${line#*|}"
+        sd_ignored "$u" && continue
+        if [ "$sub" = "running" ]; then add_svc "$u" "" "running" "systemd-user" 0 "用户 $lu"
+        else add_svc "$u" "" "stopped" "systemd-user" 0 "用户 $lu · failed"; fi
+      done
+    done
+  fi
+
+  # Watched items not discovered above: try each backend by name, then fall back to a process name
   for w in $watched; do
     case "$w" in docker:*) continue ;; esac
     case "$seen" in *" $w "*) continue ;; esac
+    valid_unit_name "$w" || continue
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$w.service" 2>/dev/null; then
-      add_svc "$w" "$w" "running" "systemd" 0
+      add_svc "$w" "" "running" "systemd" 0
+    elif [ -x "/etc/init.d/$w" ] && "/etc/init.d/$w" running 2>/dev/null; then
+      add_svc "$w" "" "running" "init" 0
+    elif pidof "$w" >/dev/null 2>&1; then
+      add_svc "$w" "" "running" "process" 0
     else
-      add_svc "$w" "$w" "stopped" "systemd" 0
+      add_svc "$w" "" "stopped" "service" 0
     fi
   done
 
@@ -332,6 +412,14 @@ execute_action() {
   rid="$1"; kind="$2"; target="$3"; op="$4"
   ok="false"; msg="不支持的操作"
 
+  case "$op" in
+    restart|start|stop|retest) ;;
+    *) kind="invalid" ;;
+  esac
+  if [ "$kind" = "service" ] || [ "$kind" = "docker" ]; then
+    valid_unit_name "$target" || { kind="invalid"; msg="无效的目标名称"; }
+  fi
+
   if [ "$kind" = "singbox" ] && [ "$op" = "retest" ] && [ -f /etc/sing-box/config.json ]; then
     info=$(ucode -e '
       import * as fs from "fs";
@@ -355,6 +443,11 @@ execute_action() {
         ok="true"; msg="服务 $target 已执行 $op"
       else
         msg="systemctl $op $target 失败（需 sudo 免密或 root 权限）"
+        for lu in $(linger_users); do
+          if user_systemctl "$lu" cat "$target.service" >/dev/null 2>&1 && user_systemctl "$lu" "$op" "$target.service" >/dev/null 2>&1; then
+            ok="true"; msg="用户 $lu 的服务 $target 已执行 $op"; break
+          fi
+        done
       fi
     fi
   elif [ "$kind" = "docker" ]; then
@@ -417,9 +510,11 @@ if [ "$ONCE" -eq 1 ]; then
   exit 0
 fi
 
-# Background long-poll loop for instant (<1s) remote control & fast-mode wakeup
+# Background long-poll loop for instant (<1s) remote control & fast-mode wakeup.
+# It exits once the main loop is gone: a SIGKILL (e.g. procd's stop timeout) skips the trap.
+MAIN_PID=$$
 (
-  while :; do
+  while kill -0 "$MAIN_PID" 2>/dev/null; do
     resp=$(curl -fsSL --connect-timeout 6 -m 32 "$SERVER/api/infra/poll" -H "Authorization: Bearer $TOKEN" 2>/dev/null)
     if [ -n "$resp" ]; then
       parse_server_response "$resp" "1"

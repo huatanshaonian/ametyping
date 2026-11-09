@@ -334,4 +334,57 @@ describe('infra monitor & topology', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('fills service labels/ports from server metadata and keeps probe-supplied labels', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
+    try {
+      const infra = createInfra({ dataDir: tmp, localNas: false });
+      infra.ingestReport('aws1', {
+        services: [
+          { name: 'danted', label: 'danted', state: 'running', kind: 'systemd' },
+          { name: 'custom', label: '自定义标签', state: 'running', port: 8080 },
+          { name: 'unknown-unit', state: 'degraded', detail: '1 个重复实例运行中' },
+        ],
+      });
+      const svcs = infra.snapshot().nodes.find((n) => n.id === 'aws1').services;
+      const by = (n) => svcs.find((s) => s.name === n);
+      assert.equal(by('danted').label, 'Dante SOCKS5 代理 (danted)');
+      assert.equal(by('danted').port, 1080);
+      assert.equal(by('custom').label, '自定义标签');
+      assert.equal(by('custom').port, 8080);
+      assert.equal(by('unknown-unit').label, 'unknown-unit');
+      assert.equal(by('unknown-unit').state, 'degraded');
+      infra.close();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates the router watch list and links from tailscaled to the procd name tailscale', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'infra.json'), JSON.stringify({
+        nodes: [
+          { id: 'openwrt', role: 'router', watched: ['sing-box', 'tailscaled'], muted: ['tailscaled'] },
+          { id: 'aws1', role: 'cloud', watched: ['tailscaled'], muted: [] },
+        ],
+        links: [
+          { id: 'l1', from: 'openwrt', to: 'aws1', service: 'tailscaled' },
+          { id: 'l2', from: 'aws1', to: 'openwrt', service: 'tailscaled' },
+        ],
+        events: [],
+      }));
+      const infra = createInfra({ dataDir: tmp, localNas: false });
+      const snap = infra.snapshot();
+      const wrt = snap.nodes.find((n) => n.id === 'openwrt');
+      assert.deepEqual(wrt.watched, ['sing-box', 'tailscale']);
+      assert.deepEqual(wrt.muted, ['tailscale']);
+      assert.deepEqual(snap.nodes.find((n) => n.id === 'aws1').watched, ['tailscaled']);
+      assert.equal(snap.links.find((l) => l.id === 'l1').service, 'tailscale');
+      assert.equal(snap.links.find((l) => l.id === 'l2').service, 'tailscaled');
+      infra.close();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
