@@ -9,11 +9,11 @@ agent 默认启用，可用 `agent.json` 的 `"fullArchive": false` 关闭。原
 - Claude：`~/.claude/projects/**/*.jsonl`，含子代理和历史会话；同时保存其中 `tool-results` 与 `attachments` 目录的原始文件，补齐落在旁文件中的长工具输出。
 - Codex：`$CODEX_HOME/sessions/**/*.jsonl` 和 `archived_sessions/**/*.jsonl`，含子线程；默认 `CODEX_HOME=~/.codex`。
 - OpenCode v2：插件记录完整事件（含运行中的文本增量、工具事件、子会话）；agent 每分钟通过只读 SQLite 查询发现历史与子会话 ID，再通过正式 `session export` 导出会话，并采集 XDG 数据目录中 OpenCode 的 `tool-output` 旁文件。仅依赖内部表的 ID 和更新时间；结构不兼容会明确报错并重试，不伪称完成。
-- Antigravity (`agy`)：`$AGY_HOME`、`~/.gemini/antigravity-cli`、`~/.gemini/antigravity`、`~/.gemini/antigravity-ide` 下的 `brain/<id>/` 完整对话目录，含 `.system_generated/logs/transcript.jsonl`、`transcript_full.jsonl`、`.system_generated/subagents/*.json` 以及 `brain/<id>/` 下的 Markdown 产物（如 `implementation_plan.md`、`walkthrough.md`、`task.md`）。
+- Antigravity (`agy`)：`$AGY_HOME`、`~/.gemini/antigravity-cli`、`~/.gemini/antigravity`、`~/.gemini/antigravity-ide` 下的 `brain/<id>/` 会话目录，含 `.system_generated/logs/transcript.jsonl`、`transcript_full.jsonl`、`.system_generated/subagents/*.json`，并将单步工具输出（`steps/<n>/output.txt`）与后台任务日志（`tasks/*.log`）按会话增量合并为 `.system_generated/logs/tool_outputs.jsonl` 后自动清理已沉淀的散落小文件，屏蔽零散原始输出文件入库。
 
 每个源文件按 512 KiB 分块，每块 SHA-256，数据库事务提交后才确认；重连先核对已保存尾块，续传后再校验整个文件。改写或截断生成新版本，旧版本保留。最近一次扫描结果每分钟更新，已有文件在下一轮传输时检测变化，不限历史天数、不截断长行。全部内容是源工具已经保存/导出的内容，不代表工具未公开的内部状态。
 
-数据库中 `sources` 保存机器、会话、父会话、来源、工作目录、字节数和完整性；`chunks` 保存原始字节。看板「控制面板 → 记忆与存档 → 完整会话」显示采集进度、SHA-256 校验状态并支持原文下载。API 支持分页查询及按机器、会话过滤。原始记录可能包含会话中本就存在的敏感内容，接口沿用登录认证；不采集账号配置或私钥文件。
+数据库中 `sources` 保存机器、会话、父会话、来源、工作目录、字节数和完整性；`chunks` 保存原始字节。看板独立应用「记忆与存档 → 完整会话」显示采集进度、SHA-256 校验状态并支持原文下载。API 支持分页查询及按机器、会话过滤。原始记录可能包含会话中本就存在的敏感内容，接口沿用登录认证；不采集账号配置或私钥文件。
 
 OpenCode 正式导出只包含已稳定的消息，运行中的细节由事件日志补充。事件日志用于追溯，不作为工具重放队列。内联附件随原生记录保存；仅以路径引用的外部文件、工作区、运行中的进程和模型未公开状态不属于原生会话文件，需要独立恢复。
 

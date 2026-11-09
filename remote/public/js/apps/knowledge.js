@@ -1,10 +1,21 @@
-import {h} from '../util.js';
+import {h, icon} from '../util.js';
 import * as net from '../net.js';
+import * as wm from '../wm.js';
 import { createReviewPanel } from './knowledge-review.js';
-export function panel(){
+
+const ICON = icon('memory', true);
+let app = null;
+
+export function open(tab) {
+  if (app) { wm.open({ id: 'knowledge' }); if (tab) app.show(tab); return; }
+  app = panel(tab);
+  wm.open({ id: 'knowledge', title: '记忆与存档', icon: ICON, content: app.root, width: 920, height: 640, onClose: () => { app.destroy(); app = null; } });
+}
+
+export function panel(initialMode='memory'){
   const root=h('div',{class:'aim knowledge'}),note=h('p',{class:'gnote'}),stats=h('p',{class:'ghint'});
   const tabs=h('div',{class:'capi-btns'}),content=h('div'),refresh=h('button',{class:'btn',text:'刷新',onclick:()=>load()});
-  let data=null,dead=false,mode='memory',page=0,seq=0,reviewPanel=null;
+  let data=null,dead=false,mode=initialMode||'memory',page=0,seq=0,reviewPanel=null;
   const selected=new Map();
   const selection=h('span',{class:'ghint',text:'已选 0 条'});
   const selectionChanged=()=>{selection.textContent='已选 '+selected.size+' 条';};
@@ -47,7 +58,7 @@ export function panel(){
         const list=data.memories.filter(m=>(scope.value==='all'||(scope.value==='disabled'?!m.enabled:m.scope===scope.value))&&(!q||[m.name,m.body,m.owner,m.source].join(' ').toLocaleLowerCase().includes(q)));
         const cards=list.map(m=>{
           const actions=h('div',{class:'capi-btns'},button('编辑',()=>editor(m)),button(m.enabled?'停用':'启用',()=>post('save',{...m,enabled:!m.enabled})),button('修订历史',()=>showHistory(m)));
-          if(m.source.startsWith('memory-review:'))actions.append(button('整理来源',()=>{mode='review';draw();reviewPanel?.show(m.source.slice(14));}));
+          if(m.source.startsWith('memory-review:'))actions.append(button('整理来源',()=>{show('review');reviewPanel?.show(m.source.slice(14));}));
           return h('div',{class:'knowledge-row knowledge-fact'},h('label',{},check('m:'+m.id,{kind:'memory',id:m.id}),h('b',{text:m.name})),
             h('small',{text:(m.scope==='global'?'共享全局':m.scope==='machine'?'机器：':'项目：')+(m.owner||'')+' · v'+m.revision+(m.enabled?'':' · 已停用')}),
             h('p',{class:'knowledge-preview',text:m.body.slice(0,180)+(m.body.length>180?'…':'')}),h('small',{text:'来源：'+m.source}),
@@ -88,6 +99,12 @@ export function panel(){
     }
   }
   async function load(){try{const d=await get('');if(dead)return;data=d;stats.textContent='NAS SQLite：'+d.stats.versions+' 个会话文件版本，'+(d.stats.bytes/1048576).toFixed(1)+' MB；'+d.memories.length+' 条统一记忆。';await draw();}catch(e){say(e.message,true);}}
-  for(const [id,title]of [['memory','统一记忆'],['sources','记忆来源'],['review','对齐与智能整理'],['projects','项目目录'],['sync','同步状态'],['archive','完整会话']])tabs.append(button(title,()=>{mode=id;seq++;draw();}));
-  root.append(tabs,h('div',{class:'knowledge-toolbar'},refresh,selection,button('对齐所选',()=>{mode='review';draw();}),button('清空选择',()=>{selected.clear();selectionChanged();draw();})),note,stats,content);load();return{root,destroy(){dead=true;seq++;reviewPanel?.destroy();}};
+  const tabBtns=[];
+  const syncTabBtns=()=>{for(const b of tabBtns)b.classList.toggle('go',b.dataset.tab===mode);};
+  const show=id=>{mode=id;seq++;syncTabBtns();draw();};
+  for(const [id,title]of [['memory','统一记忆'],['sources','记忆来源'],['review','对齐与智能整理'],['projects','项目目录'],['sync','同步状态'],['archive','完整会话']]){
+    const b=button(title,()=>show(id));b.dataset.tab=id;tabBtns.push(b);tabs.append(b);
+  }
+  syncTabBtns();
+  root.append(tabs,h('div',{class:'knowledge-toolbar'},refresh,selection,button('对齐所选',()=>show('review')),button('清空选择',()=>{selected.clear();selectionChanged();draw();})),note,stats,content);load();return{root,show,destroy(){dead=true;seq++;reviewPanel?.destroy();}};
 }

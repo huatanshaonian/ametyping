@@ -81,7 +81,7 @@ function login() {
 
     const desk = await evalJs("[...document.querySelectorAll('.dicon')].map(b => b.textContent).join('|')");
     const menu = await evalJs("[...document.querySelectorAll('#startmenu .smi')].map(b => b.textContent).join('|')");
-    chk('desktop and start menu: 控制面板 in, the separate settings out', /控制面板/.test(desk) && !/显示属性/.test(desk) && /控制面板/.test(menu) &&
+    chk('desktop and start menu: 控制面板 and standalone 记忆与存档 in, the separate settings out', /控制面板/.test(desk) && /记忆与存档/.test(desk) && !/显示属性/.test(desk) && /控制面板/.test(menu) && /记忆与存档/.test(menu) &&
       !/添加电脑|Google 账户|声音/.test(menu) && /重要计划/.test(menu) && /网上邻居/.test(menu), [desk, menu]);
     // 网上邻居 on a wide screen: there at the right; » puts it away (the desktop takes the room, remembered), the tray's button brings it back
     const netState = () => evalJs("({ panel: document.querySelector('#netpanel').getBoundingClientRect().width, desk: document.querySelector('#desktop').getBoundingClientRect().width, btn: getComputedStyle(document.querySelector('#netbtn')).display, kept: localStorage.getItem('ame.net.off') })");
@@ -92,8 +92,8 @@ function login() {
       n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the ten items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|记忆与存档|文献' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 10 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|文献' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 9 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
     for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '刷新电脑配置'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
@@ -136,8 +136,8 @@ function login() {
     await sleep(900);
     const savedProfile = await evalJs("fetch('/api/claude-apis?machine=nas').then(r=>r.json()).then(v=>({model:v.profiles[0].model,hasCredential:v.profiles[0].hasCredential,raw:JSON.stringify(v)}))");
     chk('saving through the editor changes the local model and preserves the blank key without echoing it', savedProfile.model === 'deepseek-ui[1m]' && savedProfile.hasCredential && !savedProfile.raw.includes('sk-ui-test'), savedProfile.model);
-    await evalJs("[...document.querySelectorAll('.cp-item')].find(b=>b.textContent.includes('记忆与存档')).click()");await sleep(900);
-    chk('记忆与存档 opens with SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局')"));
+    await evalJs("[...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");await sleep(900);
+    chk('记忆与存档 opens as a standalone app with memory icon, SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局') && [...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).querySelector('img').src.endsWith('/icons/memory.png')") && (await winTitle()).includes('记忆与存档'));
     await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='新增记忆').click();document.querySelector('.knowledge-editor input[placeholder=记忆名称]').value='界面记忆';document.querySelector('.knowledge-body').value='中文与 emoji 🌈';document.querySelector('.knowledge-editor').requestSubmit()");await sleep(900);
     chk('memory form publishes Unicode text to SQLite',await evalJs("fetch('/api/knowledge').then(r=>r.json()).then(d=>d.memories.some(m=>m.name==='界面记忆'&&m.body==='中文与 emoji 🌈'))"));
     await evalJs("[...document.querySelectorAll('.knowledge-fact button')].find(b=>b.textContent==='编辑').click()");

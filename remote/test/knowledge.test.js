@@ -4,7 +4,7 @@ const fs=require('fs'),os=require('os'),path=require('path'),crypto=require('cry
 const {openVault,hash,CHUNK}=require('../server/vault/database');
 const {createMemory}=require('../server/vault/memory');
 const {createMemorySync,START}=require('../agent/memory-sync');
-const {createNativeArchive,catalog}=require('../agent/native-archive');
+const {createNativeArchive,catalog,compactAgyToolOutputs}=require('../agent/native-archive');
 const {convert,lines}=require('../server/vault/opencode');
 const temp=()=>fs.mkdtempSync(path.join(os.tmpdir(),'ame-knowledge-test-'));
 const write=(file,body)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,body);};
@@ -155,4 +155,33 @@ test('NAS local participant uses the same durable archive and memory acknowledge
     for(let n=0;n<50;n++){if(s.vault.list().some(x=>x.complete)&&s.memory.deployments().some(x=>x.status==='applied'))break;await new Promise(r=>setTimeout(r,50));}
     assert.ok(s.vault.list().some(x=>x.complete));assert.match(fs.readFileSync(path.join(home,'.claude/CLAUDE.md'),'utf8'),/NAS shared memory/);
   }finally{local.stop();s.close();fs.rmSync(home,{recursive:true,force:true});fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('Antigravity tool outputs compact incrementally into tool_outputs.jsonl, shield raw step files, and clean up settled files',()=>{
+  const home=temp();
+  const sys=path.join(home,'.gemini/antigravity-cli/brain/s1/.system_generated');
+  const tf=path.join(sys,'logs/transcript_full.jsonl');
+  const step1=path.join(sys,'steps/1/output.txt'),step2=path.join(sys,'steps/2/output.txt'),task1=path.join(sys,'tasks/task-1.log');
+  try{
+    write(path.join(home,'.gemini/antigravity-cli/history.jsonl'),JSON.stringify({conversationId:'s1',workspace:'/proj',display:'t'})+'\n');
+    write(path.join(sys,'logs/transcript.jsonl'),JSON.stringify({step_index:0,type:'USER_INPUT',content:'Active Workspaces:\n- /proj\n<USER_REQUEST>hi</USER_REQUEST>'})+'\n');
+    write(tf,JSON.stringify({step_index:2,type:'GENERIC',content:'truncated: file:///brain/s1/.system_generated/steps/2/output.txt and tasks/task-1.log'})+'\n');
+    write(step1,'short inline output\n');
+    write(step2,'long truncated output\n');
+    write(task1,'background task log\n');
+    const list1=catalog(home,{agyActiveMs:60000});
+    const agyFiles=list1.filter(x=>x.provider==='agy');
+    assert.ok(agyFiles.some(x=>x.file.endsWith('tool_outputs.jsonl')&&x.kind==='tool-output'&&x.cwd==='/proj'));
+    assert.ok(!agyFiles.some(x=>x.file.includes('output.txt')||x.file.endsWith('.log')));
+    assert.ok(!fs.existsSync(step1));
+    assert.ok(fs.existsSync(step2)&&fs.existsSync(task1));
+    const lines1=fs.readFileSync(path.join(sys,'logs/tool_outputs.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(lines1.length,3);
+    assert.deepEqual(lines1.map(x=>x.type+':'+x.id),['step:1','step:2','task:task-1']);
+    // Re-running does not duplicate existing entries, and activeMs=0 cleans up aged referenced files and empty dirs
+    compactAgyToolOutputs(path.join(home,'.gemini/antigravity-cli/brain'),{activeMs:0});
+    const lines2=fs.readFileSync(path.join(sys,'logs/tool_outputs.jsonl'),'utf8').trim().split('\n');
+    assert.equal(lines2.length,3);
+    assert.ok(!fs.existsSync(step2)&&!fs.existsSync(task1));
+    assert.ok(!fs.existsSync(path.join(sys,'steps'))&&!fs.existsSync(path.join(sys,'tasks')));
+  }finally{fs.rmSync(home,{recursive:true,force:true});}
 });
