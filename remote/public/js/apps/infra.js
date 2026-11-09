@@ -54,14 +54,44 @@ export function open(initialNodeId) {
     id: 'infra',
     title: '网络与设备 — 服务监控与互联拓扑',
     icon: icon('network_cool_two_pcs', true),
-    width: 1020,
-    height: 660,
+    width: 1140,
+    height: 680,
     content: inst.root,
     onClose: () => {
       inst.destroy();
       inst = null;
     },
   });
+}
+
+function effectiveTier(n) {
+  if (n.role === 'router' || n.role === 'nas') return 1;
+  if (n.role === 'workstation') return 0;
+  if (Number.isFinite(n.tier)) return Math.max(0, Math.min(2, n.tier));
+  return 2;
+}
+
+function shortLinkLabel(l) {
+  let s = String(l.label || '').trim();
+  s = s.replace(/\s*\([^)]*\)/g, '');
+  s = s.replace(/^Tailscale\s+SOCKS5/i, 'SOCKS5');
+  s = s.replace(/^Tailscale\s+互联/i, 'TS 互联');
+  s = s.replace(/^Sing-box\s*\/\s*Tailscale/i, 'Sing-box');
+  s = s.replace(/^LAN\s*\/\s*Windose/i, 'LAN');
+  s = s.replace(/^LAN\s*网关\s*\/\s*Sing-box/i, 'LAN 网关');
+  s = s.replace(/^SSH\s+-D/i, 'SSH');
+  s = s.replace(/^Claude\s+HTTP/i, 'Claude');
+  s = s.replace(/^FRP\s+穿透/i, 'FRP');
+  if (s.length > 14) s = s.slice(0, 13) + '…';
+  return s || `${l.from}→${l.to}`;
+}
+
+function estimateTextWidth(str) {
+  let w = 0;
+  for (let i = 0; i < str.length; i++) {
+    w += str.charCodeAt(i) > 255 ? 10.5 : 5.8;
+  }
+  return Math.ceil(w);
 }
 
 function mount(initialNodeId) {
@@ -76,7 +106,7 @@ function mount(initialNodeId) {
   const canvasWrap = h('div', { class: 'inf-canvas-wrap' }, svgEl, tiersBox);
 
   const topoHead = h('div', { class: 'inf-topo-head' },
-    h('b', { text: '设备与服务互联拓扑图（点击节点查看详情与控制）' }),
+    h('b', { text: '设备与服务互联拓扑（点击节点高亮链路并查看详情）' }),
     h('div', { class: 'inf-legend' },
       h('span', { class: 'inf-leg-item' }, h('i', { class: 'inf-leg-line' }), '主用畅通'),
       h('span', { class: 'inf-leg-item' }, h('i', { class: 'inf-leg-line standby' }), '备用待命'),
@@ -160,41 +190,75 @@ function mount(initialNodeId) {
     );
   }
 
-  function renderNodeCard(n) {
+  function renderNodeCard(n, colIdx) {
     const isSel = n.id === selId && !showEvents;
     const hasAlert = n.alertCount > 0;
     const dotCls = hasAlert ? 'err' : n.online ? 'on' : '';
+    const hasLink = (state.links || []).some((l) => l.from === n.id || l.to === n.id);
+    const isCompact = !n.online && !hasAlert && !hasLink && !(n.services && n.services.length) && !(n.containers && n.containers.length);
 
-    // Pick key pills to show on the card
+    if (isCompact) {
+      return h('div', {
+        class: `inf-node compact off${isSel ? ' sel' : ''}`,
+        'data-node-id': n.id,
+        'data-col': String(colIdx),
+        onclick: () => { selId = n.id; showEvents = false; render(); },
+      },
+        h('div', { class: 'inf-node-hd' },
+          h('span', { class: `inf-dot ${dotCls}` }),
+          h('img', { src: icon(ROLE_ICONS[n.role] || 'computer_2', true), alt: '' }),
+          h('span', { style: 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', text: n.label || n.id }),
+          h('span', { style: 'font-size:9.5px;color:var(--muted)', text: '离线' })
+        )
+      );
+    }
+
+    // Pick concise key pills to show on the card without overflowing vertically
     const pills = [];
     if (n.proxy && n.proxy.active) {
+      const shortProxy = n.proxy.active.length > 14 ? n.proxy.active.slice(0, 13) + '…' : n.proxy.active;
       pills.push(h('span', {
         class: 'inf-pill proxy',
-        text: `🚀 ${n.proxy.active}${n.proxy.delayMs ? ` (${n.proxy.delayMs}ms)` : ''}`,
+        title: `${n.proxy.active}${n.proxy.delayMs ? ` (${n.proxy.delayMs}ms)` : ''}`,
+        text: `🚀 ${shortProxy}${n.proxy.delayMs ? ` ${n.proxy.delayMs}ms` : ''}`,
       }));
     }
     if (n.gpus && n.gpus.length > 0) {
       const g = n.gpus[0];
-      pills.push(h('span', { class: 'inf-pill proxy', text: `GPU ${g.utilPct}% · ${g.tempC}°C` }));
+      pills.push(h('span', { class: 'inf-pill proxy', text: `GPU ${g.utilPct}%·${g.tempC}°C` }));
     }
     if (n.net && n.net.monthTxGb != null) {
-      pills.push(h('span', { class: 'inf-pill', text: `月流量 ↑${n.net.monthTxGb}G` }));
+      pills.push(h('span', { class: 'inf-pill', text: `月↑${n.net.monthTxGb}G` }));
     }
 
-    const importantSvcs = (n.services || []).filter((s) => s.watched || s.state !== 'running').slice(0, 4);
-    for (const s of importantSvcs) {
-      const cls = s.state === 'running' ? 'ok' : s.state === 'degraded' ? 'warn' : 'err';
-      pills.push(h('span', { class: `inf-pill ${cls}`, text: `${s.state === 'running' ? '●' : '×'} ${s.name}` }));
+    const downSvcs = (n.services || []).filter((s) => s.state !== 'running');
+    const downCnts = (n.containers || []).filter((c) => c.state !== 'running');
+    for (const s of downSvcs.slice(0, 2)) {
+      pills.push(h('span', { class: 'inf-pill err', text: `× ${s.name}` }));
     }
-    const importantCnts = (n.containers || []).filter((c) => c.watched || c.state !== 'running').slice(0, 4);
-    for (const c of importantCnts) {
-      const cls = c.state === 'running' ? 'ok' : 'err';
-      pills.push(h('span', { class: `inf-pill ${cls}`, text: `🐳 ${c.name}` }));
+    for (const c of downCnts.slice(0, 2)) {
+      pills.push(h('span', { class: 'inf-pill err', text: `× 🐳${c.name}` }));
     }
 
-    const card = h('div', {
+    const okWatchedSvcs = (n.services || []).filter((s) => s.watched && s.state === 'running');
+    const okWatchedCnts = (n.containers || []).filter((c) => c.watched && c.state === 'running');
+    const shownOk = [];
+    for (const s of okWatchedSvcs) {
+      if (shownOk.length < 2) shownOk.push(h('span', { class: 'inf-pill ok', text: `● ${s.name}` }));
+    }
+    for (const c of okWatchedCnts) {
+      if (shownOk.length < 2) shownOk.push(h('span', { class: 'inf-pill ok', text: `🐳 ${c.name}` }));
+    }
+    pills.push(...shownOk);
+    const totalOkWatched = okWatchedSvcs.length + okWatchedCnts.length;
+    if (totalOkWatched > shownOk.length) {
+      pills.push(h('span', { class: 'inf-pill ok', text: `+${totalOkWatched - shownOk.length} 正常` }));
+    }
+
+    return h('div', {
       class: `inf-node${isSel ? ' sel' : ''}${n.online ? '' : ' off'}${hasAlert ? ' alert' : ''}`,
       'data-node-id': n.id,
+      'data-col': String(colIdx),
       onclick: () => {
         selId = n.id;
         showEvents = false;
@@ -204,39 +268,85 @@ function mount(initialNodeId) {
       h('div', { class: 'inf-node-hd' },
         h('span', { class: `inf-dot ${dotCls}` }),
         h('img', { src: icon(ROLE_ICONS[n.role] || 'computer_2', true), alt: '' }),
-        h('span', { style: 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', text: n.label || n.id })
+        h('span', { style: 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title: n.label || n.id, text: n.label || n.id })
       ),
-      n.host ? h('div', { class: 'inf-node-host', text: n.host }) : null,
+      n.host ? h('div', { class: 'inf-node-host', title: n.host, text: n.host }) : null,
       n.online && (n.cpuPct != null || (n.mem && n.mem.pct != null)) ? h('div', { class: 'inf-bars' },
         meterRow('CPU', n.cpuPct),
         n.mem ? meterRow('MEM', n.mem.pct) : null
       ) : null,
       pills.length ? h('div', { class: 'inf-pills' }, ...pills) : null
     );
-    return card;
+  }
+
+  function sortColumnNodes(list) {
+    const linkedIds = new Set();
+    for (const l of state.links || []) { linkedIds.add(l.from); linkedIds.add(l.to); }
+    return [...list].sort((a, b) => {
+      const aPri = (a.role === 'router' ? 4 : 0) + (linkedIds.has(a.id) ? 2 : 0) + (a.online ? 1 : 0);
+      const bPri = (b.role === 'router' ? 4 : 0) + (linkedIds.has(b.id) ? 2 : 0) + (b.online ? 1 : 0);
+      return bPri - aPri;
+    });
   }
 
   function renderTopology() {
-    const tier0 = state.nodes.filter((n) => (n.tier || 0) === 0);
-    const tier1 = state.nodes.filter((n) => n.tier === 1);
-    const tier2 = state.nodes.filter((n) => (n.tier || 0) >= 2);
+    const tier0 = sortColumnNodes(state.nodes.filter((n) => effectiveTier(n) === 0));
+    const tier1 = sortColumnNodes(state.nodes.filter((n) => effectiveTier(n) === 1));
+    const tier2 = sortColumnNodes(state.nodes.filter((n) => effectiveTier(n) >= 2));
 
     tiersBox.replaceChildren(
-      h('div', { class: 'inf-tier-col' },
-        h('div', { class: 'inf-tier-title', text: '终端工作站与局域网网关' }),
-        ...tier0.map(renderNodeCard)
+      h('div', { class: 'inf-tier-col', 'data-tier-col': '0' },
+        h('div', { class: 'inf-tier-title', text: '终端与算力工作站' }),
+        ...tier0.map((n) => renderNodeCard(n, 0))
       ),
-      h('div', { class: 'inf-tier-col' },
-        h('div', { class: 'inf-tier-title', text: '核心存储与控制中心' }),
-        ...tier1.map(renderNodeCard)
+      h('div', { class: 'inf-tier-col', 'data-tier-col': '1' },
+        h('div', { class: 'inf-tier-title', text: '局域网核心 (网关 / NAS)' }),
+        ...tier1.map((n) => renderNodeCard(n, 1))
       ),
-      h('div', { class: 'inf-tier-col' },
+      h('div', { class: 'inf-tier-col', 'data-tier-col': '2' },
         h('div', { class: 'inf-tier-title', text: '云端出口与穿透节点' }),
-        ...tier2.map(renderNodeCard)
+        ...tier2.map((n) => renderNodeCard(n, 2))
       )
     );
 
     requestAnimationFrame(drawSvgLinks);
+  }
+
+  function resolveBadgeOverlaps(items, minGap, minY, maxY) {
+    if (items.length <= 1) return;
+    items.sort((a, b) => a.wantY - b.wantY || a.idx - b.idx);
+    for (let i = 0; i < items.length; i++) items[i].my = items[i].wantY;
+
+    for (let iter = 0; iter < 4; iter++) {
+      // Push down
+      for (let i = 1; i < items.length; i++) {
+        if (items[i].my < items[i - 1].my + minGap) {
+          items[i].my = items[i - 1].my + minGap;
+        }
+      }
+      // Re-center shift toward original wantY mean
+      const shift = items.reduce((s, x) => s + (x.my - x.wantY), 0) / items.length;
+      for (let i = 0; i < items.length; i++) items[i].my -= shift * 0.5;
+      // Push up from bottom if needed
+      for (let i = items.length - 2; i >= 0; i--) {
+        if (items[i].my > items[i + 1].my - minGap) {
+          items[i].my = items[i + 1].my - minGap;
+        }
+      }
+    }
+    // Final strict forward pass & bounds clamp
+    if (items[0].my < minY) items[0].my = minY;
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].my < items[i - 1].my + minGap) {
+        items[i].my = items[i - 1].my + minGap;
+      }
+    }
+    const over = items[items.length - 1].my - maxY;
+    if (over > 0) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        items[i].my = Math.max(minY + i * minGap, items[i].my - over);
+      }
+    }
   }
 
   function drawSvgLinks() {
@@ -253,8 +363,11 @@ function mount(initialNodeId) {
     const boxMap = new Map();
     for (const el of tiersBox.querySelectorAll('.inf-node[data-node-id]')) {
       const id = el.getAttribute('data-node-id');
+      const col = Number(el.getAttribute('data-col') || 0);
       const r = el.getBoundingClientRect();
       boxMap.set(id, {
+        id,
+        col,
         left: r.left - wrapRect.left + canvasWrap.scrollLeft,
         right: r.right - wrapRect.left + canvasWrap.scrollLeft,
         top: r.top - wrapRect.top + canvasWrap.scrollTop,
@@ -266,89 +379,187 @@ function mount(initialNodeId) {
       });
     }
 
-    // Group links between same pair of nodes so parallel links fan out cleanly
-    const pairCounts = new Map();
-    const pairIdx = new Map();
-    for (const l of state.links || []) {
-      const key = [l.from, l.to].sort().join('<->');
-      pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+    // Measure column horizontal bounds to find exact corridor centers
+    const colBounds = [null, null, null];
+    for (const b of boxMap.values()) {
+      const c = b.col;
+      if (!colBounds[c]) {
+        colBounds[c] = { left: b.left, right: b.right, top: b.top, bottom: b.bottom };
+      } else {
+        colBounds[c].left = Math.min(colBounds[c].left, b.left);
+        colBounds[c].right = Math.max(colBounds[c].right, b.right);
+        colBounds[c].top = Math.min(colBounds[c].top, b.top);
+        colBounds[c].bottom = Math.max(colBounds[c].bottom, b.bottom);
+      }
     }
 
-    for (const l of state.links || []) {
+    const validLinks = (state.links || []).filter((l) => boxMap.has(l.from) && boxMap.has(l.to));
+    if (!validLinks.length) return;
+
+    // Distribute attachment ports along each node edge so multiple links don't cross at the card border
+    const rightPorts = new Map(); // nodeId -> Array<{ item, peerY }>
+    const leftPorts = new Map();
+    const items = validLinks.map((l, idx) => {
       const b1 = boxMap.get(l.from);
       const b2 = boxMap.get(l.to);
-      if (!b1 || !b2) continue;
-
-      const key = [l.from, l.to].sort().join('<->');
-      const count = pairCounts.get(key) || 1;
-      const idx = pairIdx.get(key) || 0;
-      pairIdx.set(key, idx + 1);
-      const offset = (idx - (count - 1) / 2) * 16;
-
-      let x1, y1, x2, y2;
-      if (Math.abs(b1.cx - b2.cx) > 40) {
-        if (b1.cx < b2.cx) {
-          x1 = b1.right; x2 = b2.left;
-        } else {
-          x1 = b1.left; x2 = b2.right;
-        }
-        y1 = b1.cy + offset;
-        y2 = b2.cy + offset;
-      } else {
-        // Same column vertical link
-        x1 = b1.right;
-        x2 = b2.right;
-        y1 = b1.cy;
-        y2 = b2.cy;
+      const item = { l, idx, b1, b2, x1: b1.right, y1: b1.cy, x2: b2.left, y2: b2.cy, mx: 0, my: 0, wantY: 0, kind: 'adj' };
+      if (b1.col === b2.col) {
+        item.kind = 'same';
+      } else if (Math.abs(b1.col - b2.col) >= 2) {
+        item.kind = 'span';
       }
+      if (item.kind !== 'same') {
+        const leftBox = b1.cx <= b2.cx ? b1 : b2;
+        const rightBox = b1.cx <= b2.cx ? b2 : b1;
+        if (!rightPorts.has(leftBox.id)) rightPorts.set(leftBox.id, []);
+        if (!leftPorts.has(rightBox.id)) leftPorts.set(rightBox.id, []);
+        rightPorts.get(leftBox.id).push({ item, isFrom: leftBox === b1, peerY: rightBox.cy, idx });
+        leftPorts.get(rightBox.id).push({ item, isFrom: rightBox === b1, peerY: leftBox.cy, idx });
+      }
+      return item;
+    });
 
-      const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
-      const sameCol = Math.abs(b1.cx - b2.cx) <= 40;
-      const dPath = sameCol
-        ? `M ${x1} ${y1} C ${x1 + 45} ${y1}, ${x2 + 45} ${y2}, ${x2} ${y2}`
-        : `M ${x1} ${y1} C ${x1 + (x2 >= x1 ? dx : -dx)} ${y1}, ${x2 - (x2 >= x1 ? dx : -dx)} ${y2}, ${x2} ${y2}`;
+    function assignEdgePorts(portMap, isRightEdge) {
+      for (const [nodeId, list] of portMap.entries()) {
+        const box = boxMap.get(nodeId);
+        list.sort((a, b) => a.peerY - b.peerY || a.idx - b.idx);
+        const usableH = Math.max(16, box.height - 22);
+        const step = list.length > 1 ? Math.min(13, usableH / (list.length - 1)) : 0;
+        for (let i = 0; i < list.length; i++) {
+          const py = box.cy + (i - (list.length - 1) / 2) * step;
+          const px = isRightEdge ? box.right : box.left;
+          if (list[i].isFrom) {
+            list[i].item.x1 = px;
+            list[i].item.y1 = py;
+          } else {
+            list[i].item.x2 = px;
+            list[i].item.y2 = py;
+          }
+        }
+      }
+    }
+    assignEdgePorts(rightPorts, true);
+    assignEdgePorts(leftPorts, false);
 
-      const color = l.status === 'down' ? '#d90429' : l.status === 'standby' ? '#1d6fd8' : l.status === 'ok' ? '#1b8a3d' : '#888';
+    // Group into corridors and compute badge positions
+    const corridors = new Map();
+    for (const it of items) {
+      const { b1, b2 } = it;
+      if (it.kind === 'same') {
+        const upper = b1.cy <= b2.cy ? b1 : b2;
+        const lower = b1.cy <= b2.cy ? b2 : b1;
+        it.x1 = b1.cx;
+        it.y1 = b1 === upper ? upper.bottom : lower.top;
+        it.x2 = b2.cx;
+        it.y2 = b2 === lower ? lower.top : upper.bottom;
+        it.mx = (b1.cx + b2.cx) / 2;
+        it.wantY = (upper.bottom + lower.top) / 2;
+        it.my = it.wantY;
+      } else if (it.kind === 'span') {
+        const midCol = colBounds[1];
+        const topClear = Math.min(midCol ? midCol.top : b1.top, b1.top, b2.top) - 22;
+        it.mx = midCol ? (midCol.left + midCol.right) / 2 : (it.x1 + it.x2) / 2;
+        it.wantY = Math.max(14, topClear);
+        const key = 'span:0-2';
+        if (!corridors.has(key)) corridors.set(key, []);
+        corridors.get(key).push(it);
+      } else {
+        const cMin = Math.min(b1.col, b2.col);
+        const cMax = Math.max(b1.col, b2.col);
+        const leftB = colBounds[cMin];
+        const rightB = colBounds[cMax];
+        it.mx = (leftB && rightB) ? (leftB.right + rightB.left) / 2 : (it.x1 + it.x2) / 2;
+        it.wantY = (it.y1 + it.y2) / 2;
+        const key = `adj:${cMin}-${cMax}`;
+        if (!corridors.has(key)) corridors.set(key, []);
+        corridors.get(key).push(it);
+      }
+    }
+
+    for (const group of corridors.values()) {
+      resolveBadgeOverlaps(group, 21, 16, Math.max(120, hgt - 16));
+    }
+
+    const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const badgesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    svgEl.appendChild(linesGroup);
+    svgEl.appendChild(badgesGroup);
+
+    for (const it of items) {
+      const { l, x1, y1, x2, y2, mx, my, kind } = it;
+      const isRelated = !selId || showEvents || l.from === selId || l.to === selId;
+      const isDown = l.status === 'down';
+      const color = isDown ? '#d90429' : l.status === 'standby' ? '#1d6fd8' : l.status === 'ok' ? '#1b8a3d' : '#888';
+      const opacity = isDown || isRelated ? '1' : '0.42';
+
+      let dPath;
+      if (kind === 'same') {
+        dPath = `M ${x1} ${y1} L ${x2} ${y2}`;
+      } else {
+        // Two-piece horizontal-tangent cubic Bezier passing smoothly through (mx, my)
+        const s1 = mx >= x1 ? 1 : -1;
+        const s2 = x2 >= mx ? 1 : -1;
+        const d1 = Math.max(16, Math.abs(mx - x1) * 0.46);
+        const d2 = Math.max(16, Math.abs(x2 - mx) * 0.46);
+        dPath = `M ${x1} ${y1} C ${x1 + s1 * d1} ${y1}, ${mx - s1 * d1 * 0.65} ${my}, ${mx} ${my} C ${mx + s2 * d2 * 0.65} ${my}, ${x2 - s2 * d2} ${y2}, ${x2} ${y2}`;
+      }
 
       const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       pathEl.setAttribute('d', dPath);
       pathEl.setAttribute('fill', 'none');
       pathEl.setAttribute('stroke', color);
-      pathEl.setAttribute('stroke-width', l.status === 'down' ? '2.4' : '1.8');
+      pathEl.setAttribute('stroke-opacity', opacity);
+      pathEl.setAttribute('stroke-width', isDown ? '2.4' : isRelated ? '2.0' : '1.4');
       if (l.status === 'standby' || l.standby) {
         pathEl.setAttribute('stroke-dasharray', '5,4');
       }
-      svgEl.appendChild(pathEl);
+      linesGroup.appendChild(pathEl);
 
-      // Midpoint label badge on the curve
-      const mx = sameCol ? x1 + 34 : (x1 + x2) / 2;
-      const my = (y1 + y2) / 2 + (offset * 0.25);
-      const labelText = `${l.label}${l.ms != null ? ` · ${l.ms}ms` : l.status === 'down' ? ' · 断' : ''}`;
+      // Port dots on card edges
+      for (const [px, py] of [[x1, y1], [x2, y2]]) {
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', px);
+        dot.setAttribute('cy', py);
+        dot.setAttribute('r', '2.6');
+        dot.setAttribute('fill', color);
+        dot.setAttribute('fill-opacity', opacity);
+        linesGroup.appendChild(dot);
+      }
+
+      // Compact midpoint badge
+      const shortTxt = shortLinkLabel(l);
+      const suffix = l.ms != null ? ` · ${l.ms}ms` : isDown ? ' · 断' : '';
+      const labelText = `${shortTxt}${suffix}`;
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('opacity', isDown || isRelated ? '1' : '0.68');
+      const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleEl.textContent = `${l.from} → ${l.to}：${l.label}${l.probeHost ? ` (${l.probeHost}:${l.probePort})` : ''}${l.ms != null ? ` · ${l.ms}ms` : ''}`;
+      g.appendChild(titleEl);
+
       const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', mx);
-      text.setAttribute('y', my + 3);
+      text.setAttribute('y', my + 3.5);
       text.setAttribute('text-anchor', 'middle');
-      text.setAttribute('font-size', '10');
+      text.setAttribute('font-size', '9.5');
       text.setAttribute('font-family', 'monospace, sans-serif');
-      text.setAttribute('fill', l.status === 'down' ? '#a40e26' : '#222');
+      text.setAttribute('fill', isDown ? '#a40e26' : '#1f2937');
       text.textContent = labelText;
 
-      const estW = Math.max(48, labelText.length * 6.2 + 10);
+      const estW = Math.min(110, Math.max(46, estimateTextWidth(labelText) + 10));
       rect.setAttribute('x', mx - estW / 2);
-      rect.setAttribute('y', my - 7);
+      rect.setAttribute('y', my - 7.5);
       rect.setAttribute('width', estW);
-      rect.setAttribute('height', 14);
-      rect.setAttribute('rx', '2');
-      rect.setAttribute('fill', l.status === 'down' ? '#ffe3e8' : 'rgba(255,255,255,0.9)');
+      rect.setAttribute('height', 15);
+      rect.setAttribute('rx', '3');
+      rect.setAttribute('fill', isDown ? '#ffe3e8' : isRelated ? '#ffffff' : 'rgba(255,255,255,0.92)');
       rect.setAttribute('stroke', color);
-      rect.setAttribute('stroke-width', '1');
+      rect.setAttribute('stroke-width', isRelated ? '1.2' : '0.9');
 
       g.appendChild(rect);
       g.appendChild(text);
-      svgEl.appendChild(g);
+      badgesGroup.appendChild(g);
     }
   }
 
@@ -615,11 +826,11 @@ function mount(initialNodeId) {
     );
     if (existing && existing.role) roleSel.value = existing.role;
     const tierSel = h('select', { class: 'field' },
-      h('option', { value: '0', text: '第 1 列：终端工作站与局域网网关' }),
-      h('option', { value: '1', text: '第 2 列：核心存储与控制中心' }),
+      h('option', { value: '0', text: '第 1 列：终端与算力工作站' }),
+      h('option', { value: '1', text: '第 2 列：局域网核心 (网关 / NAS)' }),
       h('option', { value: '2', text: '第 3 列：云端出口与穿透节点' })
     );
-    tierSel.value = String(existing && Number.isFinite(existing.tier) ? existing.tier : 2);
+    tierSel.value = String(existing ? effectiveTier(existing) : 2);
 
     const done = () => wrap.remove();
     const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },

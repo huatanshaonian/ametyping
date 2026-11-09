@@ -21,7 +21,7 @@ const DEFAULT_NODES = [
     label: 'OpenWrt 软路由',
     role: 'router',
     host: '192.168.114.1',
-    tier: 0,
+    tier: 1,
     watched: ['sing-box', 'tailscaled', 'dnsmasq'],
   },
   {
@@ -611,7 +611,7 @@ function createInfra({
         intervalSec: currentIntervalSec(),
         collectNow: forceCollect,
         probeTargets: probeTargetsFor(name),
-        watched: (ensureNode(name).watched || []),
+        watched: (ensureNode(name, { label: name, role: 'workstation', tier: 0 }).watched || []),
       });
       for (const s of m.sockets) {
         if (s.readyState === 1) { try { s.send(msg); } catch {} }
