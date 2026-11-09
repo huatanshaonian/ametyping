@@ -138,8 +138,9 @@ export function panel(initialMode='memory'){
       scope.value=scopeFilter;
       const countBadge=h('small',{class:'ghint'});
       const selectAllBtn=button('勾选当前列表',()=>{});
+      const unselectAllBtn=button('取消全选',()=>{});
       const topBar=h('div',{class:'knowledge-toolbar knowledge-filter-bar'},
-        search,scope,countBadge,selectAllBtn,button('新增记忆',()=>editor(),'go'));
+        search,scope,countBadge,selectAllBtn,unselectAllBtn,button('新增记忆',()=>editor(),'go'));
       const groupsWrap=h('div',{class:'knowledge-groups'});
       content.append(
         ...(data.pendingReviews?[h('div',{class:'knowledge-banner',style:'border-left-color:#c97a10;background:#fff8eb'},
@@ -155,6 +156,7 @@ export function panel(initialMode='memory'){
         const list=data.memories.filter(m=>(scope.value==='all'?true:(scope.value==='disabled'?!m.enabled:(m.enabled&&m.scope===scope.value)))&&(!q||[m.name,m.body,m.owner,m.source].join(' ').toLocaleLowerCase().includes(q)));
         countBadge.textContent=list.length+' 条记忆';
         selectAllBtn.onclick=()=>{for(const m of list)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();};
+        unselectAllBtn.onclick=()=>{selected.clear();selectionChanged();filter();};
 
         const sections=[];
         const buildGroup=(cls,iconStr,title,desc,items,subGroupFn=null)=>{
@@ -171,7 +173,8 @@ export function panel(initialMode='memory'){
               const subHeader=h('div',{class:'knowledge-subgroup-head'},
                 h('b',{text:subKey}),
                 h('small',{class:'ghint',text:subItems.length+' 条'}),
-                button('勾选 '+subKey,()=>{for(const m of subItems)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();}));
+                button('勾选 '+subKey,()=>{for(const m of subItems)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();}),
+                button('取消',()=>{for(const m of subItems)selected.delete('m:'+m.id);selectionChanged();filter();}));
               const subGrid=h('div',{class:'knowledge-card-grid'},...subItems.map(renderMemoryCard));
               groupBody.append(h('div',{class:'knowledge-subgroup'},subHeader,subGrid));
             }
@@ -188,6 +191,7 @@ export function panel(initialMode='memory'){
               ),
               h('div',{class:'capi-btns'},
                 button('勾选本组',()=>{for(const m of items)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();}),
+                button('取消本组',()=>{for(const m of items)selected.delete('m:'+m.id);selectionChanged();filter();}),
                 button('整理本组',()=>{selected.clear();for(const m of items)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();say(`已选中「${title}」共 ${items.length} 条记忆 —— 请在下方确认整理方式与 AI 模型，点击「智能整理所选」开始分析`);show('review');})
               )
             ),
@@ -224,9 +228,11 @@ export function panel(initialMode='memory'){
           },'go'),
           button('勾选全部来源并智能整理',()=>{
             selected.clear();
+            for(const m of data.memories.filter(x=>x.enabled))selected.set('m:'+m.id,{kind:'memory',id:m.id});
             for(const s of data.observed)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});
-            selectionChanged();say(`已选中全部 ${data.observed.length} 份采集来源 —— 请点击下方「智能整理所选」开始 AI 审阅`);show('review');
-          }))));
+            selectionChanged();say(`已选中全部 ${data.observed.length} 份采集来源（并附带 ${data.memories.filter(x=>x.enabled).length} 条已发布记忆用于去重比对）—— 请点击下方「智能整理所选」开始 AI 审阅`);show('review');
+          }),
+          button('取消全选',()=>{selected.clear();selectionChanged();draw();}))));
       const groupsWrap=h('div',{class:'knowledge-groups'});
       for(const [mach,items] of byMachine){
         const mInfo=data.machines.find(x=>x.name===mach);
@@ -255,14 +261,23 @@ export function panel(initialMode='memory'){
             ),
             h('div',{class:'capi-btns'},
               button('勾选该机器来源',()=>{for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});selectionChanged();draw();}),
-              button('整理该机器来源',()=>{selected.clear();for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});selectionChanged();say(`已选中「${mach}」的 ${items.length} 份记忆来源 —— 请点击下方「智能整理所选」生成审阅方案（确认前不会改写记忆）`);show('review');})
+              button('取消该机器',()=>{for(const s of items)selected.delete('s:'+JSON.stringify([s.machine,s.path]));selectionChanged();draw();}),
+              button('整理该机器来源',()=>{
+                selected.clear();
+                const enabledMems=data.memories.filter(x=>x.enabled&&(x.scope!=='machine'||x.owner===mach));
+                for(const m of enabledMems)selected.set('m:'+m.id,{kind:'memory',id:m.id});
+                for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});
+                selectionChanged();
+                say(`已选中「${mach}」的 ${items.length} 份来源（并自动附带 ${enabledMems.length} 条现有记忆用于跨机器去重与归类）—— 请点击下方「智能整理所选」生成方案`);
+                show('review');
+              })
             )
           ),
           h('div',{class:'knowledge-group-body'},h('div',{class:'knowledge-card-grid'},...cards))));
       }
       content.append(groupsWrap);
     }else if(mode==='review'){
-      reviewPanel=createReviewPanel({refs:()=>[...selected.values()],get,notify:say,applied:()=>load(),initialReviewId:data.latestReadyReviewId||null});content.append(reviewPanel.root);
+      reviewPanel=createReviewPanel({refs:()=>[...selected.values()],clearSelection:()=>{selected.clear();selectionChanged();},get,notify:say,applied:()=>load(),initialReviewId:data.latestReadyReviewId||null});content.append(reviewPanel.root);
     }else if(mode==='projects'){
       content.append(h('div',{class:'knowledge-banner'},h('span',{text:'📁 同一项目 ID 关联不同电脑上的本地工作区目录。项目专属记忆保存在 NAS，仅下发到映射过的电脑与路径。'})));
       const id=h('input',{class:'field',placeholder:'项目 ID，例如 ametyping'}),name=h('input',{class:'field',placeholder:'项目名称'}),machine=h('input',{class:'field',placeholder:'机器名'}),path=h('input',{class:'field',placeholder:'该电脑上的绝对路径'});

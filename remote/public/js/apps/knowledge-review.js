@@ -15,7 +15,7 @@ const statuses = { running: '分析中', ready: '待审阅', failed: '失败', a
 const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
 const GROUP = { claude: 'Claude', codex: 'OpenAI（Codex）', magpie: 'Magpie' };
 const button = (text, onclick, cls = '') => h('button', { class: 'btn' + (cls ? ' ' + cls : ''), type: 'button', text, onclick });
-export function createReviewPanel({ refs, get, notify, applied, initialReviewId = null }) {
+export function createReviewPanel({ refs, clearSelection = null, get, notify, applied, initialReviewId = null }) {
   let dead = false, timer = null, ai = null, currentReviewId = null;
   const root = h('div', { class: 'knowledge-review' }), report = h('div', { class: 'knowledge-report-area' }), history = h('div', { class: 'knowledge-history-card knowledge-card' });
   const selBanner = h('div', { class: 'knowledge-banner knowledge-sel-banner' });
@@ -119,7 +119,8 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
         h('span', { text: `📌 当前已选中 ${curRefs.length} 项待整理内容（统一记忆 ${memCount} 条、采集来源 ${obsCount} 份）—— 确认下方整理要求与 AI 模型后，点击「智能整理所选」即可开始生成审阅方案！` }),
         h('div', { class: 'capi-btns' },
           button('立即智能整理所选', start, 'go'),
-          button('核对所选原文', align))
+          button('核对所选原文', align),
+          ...(clearSelection ? [button('取消全选', () => { clearSelection(); renderSelBanner(); notify('已清空当前勾选内容'); })] : []))
       );
     } else {
       selBanner.style.borderLeftColor = '';
@@ -324,7 +325,10 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
       const actBar = h('div', { class: 'capi-btns' });
       if (r.status === 'ready') {
         box.append(h('p', { class: 'ghint', text: '勾选完整分组后应用。拆分组中的新增和停用会一起提交；原记忆或来源更新后，需重新分析。' }));
-        actBar.append(button('应用勾选分组', async () => {
+        actBar.append(
+          button('全选所有分组', () => { for (const x of chosen) x.pick.checked = true; }),
+          button('取消全选分组', () => { for (const x of chosen) x.pick.checked = false; }),
+          button('应用勾选分组', async () => {
           try {
             const groups = chosen.filter(x => x.pick.checked).map(x => x.gi);
             const groupOperations = {};
