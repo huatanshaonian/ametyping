@@ -265,4 +265,73 @@ describe('infra monitor & topology', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('supports downgrading (muting) intentionally stopped containers/services to yellow without alert', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
+    try {
+      const notifications = [];
+      const infra = createInfra({
+        dataDir: tmp,
+        localNas: false,
+        notify: (msg) => notifications.push(msg),
+      });
+
+      // NAS reports jellyfin stopped while watched
+      infra.ingestReport('nas', {
+        uptimeSec: 1000,
+        services: [{ name: 'ame-remote', state: 'running' }, { name: 'egress-tunnel', state: 'running' }, { name: 'tailscaled', state: 'running' }],
+        containers: [
+          { name: 'partdb', state: 'running' },
+          { name: 'zotero', state: 'running' },
+          { name: 'onlyoffice', state: 'running' },
+          { name: 'jellyfin', state: 'stopped', status: 'Exited (0)' },
+        ],
+      });
+
+      let nasNode = infra.snapshot().nodes.find((n) => n.id === 'nas');
+      assert.equal(nasNode.alertCount, 1);
+
+      // Right-click downgrade jellyfin to muted (intentionally off)
+      const muteMock = mockReqRes('POST', '/api/infra/pin', {
+        nodeId: 'nas',
+        item: 'docker:jellyfin',
+        mute: true,
+      });
+      await infra.handleBrowser(muteMock.req, muteMock.res, muteMock.url, '127.0.0.1', muteMock.json, muteMock.readBody, () => false);
+      assert.equal(muteMock.getPayload().ok, true);
+      assert.ok(muteMock.getPayload().muted.includes('docker:jellyfin'));
+
+      nasNode = infra.snapshot().nodes.find((n) => n.id === 'nas');
+      assert.equal(nasNode.alertCount, 0);
+      const jf = nasNode.containers.find((c) => c.name === 'jellyfin');
+      assert.equal(jf.muted, true);
+
+      // Transition from running -> stopped while muted should not push alert
+      infra.ingestReport('nas', {
+        uptimeSec: 1010,
+        services: [{ name: 'ame-remote', state: 'running' }, { name: 'egress-tunnel', state: 'running' }, { name: 'tailscaled', state: 'running' }],
+        containers: [
+          { name: 'partdb', state: 'running' },
+          { name: 'zotero', state: 'running' },
+          { name: 'onlyoffice', state: 'running' },
+          { name: 'jellyfin', state: 'running' },
+        ],
+      });
+      infra.ingestReport('nas', {
+        uptimeSec: 1020,
+        services: [{ name: 'ame-remote', state: 'running' }, { name: 'egress-tunnel', state: 'running' }, { name: 'tailscaled', state: 'running' }],
+        containers: [
+          { name: 'partdb', state: 'running' },
+          { name: 'zotero', state: 'running' },
+          { name: 'onlyoffice', state: 'running' },
+          { name: 'jellyfin', state: 'stopped' },
+        ],
+      });
+      assert.equal(notifications.length, 0);
+
+      infra.close();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

@@ -7,6 +7,7 @@ import { h, icon, ago } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { confirmBox, askText } from '../dialog.js';
+import * as ctxmenu from '../ctxmenu.js';
 import * as computers from './computers.js';
 
 let inst = null;
@@ -247,10 +248,22 @@ function mount(initialNodeId) {
     const downSvcs = (n.services || []).filter((s) => s.state !== 'running');
     const downCnts = (n.containers || []).filter((c) => c.state !== 'running');
     for (const s of downSvcs.slice(0, 2)) {
-      pills.push(h('span', { class: 'inf-pill err', text: `× ${s.name}` }));
+      const pill = h('span', {
+        class: `inf-pill ${s.muted ? 'warn' : 'err'}`,
+        title: s.muted ? `${s.name}：已设为按需关闭（右键可恢复异常告警）` : `${s.name}：已停止（右键可降级为按需关闭）`,
+        text: `${s.muted ? '⏸' : '×'} ${s.name}`,
+      });
+      attachItemMenu(pill, n.id, s.name, s.label || s.name, false, !!s.muted, !!s.watched);
+      pills.push(pill);
     }
     for (const c of downCnts.slice(0, 2)) {
-      pills.push(h('span', { class: 'inf-pill err', text: `× 🐳${c.name}` }));
+      const pill = h('span', {
+        class: `inf-pill ${c.muted ? 'warn' : 'err'}`,
+        title: c.muted ? `${c.name}：已设为按需关闭（右键可恢复异常告警）` : `${c.name}：已停止（右键可降级为按需关闭）`,
+        text: `${c.muted ? '⏸' : '×'} 🐳${c.name}`,
+      });
+      attachItemMenu(pill, n.id, 'docker:' + c.name, `容器 ${c.name}`, true, !!c.muted, !!c.watched);
+      pills.push(pill);
     }
 
     const okWatchedSvcs = (n.services || []).filter((s) => s.watched && s.state === 'running');
@@ -579,6 +592,35 @@ function mount(initialNodeId) {
     if (r && r.ok) await fetchState();
   }
 
+  async function toggleMute(nodeId, item, mute) {
+    const r = await net.post('/api/infra/pin', { nodeId, item, mute });
+    if (r && r.ok) {
+      say(mute ? `已将「${item}」降级为按需关闭（黄色待命，不计入异常告警）` : `已恢复「${item}」的停止异常告警（红色）`);
+      await fetchState();
+    }
+  }
+
+  function attachItemMenu(el, nodeId, itemKey, label, isDocker, isMuted, isWatched) {
+    ctxmenu.attach(el, () => [
+      {
+        label: '🟡 降级为「按需关闭 / 暂不开启」（黄色，不报异常）',
+        check: isMuted,
+        onClick: () => toggleMute(nodeId, itemKey, !isMuted),
+      },
+      {
+        label: '🔴 停止时标红告警（视为异常中断）',
+        check: !isMuted,
+        onClick: () => { if (isMuted) toggleMute(nodeId, itemKey, false); },
+      },
+      '-',
+      {
+        label: isWatched ? '📌 取消设为常驻关注项' : '📌 设为常驻关注项',
+        check: isWatched,
+        onClick: () => togglePin(nodeId, itemKey),
+      },
+    ]);
+  }
+
   function renderEventsView() {
     const evts = state.events || [];
     detailPane.replaceChildren(
@@ -665,11 +707,15 @@ function mount(initialNodeId) {
     const svcRows = svcs.map((s) => {
       const isOk = s.state === 'running';
       const isDeg = s.state === 'degraded';
-      const badgeCls = isOk ? 'ok' : isDeg ? 'warn' : 'err';
-      const badgeTxt = isOk ? '运行中' : isDeg ? '异常/降级' : '已停止';
+      const isMuted = !!s.muted;
+      const badgeCls = isOk ? 'ok' : (isDeg || isMuted) ? 'warn' : 'err';
+      const badgeTxt = isOk ? '运行中' : isDeg ? '异常/降级' : isMuted ? '按需关闭' : '已停止';
       const ctrlKind = s.kind === 'egress' ? 'egress' : 'service';
 
-      return h('div', { class: `inf-row ${!isOk && s.watched ? 'err' : ''}` },
+      const row = h('div', {
+        class: `inf-row ${!isOk && s.watched ? (isMuted ? 'warn' : 'err') : ''}`,
+        title: '右键可切换「按需关闭（黄色降级）」或「异常告警（红色）」',
+      },
         h('button', {
           class: `inf-pin ${s.watched ? 'on' : ''}`,
           type: 'button',
@@ -679,7 +725,7 @@ function mount(initialNodeId) {
         }),
         h('span', { class: `inf-pill ${badgeCls}`, text: badgeTxt }),
         h('span', { class: 'inf-row-name', text: s.label || s.name }),
-        h('span', { class: 'inf-row-meta', text: `${s.port ? `:${s.port}` : ''}${s.detail ? ` ${s.detail}` : ''}` }),
+        h('span', { class: 'inf-row-meta', text: `${s.port ? `:${s.port}` : ''}${s.detail ? ` ${s.detail}` : ''}${!isOk && isMuted ? ' · 暂不开(已降级)' : ''}` }),
         h('div', { class: 'inf-row-acts' },
           h('button', {
             class: 'btn',
@@ -702,13 +748,21 @@ function mount(initialNodeId) {
               })
         )
       );
+      attachItemMenu(row, n.id, s.name, s.label || s.name, false, isMuted, !!s.watched);
+      return row;
     });
 
     // Docker containers list
     const cnts = n.containers || [];
     const cntRows = cnts.map((c) => {
       const isOk = c.state === 'running';
-      return h('div', { class: `inf-row ${!isOk && c.watched ? 'err' : ''}` },
+      const isMuted = !!c.muted;
+      const badgeCls = isOk ? 'ok' : isMuted ? 'warn' : 'err';
+      const badgeTxt = isOk ? 'Up' : isMuted ? '按需未开' : 'Stopped';
+      const row = h('div', {
+        class: `inf-row ${!isOk && c.watched ? (isMuted ? 'warn' : 'err') : ''}`,
+        title: '右键可切换「按需关闭（黄色降级）」或「异常告警（红色）」',
+      },
         h('button', {
           class: `inf-pin ${c.watched ? 'on' : ''}`,
           type: 'button',
@@ -716,9 +770,9 @@ function mount(initialNodeId) {
           text: '📌',
           onclick: () => togglePin(n.id, 'docker:' + c.name),
         }),
-        h('span', { class: `inf-pill ${isOk ? 'ok' : 'err'}`, text: isOk ? 'Up' : 'Stopped' }),
+        h('span', { class: `inf-pill ${badgeCls}`, text: badgeTxt }),
         h('span', { class: 'inf-row-name', text: `🐳 ${c.name}` }),
-        h('span', { class: 'inf-row-meta', text: `${c.status || ''}${c.ports ? ` · ${c.ports}` : ''}` }),
+        h('span', { class: 'inf-row-meta', text: `${c.status || ''}${c.ports ? ` · ${c.ports}` : ''}${!isOk && isMuted ? ' · 暂不开(已降级)' : ''}` }),
         h('div', { class: 'inf-row-acts' },
           h('button', {
             class: 'btn',
@@ -741,6 +795,8 @@ function mount(initialNodeId) {
               })
         )
       );
+      attachItemMenu(row, n.id, 'docker:' + c.name, `容器 ${c.name}`, true, isMuted, !!c.watched);
+      return row;
     });
 
     // Connected links for this node
@@ -798,12 +854,15 @@ function mount(initialNodeId) {
       h('div', { class: 'inf-sec' },
         h('div', { class: 'inf-sec-hd' },
           h('span', { text: `常驻服务与守护进程 (${svcs.length})` }),
-          h('span', { style: 'font-weight:normal;font-size:11px;color:var(--muted)', text: '📌 亮起表示设为必看服务（异常时推送告警）' })
+          h('span', { style: 'font-weight:normal;font-size:11px;color:var(--muted)', text: '📌 必看 · 右键可降级为按需未开(黄)' })
         ),
         svcRows.length ? h('div', { class: 'inf-list' }, ...svcRows) : h('div', { class: 'notice', text: n.online ? '未发现额外服务，可点击右上角「＋ 关注服务」添加。' : '节点尚未连接上报。请在「🔑 令牌与安装命令」生成令牌并运行一键安装脚本。' })
       ),
       (cntRows.length > 0 || n.role === 'nas') ? h('div', { class: 'inf-sec' },
-        h('div', { class: 'inf-sec-hd', text: `Docker 容器 (${cnts.length})` }),
+        h('div', { class: 'inf-sec-hd' },
+          h('span', { text: `Docker 容器 (${cnts.length})` }),
+          h('span', { style: 'font-weight:normal;font-size:11px;color:var(--muted)', text: '右键容器可降级为按需未开(黄色，不告警)' })
+        ),
         cntRows.length ? h('div', { class: 'inf-list' }, ...cntRows) : h('div', { class: 'notice', text: '未检测到 Docker 容器。' })
       ) : null,
       h('div', { class: 'inf-sec' },

@@ -68,7 +68,7 @@ const DEFAULT_NODES = [
 
 const DEFAULT_LINKS = [
   { id: 'l_pc_openwrt', from: 'huatanshaonian', to: 'openwrt', label: 'LAN 网关 / Sing-box', service: 'sing-box', probeHost: '192.168.114.1', probePort: 9090 },
-  { id: 'l_pc_nas', from: 'huatanshaonian', to: 'nas', label: 'LAN / Windose :8787', service: 'ame-remote', probeHost: '192.168.114.6', probePort: 8787 },
+  { id: 'l_pc_nas', from: 'huatanshaonian', to: 'nas', label: 'LAN 直连 / NAS :445', service: 'ame-remote', probeHost: '192.168.114.6', probePort: 445 },
   { id: 'l_dell_nas', from: 'dell97', to: 'nas', label: 'Tailscale :8788', service: 'tailscaled', probeHost: '100.65.10.90', probePort: 8788 },
   { id: 'l_nas_aws_egress', from: 'nas', to: 'aws1', label: 'SSH -D :1058 (egress.sh)', service: 'egress-tunnel', probeHost: '127.0.0.1', probePort: 1057, standby: true },
   { id: 'l_nas_aws_socks', from: 'nas', to: 'aws1', label: 'Tailscale SOCKS5 :1080', service: 'danted', probeHost: '100.120.53.46', probePort: 1080 },
@@ -94,12 +94,16 @@ function createInfra({
   offlineMs = OFFLINE_MS,
 } = {}) {
   const file = path.join(dataDir, 'infra.json');
-  let cfg = { nodes: DEFAULT_NODES.map((n) => ({ ...n, watched: [...n.watched] })), links: DEFAULT_NODES ? DEFAULT_LINKS.map((l) => ({ ...l })) : [], events: [] };
+  let cfg = { nodes: DEFAULT_NODES.map((n) => ({ ...n, watched: [...n.watched], muted: [] })), links: DEFAULT_NODES ? DEFAULT_LINKS.map((l) => ({ ...l })) : [], events: [] };
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (raw && Array.isArray(raw.nodes) && Array.isArray(raw.links)) {
       cfg = {
-        nodes: raw.nodes,
+        nodes: raw.nodes.map((n) => ({
+          ...n,
+          watched: Array.isArray(n.watched) ? n.watched : [],
+          muted: Array.isArray(n.muted) ? n.muted : [],
+        })),
         links: raw.links,
         events: Array.isArray(raw.events) ? raw.events.slice(-MAX_EVENTS) : [],
       };
@@ -135,10 +139,13 @@ function createInfra({
         host: str(defaults.host || '', 80),
         tier: Number.isFinite(defaults.tier) ? defaults.tier : 2,
         watched: Array.isArray(defaults.watched) ? defaults.watched : [],
+        muted: Array.isArray(defaults.muted) ? defaults.muted : [],
       };
       cfg.nodes.push(n);
       save();
     }
+    if (!Array.isArray(n.watched)) n.watched = [];
+    if (!Array.isArray(n.muted)) n.muted = [];
     return n;
   }
 
@@ -292,12 +299,14 @@ function createInfra({
 
     // Detect state transitions on watched services & containers
     if (prevRep) {
+      const mutedSet = new Set(nodeCfg.muted || []);
       const prevSvc = new Map((prevRep.services || []).map((s) => [s.name, s.state]));
       for (const s of rep.services) {
         const old = prevSvc.get(s.name);
         const isWatched = (nodeCfg.watched || []).includes(s.name);
+        const isMuted = mutedSet.has(s.name);
         if (old && old !== s.state) {
-          if (s.state === 'stopped') {
+          if (s.state === 'stopped' && !isMuted) {
             recordEvent(nodeId, 'service-down', `服务 ${s.label || s.name} 已停止`, isWatched ? 'err' : 'warn');
           } else if (old === 'stopped' && s.state === 'running') {
             recordEvent(nodeId, 'service-up', `服务 ${s.label || s.name} 已恢复运行`, 'ok');
@@ -308,8 +317,9 @@ function createInfra({
       for (const c of rep.containers) {
         const old = prevCnt.get(c.name);
         const isWatched = (nodeCfg.watched || []).includes('docker:' + c.name);
+        const isMuted = mutedSet.has('docker:' + c.name);
         if (old && old !== c.state) {
-          if (c.state === 'stopped') {
+          if (c.state === 'stopped' && !isMuted) {
             recordEvent(nodeId, 'docker-down', `容器 ${c.name} 已停止 (${c.status || 'Exited'})`, isWatched ? 'err' : 'warn');
           } else if (old === 'stopped' && c.state === 'running') {
             recordEvent(nodeId, 'docker-up', `容器 ${c.name} 已恢复运行`, 'ok');
@@ -425,21 +435,24 @@ function createInfra({
       const online = isNodeOnline(n.id);
       const rep = (rt && rt.report) || null;
       const watchedSet = new Set(n.watched || []);
+      const mutedSet = new Set(n.muted || []);
 
       const services = (rep ? rep.services : []).map((s) => ({
         ...s,
         watched: watchedSet.has(s.name),
+        muted: mutedSet.has(s.name),
       }));
       const containers = (rep ? rep.containers : []).map((c) => ({
         ...c,
         watched: watchedSet.has('docker:' + c.name),
+        muted: mutedSet.has('docker:' + c.name),
       }));
 
-      // Count alerts on this node
+      // Count alerts on this node (muted items are intentionally stopped and do not count as alerts)
       let alertCount = 0;
       if (!online && rt && rt.lastSeen > 0) alertCount++;
-      for (const s of services) if (s.watched && s.state !== 'running') alertCount++;
-      for (const c of containers) if (c.watched && c.state !== 'running') alertCount++;
+      for (const s of services) if (s.watched && !s.muted && s.state !== 'running') alertCount++;
+      for (const c of containers) if (c.watched && !c.muted && c.state !== 'running') alertCount++;
 
       return {
         id: n.id,
@@ -448,6 +461,7 @@ function createInfra({
         host: n.host || '',
         tier: Number.isFinite(n.tier) ? n.tier : 1,
         watched: n.watched || [],
+        muted: n.muted || [],
         online,
         lastSeen: (rt && rt.lastSeen) || (m && m.online ? Date.now() : 0),
         uptimeSec: rep ? rep.uptimeSec : 0,
@@ -747,15 +761,26 @@ function createInfra({
       const node = cfg.nodes.find((n) => n.id === nodeId);
       if (!node || !item) { json(res, 200, { ok: false, msg: '节点或服务名无效' }); return true; }
       if (!Array.isArray(node.watched)) node.watched = [];
-      const idx = node.watched.indexOf(item);
-      if (d.watch === false || (d.watch == null && idx >= 0)) {
-        if (idx >= 0) node.watched.splice(idx, 1);
-      } else if (idx < 0) {
-        node.watched.push(item);
+      if (!Array.isArray(node.muted)) node.muted = [];
+      if (d.mute != null || d.op === 'mute') {
+        const mIdx = node.muted.indexOf(item);
+        const wantMute = d.mute != null ? !!d.mute : mIdx < 0;
+        if (!wantMute) {
+          if (mIdx >= 0) node.muted.splice(mIdx, 1);
+        } else if (mIdx < 0) {
+          node.muted.push(item);
+        }
+      } else {
+        const idx = node.watched.indexOf(item);
+        if (d.watch === false || (d.watch == null && idx >= 0)) {
+          if (idx >= 0) node.watched.splice(idx, 1);
+        } else if (idx < 0) {
+          node.watched.push(item);
+        }
       }
       save();
       onChange();
-      json(res, 200, { ok: true, watched: node.watched });
+      json(res, 200, { ok: true, watched: node.watched, muted: node.muted });
       return true;
     }
 
