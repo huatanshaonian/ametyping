@@ -14,6 +14,14 @@ const OFFLINE_MS = 5 * 60 * 1000;   // 5 heartbeats (60s * 5) without report -> 
 const STALL_MS = 45 * 1000;         // event-loop stall threshold (e.g. SQLite backup pause)
 const ALERT_COOLDOWN_MS = 10 * 60e3; // 10 min cooldown per alert key
 const MAX_EVENTS = 80;
+// what remote/deploy/nas/docker-upgrade.sh reports about a container's last one-click upgrade
+const UPGRADE_STATES = ['running', 'latest', 'done', 'failed', 'rolledback'];
+const UPGRADE_EVENTS = {
+  done: ['ok', '已升级'],
+  latest: ['ok', '已是最新版本'],
+  rolledback: ['err', '升级失败，已回退到旧版本'],
+  failed: ['err', '升级失败'],
+};
 
 const DEFAULT_NODES = [
   {
@@ -243,6 +251,14 @@ function createInfra({
       status: str(c && c.status, 80),
       ports: str(c && c.ports, 120),
       image: str(c && c.image, 80),
+      compose: c && c.compose ? str(c.compose, 64) : undefined,
+      upgrade: c && c.upgrade && typeof c.upgrade === 'object' && UPGRADE_STATES.includes(c.upgrade.state) ? {
+        state: c.upgrade.state,
+        msg: str(c.upgrade.msg, 300),
+        from: str(c.upgrade.from, 20),
+        to: str(c.upgrade.to, 20),
+        at: Math.max(0, +c.upgrade.at || 0),
+      } : undefined,
     })).filter((c) => c.name) : [];
 
     const gpus = Array.isArray(d.gpus) ? d.gpus.slice(0, 8).map((g) => ({
@@ -372,6 +388,14 @@ function createInfra({
             recordEvent(nodeId, 'docker-up', `容器 ${c.name} 已恢复运行`, 'ok');
           }
         }
+      }
+      // a one-click upgrade that finished since the last report
+      const prevUp = new Map((prevRep.containers || []).map((c) => [c.name, c.upgrade]));
+      for (const c of rep.containers) {
+        const u = c.upgrade, p = prevUp.get(c.name);
+        if (!u || !UPGRADE_EVENTS[u.state] || (p && p.state === u.state && p.at === u.at)) continue;
+        const [level, word] = UPGRADE_EVENTS[u.state];
+        recordEvent(nodeId, 'docker-upgrade', `容器 ${c.name} ${word}${u.from && u.to && u.from !== u.to ? `（${u.from} → ${u.to}）` : ''}${u.state === 'failed' || u.state === 'rolledback' ? `：${u.msg}` : ''}`, level);
       }
     }
 
@@ -899,8 +923,8 @@ function createInfra({
       const nodeId = str(d.nodeId, 40);
       const kind = str(d.kind, 20); // 'service' | 'docker' | 'egress' | 'singbox'
       const target = str(d.target, 64);
-      const op = str(d.op, 20);     // 'restart' | 'start' | 'stop' | 'retest'
-      if (!nodeId || !['service', 'docker', 'egress', 'singbox'].includes(kind) || !['restart', 'start', 'stop', 'retest'].includes(op)) {
+      const op = str(d.op, 20);     // 'restart' | 'start' | 'stop' | 'retest' | 'upgrade' (docker only)
+      if (!nodeId || !['service', 'docker', 'egress', 'singbox'].includes(kind) || !['restart', 'start', 'stop', 'retest', 'upgrade'].includes(op) || (op === 'upgrade' && kind !== 'docker')) {
         json(res, 200, { ok: false, msg: '无效的控制参数' });
         return true;
       }

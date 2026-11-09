@@ -85,7 +85,7 @@ Kiro CLI (`kiro-cli`) 支持桌宠进度、完整对话（读取 `~/.kiro/sessio
 4. 证书：[`remote/deploy/nas/renew-cert.sh`](remote/deploy/nas/renew-cert.sh)（acme.sh + Cloudflare DNS 验证，推送进 DSM）；首次用 root 运行 `renew-cert.sh deploy`，之后在 DSM 任务计划里以 root 每周运行一次。
 5. 开机自启：[`remote/deploy/nas/run.sh`](remote/deploy/nas/run.sh) `start|stop|restart|status`；DSM 任务计划加一个「开机」触发的任务运行 `run.sh start`（守护循环，崩溃自动拉起）。
 6. 域名解析到群晖的 Tailscale 地址（灰云，仅 DNS）。
-7. Docker 权限：看板以普通用户运行，读不了 `docker.sock`，监控里的容器会全部误报「未运行」。用 root 运行一次 [`remote/deploy/nas/docker-ps-sudoers.sh`](remote/deploy/nas/docker-ps-sudoers.sh)，它写入 `/etc/sudoers.d/ame-docker-ps`，只允许该用户免密执行 `docker ps -a --format`、`start`、`stop`、`restart`；之后 `run.sh restart`。撤销：`sudo sh docker-ps-sudoers.sh remove`。
+7. Docker 权限：看板以普通用户运行，读不了 `docker.sock`，监控里的容器会全部误报「未运行」。用 root 运行一次 [`remote/deploy/nas/docker-ps-sudoers.sh`](remote/deploy/nas/docker-ps-sudoers.sh)，它写入 `/etc/sudoers.d/ame-docker-ps`，只允许该用户免密执行 `docker ps -a --format`、`start`、`stop`、`restart` 和一键升级脚本 `ame-docker-upgrade upgrade`（同时安装该脚本；各 compose 项目要再 `sudo ame-docker-upgrade register <目录>` 登记一次）；之后 `run.sh restart`。撤销：`sudo sh docker-ps-sudoers.sh remove`。NAS 上的容器一律用 compose 安装，约定和现状见 [`remote/deploy/nas/DOCKER.md`](remote/deploy/nas/DOCKER.md)。
 
 忘记密码：`setup.js password`；换手机：`setup.js totp`（之后重启服务）。
 

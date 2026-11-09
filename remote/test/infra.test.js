@@ -335,6 +335,54 @@ describe('infra monitor & topology', () => {
     }
   });
 
+  it('passes container compose/upgrade state through, logs finished upgrades once, and validates the upgrade op', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
+    try {
+      const notifications = [];
+      const infra = createInfra({ dataDir: tmp, localNas: false, control: true, notify: (m) => notifications.push(m) });
+      const rep = (upgrade) => ({ uptimeSec: 1, containers: [
+        { name: 'jellyfin', state: 'running', compose: 'jellyfin', upgrade },
+        { name: 'v2raya', state: 'stopped' },
+      ] });
+      infra.ingestReport('nas', rep(undefined));
+      infra.ingestReport('nas', rep({ state: 'running', msg: '开始升级', from: 'aaa', at: 1 }));
+      infra.ingestReport('nas', rep({ state: 'done', msg: '已升级', from: 'aaa', to: 'bbb', at: 2 }));
+      infra.ingestReport('nas', rep({ state: 'done', msg: '已升级', from: 'aaa', to: 'bbb', at: 2 }));   // same result again
+      infra.ingestReport('nas', rep({ state: 'bogus', at: 3 }));                                          // unknown state dropped
+      infra.ingestReport('nas', rep({ state: 'rolledback', msg: '新版本启动失败', from: 'bbb', to: 'ccc', at: 4 }));
+
+      const nas = infra.snapshot().nodes.find((n) => n.id === 'nas');
+      const jf = nas.containers.find((c) => c.name === 'jellyfin');
+      assert.equal(jf.compose, 'jellyfin');
+      assert.equal(jf.upgrade.state, 'rolledback');
+      assert.equal(nas.containers.find((c) => c.name === 'v2raya').compose, undefined);
+      const ups = infra.snapshot().events.filter((e) => e.kind === 'docker-upgrade');
+      assert.equal(ups.length, 2);
+      assert.match(ups[1].summary, /jellyfin 已升级（aaa → bbb）/);
+      assert.match(ups[0].summary, /已回退.*新版本启动失败/);
+      assert.equal(notifications.length, 1);   // the rolled-back one is an alert
+
+      for (const body of [{ nodeId: 'nas', kind: 'service', target: 'x', op: 'upgrade' }, { nodeId: 'nas', kind: 'docker', target: 'x', op: 'rm' }]) {
+        const m = mockReqRes('POST', '/api/infra/control', body);
+        await infra.handleBrowser(m.req, m.res, m.url, '127.0.0.1', m.json, m.readBody, () => true);
+        assert.equal(m.getPayload().ok, false);
+        assert.match(m.getPayload().msg, /无效的控制参数/);
+      }
+      infra.close();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('probe refuses upgrade for anything but a docker container name', async () => {
+    const { createCollector } = require('../agent/infra-probe');
+    const c = createCollector({ isNas: false });
+    assert.match((await c.executeControl({ kind: 'service', target: 'nginx', op: 'upgrade' })).msg, /只有 Docker 容器/);
+    assert.match((await c.executeControl({ kind: 'docker', target: '-rf', op: 'upgrade' })).msg, /只有 Docker 容器/);
+    assert.match((await c.executeControl({ kind: 'docker', target: 'a b', op: 'upgrade' })).msg, /无效的目标名称/);
+    assert.match((await c.executeControl({ kind: 'docker', target: 'x', op: 'exec' })).msg, /不支持的操作类型/);
+  });
+
   it('fills service labels/ports from server metadata and keeps probe-supplied labels', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-infra-test-'));
     try {

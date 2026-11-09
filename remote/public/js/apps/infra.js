@@ -587,6 +587,28 @@ function mount(initialNodeId) {
     await fetchState();
   }
 
+  // the last one-click upgrade of a container (shown for a day, or while it runs / when it went wrong)
+  const UPGRADE_NOTE = {
+    running: ['proxy', '升级中'],
+    latest: ['ok', '已是最新'],
+    done: ['ok', '已升级'],
+    rolledback: ['err', '升级失败·已回退'],
+    failed: ['err', '升级失败'],
+  };
+  function upgradeNote(c) {
+    const u = c.upgrade;
+    if (!u || !UPGRADE_NOTE[u.state]) return null;
+    const bad = u.state === 'failed' || u.state === 'rolledback';
+    if (!bad && u.state !== 'running' && Date.now() - (u.at || 0) > 86400e3) return null;
+    const [cls, txt] = UPGRADE_NOTE[u.state];
+    const when = u.at ? new Date(u.at).toLocaleString('zh-CN', { hour12: false }) : '';
+    return h('span', {
+      class: `inf-pill ${cls}`,
+      text: txt,
+      title: `${u.msg || ''}${u.from && u.to && u.from !== u.to ? `\n${u.from} → ${u.to}` : ''}${when ? `\n${when}` : ''}`,
+    });
+  }
+
   async function togglePin(nodeId, item) {
     const r = await net.post('/api/infra/pin', { nodeId, item });
     if (r && r.ok) await fetchState();
@@ -759,6 +781,7 @@ function mount(initialNodeId) {
       const isMuted = !!c.muted;
       const badgeCls = isOk ? 'ok' : isMuted ? 'warn' : 'err';
       const badgeTxt = isOk ? 'Up' : isMuted ? '按需未开' : 'Stopped';
+      const upgrading = !!(c.upgrade && c.upgrade.state === 'running');
       const row = h('div', {
         class: `inf-row ${!isOk && c.watched ? (isMuted ? 'warn' : 'err') : ''}`,
         title: '右键可切换「按需关闭（黄色降级）」或「异常告警（红色）」',
@@ -773,7 +796,16 @@ function mount(initialNodeId) {
         h('span', { class: `inf-pill ${badgeCls}`, text: badgeTxt }),
         h('span', { class: 'inf-row-name', text: `🐳 ${c.name}` }),
         h('span', { class: 'inf-row-meta', text: `${c.status || ''}${c.ports ? ` · ${c.ports}` : ''}${!isOk && isMuted ? ' · 暂不开(已降级)' : ''}` }),
+        upgradeNote(c),
         h('div', { class: 'inf-row-acts' },
+          c.compose ? h('button', {
+            class: 'btn',
+            type: 'button',
+            text: upgrading ? '升级中…' : '升级',
+            disabled: upgrading,
+            title: '拉取新镜像并按 compose 文件重建（设置和数据保留）；新版本起不来会自动回退',
+            onclick: () => runControl(n.id, 'docker', c.name, 'upgrade', `升级容器 ${c.name}（拉取新镜像后重建，期间服务会中断片刻）`),
+          }) : null,
           h('button', {
             class: 'btn',
             type: 'button',

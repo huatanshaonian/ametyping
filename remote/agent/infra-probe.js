@@ -8,6 +8,10 @@ const net = require('net');
 const path = require('path');
 const { execFile } = require('child_process');
 
+// one-click container upgrade (remote/deploy/nas/docker-upgrade.sh, installed by docker-ps-sudoers.sh)
+const UPGRADE_BIN = '/usr/local/bin/ame-docker-upgrade';
+const UPGRADE_STATE_DIR = '/var/log/ame-docker-upgrade';
+
 const SYSTEMD_IGNORE = /^(systemd-|dbus|getty@|serial-getty@|multipathd|ModemManager|networkd-dispatcher|polkit|rsyslog|snapd|udisks2|unattended-upgrades|user@|user-runtime-dir@|accounts-daemon|cron|irqbalance|packagekit|acpid|chrony|fwupd|blk-availability|console-setup|dmesg|finalrd|grub-|keyboard-setup|lvm2-|open-iscsi|pollinate|setvtrgb|ua-|uuidd|vgauth|apport|ec2-|google-guest|google-osconfig|snap\.amazon-ssm)/;
 
 function runCmd(bin, args, timeout = 3500) {
@@ -164,23 +168,35 @@ function createCollector({ isNas = false, nasRoot = '/volume2/docker/ame-remote'
     return '';
   }
 
+  // the last one-click upgrade of a container, as remote/deploy/nas/docker-upgrade.sh left it (world-readable JSON)
+  function readUpgradeState(name) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(UPGRADE_STATE_DIR, name + '.json'), 'utf8'));
+      if (!j || typeof j !== 'object' || typeof j.state !== 'string') return undefined;
+      return { state: j.state, msg: String(j.msg || ''), from: String(j.from || ''), to: String(j.to || ''), at: +j.at || 0 };
+    } catch { return undefined; }
+  }
+
   async function collectDocker() {
     const bin = await findDocker();
     if (!bin) return [];
-    const fmt = '{{.Names}}|{{.State}}|{{.Status}}|{{.Ports}}|{{.Image}}';
+    const fmt = '{{.Names}}|{{.State}}|{{.Status}}|{{.Ports}}|{{.Image}}|{{.Label "com.docker.compose.project"}}';
     const r = bin.startsWith('sudo:')
       ? await runCmd('sudo', ['-n', bin.slice(5), 'ps', '-a', '--format', fmt], 4000)
       : await runCmd(bin, ['ps', '-a', '--format', fmt], 4000);
     if (!r.ok || !r.out) return [];
     return r.out.split('\n').map((line) => {
-      const [name, state, status, ports, image] = line.split('|');
+      const [name, state, status, ports, image, compose] = line.split('|');
       if (!name) return null;
+      const n = name.trim().slice(0, 64);
       return {
-        name: name.trim().slice(0, 64),
+        name: n,
         state: (state || '').trim().toLowerCase() === 'running' ? 'running' : 'stopped',
         status: (status || '').trim().slice(0, 80),
         ports: (ports || '').trim().slice(0, 120),
         image: (image || '').trim().slice(0, 80),
+        compose: (compose || '').trim().slice(0, 64) || undefined,
+        upgrade: /^[A-Za-z0-9._-]{1,64}$/.test(n) ? readUpgradeState(n) : undefined,
       };
     }).filter(Boolean);
   }
@@ -288,8 +304,16 @@ function createCollector({ isNas = false, nasRoot = '/volume2/docker/ame-remote'
   }
 
   async function executeControl({ kind, target, op }) {
-    if (!['restart', 'start', 'stop'].includes(op)) return { ok: false, msg: '不支持的操作类型' };
+    if (!['restart', 'start', 'stop', 'upgrade'].includes(op)) return { ok: false, msg: '不支持的操作类型' };
     if (typeof target !== 'string' || !/^[A-Za-z0-9._@-]{1,64}$/.test(target)) return { ok: false, msg: '无效的目标名称' };
+
+    if (op === 'upgrade') {
+      // only compose containers, through the root-owned script that checks the project was registered by an admin
+      if (kind !== 'docker' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(target)) return { ok: false, msg: '只有 Docker 容器可以升级' };
+      if (!fs.existsSync(UPGRADE_BIN)) return { ok: false, msg: '这台电脑没装升级脚本（remote/deploy/nas/docker-ps-sudoers.sh）' };
+      const r = await runCmd('sudo', ['-n', UPGRADE_BIN, 'upgrade', target], 15000);
+      return { ok: r.ok, msg: r.ok ? `容器 ${target} 已开始升级，完成后状态会显示在这一行` : (r.err || r.out || '升级失败') };
+    }
 
     if (kind === 'egress' && isNas) {
       const script = path.join(nasRoot, 'egress.sh');
@@ -320,7 +344,7 @@ function createCollector({ isNas = false, nasRoot = '/volume2/docker/ame-remote'
 function stateSignature(report) {
   if (!report) return '';
   const s = (report.services || []).map((x) => `${x.name}:${x.state}`).sort().join(',');
-  const c = (report.containers || []).map((x) => `${x.name}:${x.state}`).sort().join(',');
+  const c = (report.containers || []).map((x) => `${x.name}:${x.state}:${(x.upgrade && x.upgrade.state) || ''}`).sort().join(',');
   const l = Object.entries(report.links || {}).map(([k, v]) => `${k}:${v && v.ok ? 1 : 0}`).sort().join(',');
   return `${s}|${c}|${l}`;
 }
