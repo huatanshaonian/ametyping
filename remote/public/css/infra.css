@@ -1,12 +1,12 @@
 /* 网络与设备 (Infrastructure & Network Topology Monitor) */
-.inf-app { display: flex; flex-direction: column; height: 100%; background: var(--surface); color: var(--ink); font-size: 12px; }
+.inf-app { display: flex; flex-direction: column; height: 100%; background: var(--surface); color: var(--ink); font-size: 12px; container: infapp / inline-size; }
 .inf-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); flex-wrap: wrap; }
 .inf-stat-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid var(--edge); background: var(--surface); font-size: 11.5px; white-space: nowrap; }
 .inf-stat-pill.ok { border-color: #1b8a3d; color: #1b8a3d; font-weight: bold; }
 .inf-stat-pill.err { border-color: #c9184a; background: #ffe3e8; color: #a40e26; font-weight: bold; }
 .inf-bar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
-.inf-body { flex: 1; display: grid; grid-template-columns: minmax(540px, 1.42fr) minmax(350px, 1fr); min-height: 0; overflow: hidden; }
+.inf-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(330px, 1fr); min-height: 0; overflow: hidden; }
 .inf-topo-pane { display: flex; flex-direction: column; border-right: 1px solid var(--edge); min-height: 0; overflow: hidden; background: var(--tint); }
 .inf-topo-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 5px 10px; border-bottom: 1px solid var(--edge); background: var(--surface); font-size: 11.5px; }
 .inf-legend { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
@@ -15,12 +15,32 @@
 .inf-leg-line.standby { border-top: 2px dashed #1d6fd8; }
 .inf-leg-line.down { border-top: 2px solid #d90429; }
 
-.inf-canvas-wrap { position: relative; flex: 1; overflow: auto; padding: 20px 18px; min-height: 360px; }
-.inf-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
-.inf-tiers { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(146px, 178px)); justify-content: space-between; column-gap: 116px; align-items: center; min-height: 100%; min-width: 670px; }
-.inf-tier-col { display: flex; flex-direction: column; gap: 18px; justify-content: center; }
-.inf-tier-title { text-align: center; font-size: 11px; font-weight: bold; color: var(--muted); padding: 2px 4px; background: rgba(255,255,255,0.65); border: 1px dotted var(--edge); margin-bottom: 2px; white-space: nowrap; }
+/* Topology stage. The canvas is a size container: wide → three tier columns with link corridors between them,
+   narrow → tiers stacked top-to-bottom (js/apps/infra.js detects which and routes the links accordingly). */
+.inf-canvas-wrap { position: relative; flex: 1; overflow: auto; padding: 12px 14px 16px; min-height: 0; display: flex; flex-direction: column; container: infcanvas / inline-size; }
+.inf-stage { position: relative; flex: 1 0 auto; display: flex; flex-direction: column; }
+.inf-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; overflow: visible; }
+.inf-svg .inf-badge { pointer-events: auto; cursor: pointer; }
+.inf-tiers { position: relative; z-index: 2; flex: 1 0 auto; display: grid; grid-template-columns: repeat(3, minmax(118px, 178px)); justify-content: space-between; column-gap: clamp(60px, 17cqi, 200px); align-items: center; pointer-events: none; }
+.inf-tier-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.inf-tier-cards { display: flex; flex-direction: column; gap: 14px; }
+.inf-tier-cards > .inf-node { pointer-events: auto; }
+.inf-tier-title { text-align: center; font-size: 11px; font-weight: bold; color: var(--muted); padding: 2px 4px; background: rgba(255,255,255,0.65); border: 1px dotted var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+@container infcanvas (max-width: 520px) {
+  .inf-tiers { grid-template-columns: minmax(0, 1fr); row-gap: 66px; align-content: center; justify-content: stretch; }
+  .inf-tier-cards { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 10px; }
+  /* linked cards come first; in the top tier put them on the line nearest the next tier */
+  .inf-tier-col[data-tier-col="0"] .inf-tier-cards { flex-wrap: wrap-reverse; }
+  .inf-tier-cards > .inf-node { flex: 0 1 176px; min-width: 138px; }
+  .inf-tier-cards > .inf-node.compact { flex: 0 1 132px; min-width: 112px; }
+  /* the title sits in the corridor the links cross: keep it a small corner caption */
+  .inf-tier-title { align-self: flex-start; max-width: 100%; border: none; background: none; padding: 0; font-weight: normal; }
+}
+@container infcanvas (max-width: 330px) {
+  .inf-tier-cards > .inf-node { flex: 1 1 100%; }
+  .inf-tier-cards > .inf-node.compact { flex: 1 1 120px; }
+}
 .inf-node { position: relative; background: var(--surface); border: 2px solid var(--border); padding: 6px 8px; cursor: pointer; box-shadow: 2px 2px 0 rgba(0,0,0,0.12); transition: border-color 0.1s, box-shadow 0.1s; }
 .inf-node:hover { border-color: var(--fill); }
 .inf-node.sel { border-color: var(--fill); outline: 2px solid var(--fill); background: var(--head-bg); box-shadow: 3px 3px 0 rgba(0,0,0,0.18); }
@@ -31,6 +51,7 @@
 .inf-node-hd { display: flex; align-items: center; gap: 5px; font-weight: bold; font-size: 11.5px; margin-bottom: 2px; }
 .inf-node.compact .inf-node-hd { margin-bottom: 0; font-weight: normal; font-size: 11px; }
 .inf-node-hd img { width: 15px; height: 15px; flex: none; }
+.inf-node-name { flex: 1; min-width: 0; line-height: 1.25; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .inf-dot { width: 8px; height: 8px; border-radius: 50%; background: #999; flex: none; display: inline-block; }
 .inf-dot.on { background: #1b8a3d; box-shadow: 0 0 4px #1b8a3d; }
 .inf-dot.err { background: #d90429; box-shadow: 0 0 5px #d90429; }
@@ -77,7 +98,8 @@
 
 .inf-status { padding: 4px 8px; border-top: 1px solid var(--edge); background: var(--head-bg); font-size: 11.5px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 
-@media (max-width: 900px) {
-  .inf-body { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 1.1fr) 1fr; }
+/* the split follows the window (not the browser viewport): Windose windows can be much narrower than the screen */
+@container infapp (max-width: 860px) {
+  .inf-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 1.25fr) minmax(220px, 1fr); }
   .inf-topo-pane { border-right: none; border-bottom: 1px solid var(--edge); }
 }
