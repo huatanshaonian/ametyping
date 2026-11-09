@@ -4,9 +4,8 @@ const {createMemory}=require('./memory');
 const {convert}=require('./opencode');
 const {createReview}=require('./review');
 const drain=res=>new Promise(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});
-function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null}){
+function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null,onAutoReview=null}){
   const vault=openVault(dir),memory=createMemory(vault);
-  const review=createReview({vault,memory,ask,model,machines:()=>[...machines.keys()]});
   const version=()=>vault.db.prepare("SELECT value FROM vault_meta WHERE key='memory_version'").get()?.value||'';
   let publishedVersion=version();
   const respond=(ws,rid,r)=>{try{ws.send(JSON.stringify({t:'vault-result',rid,...r}));}catch{}};
@@ -17,6 +16,8 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
     if(ws)try{ws.send(JSON.stringify({t:'memory-bundle',...memory.bundle(name)}));}catch{log('记忆下发连接中断，重连后同步：'+name);}
   }
   const publishAll=()=>{for(const name of machines.keys())publish(name);publishedVersion=version();};
+  const review=createReview({vault,memory,ask,model,machines:()=>[...machines.keys()],
+    onAutoApplied:outcome=>{if(outcome.autoApplied>0)publishAll();if(onAutoReview)try{onAutoReview(outcome);}catch{}}});
   // Also notice migrations performed through the same memory module by an administrator on the NAS.
   const timer=setInterval(()=>{try{if(version()!==publishedVersion)publishAll();}catch(e){log('记忆版本检查失败：'+e.message);}},5000);timer.unref();
   function message(machine,d,ws){
@@ -54,7 +55,9 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
     try{
       if(req.method==='GET'){
         if(p==='/api/knowledge'){
+          const latestReady=vault.db.prepare("SELECT id FROM memory_reviews WHERE status='ready' ORDER BY created DESC LIMIT 1").get()?.id||null;
           json(res,200,{ok:true,stats:vault.stats(),memories:memory.list(),observed:memory.observed(),projects:memory.projects(),deployments:memory.deployments(),
+            pendingSources:review.pendingObserved().length,pendingReviews:review.pendingReviewsCount(),latestReadyReviewId:latestReady,
             machines:[...machines.values()].map(m=>({name:m.name,online:m.online,archive:[...(m.sockets||[])].some(s=>s.vaultAllowed),memory:[...(m.sockets||[])].some(s=>s.memoryAllowed)}))});
         }else if(p==='/api/knowledge/sources')json(res,200,{ok:true,items:vault.list(Object.fromEntries(url.searchParams))});
         else if(p==='/api/knowledge/versions')json(res,200,{ok:true,items:vault.db.prepare('SELECT * FROM sources WHERE machine=? AND key=? ORDER BY created DESC,rowid DESC LIMIT 500').all(url.searchParams.get('machine'),url.searchParams.get('key'))});
@@ -95,8 +98,11 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
       if(p==='/api/knowledge/save')result=memory.save(d);
       else if(p==='/api/knowledge/align')result=review.alignment(d.refs);
       else if(p==='/api/knowledge/review/start')result=review.start(d);
+      else if(p==='/api/knowledge/review/auto')result=await review.autoReview(d);
+      else if(p==='/api/knowledge/review/monthly')result=await review.monthlyReview({...d,force:d.force!==false});
       else if(p==='/api/knowledge/review/manual')result=review.manual(d);
       else if(p==='/api/knowledge/review/apply')result=review.apply(d);
+      else if(p==='/api/knowledge/review/ignore-group')result=review.ignoreGroup(d);
       else if(p==='/api/knowledge/review/discard')review.discard(d.id);
       else if(p==='/api/knowledge/promote')result=memory.promoted(d);
       else if(p==='/api/knowledge/project')memory.project(d);
@@ -104,12 +110,12 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
         if(!machines.get(d.machine)?.online)throw Error('目标电脑离线，已发布的记忆会在重连时同步');
         publish(d.machine);
       }else throw Error('未知的管理操作');
-      if(['/api/knowledge/save','/api/knowledge/promote','/api/knowledge/project','/api/knowledge/review/apply'].includes(p))publishAll();
+      if(['/api/knowledge/save','/api/knowledge/promote','/api/knowledge/project','/api/knowledge/review/apply','/api/knowledge/review/auto'].includes(p))publishAll();
       audit('knowledge-change',p,String(d.id||d.machine||'').slice(0,200));
       json(res,200,{ok:true,item:result});
     }catch(e){if(!res.headersSent)json(res,200,{ok:false,msg:e.message});else res.destroy();}
     return true;
   }
-  return {vault,memory,review,message,handle,publish,publishAll,close:()=>{review.close();clearInterval(timer);vault.close();}};
+  return {vault,memory,review,autoReview:review.autoReview,monthlyReview:review.monthlyReview,message,handle,publish,publishAll,close:()=>{review.close();clearInterval(timer);vault.close();}};
 }
 module.exports={createVaultService};

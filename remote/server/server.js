@@ -206,7 +206,8 @@ function broadcastSoon() {
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
 const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
   fresh:auth.isFresh,audit,log:console.error,
-  ask:(...args)=>{if(!summary)throw Error('AI 功能未启用');return summary.ai.ask(...args);},model:()=>summary?summary.ai.pick('memory'):null});
+  ask:(...args)=>{if(!summary)throw Error('AI 功能未启用');return summary.ai.ask(...args);},model:()=>summary?summary.ai.pick('memory'):null,
+  onAutoReview:r=>{broadcast({t:'knowledge-review',...r});if(r.pendingManual>0&&push)push.notify('infra',{title:r.kind==='monthly'?`月度记忆体检待确认 (${r.month||''})`:'记忆自动审阅待裁决',body:r.kind==='monthly'?`月度记忆整理已生成 ${r.pendingManual} 组修订建议（过度防御/表达润色/过时更新），未自动修改，请手动审阅确认。`:`已自动入库 ${r.autoApplied||0} 条无争议记忆；另有 ${r.pendingManual} 组存在矛盾或需确认归属，请在「记忆与存档」中审阅。`});}});
 // Opt-in for the server host so disposable/test servers never inspect the invoking user's home.
 const hostKnowledge=cfg.knowledge&&cfg.knowledge.local===true?attachLocal({service:knowledge,machine:machine('nas'),control:CONTROL,
   archive:cfg.knowledge.archive!==false,memory:cfg.knowledge.memory!==false,confirmedDir:cfg.knowledge.confirmedDir||''}):null;
@@ -276,6 +277,20 @@ const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), c
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
     if (n.week) google.onWeek(summary.reports.getWeek(n.week.start));         // and the week's, after a Sunday
+    if (CONTROL) {
+      (async () => {
+        try { await knowledge.autoReview(); } catch (e) { console.error('每日记忆自动审阅失败：' + e.message); }
+        try {
+          const d = new Date((n.date || '') + 'T12:00:00');
+          if (!isNaN(d.getTime())) {
+            const nextDay = new Date(d.getTime() + 86400e3);
+            const targetDate = nextDay.getMonth() !== d.getMonth() ? d : new Date(d.getFullYear(), d.getMonth() - 1, 15);
+            const ym = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
+            await knowledge.monthlyReview({ month: ym, force: false });
+          }
+        } catch (e) { console.error('月度记忆整理失败：' + e.message); }
+      })();
+    }
   } });
 const calendarView = createCalendarView({ reports: summary && summary.reports, todos, google });
 // 邮件: the mailboxes kept in step on the NAS (mail/index.js); open pages are told about new mail / account changes

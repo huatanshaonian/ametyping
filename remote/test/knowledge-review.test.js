@@ -87,3 +87,84 @@ test('API-only calls use HTTP with base-path preservation and never invoke a CLI
     compat=true;await alias.ask('fixture',schema,'memory',{apiOnly:true});assert.equal(requests.at(-1).body.output_config,undefined);assert.match(requests.at(-1).body.system,/JSON Schema/);
   }finally{await new Promise(r=>server.close(r));}
 });
+test('incremental autoReview auto-publishes safe factual creates, holds conflicts for manual review, and skips unchanged sources with zero LLM calls',async()=>{
+  let llmCalls=0;
+  const f=fixture(async()=>{
+    llmCalls++;
+    return {
+      summary:'增量自动审阅结果',
+      groups:[
+        {title:'新增个人偏好',reason:'明确无争议的事实与偏好',category:'rewrite',operations:[{action:'create',target:'',scope:'global',owner:'',name:'画图字体偏好',body:'使用 Microsoft YaHei'}]},
+        {title:'路径矛盾待核对',reason:'与现有规则存在冲突',category:'conflict',operations:[{action:'update',target:'item2',scope:'global',owner:'',name:'original',body:'冲突合并草案'}]}
+      ]
+    };
+  });
+  try{
+    f.memory.save(row('existing rule'));
+    // 1. No observed sources -> 0 LLM calls
+    const r0=await f.review.autoReview();
+    assert.equal(r0.skipped,true);assert.equal(llmCalls,0);
+    // 2. Observed source identical to existing memory -> covered without LLM call
+    f.memory.observe('box',{items:[{path:'/same.md',scope:'machine',owner:'box',provider:'claude',body:'existing rule'}]});
+    const r1=await f.review.autoReview();
+    assert.equal(r1.skipped,true);assert.equal(llmCalls,0);
+    // 3. New observed source -> 1 LLM call, safe group auto-published, conflict group held as 'ready'
+    f.memory.observe('box',{items:[{path:'/new.md',scope:'machine',owner:'box',provider:'claude',body:'新增画图字体偏好与路径说明'}]});
+    const r2=await f.review.autoReview();
+    assert.equal(r2.skipped,false);assert.equal(llmCalls,1);
+    assert.equal(r2.autoApplied,1);assert.equal(r2.pendingManual,1);
+    assert.ok(f.memory.list().some(m=>m.name==='画图字体偏好'&&m.enabled===1));
+    assert.equal(f.review.read(r2.id).status,'ready');
+    assert.equal(f.review.read(r2.id).result.groups.length,1);
+    assert.equal(f.review.read(r2.id).result.groups[0].category,'conflict');
+    // 4. Subsequent autoReview with no new source changes -> skipped with 0 additional LLM calls
+    const r3=await f.review.autoReview();
+    assert.equal(r3.skipped,true);assert.equal(llmCalls,1);
+  }finally{f.close();}
+});
+test('monthlyReview flags defensive/expression/outdated issues without auto-modifying memory, and supports manual edits, appended ops, partial apply and ignoreGroup',async()=>{
+  let calls=0;
+  const f=fixture(async()=>{
+    calls++;
+    return {
+      summary:'2026-11 月度记忆体检报告',
+      groups:[
+        {title:'收敛过度防御规则',reason:'原表述过于绝对死板',category:'defensive',operations:[{action:'update',target:'item1',scope:'global',owner:'',name:'original',body:'适度边界规则'}]},
+        {title:'清理已完成的旧重构记录',reason:'重构已在10月完成，无需继续作为活跃指令',category:'outdated',operations:[{action:'disable',target:'item2',scope:'global',owner:'',name:'z-old-task',body:'正在重构某模块'}]}
+      ]
+    };
+  });
+  try{
+    const m1=f.memory.save(row('严禁任何情况下触碰此模块'));
+    const m2=f.memory.save({scope:'global',owner:'',name:'z-old-task',body:'正在重构某模块'});
+    const res=await f.review.monthlyReview({month:'2026-11'});
+    assert.equal(res.skipped,false);assert.equal(res.autoApplied,0);assert.equal(res.pendingManual,2);
+    // Memory is untouched before manual confirmation
+    assert.equal(f.memory.list().find(x=>x.id===m1.id).body,'严禁任何情况下触碰此模块');
+    assert.equal(f.memory.list().find(x=>x.id===m2.id).enabled,1);
+    // Same month does not re-run unless forced
+    assert.equal((await f.review.monthlyReview({month:'2026-11'})).skipped,true);
+    assert.equal(calls,1);
+    // User edits group 0 AND appends a manual create operation inside group 0, applying only group 0 with keepUnselected=true
+    const applied=f.review.apply({
+      id:res.id,
+      groups:[0],
+      keepUnselected:true,
+      groupOperations:{
+        0:[
+          {action:'update',target:'item1',scope:'global',owner:'',name:'original',body:'人工修改后的适度规则'},
+          {action:'create',target:'',scope:'global',owner:'',name:'人工补充说明',body:'手动追加的补充条目'}
+        ]
+      }
+    });
+    assert.equal(applied.changed.length,2);
+    assert.ok(applied.remainingId);
+    assert.equal(f.memory.list().find(x=>x.id===m1.id).body,'人工修改后的适度规则');
+    assert.ok(f.memory.list().some(x=>x.name==='人工补充说明'&&x.body==='手动追加的补充条目'));
+    // Remaining group (group 1 -> now index 0 in remainingId) is still ready for review or ignoreGroup
+    const rem=f.review.read(applied.remainingId);
+    assert.equal(rem.status,'ready');assert.equal(rem.result.groups.length,1);assert.equal(rem.result.groups[0].category,'outdated');
+    const ignored=f.review.ignoreGroup({id:applied.remainingId,group:0});
+    assert.equal(ignored.status,'discarded');
+  }finally{f.close();}
+});

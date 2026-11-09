@@ -140,7 +140,7 @@ async function fileHash(file,size) {
   if(size)for await(const b of fs.createReadStream(file,{start:0,end:size-1}))h.update(b);
   return h.digest('hex');
 }
-function createNativeArchive({send,home=os.homedir(),enabled=true,scanMs=60000,log=()=>{}}) {
+function createNativeArchive({send,home=os.homedir(),enabled=true,scanMs=300000,log=()=>{}}) {
   let sources=[],scanAt=0,index=0,pending=null,current=null,connected=false,busy=false,pauseUntil=0;
   const sent=new Map();
   const request=(action,d)=>{const rid=crypto.randomUUID();pending={rid,at:Date.now(),action};send({t:'vault-request',rid,action,...d});};

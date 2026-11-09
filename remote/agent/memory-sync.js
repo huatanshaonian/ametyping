@@ -7,7 +7,7 @@ const START='<!-- ametyping-memory:start -->',END='<!-- ametyping-memory:end -->
 const ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 function atomic(file,body){fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});const tmp=file+'.ame-'+crypto.randomUUID()+'.tmp';try{fs.writeFileSync(tmp,body,{mode:0o600});fs.renameSync(tmp,file);}finally{try{fs.unlinkSync(tmp);}catch{}}}
 function cleanManaged(body){const a=body.indexOf(START),b=body.indexOf(END);return a>=0&&b>a?body.slice(0,a)+body.slice(b+END.length):body;}
-function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false,confirmedDir='',enabled=true,autoApply=true}){
+function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false,confirmedDir='',enabled=true,autoApply=true,scanMs=300000}){
   const root=path.join(home,'.ametyping','memory'),stateFile=path.join(root,'state.json');
   let state={files:{}},bundle=null,at=0,working=false,queue=Promise.resolve();
   const seen=new Map();
@@ -173,7 +173,7 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     else for(const t of d.targets)send({t:'memory-applied',target:t.target,revision:t.revision,ok:false,msg:'本机设置为只采集（autoApply=false），尚未应用'});
     return true;
   }
-  async function tick(){if(working||Date.now()-at<60000)return;working=true;at=Date.now();try{await collect();}finally{working=false;}}
+  async function tick(){if(working||Date.now()-at<scanMs)return;working=true;at=Date.now();try{await collect();}finally{working=false;}}
   const handle=d=>{queue=queue.catch(()=>{}).then(()=>receive(d));return queue;};
   return {handle,collect,apply,tick,reset(){seen.clear();at=0;}};
 }
