@@ -168,3 +168,26 @@ test('monthlyReview flags defensive/expression/outdated issues without auto-modi
     assert.equal(ignored.status,'discarded');
   }finally{f.close();}
 });
+test('reviews may propose new project IDs, but registering them requires explicit approval; autoReview never auto-registers projects',async()=>{
+  let sent;
+  const proj=(owner,name,body)=>({action:'create',target:'',scope:'project',owner,name,body});
+  const f=fixture(async(prompt)=>{sent=prompt;return {summary:'项目归属',groups:[
+    {title:'已登记项目规则',reason:'项目规范',category:'scope',operations:[proj('cem-po','求解器约定','CEM 约定')]},
+    {title:'新项目规则',reason:'项目规范',category:'scope',operations:[proj('mom-dev','MoM 约定','MoM 约定')]}]};});
+  try{
+    f.memory.project({id:'cem-po',name:'CEM_PO',paths:[{machine:'box',path:'/w/CEM_PO'}]});
+    f.memory.observe('box',{items:[{path:'/home/u/.claude/projects/-home-u-mom_dev/memory/a.md',scope:'machine',owner:'box',provider:'claude',body:'MoM 新规则'}]});
+    const auto=await f.review.autoReview();
+    assert.match(sent,/cem-po/);assert.match(sent,/-home-u-mom_dev/);
+    assert.equal(auto.autoApplied,1);assert.equal(auto.pendingManual,1);
+    assert.ok(!f.memory.projects().some(p=>p.id==='mom-dev'));
+    const r=f.review.read(auto.id);assert.deepEqual(r.newProjects,['mom-dev']);
+    assert.throws(()=>f.review.apply({id:auto.id,groups:[0]}),/需要确认新项目：mom-dev/);
+    assert.ok(!f.memory.list().some(m=>m.name==='MoM 约定'));
+    f.review.apply({id:auto.id,groups:[0],approveProjects:['mom-dev']});
+    assert.ok(f.memory.projects().some(p=>p.id==='mom-dev'));
+    assert.ok(f.memory.list().some(m=>m.scope==='project'&&m.owner==='mom-dev'&&m.name==='MoM 约定'));
+    const bad=f.memory.save(row('x'));
+    assert.throws(()=>f.review.manual({refs:[{kind:'memory',id:bad.id}],groups:[group([proj('global','n','b')])]}),/未知/);
+  }finally{f.close();}
+});

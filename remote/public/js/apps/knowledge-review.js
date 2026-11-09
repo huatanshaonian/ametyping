@@ -30,6 +30,21 @@ export function createReviewPanel({ refs, clearSelection = null, get, notify, ap
     if (!r.ok) throw Error(r.msg || '操作失败');
     return r.item;
   };
+  // New project IDs proposed by the review are only registered after the user explicitly confirms each one.
+  const applyReview = async (payload) => {
+    try { return await send('review/apply', payload); }
+    catch (e) {
+      const prefix = '需要确认新项目：';
+      if (!String(e.message).startsWith(prefix)) throw e;
+      const ids = e.message.slice(prefix.length).split(',').map(s => s.trim()).filter(Boolean);
+      const approved = [];
+      for (const pid of ids) {
+        if (confirm(`方案要把记忆归入尚未登记的项目「${pid}」。\n确认登记该项目吗？\n（登记后请在“项目映射”里为各机器补充目录，否则不会下发到工作区）`)) approved.push(pid);
+      }
+      if (approved.length !== ids.length) throw Error('未确认全部新项目，方案未应用；可把对应条目改到已登记项目后再应用');
+      return await send('review/apply', { ...payload, approveProjects: approved });
+    }
+  };
   const nameOf = (slug, api = '') => {
     if (!ai?.models) return slug || '';
     const m = ai.models.find(x => x.slug === (api ? `api:${api}:${slug}` : slug)) || ai.models.find(x => x.slug === slug) || ai.models.find(x => x.provider === 'magpie' && x.model === slug);
@@ -204,6 +219,7 @@ export function createReviewPanel({ refs, clearSelection = null, get, notify, ap
         return;
       }
       if (r.error) box.append(h('p', { class: 'ghint bad', text: r.error }));
+      if (r.newProjects?.length) box.append(h('p', { class: 'knowledge-banner', text: `📁 方案提议了尚未登记的新项目：${r.newProjects.join('、')}。应用相关分组时会逐个请你确认是否登记。` }));
       if (r.status === 'ready') notify('方案已就绪：可直接修改下方内容、追加手动修改，再单组或勾选批量应用');
       else if (r.status === 'failed') notify(r.error || '分析失败，请检查模型和 API 设置', true);
       if (r.result.summary) box.append(h('p', { class: 'knowledge-banner', text: r.result.summary }));
@@ -292,7 +308,7 @@ export function createReviewPanel({ refs, clearSelection = null, get, notify, ap
                   scope: x.scope.value, owner: x.scope.value === 'global' ? '' : x.owner.value.trim(),
                   name: x.name.value.trim(), body: x.body.value,
                 }));
-                const res = await send('review/apply', { id, groups: [gi], groupOperations: { [gi]: ops }, keepUnselected: true });
+                const res = await applyReview({ id, groups: [gi], groupOperations: { [gi]: ops }, keepUnselected: true });
                 if (!dead) {
                   notify('本组修改已应用并同步；' + (res.remainingId ? '其余未处理分组已保留在当前方案中' : '全部待办组已处理完毕'));
                   await applied();
@@ -339,7 +355,7 @@ export function createReviewPanel({ refs, clearSelection = null, get, notify, ap
                 name: x.name.value.trim(), body: x.body.value,
               }));
             }
-            await send('review/apply', {
+            await applyReview({
               id, groups, groupOperations,
               edits: edits.filter(x => groups.includes(x.gi) && x.oi < (r.result.groups[x.gi]?.operations?.length || 0)).map(x => ({
                 group: x.gi, operation: x.oi, action: x.action.value, target: x.action.value === 'create' ? '' : x.target.value,
