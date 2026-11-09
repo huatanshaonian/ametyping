@@ -137,16 +137,17 @@ function createInfra({
     }
   } catch {}
   // The OpenWrt probe now reports procd service names; its init service is "tailscale".
+  let migrated = false;
   for (const n of cfg.nodes) {
     if (n.role !== 'router') continue;
     for (const list of [n.watched, n.muted]) {
       const i = list.indexOf('tailscaled');
-      if (i >= 0) { if (list.includes('tailscale')) list.splice(i, 1); else list[i] = 'tailscale'; }
+      if (i >= 0) { if (list.includes('tailscale')) list.splice(i, 1); else list[i] = 'tailscale'; migrated = true; }
     }
   }
   for (const l of cfg.links) {
     const from = cfg.nodes.find((n) => n.id === l.from);
-    if (l.service === 'tailscaled' && from && from.role === 'router') l.service = 'tailscale';
+    if (l.service === 'tailscaled' && from && from.role === 'router') { l.service = 'tailscale'; migrated = true; }
   }
 
   function save() {
@@ -156,6 +157,7 @@ function createInfra({
       fs.renameSync(file + '.tmp', file);
     } catch {}
   }
+  if (migrated) save();
 
   // Runtime state per node id
   const runtime = new Map();       // nodeId -> { lastSeen, report, sig, online }

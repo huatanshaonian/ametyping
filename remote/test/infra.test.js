@@ -382,6 +382,8 @@ describe('infra monitor & topology', () => {
       assert.deepEqual(snap.nodes.find((n) => n.id === 'aws1').watched, ['tailscaled']);
       assert.equal(snap.links.find((l) => l.id === 'l1').service, 'tailscale');
       assert.equal(snap.links.find((l) => l.id === 'l2').service, 'tailscaled');
+      const onDisk = JSON.parse(fs.readFileSync(path.join(tmp, 'infra.json'), 'utf8'));
+      assert.deepEqual(onDisk.nodes.find((n) => n.id === 'openwrt').watched, ['sing-box', 'tailscale']);
       infra.close();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
