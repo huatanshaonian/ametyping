@@ -63,7 +63,7 @@ export function panel(initialMode='memory'){
         h('small',{text:data.pendingReviews?'点击直接修改、确认或丢弃':'共 '+data.observed.length+' 份来源 · 每 5 分钟采集'})),
       h('div',{class:'knowledge-kpi scope-archive',onclick:()=>show('archive')},
         h('span',{class:'knowledge-kpi-label',text:'🗄️ 原生会话存档'}),
-        h('strong',{text:data.stats.versions+' 个版本'}),
+        h('strong',{text:data.stats.versions+' 个归档文件'}),
         h('small',{text:'NAS SQLite · '+(data.stats.bytes/1048576).toFixed(1)+' MB'}))
     );
   }
@@ -110,6 +110,13 @@ export function panel(initialMode='memory'){
     if(m.source.startsWith('memory-review:'))actions.append(button('整理来源',()=>{show('review');reviewPanel?.show(m.source.slice(14));}));
     const scopeText=(m.scope==='global'?'共享全局':m.scope==='machine'?'机器：':'项目：')+(m.owner||'')+' · v'+m.revision+(m.enabled?'':' · 已停用');
     const scopeCls=m.enabled?'scope-'+m.scope:'scope-disabled';
+    const isLong=m.body.length>140||m.body.split('\n').length>3;
+    const bodyBox=h('pre',{class:'knowledge-preview'+(isLong?' is-collapsed':''),text:m.body});
+    const toggleBtn=isLong?h('button',{class:'knowledge-expand-btn',type:'button',text:'展开全文 ('+m.body.length+' 字) ▾',onclick:()=>{
+      const collapsed=bodyBox.classList.toggle('is-collapsed');
+      bodyBox.classList.toggle('is-expanded',!collapsed);
+      toggleBtn.textContent=collapsed?('展开全文 ('+m.body.length+' 字) ▾'):'收起全文 ▴';
+    }}):null;
     return h('div',{class:'knowledge-row knowledge-fact '+scopeCls},
       h('div',{class:'knowledge-card-head'},
         h('label',{class:'knowledge-card-title'},check('m:'+m.id,{kind:'memory',id:m.id}),h('b',{text:m.name})),
@@ -118,8 +125,8 @@ export function panel(initialMode='memory'){
           h('small',{class:'knowledge-badge source-badge',text:'来源：'+m.source})
         )
       ),
-      h('p',{class:'knowledge-preview',text:m.body.slice(0,200)+(m.body.length>200?'…':'')}),
-      h('details',{class:'knowledge-details'},h('summary',{text:'展开全文 ('+m.body.length+' 字)'}),h('pre',{text:m.body})),
+      bodyBox,
+      toggleBtn,
       actions);
   }
 
@@ -181,7 +188,7 @@ export function panel(initialMode='memory'){
               ),
               h('div',{class:'capi-btns'},
                 button('勾选本组',()=>{for(const m of items)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();}),
-                button('整理本组',()=>{for(const m of items)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();show('review');})
+                button('整理本组',()=>{selected.clear();for(const m of items)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();say(`已选中「${title}」共 ${items.length} 条记忆 —— 请在下方确认整理方式与 AI 模型，点击「智能整理所选」开始分析`);show('review');})
               )
             ),
             groupBody));
@@ -216,8 +223,9 @@ export function panel(initialMode='memory'){
             if(r.item?.pendingManual>0)show('review');
           },'go'),
           button('勾选全部来源并智能整理',()=>{
+            selected.clear();
             for(const s of data.observed)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});
-            selectionChanged();show('review');
+            selectionChanged();say(`已选中全部 ${data.observed.length} 份采集来源 —— 请点击下方「智能整理所选」开始 AI 审阅`);show('review');
           }))));
       const groupsWrap=h('div',{class:'knowledge-groups'});
       for(const [mach,items] of byMachine){
@@ -247,7 +255,7 @@ export function panel(initialMode='memory'){
             ),
             h('div',{class:'capi-btns'},
               button('勾选该机器来源',()=>{for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});selectionChanged();draw();}),
-              button('整理该机器来源',()=>{for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});selectionChanged();show('review');})
+              button('整理该机器来源',()=>{selected.clear();for(const s of items)selected.set('s:'+JSON.stringify([s.machine,s.path]),{kind:'observed',machine:s.machine,path:s.path});selectionChanged();say(`已选中「${mach}」的 ${items.length} 份记忆来源 —— 请点击下方「智能整理所选」生成审阅方案（确认前不会改写记忆）`);show('review');})
             )
           ),
           h('div',{class:'knowledge-group-body'},h('div',{class:'knowledge-card-grid'},...cards))));
@@ -324,7 +332,7 @@ export function panel(initialMode='memory'){
       }catch(e){say(e.message,true);}
     }
   }
-  async function load(){try{const d=await get('');if(dead)return;data=d;stats.textContent='NAS SQLite：'+d.stats.versions+' 个会话文件版本，'+(d.stats.bytes/1048576).toFixed(1)+' MB；'+d.memories.length+' 条统一记忆。';renderKpis();await draw();}catch(e){say(e.message,true);}}
+  async function load(){try{const d=await get('');if(dead)return;data=d;stats.textContent='NAS SQLite：'+d.stats.versions+' 个原生会话归档文件，'+(d.stats.bytes/1048576).toFixed(1)+' MB；'+d.memories.length+' 条统一记忆。';renderKpis();await draw();}catch(e){say(e.message,true);}}
   const tabBtns=[];
   const syncTabBtns=()=>{for(const b of tabBtns)b.classList.toggle('go',b.dataset.tab===mode);};
   const show=id=>{mode=id;seq++;syncTabBtns();draw();};

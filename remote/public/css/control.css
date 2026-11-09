@@ -124,10 +124,15 @@
 .knowledge-badge.scope-disabled { background: #f0f1f4; border-color: #c5c8d0; color: #5f6570; }
 .knowledge-badge.source-badge { color: var(--muted); background: var(--body); }
 
-.knowledge-preview { margin: 2px 0; padding: 6px 8px; background: var(--tint); border: 1px dotted var(--edge);
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--ink); max-height: 92px; overflow: hidden; }
-.knowledge-details summary { cursor: pointer; font-size: 11.5px; color: var(--border); user-select: none; }
 .knowledge pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; background: var(--tint); padding: 8px; border: 1px solid var(--edge); font: 12px/1.55 Consolas, monospace; margin: 4px 0 0; }
+.knowledge pre.knowledge-preview { margin: 2px 0 0; padding: 7px 9px; background: var(--tint); border: 1px solid var(--edge);
+  font: 12px/1.55 Consolas, 'Microsoft YaHei', monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); max-height: none; overflow: visible; }
+.knowledge pre.knowledge-preview.is-collapsed { max-height: 86px; overflow: hidden; border-bottom-style: dashed; }
+.knowledge pre.knowledge-preview.is-expanded { max-height: 420px; overflow: auto; }
+.knowledge-expand-btn { align-self: flex-start; margin: 0 0 2px; padding: 2px 8px; border: 1px solid var(--edge); border-top: 0;
+  background: var(--body); color: var(--border); font-size: 11.5px; cursor: pointer; user-select: none; }
+.knowledge-expand-btn:hover { background: var(--hover); }
+.knowledge-details summary { cursor: pointer; font-size: 11.5px; color: var(--border); user-select: none; }
 .knowledge-path { font: 11.5px/1.4 Consolas, monospace; color: var(--muted); background: var(--tint); padding: 2px 6px; }
 .knowledge-card-actions { margin-top: auto; padding-top: 4px; border-top: 1px dotted var(--edge); }
 

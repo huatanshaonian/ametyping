@@ -54,10 +54,20 @@ function openVault(dir) {
     if (!/^[a-f0-9]{64}$/.test(d.key || '') || !['claude','codex','opencode','agy','kiro','workspace'].includes(d.provider) ||
         !Number.isSafeInteger(d.size) || d.size < 0 || !Number.isFinite(d.mtime) || typeof d.path !== 'string' || d.path.length > 4096) throw new Error('无效的采集源');
     let s = latest(machine, d.key);
-    if (!s || d.reset === true || d.size < s.bytes || (s.complete && d.size === s.bytes && d.mtime !== s.mtime)) {
+    if (s && s.complete && d.size === s.bytes && typeof d.sha256 === 'string' && d.sha256 === s.digest && !d.reset) {
+      db.prepare('UPDATE sources SET mtime=?,updated=? WHERE machine=? AND key=? AND generation=?')
+        .run(d.mtime, Date.now(), machine, d.key, s.generation);
+    } else if (!s || d.reset === true || d.size < s.bytes || (s.complete && d.size === s.bytes && d.mtime !== s.mtime)) {
       const generation = crypto.randomUUID(), now = Date.now();
-      db.prepare('INSERT INTO sources(machine,key,generation,provider,session,parent,kind,path,cwd,size,mtime,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(machine,d.key,generation,d.provider,text(d.session,200),text(d.parent,200),text(d.kind,50),d.path,text(d.cwd),d.size,d.mtime,now,now);
+      transaction(() => {
+        const incomplete = db.prepare('SELECT generation FROM sources WHERE machine=? AND key=? AND complete=0').all(machine, d.key);
+        for (const old of incomplete) {
+          db.prepare('DELETE FROM chunks WHERE machine=? AND key=? AND generation=?').run(machine, d.key, old.generation);
+          db.prepare('DELETE FROM sources WHERE machine=? AND key=? AND generation=?').run(machine, d.key, old.generation);
+        }
+        db.prepare('INSERT INTO sources(machine,key,generation,provider,session,parent,kind,path,cwd,size,mtime,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+          .run(machine,d.key,generation,d.provider,text(d.session,200),text(d.parent,200),text(d.kind,50),d.path,text(d.cwd),d.size,d.mtime,now,now);
+      });
       s = source(machine,d.key,generation);
     } else db.prepare('UPDATE sources SET size=?,mtime=?,complete=CASE WHEN bytes=? THEN complete ELSE 0 END,updated=? WHERE machine=? AND key=? AND generation=?')
       .run(d.size,d.mtime,d.size,Date.now(),machine,d.key,s.generation);
@@ -94,7 +104,14 @@ function openVault(dir) {
     const h = crypto.createHash('sha256'); for (const b of data(machine,d.key,d.generation)) h.update(b);
     const digest = h.digest('hex');
     if (digest !== d.sha256) throw new Error('整文件校验失败，源文件可能已改写，请重新采集');
-    db.prepare('UPDATE sources SET complete=1,digest=?,updated=? WHERE machine=? AND key=? AND generation=?').run(digest,Date.now(),machine,d.key,d.generation);
+    transaction(() => {
+      db.prepare('UPDATE sources SET complete=1,digest=?,updated=? WHERE machine=? AND key=? AND generation=?').run(digest,Date.now(),machine,d.key,d.generation);
+      const old = db.prepare('SELECT generation FROM sources WHERE machine=? AND key=? AND generation!=?').all(machine,d.key,d.generation);
+      for (const r of old) {
+        db.prepare('DELETE FROM chunks WHERE machine=? AND key=? AND generation=?').run(machine,d.key,r.generation);
+        db.prepare('DELETE FROM sources WHERE machine=? AND key=? AND generation=?').run(machine,d.key,r.generation);
+      }
+    });
     return { offset:s.bytes,complete:true,digest };
   }
   function list({machine='',session='',limit=200,offset=0}={}) {

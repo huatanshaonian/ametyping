@@ -12,13 +12,17 @@ const categories = {
   outdated: '过时/待更新核对',
 };
 const statuses = { running: '分析中', ready: '待审阅', failed: '失败', applied: '已应用', discarded: '已丢弃' };
+const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
+const GROUP = { claude: 'Claude', codex: 'OpenAI（Codex）', magpie: 'Magpie' };
 const button = (text, onclick, cls = '') => h('button', { class: 'btn' + (cls ? ' ' + cls : ''), type: 'button', text, onclick });
 export function createReviewPanel({ refs, get, notify, applied, initialReviewId = null }) {
   let dead = false, timer = null, ai = null, currentReviewId = null;
   const root = h('div', { class: 'knowledge-review' }), report = h('div', { class: 'knowledge-report-area' }), history = h('div', { class: 'knowledge-history-card knowledge-card' });
+  const selBanner = h('div', { class: 'knowledge-banner knowledge-sel-banner' });
   const instructions = h('textarea', { class: 'field knowledge-instruction', placeholder: '例如：把长文拆成一事一条；找出不同电脑上的重复与矛盾；保留日期和证据。' });
   const apiOnly = h('input', { type: 'checkbox', checked: true });
-  const model = h('select', { class: 'field', title: '记忆智能整理模型' });
+  const model = h('select', { class: 'field', title: '记忆智能整理模型（与控制面板同步）' });
+  const effort = h('select', { class: 'field', style: 'max-width:135px', title: '推理强度（与控制面板同步）' });
   const route = h('p', { class: 'ghint' });
   const run = button('智能整理所选', start, 'go');
   const send = async (p, d) => {
@@ -26,37 +30,110 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
     if (!r.ok) throw Error(r.msg || '操作失败');
     return r.item;
   };
-  function fillModels() {
+  const nameOf = (slug, api = '') => {
+    if (!ai?.models) return slug || '';
+    const m = ai.models.find(x => x.slug === (api ? `api:${api}:${slug}` : slug)) || ai.models.find(x => x.slug === slug) || ai.models.find(x => x.provider === 'magpie' && x.model === slug);
+    return (m && m.name) || slug || '';
+  };
+  function fillModels(init = false) {
     if (!ai) return;
-    const current = model.value || ai.tasks.find(t => t.id === 'memory')?.set.model || '';
-    const list = ai.models.filter(m => !apiOnly.checked || m.provider === 'claude');
-    model.replaceChildren(...list.map(m => h('option', { value: m.slug, text: m.name })));
-    if (list.some(m => m.slug === current)) model.value = current;
-    const selected = list.find(m => m.slug === model.value);
-    run.disabled = !list.length || (apiOnly.checked && !ai.api?.has && !selected?.api);
+    const memTask = ai.tasks?.find(t => t.id === 'memory');
+    if (apiOnly.checked) {
+      const current = model.value || memTask?.set?.model || '';
+      const list = ai.models.filter(m => m.provider === 'claude');
+      model.replaceChildren(...list.map(m => h('option', { value: m.slug, text: m.name })));
+      if (list.some(m => m.slug === current)) model.value = current;
+    } else {
+      const current = init ? (memTask?.set?.model || '') : model.value;
+      const defSlug = ai.default?.model || ai.fallbackModel || '';
+      const groups = Object.keys(GROUP).map(p => [p, ai.models.filter(m => m.provider === p)]).filter(([, ms]) => ms.length);
+      model.replaceChildren(
+        h('option', { value: '', text: `跟随控制面板默认（${nameOf(defSlug)}）` }),
+        ...groups.map(([p, ms]) => h('optgroup', { label: GROUP[p] }, ...ms.map(m => h('option', { value: m.slug, text: m.name, title: m.note || '' }))))
+      );
+      if (!current || ai.models.some(m => m.slug === current)) model.value = current;
+    }
+    const effTargetSlug = model.value || ai.default?.model || ai.fallbackModel || '';
+    const mObj = ai.models.find(x => x.slug === effTargetSlug);
+    const effList = mObj ? (mObj.efforts || []) : [...new Set(ai.models.flatMap(x => x.efforts || []))];
+    const keepEff = init ? (memTask?.set?.effort || '') : (effort.value || memTask?.set?.effort || '');
+    effort.replaceChildren(
+      h('option', { value: '', text: mObj && mObj.defaultEffort ? `默认强度（${EFFORT[mObj.defaultEffort] || mObj.defaultEffort}）` : (mObj && !effList.length ? '（不分强度）' : '默认强度') }),
+      ...effList.map(e => h('option', { value: e, text: `${EFFORT[e] || e}（${e}）` }))
+    );
+    effort.value = effList.includes(keepEff) ? keepEff : '';
+    effort.disabled = !!(mObj && !effList.length);
+    const selected = ai.models.find(m => m.slug === model.value);
+    run.disabled = !ai.models.length || (apiOnly.checked && !ai.api?.has && !selected?.api);
+    const u = memTask?.uses;
+    const usesStr = u ? `当前生效模型：${nameOf(u.model, u.api)} · ${u.effort ? (EFFORT[u.effort] || u.effort) : '默认强度'}${u.backup ? '；出错时改用 ' + nameOf(u.backup.model, u.backup.api) : ''}。` : '';
     route.textContent = apiOnly.checked
-      ? (selected?.api ? '直接调用 NAS 上的 ' + selected.api + ' API 入口，沿用该入口的模型、密钥和网络；失败时不会切换到 CLI。' : ai.api?.has ? '通过已配置的 Claude API 分析，失败时不会切换到 CLI。' : '尚未配置 Claude API 密钥，请打开“模型与 API 设置”；也可配置 NAS 的 API 别名。')
-      : '使用“AI 模型”里配置的通道和后备模型，可能通过 API、Claude Code 或 Codex 调用。';
+      ? (selected?.api ? '直接调用 NAS 上的 ' + selected.api + ' API 入口，沿用该入口的模型、密钥和网络；失败时不会切换到 CLI。' : ai.api?.has ? '通过已配置的 Claude API 分析，失败时不会切换到 CLI。' : '尚未配置 Claude API 密钥，请取消勾选「仅使用 API」以使用控制面板模型，或打开「模型与 API 设置」。')
+      : `${usesStr}（与「控制面板 → AI 模型 → 记忆智能整理」双向同步，可走 API、Codex、Magpie 或 Claude Code）`;
   }
-  apiOnly.addEventListener('change', fillModels);
-  model.addEventListener('change', fillModels);
+  async function syncTaskSetting() {
+    if (!ai) return;
+    fillModels(false);
+    try {
+      const r = await net.post('/api/ai/set', { tasks: { memory: { model: model.value, effort: effort.value } } });
+      if (!dead && r.ok && r.tasks) { ai = r; fillModels(false); }
+    } catch {}
+  }
+  apiOnly.addEventListener('change', () => fillModels(false));
+  model.addEventListener('change', syncTaskSetting);
+  effort.addEventListener('change', syncTaskSetting);
   async function loadModels() {
-    try { const r = await fetch('/api/ai', { cache: 'no-store' }); const d = await r.json(); if (!dead && d.models) { ai = d; fillModels(); } }
-    catch { if (!dead) route.textContent = '无法读取 AI 设置，请先配置 AI 模型。'; }
+    try {
+      const r = await fetch('/api/ai', { cache: 'no-store' });
+      const d = await r.json();
+      if (!dead && d.models) {
+        ai = d;
+        const memTask = ai.tasks?.find(t => t.id === 'memory');
+        const setMod = memTask?.set?.model || '';
+        const hasDirectClaudeApi = !!(ai.api?.has || (setMod && setMod.startsWith('api:')));
+        if (!hasDirectClaudeApi || (setMod && !/^(claude-|opus$|sonnet$|haiku$|fable$|api:)/.test(setMod))) {
+          apiOnly.checked = false;
+        }
+        fillModels(true);
+      }
+    } catch { if (!dead) route.textContent = '无法读取 AI 设置，请先配置 AI 模型。'; }
+  }
+  function renderSelBanner() {
+    const curRefs = refs();
+    if (curRefs.length) {
+      const memCount = curRefs.filter(x => x.kind === 'memory').length;
+      const obsCount = curRefs.filter(x => x.kind === 'observed').length;
+      if (obsCount > 0 && !instructions.value) {
+        instructions.value = '提取所选来源中有价值的通用规范、偏好、本机环境路径与项目规则，与现有记忆比对去重；将混杂长文拆成一事一条，指出冲突项供人工裁决。';
+      }
+      selBanner.style.borderLeftColor = '#15996b';
+      selBanner.style.background = '#eefaf4';
+      selBanner.replaceChildren(
+        h('span', { text: `📌 当前已选中 ${curRefs.length} 项待整理内容（统一记忆 ${memCount} 条、采集来源 ${obsCount} 份）—— 确认下方整理要求与 AI 模型后，点击「智能整理所选」即可开始生成审阅方案！` }),
+        h('div', { class: 'capi-btns' },
+          button('立即智能整理所选', start, 'go'),
+          button('核对所选原文', align))
+      );
+    } else {
+      selBanner.style.borderLeftColor = '';
+      selBanner.style.background = '';
+      selBanner.replaceChildren(
+        h('span', { text: '💡 当前未勾选特定条目：可直接点下方「增量自动审阅」处理新采集来源，或点「📅 月度记忆体检」检查全部启用记忆；如需单独整理某台机器来源，可在「记忆来源」页点「整理该机器来源」。' })
+      );
+    }
   }
   async function start() {
     try {
       if (!refs().length) throw Error('请先在记忆列表或来源列表勾选内容');
       run.disabled = true;
-      const prior = ai?.tasks.find(t => t.id === 'memory')?.set;
-      const setting = await net.post('/api/ai/set', { tasks: { memory: { model: model.value, effort: prior?.model === model.value ? prior.effort : '' } } });
+      const setting = await net.post('/api/ai/set', { tasks: { memory: { model: model.value, effort: effort.value } } });
       if (!setting.ok) throw Error(setting.msg || '无法保存模型选择');
       const result = await send('review/start', { refs: refs(), instruction: instructions.value, apiOnly: apiOnly.checked });
       if (dead) return;
       notify('正在分析所选记忆；尚未修改或发布记忆');
       await show(result.id);
     } catch (e) { if (!dead) notify(e.message, true); }
-    finally { if (!dead) fillModels(); }
+    finally { if (!dead) fillModels(false); }
   }
   function difference(a, b) {
     const other = new Set(b.split('\n').map(s => s.trim()));
@@ -319,6 +396,7 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
   root.append(
     h('div', { class: 'knowledge-banner' },
       h('span', { text: '🧠 自动化与人工裁决机制：① 每日随日报「增量审阅」新来源（无争议直接入库，冲突挂起待裁决）；② 每月随月度周期自动运行「月度记忆体检」（指出过度防御、生硬表达与过时内容，100% 由你手动修改或确认后才生效）。' })),
+    selBanner,
     h('div', { class: 'knowledge-review-grid' },
       h('div', { class: 'knowledge-card' },
         h('h3', { class: 'knowledge-section-title', text: '1. 选择整理方式与指令模板' }),
@@ -329,18 +407,20 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
           button('月度体检模板（过度防御/表达/过时）', () => { instructions.value = '排查过度防御性限制（defensive）、生硬或奇怪的表达（expression）、已过时需更新的旧任务/旧版本（outdated），给出精炼修改建议供人工确认。'; })),
         instructions),
       h('div', { class: 'knowledge-card' },
-        h('h3', { class: 'knowledge-section-title', text: '2. 调用 AI 模型生成审阅方案' }),
+        h('h3', { class: 'knowledge-section-title', text: '2. 选择 AI 模型并生成审阅方案（与控制面板同步）' }),
         h('div', { class: 'knowledge-toolbar' },
-          h('label', { class: 'knowledge-check-lbl' }, apiOnly, '仅使用 API'),
           model,
+          effort,
+          h('label', { class: 'knowledge-check-lbl' }, apiOnly, '仅使用 Claude API')),
+        h('div', { class: 'knowledge-toolbar' },
           run,
           button('增量自动审阅', runAuto),
           button('📅 月度记忆体检', runMonthly),
-          button('模型与 API 设置', async () => (await import('./control.js')).open('ai'))),
+          button('控制面板 → AI 模型设置', async () => (await import('./control.js')).open('ai'))),
         route)
     ),
     report,
     history);
-  run.disabled = true; loadModels(); loadHistory(true);
+  run.disabled = true; renderSelBanner(); loadModels(); loadHistory(true);
   return { root, show, destroy() { dead = true; clearTimeout(timer); } };
 }

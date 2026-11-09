@@ -154,9 +154,11 @@ function createNativeArchive({send,home=os.homedir(),enabled=true,scanMs=300000,
         if(Date.now()-scanAt>scanMs){sources=catalog(home);scanAt=Date.now();index=0;}
         for(let n=0;n<sources.length;n++){
           const c=sources[index++%sources.length];let st;try{st=fs.statSync(c.file);}catch{continue;}
-          const signature=st.size+':'+st.mtimeMs;
-          if(sent.get(c.key)===signature)continue;
-          current={...c,size:st.size,mtime:st.mtimeMs,signature};request('begin',current);return;
+          const signature=st.size+':'+st.mtimeMs,prevSig=sent.get(c.key);
+          if(prevSig===signature)continue;
+          const prevSize=prevSig?+prevSig.split(':')[0]:-1;
+          const sha256=(prevSize===st.size&&st.size>0)?await fileHash(c.file,st.size):undefined;
+          current={...c,size:st.size,mtime:st.mtimeMs,signature,...(sha256?{sha256}:{})};request('begin',current);return;
         }return;
       }
       const c=current;
