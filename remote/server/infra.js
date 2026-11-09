@@ -46,7 +46,7 @@ const DEFAULT_NODES = [
     role: 'nas',
     host: '192.168.114.6 / 100.65.10.90',
     tier: 1,
-    watched: ['ame-remote', 'egress-tunnel', 'tailscaled', 'docker:partdb', 'docker:zotero', 'docker:onlyoffice', 'docker:jellyfin'],
+    watched: ['ame-remote', 'egress-tunnel', 'tailscaled', 'docker:partdb', 'docker:zotero', 'docker:ame-onlyoffice', 'docker:jellyfin'],
   },
   {
     id: 'aws1',

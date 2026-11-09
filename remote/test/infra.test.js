@@ -283,7 +283,7 @@ describe('infra monitor & topology', () => {
         containers: [
           { name: 'partdb', state: 'running' },
           { name: 'zotero', state: 'running' },
-          { name: 'onlyoffice', state: 'running' },
+          { name: 'ame-onlyoffice', state: 'running' },
           { name: 'jellyfin', state: 'stopped', status: 'Exited (0)' },
         ],
       });
@@ -313,7 +313,7 @@ describe('infra monitor & topology', () => {
         containers: [
           { name: 'partdb', state: 'running' },
           { name: 'zotero', state: 'running' },
-          { name: 'onlyoffice', state: 'running' },
+          { name: 'ame-onlyoffice', state: 'running' },
           { name: 'jellyfin', state: 'running' },
         ],
       });
@@ -323,7 +323,7 @@ describe('infra monitor & topology', () => {
         containers: [
           { name: 'partdb', state: 'running' },
           { name: 'zotero', state: 'running' },
-          { name: 'onlyoffice', state: 'running' },
+          { name: 'ame-onlyoffice', state: 'running' },
           { name: 'jellyfin', state: 'stopped' },
         ],
       });
