@@ -140,7 +140,14 @@ collect_services_json() {
     else
       add_svc "sing-box" "Sing-box 透明代理" "stopped" "init" 9090
     fi
-    wd_cnt=$(printf '%s\n' "$ps_out" | grep -v grep | grep -c '/etc/sing-box/watchdog.sh' 2>/dev/null || echo 0)
+    # Count top-level instances only: the script's pipeline/subshells share its cmdline.
+    wd_pids=$(pgrep -f '/etc/sing-box/watchdog.sh' 2>/dev/null)
+    wd_cnt=0
+    for wd_p in $wd_pids; do
+      wd_pp=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$wd_p/status" 2>/dev/null)
+      [ -n "$wd_pp" ] || continue
+      case " $(echo $wd_pids) " in *" $wd_pp "*) ;; *) wd_cnt=$((wd_cnt + 1)) ;; esac
+    done
     if [ "$wd_cnt" -gt 1 ]; then
       add_svc "singbox-watchdog" "Sing-box 断流自愈守护" "degraded" "script" 0 "${wd_cnt} 个重复实例运行中"
     elif [ "$wd_cnt" -eq 1 ]; then
