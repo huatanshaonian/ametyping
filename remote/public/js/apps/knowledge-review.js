@@ -40,8 +40,13 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
     const memTask = ai.tasks?.find(t => t.id === 'memory');
     if (apiOnly.checked) {
       const current = model.value || memTask?.set?.model || '';
-      const list = ai.models.filter(m => m.provider === 'claude');
-      model.replaceChildren(...list.map(m => h('option', { value: m.slug, text: m.name })));
+      const list = ai.models.filter(m => m.provider === 'claude' || m.provider === 'magpie');
+      const groups = [['claude', 'Claude'], ['magpie', 'Magpie']].map(([p, lbl]) => [lbl, list.filter(m => m.provider === p)]).filter(([, ms]) => ms.length);
+      if (groups.length > 1) {
+        model.replaceChildren(...groups.map(([lbl, ms]) => h('optgroup', { label: lbl }, ...ms.map(m => h('option', { value: m.slug, text: m.name, title: m.note || '' })))));
+      } else {
+        model.replaceChildren(...list.map(m => h('option', { value: m.slug, text: m.name, title: m.note || '' })));
+      }
       if (list.some(m => m.slug === current)) model.value = current;
     } else {
       const current = init ? (memTask?.set?.model || '') : model.value;
@@ -64,12 +69,13 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
     effort.value = effList.includes(keepEff) ? keepEff : '';
     effort.disabled = !!(mObj && !effList.length);
     const selected = ai.models.find(m => m.slug === model.value);
-    run.disabled = !ai.models.length || (apiOnly.checked && !ai.api?.has && !selected?.api);
+    const isMagpie = selected?.provider === 'magpie';
+    run.disabled = !ai.models.length || (apiOnly.checked && !isMagpie && !ai.api?.has && !selected?.api);
     const u = memTask?.uses;
     const usesStr = u ? `当前生效模型：${nameOf(u.model, u.api)} · ${u.effort ? (EFFORT[u.effort] || u.effort) : '默认强度'}${u.backup ? '；出错时改用 ' + nameOf(u.backup.model, u.backup.api) : ''}。` : '';
     route.textContent = apiOnly.checked
-      ? (selected?.api ? '直接调用 NAS 上的 ' + selected.api + ' API 入口，沿用该入口的模型、密钥和网络；失败时不会切换到 CLI。' : ai.api?.has ? '通过已配置的 Claude API 分析，失败时不会切换到 CLI。' : '尚未配置 Claude API 密钥，请取消勾选「仅使用 API」以使用控制面板模型，或打开「模型与 API 设置」。')
-      : `${usesStr}（与「控制面板 → AI 模型 → 记忆智能整理」双向同步，可走 API、Codex、Magpie 或 Claude Code）`;
+      ? (isMagpie ? '直接调用群晖上的 Magpie 网关 API，沿用网关的账号与路由；失败时不会切换到 CLI。' : selected?.api ? '直接调用 NAS 上的 ' + selected.api + ' API 入口，沿用该入口的模型、密钥和网络；失败时不会切换到 CLI。' : ai.api?.has ? '通过已配置的 Claude API 分析，失败时不会切换到 CLI。' : '尚未配置 Claude API 密钥，请取消勾选「仅使用 API」以使用控制面板模型，或选择 Magpie 模型。')
+      : `${usesStr}（与「控制面板 → AI 模型 → 记忆智能整理」双向同步，支持 Magpie、Codex、Claude API 与 CLI）`;
   }
   async function syncTaskSetting() {
     if (!ai) return;
@@ -89,9 +95,10 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
       if (!dead && d.models) {
         ai = d;
         const memTask = ai.tasks?.find(t => t.id === 'memory');
-        const setMod = memTask?.set?.model || '';
-        const hasDirectClaudeApi = !!(ai.api?.has || (setMod && setMod.startsWith('api:')));
-        if (!hasDirectClaudeApi || (setMod && !/^(claude-|opus$|sonnet$|haiku$|fable$|api:)/.test(setMod))) {
+        const configuredSlug = memTask?.set?.model || ai.default?.model || '';
+        const configuredNonClaude = configuredSlug && !/^(claude-|opus$|sonnet$|haiku$|fable$|api:)/.test(configuredSlug);
+        const hasDirectClaudeApi = !!(ai.api?.has || configuredSlug.startsWith('api:'));
+        if (!hasDirectClaudeApi || configuredNonClaude) {
           apiOnly.checked = false;
         }
         fillModels(true);
@@ -411,7 +418,7 @@ export function createReviewPanel({ refs, get, notify, applied, initialReviewId 
         h('div', { class: 'knowledge-toolbar' },
           model,
           effort,
-          h('label', { class: 'knowledge-check-lbl' }, apiOnly, '仅使用 Claude API')),
+          h('label', { class: 'knowledge-check-lbl' }, apiOnly, '仅使用 API（不走 CLI）')),
         h('div', { class: 'knowledge-toolbar' },
           run,
           button('增量自动审阅', runAuto),
