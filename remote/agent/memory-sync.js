@@ -2,14 +2,66 @@
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto');
 const {walk}=require('./native-archive');
+const {execFile}=require('child_process');
 const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+const git=(dir,args)=>new Promise(res=>execFile('git',['-C',dir,...args],{timeout:10000,windowsHide:true,maxBuffer:1024*1024},(e,out)=>res(e?null:String(out))));
+// Worktrees of the repository containing dir: [{path,branch}]; null when dir is not in a repository or git is missing.
+async function listWorktrees(dir){
+  const out=await git(dir,['worktree','list','--porcelain']);if(out===null)return null;
+  const list=[];let cur=null;
+  for(const l of out.split(/\r?\n/)){
+    if(l.startsWith('worktree ')){cur={path:path.resolve(l.slice(9)),branch:''};list.push(cur);}
+    else if(!cur)continue;
+    else if(l.startsWith('branch '))cur.branch=l.slice(7).replace(/^refs\/heads\//,'');
+    else if(l==='detached')cur.branch='(detached)';
+    else if(l==='bare'||l.startsWith('prunable'))cur.skip=true;
+  }
+  return list.filter(x=>!x.skip&&fs.existsSync(x.path));
+}
+// Keeps generated instruction files out of `git status` through the shared info/exclude; tracked files are left as they are.
+async function excludeFromGit(dir,names){
+  const common=await git(dir,['rev-parse','--path-format=absolute','--git-common-dir']);if(common===null)return;
+  const tracked=new Set(String(await git(dir,['ls-files','--',...names])||'').split(/\r?\n/).filter(Boolean));
+  const add=[];
+  for(const n of names)if(!tracked.has(n)&&await git(dir,['check-ignore','-q','--',n])===null)add.push('/'+n);
+  if(!add.length)return;
+  const file=path.join(common.trim(),'info','exclude');
+  let old='';try{old=fs.readFileSync(file,'utf8');}catch{}
+  const missing=add.filter(p=>!old.split(/\r?\n/).includes(p));
+  if(missing.length){fs.mkdirSync(path.dirname(file),{recursive:true});fs.appendFileSync(file,(old&&!old.endsWith('\n')?'\n':'')+'# AmeTyping 托管记忆\n'+missing.join('\n')+'\n');}
+}
 const START='<!-- ametyping-memory:start -->',END='<!-- ametyping-memory:end -->';
 const ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 function atomic(file,body){fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});const tmp=file+'.ame-'+crypto.randomUUID()+'.tmp';try{fs.writeFileSync(tmp,body,{mode:0o600});fs.renameSync(tmp,file);}finally{try{fs.unlinkSync(tmp);}catch{}}}
 function cleanManaged(body){const a=body.indexOf(START),b=body.indexOf(END);return a>=0&&b>a?body.slice(0,a)+body.slice(b+END.length):body;}
-function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false,confirmedDir='',enabled=true,autoApply=true,scanMs=300000}){
+function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false,confirmedDir='',enabled=true,autoApply=true,scanMs=300000,
+  worktrees=listWorktrees,gitExclude=excludeFromGit}){
+  const same=(a,b)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b;
+  // Registered directories plus every worktree of the repositories they contain:
+  // a repository directory expands to its worktrees, a plain folder to the worktrees of its direct child repositories.
+  async function projectDirs(t){
+    const raw=Array.isArray(t.dirs)&&t.dirs.length?t.dirs:t.path?[{path:t.path,source:'manual'}]:[];
+    const out=[];
+    const add=async(p,source,branch='')=>{
+      let dir;try{dir=await folder(p);}catch(e){out.push({path:p,source,branch,ok:false,msg:e.message});return null;}
+      const old=out.find(x=>x.ok&&same(x.path,dir));
+      if(old){if(!old.branch)old.branch=branch;return old;}
+      const x={path:dir,source,branch,ok:true};out.push(x);return x;
+    };
+    for(const d of raw){
+      if(!d||typeof d.path!=='string')continue;
+      const base=await add(d.path,d.source==='linked'?'linked':'manual');if(!base)continue;
+      let repos=[base.path];
+      if(!fs.existsSync(path.join(base.path,'.git'))){
+        try{repos=fs.readdirSync(base.path,{withFileTypes:true}).slice(0,200).filter(e=>e.isDirectory()&&fs.existsSync(path.join(base.path,e.name,'.git'))).map(e=>path.join(base.path,e.name));}catch{repos=[];}
+      }
+      for(const r of repos)for(const w of await worktrees(r)||[])await add(w.path,'worktree',w.branch);
+    }
+    return out;
+  }
   const root=path.join(home,'.ametyping','memory'),stateFile=path.join(root,'state.json');
-  let state={files:{}},bundle=null,at=0,working=false,queue=Promise.resolve();
+  let state={files:{}},bundle=null,at=0,working=false,queue=Promise.resolve(),lastDirs='';
+  const dirSignature=m=>JSON.stringify([...m].map(([id,l])=>[id,l.filter(d=>d.ok).map(d=>d.path).sort()]));
   const seen=new Map();
   try{state=JSON.parse(fs.readFileSync(stateFile,'utf8'));if(!state.files)state.files={};}catch{}
   if(!state.adopted)state.adopted={};
@@ -34,14 +86,14 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     if(!enabled)return;
     const list=sources();
     for(const p of bundle&&bundle.projects||[]){
-      let dir;try{dir=await folder(p.path);}catch{continue;}
-      for(const [provider,rel]of [['claude','CLAUDE.md'],['claude','CLAUDE.local.md'],['codex','AGENTS.md'],['codex','AGENTS.override.md'],['agy','GEMINI.md']])list.push({provider,file:path.join(dir,rel),scope:'project',owner:p.id});
-      for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))list.push({provider:'claude',file,scope:'project',owner:p.id});
-      for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))list.push({provider:'agy',file,scope:'project',owner:p.id});
-    }
-    for(const p of bundle&&bundle.projects||[]){
-      const encoded=p.path.replace(/[^A-Za-z0-9]/g,'-');
-      for(const s of list)if(s.file.startsWith(path.join(home,'.claude','projects',encoded,'memory')+path.sep)){s.scope='project';s.owner=p.id;}
+      for(const d of await projectDirs(p)){
+        if(!d.ok)continue;const dir=d.path;
+        for(const [provider,rel]of [['claude','CLAUDE.md'],['claude','CLAUDE.local.md'],['codex','AGENTS.md'],['codex','AGENTS.override.md'],['agy','GEMINI.md']])list.push({provider,file:path.join(dir,rel),scope:'project',owner:p.id});
+        for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))list.push({provider:'claude',file,scope:'project',owner:p.id});
+        for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))list.push({provider:'agy',file,scope:'project',owner:p.id});
+        const encoded=dir.replace(/[^A-Za-z0-9]/g,'-');
+        for(const s of list)if(s.file.startsWith(path.join(home,'.claude','projects',encoded,'memory')+path.sep)){s.scope='project';s.owner=p.id;}
+      }
     }
     const items=[];
     for(const s of list){
@@ -100,9 +152,15 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     // Explicitly adopted sources are retired only when their last observed content still matches.
     // Immutable confirmed releases are reference material and never rewritten.
     const allowed=new Set(sources().filter(s=>s.provider!=='confirmed').map(s=>s.file));
-    for(const p of bundle.projects||[]){try{const dir=await folder(p.path);for(const rel of ['CLAUDE.md','CLAUDE.local.md','AGENTS.md','AGENTS.override.md','GEMINI.md'])allowed.add(path.join(dir,rel));
-      for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))allowed.add(file);
-      for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))allowed.add(file);}catch{}}
+    const dirsOf=new Map();
+    for(const p of bundle.projects||[]){
+      const list=await projectDirs(p);dirsOf.set(p.id,list);
+      for(const d of list){if(!d.ok)continue;const dir=d.path;
+        for(const rel of ['CLAUDE.md','CLAUDE.local.md','AGENTS.md','AGENTS.override.md','GEMINI.md'])allowed.add(path.join(dir,rel));
+        for(const file of walk(path.join(dir,'.claude','rules'),p=>p.endsWith('.md')))allowed.add(file);
+        for(const file of walk(path.join(dir,'.agents','rules'),p=>p.endsWith('.md')))allowed.add(file);}
+    }
+    lastDirs=dirSignature(dirsOf);
     const adoptSources=()=>{for(const a of bundle.adoptions||[]){
       const owner=a.scope==='project'?a.owner:'global';
       if(!results.some(r=>r.target===owner&&r.ok))continue;
@@ -117,6 +175,8 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
         atomic(a.path,retained);state.adopted[a.path]=a.sha256;atomic(stateFile,JSON.stringify(state));
       }catch(e){send({t:'memory-applied',target:'source:'+a.path,revision:a.sha256,ok:false,msg:e.message});}
     }};
+    // A file can move between targets (project renamed, directory shared); never retire what this run wrote.
+    const written=new Set();
     for(const t of bundle.targets){
       if(target&&target!==t.target)continue;
       try{
@@ -133,14 +193,21 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
         // Keep startup instructions small; full, untruncated documents remain in generated Markdown files.
         if(Buffer.byteLength(body)>16000)content='# NAS 统一记忆索引\n\n按当前任务读取以下文件：\n'+files.map(x=>'- '+x.item.name+': '+x.file.replace(/\\/g,'/')).join('\n');
         if(Buffer.byteLength(content)>24000)throw Error('记忆索引过大，请拆分范围后重新发布');
-        let targets;
+        let targets,dirs=null;
         if(t.target==='global'){
           const codexDir=process.env.CODEX_HOME||path.join(home,'.codex');
           targets=[path.join(home,'.claude','CLAUDE.md'),path.join(codexDir,fs.existsSync(path.join(codexDir,'AGENTS.override.md'))?'AGENTS.override.md':'AGENTS.md'),path.join(process.env.XDG_CONFIG_HOME||path.join(home,'.config'),'opencode','AGENTS.md'),path.join(home,'.gemini','GEMINI.md')];
         }else{
-          const dir=await folder(t.path);targets=[path.join(dir,'CLAUDE.md'),path.join(dir,'AGENTS.md')];
-          if(fs.existsSync(path.join(dir,'AGENTS.override.md')))targets.push(path.join(dir,'AGENTS.override.md'));
-          if(fs.existsSync(path.join(dir,'GEMINI.md')))targets.push(path.join(dir,'GEMINI.md'));
+          dirs=dirsOf.get(t.target)||await projectDirs(t);
+          const usable=dirs.filter(d=>d.ok);
+          if(!usable.length)throw Error(dirs.map(d=>d.path+'：'+d.msg).join('；')||'没有可写的项目目录');
+          targets=[];
+          for(const d of usable){
+            const dir=d.path;targets.push(path.join(dir,'CLAUDE.md'),path.join(dir,'AGENTS.md'));
+            if(fs.existsSync(path.join(dir,'AGENTS.override.md')))targets.push(path.join(dir,'AGENTS.override.md'));
+            if(fs.existsSync(path.join(dir,'GEMINI.md')))targets.push(path.join(dir,'GEMINI.md'));
+            if(content)try{await gitExclude(dir,['CLAUDE.md','AGENTS.md']);}catch{}
+          }
         }
         for(const file of targets)if(content||state.files[file]){
           let selected=content;
@@ -151,14 +218,16 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
           }
           update(file,selected);
         }
+        for(const file of targets)written.add(file);
         const failed=[];
-        for(const old of state.targets[t.target]||[])if(!targets.includes(old)&&!await retire(old,t.target))failed.push(old);
+        for(const old of state.targets[t.target]||[])if(!targets.includes(old)&&!written.has(old)&&!await retire(old,t.target))failed.push(old);
         state.targets[t.target]=[...targets,...failed];atomic(stateFile,JSON.stringify(state));
-        results.push({target:t.target,revision:t.revision,ok:true});
-      }catch(e){results.push({target:t.target,revision:t.revision,ok:false,msg:e.message});}
+        const bad=dirs?dirs.filter(d=>!d.ok):[];
+        results.push({target:t.target,revision:t.revision,ok:true,...(dirs?{dirs}:{}),...(bad.length?{msg:'部分目录未写入：'+bad.map(d=>d.path+'：'+d.msg).join('；')}:{})});
+      }catch(e){results.push({target:t.target,revision:t.revision,ok:false,msg:e.message,...(dirsOf.has(t.target)?{dirs:dirsOf.get(t.target)}:{})});}
     }
     for(const target of Object.keys(state.targets))if(!bundle.targets.some(t=>t.target===target)){
-      const failed=[];for(const file of state.targets[target])if(!await retire(file,target))failed.push(file);
+      const failed=[];for(const file of state.targets[target])if(!written.has(file)&&!await retire(file,target))failed.push(file);
       if(failed.length)state.targets[target]=failed;else delete state.targets[target];atomic(stateFile,JSON.stringify(state));
     }
     adoptSources();
@@ -173,7 +242,14 @@ function createMemorySync({home=os.homedir(),name,send,folder,canWrite=()=>false
     else for(const t of d.targets)send({t:'memory-applied',target:t.target,revision:t.revision,ok:false,msg:'本机设置为只采集（autoApply=false），尚未应用'});
     return true;
   }
-  async function tick(){if(working||Date.now()-at<scanMs)return;working=true;at=Date.now();try{await collect();}finally{working=false;}}
+  // A worktree added or removed between bundles is picked up by the periodic scan.
+  async function tick(){if(working||Date.now()-at<scanMs)return;working=true;at=Date.now();try{
+    await collect();
+    if(bundle&&autoApply&&enabled&&canWrite()&&(bundle.projects||[]).length){
+      const m=new Map();for(const p of bundle.projects)m.set(p.id,await projectDirs(p));
+      if(dirSignature(m)!==lastDirs)await queue.catch(()=>{}).then(()=>apply()).catch(()=>{});
+    }
+  }finally{working=false;}}
   const handle=d=>{queue=queue.catch(()=>{}).then(()=>receive(d));return queue;};
   return {handle,collect,apply,tick,reset(){seen.clear();at=0;}};
 }

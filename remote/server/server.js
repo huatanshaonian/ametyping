@@ -204,7 +204,9 @@ function broadcastSoon() {
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+// mesh is created further down; the memory service only reads its workspaces after startup.
 const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
+  linked:id=>mesh.getProject(id)?.workspaces||[],
   fresh:auth.isFresh,audit,log:console.error,
   ask:(...args)=>{if(!summary)throw Error('AI 功能未启用');return summary.ai.ask(...args);},model:()=>summary?summary.ai.pick('memory'):null,
   onAutoReview:r=>{broadcast({t:'knowledge-review',...r});if(r.pendingManual>0&&push)push.notify('infra',{title:r.kind==='monthly'?`月度记忆体检待确认 (${r.month||''})`:'记忆自动审阅待裁决',body:r.kind==='monthly'?`月度记忆整理已生成 ${r.pendingManual} 组修订建议（过度防御/表达润色/过时更新），未自动修改，请手动审阅确认。`:`已自动入库 ${r.autoApplied||0} 条无争议记忆；另有 ${r.pendingManual} 组存在矛盾或需确认归属，请在「记忆与存档」中审阅。`});}});

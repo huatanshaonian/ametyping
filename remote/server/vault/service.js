@@ -4,9 +4,10 @@ const {createMemory}=require('./memory');
 const {convert}=require('./opencode');
 const {createReview}=require('./review');
 const drain=res=>new Promise(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});
-function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null,onAutoReview=null}){
-  const vault=openVault(dir),memory=createMemory(vault);
-  const version=()=>vault.db.prepare("SELECT value FROM vault_meta WHERE key='memory_version'").get()?.value||'';
+function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null,onAutoReview=null,linked=()=>[]}){
+  const vault=openVault(dir),memory=createMemory(vault,{linked});
+  // Linked 项目管理 workspaces live outside SQLite, so their signature is part of the published version.
+  const version=()=>(vault.db.prepare("SELECT value FROM vault_meta WHERE key='memory_version'").get()?.value||'')+':'+memory.linkSignature();
   let publishedVersion=version();
   const respond=(ws,rid,r)=>{try{ws.send(JSON.stringify({t:'vault-result',rid,...r}));}catch{}};
   function publish(name){

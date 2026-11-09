@@ -185,3 +185,58 @@ test('Antigravity tool outputs compact incrementally into tool_outputs.jsonl, sh
     assert.ok(!fs.existsSync(path.join(sys,'steps'))&&!fs.existsSync(path.join(sys,'tasks')));
   }finally{fs.rmSync(home,{recursive:true,force:true});}
 });
+
+test('projects map several directories per machine, merge linked 项目管理 workspaces, rename and delete safely',()=>{
+  const dir=temp(),v=openVault(dir);let ws=[{machine:'win',path:'D:/linked',tag:'code'},{machine:'win',path:'D:/data',tag:'data'}];
+  const m=createMemory(v,{linked:id=>id==='proj_x'?ws:[]});
+  try{
+    // Old single-path mappings migrate into project_dirs on open.
+    v.db.prepare("INSERT INTO projects(id,name) VALUES('old','Old')").run();v.db.prepare("INSERT INTO project_paths VALUES('old','win','D:/old')").run();
+    v.db.prepare("DELETE FROM vault_meta WHERE key='project_dirs_migrated'").run();
+    const m2=createMemory(v);assert.deepEqual(m2.projects().filter(p=>p.id==='old').map(p=>p.path),['D:/old']);
+    m.project({id:'cem',name:'CEM',mesh:'proj_x',paths:[{machine:'win',path:'D:/a'},{machine:'win',path:'D:/b'},{machine:'linux',path:'/home/u/cem'}]});
+    const mem=m.save({scope:'project',owner:'cem',name:'规则',body:'先验证'});
+    const b=m.bundle('win'),t=b.targets.find(x=>x.target==='cem');
+    assert.deepEqual(t.dirs.map(d=>d.path+':'+d.source),['D:/a:manual','D:/b:manual','D:/linked:linked']);
+    assert.equal(t.path,'D:/a');assert.equal(b.projects.find(p=>p.id==='cem').dirs.length,3);
+    // A workspace change in 项目管理 changes the published signature without touching SQLite.
+    const sig=m.linkSignature();ws=[...ws,{machine:'win',path:'D:/more',tag:'solver'}];assert.notEqual(m.linkSignature(),sig);
+    m.project({id:'cem',name:'CEM',paths:[{machine:'win',path:'D:/b',remove:true}]});
+    assert.deepEqual(m.bundle('win').targets.find(x=>x.target==='cem').dirs.map(d=>d.path),['D:/a','D:/linked','D:/more']);
+    m.deployed('win',{target:'cem',revision:'r',ok:true,dirs:[{path:'D:/a',source:'manual',branch:'main',ok:true}]});
+    assert.equal(m.deployments().find(x=>x.target==='cem').dirs[0].branch,'main');
+    m.project({op:'rename',id:'cem',to:'cem2',name:'CEM 电磁求解器'});
+    const moved=v.db.prepare('SELECT * FROM memory WHERE id=?').get(mem.id);
+    assert.equal(moved.owner,'cem2');assert.equal(m.history(mem.id).length,2);
+    assert.ok(!m.projects().some(p=>p.id==='cem'));assert.equal(m.projects().find(p=>p.id==='cem2').mesh,'proj_x');
+    assert.ok(!m.deployments().some(x=>x.target==='cem'));
+    assert.throws(()=>m.project({op:'delete',id:'cem2'}),/启用的记忆/);
+    m.project({op:'delete',id:'old'});assert.ok(!m.projects().some(p=>p.id==='old'));
+  }finally{v.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('agent writes every directory and expanded worktree, excludes generated files from git, and retires a renamed target',async()=>{
+  const home=temp(),repo=path.join(home,'CEM_1','main'),wt=path.join(home,'CEM_1','fdtd'),plain=path.join(home,'notes');
+  for(const d of [repo,wt,plain])fs.mkdirSync(d,{recursive:true});
+  fs.mkdirSync(path.join(repo,'.git'));write(path.join(wt,'.git'),'gitdir: x\n');
+  const excluded=[];const sent=[];
+  const sync=createMemorySync({home,name:'box',send:d=>sent.push(d),canWrite:()=>true,folder:async p=>fs.realpathSync(p),
+    worktrees:async r=>fs.realpathSync(r)===fs.realpathSync(repo)||fs.realpathSync(r)===fs.realpathSync(wt)?[{path:fs.realpathSync(repo),branch:'mom_dev'},{path:fs.realpathSync(wt),branch:'fdtd_dev'}]:null,
+    gitExclude:async(dir,names)=>excluded.push(dir)});
+  const bundle=id=>({t:'memory-bundle',machine:'box',projects:[{id,path:path.join(home,'CEM_1'),dirs:[{path:path.join(home,'CEM_1'),source:'manual'},{path:plain,source:'linked'}]}],
+    targets:[{target:id,path:path.join(home,'CEM_1'),dirs:[{path:path.join(home,'CEM_1'),source:'manual'},{path:plain,source:'linked'}],revision:'b'.repeat(64),items:[{id:'fixture',name:'规则',body:'CEM-MANAGED'}]}]});
+  try{
+    await sync.handle(bundle('cem-po'));
+    for(const d of [path.join(home,'CEM_1'),repo,wt,plain])assert.match(fs.readFileSync(path.join(d,'CLAUDE.md'),'utf8'),/CEM-MANAGED/,d);
+    const ack=sent.find(x=>x.t==='memory-applied'&&x.target==='cem-po');
+    // CEM_1 is a plain folder, so both child repositories arrive as worktrees with their branches.
+    assert.ok(ack.ok);assert.deepEqual(ack.dirs.filter(d=>d.source==='worktree').map(d=>d.branch).sort(),['fdtd_dev','mom_dev']);
+    assert.equal(ack.dirs.find(d=>fs.realpathSync(d.path)===fs.realpathSync(repo)).branch,'mom_dev');
+    assert.equal(excluded.length,4);
+    // Rename: the same files now belong to the new ID and must stay written.
+    await sync.handle(bundle('cem'));
+    for(const d of [repo,wt,plain])assert.match(fs.readFileSync(path.join(d,'AGENTS.md'),'utf8'),/CEM-MANAGED/,d);
+    await sync.handle({t:'memory-bundle',machine:'box',projects:[],targets:[]});
+    for(const d of [repo,wt,plain])assert.equal(fs.readFileSync(path.join(d,'AGENTS.md'),'utf8'),'');
+  }finally{fs.rmSync(home,{recursive:true,force:true});}
+});

@@ -279,22 +279,47 @@ export function panel(initialMode='memory'){
     }else if(mode==='review'){
       reviewPanel=createReviewPanel({refs:()=>[...selected.values()],clearSelection:()=>{selected.clear();selectionChanged();},get,notify:say,applied:()=>load(),initialReviewId:data.latestReadyReviewId||null});content.append(reviewPanel.root);
     }else if(mode==='projects'){
-      content.append(h('div',{class:'knowledge-banner'},h('span',{text:'📁 同一项目 ID 关联不同电脑上的本地工作区目录。项目专属记忆保存在 NAS，仅下发到映射过的电脑与路径。'})));
-      const id=h('input',{class:'field',placeholder:'项目 ID，例如 ametyping'}),name=h('input',{class:'field',placeholder:'项目名称'}),machine=h('input',{class:'field',placeholder:'机器名'}),path=h('input',{class:'field',placeholder:'该电脑上的绝对路径'});
+      content.append(h('div',{class:'knowledge-banner'},h('span',{text:'📁 项目专属记忆下发到每台电脑登记的全部目录。目录内的 git 仓库会自动展开到同一仓库的所有 worktree；关联「项目管理」项目后，那里的工作区（数据、结果类除外）也会一起下发。'})));
+      let meshProjects=[];const version=++seq;
+      try{const r=await fetch('/api/mesh/projects',{cache:'no-store'});if(r.ok)meshProjects=(await r.json()).projects||[];}catch{}
+      if(dead||mode!=='projects'||version!==seq)return;
+      const id=h('input',{class:'field',placeholder:'项目 ID，例如 cem'}),name=h('input',{class:'field',placeholder:'项目名称'}),machine=h('input',{class:'field',placeholder:'机器名'}),path=h('input',{class:'field',placeholder:'该电脑上的绝对路径'});
       const form=h('form',{class:'knowledge-editor knowledge-card'},
-        h('h3',{class:'knowledge-section-title',text:'新增或更新项目目录映射'}),
+        h('h3',{class:'knowledge-section-title',text:'新增项目或给项目添加目录'}),
         h('div',{class:'knowledge-editor-grid'},id,name,machine,path),
-        h('div',{class:'capi-btns'},h('button',{class:'btn go',type:'submit',text:'保存路径映射'})));
-      form.addEventListener('submit',e=>{e.preventDefault();post('project',{id:id.value.trim(),name:name.value.trim(),paths:[{machine:machine.value.trim(),path:path.value.trim()}]});});
+        h('div',{class:'capi-btns'},h('button',{class:'btn go',type:'submit',text:'添加目录'})));
+      form.addEventListener('submit',e=>{e.preventDefault();post('project',{id:id.value.trim(),name:name.value.trim(),paths:machine.value.trim()?[{machine:machine.value.trim(),path:path.value.trim()}]:[]});});
+      const grouped=new Map();
+      for(const r of data.projects){if(!grouped.has(r.id))grouped.set(r.id,{id:r.id,name:r.name,mesh:r.mesh||'',dirs:[]});if(r.machine)grouped.get(r.id).dirs.push(r);}
       const listWrap=h('div',{class:'knowledge-card-grid'});
-      for(const p of data.projects){
+      for(const p of grouped.values()){
+        const linked=meshProjects.find(m=>m.id===p.mesh);
+        const pick=h('select',{class:'field',style:'max-width:220px'},h('option',{value:'',text:'不关联项目管理'}),
+          ...meshProjects.map(m=>h('option',{value:m.id,text:m.name+'（'+(m.workspaces||[]).length+' 个工作区）',selected:m.id===p.mesh})));
+        pick.addEventListener('change',()=>post('project',{id:p.id,name:p.name,mesh:pick.value,paths:[]}));
+        const machines=[...new Set([...p.dirs.map(d=>d.machine),...data.deployments.filter(x=>x.target===p.id).map(x=>x.machine)])].sort();
+        const rows=[];
+        for(const m of machines){
+          const dep=data.deployments.find(x=>x.machine===m&&x.target===p.id);
+          rows.push(h('div',{class:'knowledge-group-head'},h('b',{text:'💻 '+m}),
+            dep?h('small',{class:'knowledge-badge '+(dep.status==='applied'?'scope-machine':'scope-disabled'),text:dep.status==='applied'?'已同步':'冲突或未写入'}):h('small',{class:'ghint',text:'尚无下发记录'})));
+          for(const d of p.dirs.filter(d=>d.machine===m))rows.push(h('div',{class:'knowledge-dep-row'},
+            h('small',{class:'knowledge-path',text:d.path}),
+            h('small',{class:'knowledge-badge scope-project',text:d.source==='linked'?'来自项目管理':'手动登记'}),
+            ...(d.source==='manual'?[button('移除',()=>post('project',{id:p.id,name:p.name,paths:[{machine:m,path:d.path,remove:true}]}))]:[])));
+          // What the agent actually wrote, including the worktrees it expanded and their branches.
+          for(const x of dep?.dirs||[])rows.push(h('p',{class:'ghint knowledge-dep-row'+(x.ok?'':' bad'),
+            text:'　↳ '+x.path+(x.branch?' ['+x.branch+']':'')+(x.source==='worktree'?' · worktree':'')+(x.ok?'':' · '+x.msg)}));
+          if(dep?.detail)rows.push(h('p',{class:'ghint bad',text:dep.detail}));
+        }
         listWrap.append(h('div',{class:'knowledge-row knowledge-fact scope-project'},
-          h('div',{class:'knowledge-card-head'},
-            h('b',{text:p.name+' · '+p.id}),
-            p.machine?h('small',{class:'knowledge-badge scope-machine',text:p.machine}):null
-          ),
-          h('small',{class:'knowledge-path',text:(p.machine||'')+' '+(p.path||'')}),
-          ...(p.machine?[h('div',{class:'capi-btns'},button('移除此机器映射',()=>post('project',{id:p.id,name:p.name,paths:[{machine:p.machine,remove:true}]})))]:[])));
+          h('div',{class:'knowledge-card-head'},h('b',{text:p.name+' · '+p.id}),
+            h('small',{class:'knowledge-badge scope-project',text:data.memories.filter(x=>x.enabled&&x.scope==='project'&&x.owner===p.id).length+' 条记忆'})),
+          h('div',{class:'capi-btns'},pick,linked?h('small',{class:'ghint',text:'项目管理：'+(linked.workspaces||[]).map(w=>w.machine+':'+w.path+(w.snapshot?.gitBranch?' ['+w.snapshot.gitBranch+']':'')).join('，')||'暂无工作区'}):null),
+          ...rows,
+          h('div',{class:'capi-btns'},
+            button('改 ID',()=>{const to=prompt('新的项目 ID（记忆和目录一起迁移，旧 ID 的托管区块会被清理）',p.id);if(to&&to!==p.id)post('project',{op:'rename',id:p.id,to:to.trim(),name:prompt('项目名称',p.name)||p.name});}),
+            button('删除项目',()=>{if(confirm('删除项目 '+p.id+'？项目下有启用的记忆时会拒绝删除。'))post('project',{op:'delete',id:p.id});}))));
       }
       content.append(form,listWrap);
     }else if(mode==='sync'){
