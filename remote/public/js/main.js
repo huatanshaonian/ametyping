@@ -11,6 +11,7 @@ import * as dashboard from './apps/dashboard.js';
 import * as explorer from './apps/explorer.js';
 import * as projects from './apps/projects.js';
 import * as infra from './apps/infra.js';
+import * as magpie from './apps/magpie.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
@@ -43,6 +44,7 @@ function openMyComputer() {
 }
 
 const APPS = [
+  { id: 'magpie', label: 'Magpie 用量', icon: icon('chart1'), open: magpie.open, hint: '各账号额度、重置时间与网关调用统计' },
   { id: 'dashboard', label: '糖糖看板', icon: '/asset/icon256.png', open: openDashboard },
   { id: 'projects', label: '项目管理', icon: icon('projects'), open: () => projects.open(), hint: '跨机协同拓扑、目标契约、目录结构树与大文件摆渡' },
   { id: 'infra', label: '网络与设备', icon: icon('network_cool_two_pcs'), open: () => infra.open(), hint: '远程服务器（AWS/GCP）、OpenWrt、群晖 Docker 与网络互联拓扑监控' },
@@ -97,7 +99,10 @@ function render() {
 net.on('sessions', render);
 
 wallpaper.init();
-todo.initWidget(document.getElementById('desktop'));        // 重要计划, pinned to the desktop
+const widgets = h('div', { id: 'desktopwidgets' });
+document.getElementById('desktop').append(widgets);
+todo.initWidget(widgets);
+magpie.initWidget(widgets);
 // a phone's back gesture: each window on screen is a level; back puts the one in front away (to the taskbar)
 wm.onChange((list) => backnav.level('windows', list.filter((w) => !w.minimized).length));
 backnav.step(() => { const l = wm.list().filter((w) => !w.minimized); const w = l.find((x) => x.active) || l[l.length - 1]; if (!w) return false; wm.minimize(w.id); return true; }, 0);
@@ -114,6 +119,7 @@ openDashboard();
   // #lit: the day's papers (糖糖's morning bubble)
   if (location.hash === '#lit') { literature.open('feed'); history.replaceState(null, '', location.pathname); }
   if (location.hash === '#knowledge') { knowledge.open(); history.replaceState(null, '', location.pathname); }
+  if (location.hash === '#magpie') { magpie.open(); history.replaceState(null, '', location.pathname); }
   if (location.hash === '#infra') { infra.open(); history.replaceState(null, '', location.pathname); }
   // back from Google's consent screen (google/index.js handleCallback)
   const g = /^#google=(ok|fail)$/.exec(location.hash);

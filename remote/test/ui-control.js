@@ -5,7 +5,7 @@ const fs = require('fs'), path = require('path'), os = require('os'), http = req
 const R = path.resolve(__dirname, '..');
 const WebSocket = require(R + '/node_modules/ws');
 const auth = require(R + '/server/auth');
-const OUT = path.join(__dirname, 'out', 'shots'); fs.mkdirSync(OUT, { recursive: true });
+const OUT = process.env.AME_CONTROL_UI_OUT || path.join(__dirname, 'out', 'shots'); fs.mkdirSync(OUT, { recursive: true });
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-uictl-'));
 const PORT = 18890, CDP = 9343, API = 18891;
 const memoryApi=http.createServer((req,res)=>{
@@ -74,6 +74,8 @@ function login() {
     const shot = async (name) => { const r = await call('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(OUT, name), Buffer.from(r.result.data, 'base64')); };
     const winTitle = () => evalJs("[...document.querySelectorAll('.win .title')].map(t => t.textContent).join('|')");
     await call('Runtime.enable'); await call('Log.enable'); await call('Page.enable'); await call('Network.enable');
+    const downloadDir=path.join(OUT,'downloads');fs.mkdirSync(downloadDir,{recursive:true});
+    await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloadDir});
     await call('Network.setCookie', { name: cname, value: cval, url: `http://127.0.0.1:${PORT}/` });
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
     await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
@@ -92,10 +94,10 @@ function login() {
       n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|Claude Code API|文献' &&
+    chk('控制面板: the nine items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|OpenCode 配置指南|文献' &&
       (await evalJs("document.querySelectorAll('.cp-item img').length")) === 9 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
-    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['Claude Code API', '.capi-form', '刷新电脑配置'], ['AI 模型', '.aim', '默认']]) {
+    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['OpenCode 配置指南', '.ocg', 'OpenCode 连接 NAS Magpie'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);
@@ -123,19 +125,24 @@ function login() {
     const uses2 = await evalJs("[...document.querySelectorAll('.aim-uses')].map(e => e.textContent)");
     chk('后备模型: picked, saved, each job shows it', bak === '{"model":"claude-opus-5-5","effort":""}' && uses2.length === 13 && uses2.every((t) => /出错时改用 Opus 5\.5/.test(t)), [bak, uses2]);
     await shot('81-control-ai.png');
-    // Claude Code API: a configured key must show as set (the row check used to pass the env object to a helper that
-    // expected a settings object, always showing 未设置)
-    const capi = await evalJs("fetch('/api/claude-apis/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({machine:'nas',profile:{id:'deepseek',baseUrl:'https://deepseek.example',model:'deepseek-flash[1m]',key:'sk-ui-test',network:'direct'}})}).then(r=>r.json())");
-    await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('Claude Code API')).click()"); await sleep(900);
-    const capiShown = await evalJs("(document.querySelector('.capi-token') || {}).textContent || ''");
-    chk('Claude Code API: a configured key shows as set, not 密钥未设置', capi.ok === true && capiShown === '密钥已设置', [capi, capiShown]);
-    await evalJs("document.querySelector('.capi-row .btn').click()");
-    const editor = await evalJs("(() => { const f=document.querySelector('.capi-editor'), x=f.querySelectorAll('input'); return {shown:!f.hidden,id:x[0].value,model:x[2].value,keyType:x[3].type,keyValue:x[3].value}; })()");
-    chk('profile editor shows the local default model and an empty password field', editor.shown && editor.id === 'deepseek' && editor.model === 'deepseek-flash[1m]' && editor.keyType === 'password' && editor.keyValue === '', editor);
-    await evalJs("(() => { const f=document.querySelector('.capi-editor'); f.querySelectorAll('input')[2].value='deepseek-ui[1m]'; f.requestSubmit(); })()");
-    await sleep(900);
-    const savedProfile = await evalJs("fetch('/api/claude-apis?machine=nas').then(r=>r.json()).then(v=>({model:v.profiles[0].model,hasCredential:v.profiles[0].hasCredential,raw:JSON.stringify(v)}))");
-    chk('saving through the editor changes the local model and preserves the blank key without echoing it', savedProfile.model === 'deepseek-ui[1m]' && savedProfile.hasCredential && !savedProfile.raw.includes('sk-ui-test'), savedProfile.model);
+    // The retired credential editor is replaced by portable, read-only setup instructions.
+    await evalJs("document.querySelector('.cp-item[data-id=opencode]').click()"); await sleep(200);
+    chk('OpenCode guide replaces the old Claude Code API entry', await evalJs("!!document.querySelector('.ocg') && ![...document.querySelectorAll('.cp-item')].some(b=>b.textContent.includes('Claude Code API')) && !document.querySelector('.capi-editor')"));
+    await evalJs("document.querySelector('.ocg [data-os=windows]').click()");
+    chk('Windows instructions cover install, secure key file, proxy and connectivity checks', await evalJs("(() => {const t=document.querySelector('.ocg-body').textContent;return t.includes('opencode.exe --version')&&t.includes('AsSecureString')&&t.includes('icacls.exe')&&t.includes('service set env NO_PROXY')&&t.includes('Resolve-DnsName')&&t.includes('不带 http://、端口或 full:');})()"));
+    const template = await evalJs("fetch(document.querySelector('.ocg a[download=\"opencode.json\"]').href).then(r=>r.json())");
+    chk('portable configuration contains six named models and a file reference, no local credential or drive path', Object.keys(template.providers.magpie.models).length===6 && template.model==='magpie/group/opus-main' && template.agents.explore.model==='magpie/group/deepseek-worker' && template.providers.magpie.settings.baseURL==='https://magapi.huatan.org/v1' && template.providers.magpie.settings.apiKey==='{file:~/.config/opencode/.secrets/magpie-nas.key}' && !/[A-Z]:[\\/]/.test(JSON.stringify(template)));
+    const downloaded=path.join(downloadDir,'opencode-magpie-usage.zip');
+    if(fs.existsSync(downloaded))fs.unlinkSync(downloaded);
+    await evalJs("const detail=[...document.querySelectorAll('.ocg details')].find(x=>x.textContent.includes('把 /usage'));detail.open=true;document.querySelector('.ocg [data-download=usage-plugin]').click()");
+    for(let n=0;n<60&&!fs.existsSync(downloaded);n++)await sleep(100);
+    chk('portable usage plugin downloads as a complete ZIP',fs.existsSync(downloaded)&&fs.readFileSync(downloaded).equals(fs.readFileSync(R+'/public/downloads/opencode-magpie-usage.zip')));
+    await evalJs("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{window.guideCopied=t;}}});document.querySelector('.ocg-code .btn').click()"); await sleep(100);
+    chk('guide command copy uses the displayed command and reports success', await evalJs("window.guideCopied===document.querySelector('.ocg-code code').textContent && document.querySelector('.ocg-copy-note').textContent==='已复制'"));
+    await evalJs("document.querySelector('.ocg [data-os=linux]').click()");
+    chk('Linux instructions have Bash key permissions, lowercase proxy bypass and service setup', await evalJs("(() => {const t=document.querySelector('.ocg-body').textContent;return document.querySelector('.ocg-body').dataset.os==='linux'&&t.includes('opencode.ai/v2/install')&&t.includes('chmod 600')&&t.includes('export no_proxy=')&&t.includes('getent ahostsv4')&&t.includes('sudo tailscale up');})()"));
+    chk('guide explains HTTP80 and HTTPS443 and provides no credential editor', await evalJs("document.querySelector('.ocg-body').textContent.includes('现在使用 HTTPS 默认443') && !document.querySelector('.ocg input, .ocg form')"));
+    await shot('81-control-opencode-guide.png');
     await evalJs("[...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");await sleep(900);
     chk('记忆与存档 opens as a standalone app with memory icon, SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局') && [...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).querySelector('img').src.endsWith('/icons/memory.png')") && (await winTitle()).includes('记忆与存档'));
     await evalJs("[...document.querySelectorAll('.knowledge button')].find(b=>b.textContent==='新增记忆').click();document.querySelector('.knowledge-editor input[placeholder=记忆名称]').value='界面记忆';document.querySelector('.knowledge-body').value='中文与 emoji 🌈';document.querySelector('.knowledge-editor').requestSubmit()");await sleep(900);
@@ -201,6 +208,9 @@ function login() {
     await evalJs("[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('AI 模型')).click()"); await sleep(1200);
     chk('phone: an item fills the window, with ‹ 控制面板 to go back', await evalJs("getComputedStyle(document.querySelector('.cp-nav')).display === 'none' && getComputedStyle(document.querySelector('.cp-back')).display !== 'none' && !!document.querySelector('.cp-pane .aim')"), 0);
     await shot('83-control-phone-ai.png');
+    await evalJs("document.querySelector('.cp-back').click();document.querySelector('.cp-item[data-id=opencode]').click()"); await sleep(200);
+    chk('phone: guide keeps command overflow inside its code panes', await evalJs("document.querySelector('.ocg').scrollWidth<=document.querySelector('.ocg').clientWidth+2 && document.querySelector('.cp-pane').scrollWidth<=document.querySelector('.cp-pane').clientWidth+2"));
+    await shot('85-control-phone-opencode.png');
     ws.close();
   } catch (e) { errors.push('test: ' + e.stack); }
   finally { try { chrome && chrome.kill(); } catch {} srv.kill();memoryApi.close(); }

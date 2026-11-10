@@ -8,6 +8,7 @@ const bridge = require('./bridge');
 const { createRemoteControl } = require('./remote-control');
 const { createMorning } = require('./morning');
 const { createMailNotice } = require('./mail-notice');
+const { createQuotaNotice } = require('./quota-notice');
 const { adoptRunning } = require('./session-adopt');
 const { CLAUDE_EXE, TERM_HOSTS, createLocator } = require('./session-locate');
 const { lineage } = require('./running-sessions');
@@ -791,6 +792,7 @@ async function onControl(req, res, body) {
   // the NAS wrote a daily report: a note for the morning bubble (information only -- not remote control)
   if (req.method === 'POST' && req.url === '/control/report') return out(200, { ok: morning.setNote(d) });
   // ... and a new mail that needs you: a bubble at once (information only, too)
+  if (req.method === 'POST' && req.url === '/control/quota') return out(200, { ok: quotaNotice.add(d) });
   if (req.method === 'POST' && req.url === '/control/mail') return out(200, { ok: mailNotice.add(d) });
   // a session renamed with /rename (no hook says so; the NAS heard it from the agent's records): its new name now
   if (req.method === 'POST' && req.url === '/control/title') {
@@ -924,6 +926,8 @@ const morning = createMorning({ app, BrowserWindow, ipcMain, screen, anchor: () 
   enabled: () => settings.morningBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const mailNotice = createMailNotice({ BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
   enabled: () => settings.mailBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
+const quotaNotice = createQuotaNotice({ app, BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
+  dashboardUrl: () => settings.dashboardUrl, openExternal: u => shell.openExternal(u) });
 const { chatSend, chatKey, chatScreen, launch, btwList } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home'), onBtw: btwToChat });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 

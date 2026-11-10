@@ -28,6 +28,7 @@ const { createInfra } = require('./infra');
 const { createResearch } = require('./research/service');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
+const { createMagpie } = require('./magpie');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
@@ -87,10 +88,10 @@ const SID = cfg.secureCookies ? '__Host-sid' : 'sid';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.ttf': 'font/ttf', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.wav': 'audio/wav',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.zip': 'application/zip' };
 // the desktop's own files (after login): one level under these folders, plain names only; and the blank documents
 // 新建 in Word / Excel / PowerPoint starts from (public/tpl)
-const STATIC = /^\/(?:(css|js|js\/apps|icons|img|wall|vendor|sounds)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg|wav)|tpl\/blank\.(docx|xlsx|pptx))$/;
+const STATIC = /^\/(?:(css|js|js\/apps|icons|img|wall|vendor|sounds)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(js|css|png|webp|jpg|svg|wav)|tpl\/blank\.(docx|xlsx|pptx)|downloads\/(opencode-magpie\.json|opencode-magpie-usage\.(zip|json)))$/;
 
 // Behind the proxy, the client IP is the LAST X-Forwarded-For entry -- the one the proxy itself appended.
 // Anything to its left came from the client and could be forged to dodge the per-IP lockout.
@@ -273,7 +274,11 @@ const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...t
 // the conversations' full-text index (SQLite, data/search.db): follows what the store writes; built in the background
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
 if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
-const summary = createSummary({ store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
+const sendQuota = (sock, notice) => { try { sock.send(JSON.stringify({ t: 'quota-alert', notice })); } catch {} };
+const magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
+  onChange: () => broadcast({ t: 'magpie' }),
+  onNotice: n => { for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) sendQuota(sock, n); } });
+const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
   resumeCmd, artifacts, todos, notes, searchIndex, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
@@ -331,7 +336,7 @@ function mailAlert(alert) {
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
 if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
   before:()=>knowledge.vault.snapshot(path.join(path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),'knowledge-backup.sqlite')),log: console.log });
-function flushAndExit() { try { infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { magpie.stop(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -357,6 +362,7 @@ function onAgentMessage(m, raw, ws) {
   if (infra.fromAgentMessage(m.name, d)) return;
   if(knowledge.message(m.name,d,ws))return;
   if (d.t === 'hello') {
+    for (const notice of magpie.activeNotices()) sendQuota(ws, notice);
     ws.remoteControlAllowed = d.control === true; ws.filesAllowed = d.files === true; ws.uploadAllowed = d.upload === true;
     updateMachineCapabilities(m);
     ws.claudeProfilesVersion = d.claudeProfilesVersion === 1 ? 1 : 0;
@@ -723,6 +729,7 @@ const server = http.createServer(async (req, res) => {
   if (await calendarView.handle(req, res, url, json)) return;
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (lit && /^\/api\/lit(\/|$)/.test(p) && await lit.handle(req, res, url, ip, json, readBody)) return;
+  if (req.method === 'GET' && p === '/api/magpie/status') return json(res, 200, magpie.status(url.searchParams.get('period')));
   // AI 模型: each job's model / effort, Codex's version and updates (server/ai)
   if (summary && /^\/api\/ai(\/|$)/.test(p) && await summary.ai.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded

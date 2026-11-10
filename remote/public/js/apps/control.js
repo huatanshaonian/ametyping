@@ -11,7 +11,7 @@ import { panel as computersPanel } from './computers.js';
 import { panel as googlePanel } from './google.js';
 import { panel as mailPanel } from './mail-accounts.js';
 import { panel as aiPanel } from './ai-models.js';
-import { panel as apisPanel } from './claude-apis.js';
+import { panel as opencodePanel } from './opencode-guide.js';
 import { open as openKnowledge } from './knowledge.js';
 import { panel as notifyPanel } from './notify.js';
 import { panel as litPanel } from './lit-settings.js';
@@ -25,13 +25,14 @@ const ITEMS = [
   { id: 'google', label: 'Google 账户', icon: 'key_win', note: '日历、任务、云端硬盘、提醒到手机', panel: googlePanel },
   { id: 'mail', label: '邮箱', icon: 'outlook_express', note: '收信的邮箱、签名、推荐文献按什么判断', panel: mailPanel },
   { id: 'ai', label: 'AI 模型', icon: 'chip_ramdrive', note: '每项工作用哪个模型、后备模型、Claude Code / Codex 更新', panel: aiPanel },
-  { id: 'apis', label: 'Claude Code API', icon: 'key_win', note: '每台电脑的启动入口、默认模型和网络', panel: apisPanel },
+  { id: 'opencode', label: 'OpenCode 配置指南', icon: 'help_book_big', note: 'Windows / Linux 安装、NAS 接入与代理', panel: opencodePanel },
   { id: 'literature', label: '文献', icon: 'help_book_big', note: '文献来源的 key、联系邮箱、每日推送', panel: litPanel },
 ];
 export const items = () => ITEMS.map(({ id, label, icon: ic, note }) => ({ id, label, icon: ic, note }));
 
 let app = null;
 export function open(id, arg) {
+  if (id === 'apis') id = 'opencode'; // Old control-panel links land on the new guide.
   if (id === 'knowledge') return openKnowledge(arg);
   if (!app) {
     app = mount();

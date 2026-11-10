@@ -18,7 +18,7 @@ const WHO = { codex: 'OpenAI', claude: 'Anthropic' };
 // codex / claude: { bin, pathPrefix, timeoutMs }; api: { key(), base, timeoutMs };
 // pick(task) -> { model, effort, provider, api?, backup: { ... } | null }
 // claudeApis: the Claude Code API aliases; an alias model runs through that API (base URL / key / proxy mode)
-function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis = null, machine = 'nas', log = () => {}, now = Date.now }) {
+function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis = null, machine = 'nas', magpie = null, log = () => {}, now = Date.now }) {
   const down = new Map();                     // model -> { at, error, task }
   let apiDown = null;                         // the Claude API as last failed: { at, error, task }
 
@@ -27,6 +27,10 @@ function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis 
   const keyOf = (u) => (u.api ? u.api + '|' : '') + u.model;
 
   async function once(use, prompt, schema, images, task, apiOnly = false) {
+    if (use.provider === 'magpie') {
+      if (!magpie) throw new Error('Magpie 尚未启用');
+      return magpie.run({ model: use.model, effort: use.effort, prompt, schema, images, timeoutMs: codex.timeoutMs });
+    }
     if(apiOnly&&use.provider!=='claude')throw new Error('仅 API 模式请选择 Claude API 模型或 NAS 上的 API 别名；Codex 当前走工具通道');
     if(apiOnly&&use.api){
       const alias=claudeApis?.resolve(use.api,machine),env=alias?.settings?.env||{};

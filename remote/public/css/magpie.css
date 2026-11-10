@@ -1,0 +1,30 @@
+/* Desktop font, surfaces and colour tokens also follow Win98 and shade overrides. */
+.magpie-monitor{height:100%;min-height:0;display:flex;flex-direction:column;background:var(--body);color:var(--ink);font:inherit;min-width:0}
+.mp-tools{flex:none;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px;background:var(--head-bg);border-bottom:1px solid var(--edge)}
+.mp-tools input{flex:1;min-width:140px}.mp-body{flex:1;min-height:0;overflow:auto;padding:8px}
+.mp-statusbar{flex:none;padding:4px 8px;background:var(--head-bg);border-top:1px solid var(--edge);font-size:11px;color:var(--muted)}
+.mp-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.mp-stat{padding:6px 8px;background:var(--surface);border:1px solid var(--edge);display:flex;flex-direction:column;gap:3px}.mp-stat small{color:var(--muted);font-size:11px}.mp-stat strong{font-size:14px;color:var(--ink);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.mp-muted{color:var(--muted);font-size:11px;margin:8px 0}.mp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start;gap:10px;margin:10px 0}
+.mp-account{background:var(--surface);border:1px solid var(--edge);overflow:hidden;min-width:0}.mp-account header{padding:6px 8px;background:var(--head-bg);border-bottom:1px solid var(--edge);display:flex;align-items:start;justify-content:space-between;gap:6px}.mp-account h3{margin:0 0 2px;font-size:13px;color:var(--ink)}.mp-account header span{font-size:11px;overflow-wrap:anywhere}
+.mp-badge{white-space:nowrap;color:var(--ok-text);font-size:11px}.mp-badge.mp-warn{color:var(--warn)}
+.mp-window{margin:8px;padding-bottom:8px;border-bottom:1px dotted var(--edge)}.mp-window-head,.mp-window-meta{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}.mp-window-head b,.mp-window-head strong{font-size:12px}.mp-window-head strong{color:var(--border)}
+.mp-meter{height:12px;border:1px solid var(--edge);padding:1px;background:var(--tint-soft);margin:5px 0;overflow:hidden}.mp-meter span{display:block;height:100%;background:repeating-linear-gradient(90deg,var(--fill) 0 7px,transparent 7px 9px)}.mp-meter.mp-low span{background:repeating-linear-gradient(90deg,var(--warn) 0 7px,transparent 7px 9px)}.mp-meter.mp-unknown{border-style:dotted}
+.mp-window-meta,.mp-window small{font-size:11px;color:var(--muted)}.mp-account-usage{padding:6px 8px;font-size:11px;background:var(--tint-soft)}.mp-account-usage summary{cursor:pointer}.mp-account footer{padding:5px 8px;font-size:10px;color:var(--muted);border-top:1px solid var(--edge)}.mp-account>p{padding:0 8px;font-size:12px}.mp-error{padding:6px 8px;background:var(--note-bg);border:1px solid var(--edge);color:var(--bad);font-size:12px}.mp-models{display:flex;flex-direction:column;font-size:11px;padding:8px;overflow-wrap:anywhere}
+html[data-theme="win98"] .mp-tools{border-bottom:1px solid #808080;box-shadow:0 1px #fff}
+html[data-theme="win98"] .mp-stat,html[data-theme="win98"] .mp-account{border:0;box-shadow:var(--sunken);padding:2px}
+html[data-theme="win98"] .mp-account header{border-bottom:1px solid #808080}
+html[data-theme="win98"] .mp-meter{border:0;box-shadow:var(--sunken);padding:2px;background:#c0c0c0}
+html[data-theme="win98"] .mp-statusbar{border:0;padding:4px 6px;background:#c0c0c0;box-shadow:inset 1px 1px #808080,inset -1px -1px #fff;margin:3px}
+/* A shared stack keeps the plan and usage widgets apart. */
+#desktopwidgets{position:absolute;top:12px;right:14px;width:270px;max-height:calc(100% - 24px);display:flex;flex-direction:column;gap:10px;z-index:1;min-height:0}
+#desktopwidgets #todowidget{position:relative;inset:auto;width:auto;max-height:none;flex:0 1 auto;min-height:24px}
+#desktopwidgets #todowidget .td-body{max-height:min(30vh,210px);min-height:0}
+.mp-widget{flex:0 1 auto;min-height:24px;display:flex;flex-direction:column;background:var(--body);border:2px solid var(--border);box-shadow:3px 3px 0 var(--edge);font-size:12px;color:var(--ink)}
+.mpw-head{flex:none;display:flex;align-items:center;gap:5px;padding:3px 6px;color:var(--border);background:linear-gradient(90deg,var(--title),var(--title-2));border-bottom:2px solid var(--border);user-select:none}.mpw-head img{width:16px;height:16px}.mpw-title{flex:1;min-width:0;padding:0;border:0;background:none;text-align:left;color:inherit;font-size:12px;font-weight:bold}.mpw-title:hover{text-decoration:underline}.mpw-fold{width:18px;height:16px;padding:0;line-height:1;border:1px solid var(--border);background:var(--body);color:var(--border)}
+.mpw-body{min-height:0;overflow:auto;max-height:260px;padding:2px 6px 4px}.mpw-row{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:2px 6px;width:100%;padding:5px 0;text-align:left;background:none;border:0;border-bottom:1px dotted var(--edge);font-size:11px}.mpw-row:hover{background:var(--hover)}.mpw-name{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mpw-value{font-weight:normal;color:var(--border);font-variant-numeric:tabular-nums}.mpw-row small{grid-column:1/-1;color:var(--muted);font-size:10px}.mpw-error .mpw-value{color:var(--bad)}.mpw-status{display:block;color:var(--muted);font-size:10px;padding-top:5px}.mpw-empty{padding:6px 0;color:var(--muted)}.mp-widget.collapsed .mpw-body{display:none}
+html[data-theme="win98"] .mp-widget{border:0;padding:3px;background:#c0c0c0;box-shadow:var(--raised-outer)}
+html[data-theme="win98"] .mpw-head{color:#fff;background:linear-gradient(90deg,#000080,#1084d0);border:0}
+html[data-theme="win98"] .mpw-body{background:var(--surface);box-shadow:var(--sunken);margin-top:3px;padding:2px 7px 5px}
+html[data-theme="win98"] .mpw-fold{border:0;background:#c0c0c0;color:#000;box-shadow:var(--raised)}
+@media(max-width:700px){#desktopwidgets{display:none}}
+@media(max-width:600px){.mp-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-body{padding:6px}.mp-stat strong{font-size:13px}}

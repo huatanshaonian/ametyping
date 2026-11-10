@@ -1,0 +1,155 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "magpie/group/opus-main",
+  "agents": {
+    "general": {
+      "model": "magpie/group/deepseek-worker"
+    },
+    "explore": {
+      "model": "magpie/group/deepseek-worker"
+    }
+  },
+  "providers": {
+    "magpie": {
+      "name": "Magpie",
+      "settings": {
+        "baseURL": "https://magapi.huatan.org/v1",
+        "apiKey": "{file:~/.config/opencode/.secrets/magpie-nas.key}"
+      },
+      "models": {
+        "group/opus-main": {
+          "name": "Opus · 日常",
+          "modelID": "group/opus-main",
+          "package": "@opencode/ai/providers/anthropic-compatible",
+          "limit": {
+            "context": 1000000,
+            "input": 1000000,
+            "output": 64000
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ]
+          }
+        },
+        "devin/claude-opus-5-5": {
+          "name": "Opus 5.5 · Devin",
+          "modelID": "devin/claude-opus-5-5",
+          "package": "@opencode/ai/providers/anthropic-compatible",
+          "limit": {
+            "context": 1000000,
+            "input": 1000000,
+            "output": 128000
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ],
+            "reasoning": {
+              "supported": true,
+              "effort": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            }
+          }
+        },
+        "devin/claude-fable-5-1": {
+          "name": "Fable 5.1 · Devin",
+          "modelID": "devin/claude-fable-5-1",
+          "package": "@opencode/ai/providers/anthropic-compatible",
+          "limit": {
+            "context": 1000000,
+            "input": 1000000,
+            "output": 128000
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ],
+            "reasoning": {
+              "supported": true,
+              "effort": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            }
+          }
+        },
+        "group/gemini-argon": {
+          "name": "Gemini Argon",
+          "modelID": "group/gemini-argon",
+          "package": "@opencode/ai/providers/openai-compatible",
+          "limit": {
+            "context": 1048576,
+            "input": 1048576,
+            "output": 65536
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ]
+          }
+        },
+        "group/deepseek-worker": {
+          "name": "DeepSeek Flash · 子 Agent",
+          "modelID": "group/deepseek-worker",
+          "package": "@opencode/ai/providers/openai-compatible",
+          "limit": {
+            "context": 1048576,
+            "input": 1048576,
+            "output": 393216
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ]
+          }
+        },
+        "kiro/claude-opus-5.5": {
+          "name": "Opus 5.5 · Kiro",
+          "modelID": "kiro/claude-opus-5.5",
+          "package": "@opencode/ai/providers/anthropic-compatible",
+          "limit": {
+            "context": 1000000,
+            "input": 1000000,
+            "output": 64000
+          },
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      },
+      "package": "@opencode/ai/providers/openai-compatible"
+    }
+  }
+}

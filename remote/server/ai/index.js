@@ -16,10 +16,10 @@ const { createApiKey } = require('./api-key');
 const { checkKey } = require('./anthropic-api');
 
 // codex / claude: { bin, pathPrefix, timeoutMs }; apiBase: another address for the Claude API (tests)
-function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', claudeApis = null, machine = 'nas', log = () => {}, audit = () => {} }) {
+function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', claudeApis = null, machine = 'nas', magpie = null, log = () => {}, audit = () => {} }) {
   const apiKey = createApiKey({ dataDir });
-  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine });
-  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, log });
+  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine, magpie });
+  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, magpie, log });
   // the key as last tried against the API: { at, ok, error }
   let checked = null;
   async function apiStatus(check) {
@@ -30,7 +30,7 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
     return { ...apiKey.view(), checked: apiKey.has() ? checked : null, down: apiKey.has() ? asker.apiState() : null };
   }
   const admins = { codex: createCodexAdmin({ dataDir, codex, egress, codexHome, log }), claude: createClaudeAdmin({ dataDir, claude, egress, log }) };
-  const view = () => ({ ...settings.view(), down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null } });
+  const view = () => ({ ...settings.view(), magpie: magpie ? { enabled: magpie.status().enabled, errors: magpie.status().errors } : null, down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null } });
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;

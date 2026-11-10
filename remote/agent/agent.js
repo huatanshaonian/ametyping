@@ -282,6 +282,9 @@ const artifacts = createArtifacts({ sessionFile, send: (o) => sendJSON(o) });
 const pet = new Map();                               // id -> session as the pet sees it
 let petUp = false, petAllows = false;                // pet reachable / its "允许远程控制" option (absent = allowed)
 const controlOn = () => CONTROL && petUp && petAllows;
+const { createQuotaNotices } = require('./quota-notices');
+// Sanitized inbox shared with the local OpenCode TUI. No gateway credentials.
+const quotaNotices = createQuotaNotices({ deliver: n => petCall('POST', '/control/quota', n) });
 function petCall(method, p, body) {
   let token;
   try { token = fs.readFileSync(PET_TOKEN_FILE, 'utf8').trim(); } catch { return Promise.resolve(null); }
@@ -461,6 +464,7 @@ function connect() {
     // a new daily report: its note goes to the local pet for the morning bubble (information, not remote control)
     else if (d.t === 'report-note' && typeof d.date === 'string') petCall('POST', '/control/report', d);
     // a new mail the NAS found something in: the pet's bubble (information too)
+    else if (d.t === 'quota-alert') quotaNotices.add(d.notice);
     else if (d.t === 'mail-alert' && d.alert && typeof d.alert.id === 'string') petCall('POST', '/control/mail', d.alert);
     // a session renamed (the server tells every machine): this one's pet shows the new name at once
     else if (d.t === 'title' && d.machine === NAME && typeof d.id === 'string' && typeof d.title === 'string') petCall('POST', '/control/title', { id: d.id, title: d.title });

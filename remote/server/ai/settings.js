@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { decodeModel } = require('../magpie/ai');
 
 const TASKS = [
   { id: 'daily', name: '工作日报', note: '每天早上读前一天的全部对话写日报，也核对重要计划' },
@@ -40,7 +41,7 @@ const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 
 // codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model
 // claudeApis: the NAS's local cc-environments profiles; machine is retained for injected test providers.
-function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas' }) {
+function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas', magpie = null }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -97,12 +98,15 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
   // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude', api?, model? }] -- what the accounts can use
   const models = () => {
     const claude = claudeModels();
-    return [...codexModels(), ...claude, ...aliasModels(claude)];
+    return [...codexModels(), ...claude, ...aliasModels(claude), ...(magpie ? magpie.models() : [])];
   };
 
   // a model + effort as it will run: the effort only when that model has it; who runs it (and which API alias)
   function resolve(model, effort, list = models()) {
     const m = list.find((x) => x.slug === model);
+    // Persisted gateway selections must never fall through to a CLI during an outage.
+    const gatewayModel = decodeModel(model);
+    if (String(model).startsWith('magpie:')) return { model: gatewayModel, effort: m && m.efforts.includes(effort) ? effort : '', provider: 'magpie' };
     const am = /^api:([A-Za-z0-9._-]{1,40}):(.+)$/.exec(String(model || ''));
     if (effort && m && m.efforts.length && !m.efforts.includes(effort)) effort = '';      // (not one this model has)
     if (m && !m.efforts.length) effort = '';                                               // (one that does not think)
