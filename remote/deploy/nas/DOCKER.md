@@ -55,7 +55,7 @@ sudo ame-docker-upgrade list
 | zotero | compose | `/volume2/docker/zotero/` | 模板在仓库 `remote/deploy/nas/zotero/` |
 | partdb | compose | `/volume2/docker/partdb/` | 升级走 `deploy.sh` |
 | ame-onlyoffice | compose | `/volume2/docker/onlyoffice/` | 字体目录还是匿名卷（目前为空），待改成具体目录 |
-| magpie | `docker run` | 数据在 `/volume1/docker/magpie/` | compose 文件已备好在 `/volume2/docker/magpie/`（与现容器逐项核对一致），待切换。它是 AI 模型网关，切换时断几秒，挑没有会话在跑时做 |
+| magpie | compose | `/volume2/docker/magpie/`（数据在 `/volume1/docker/magpie/`） | 2026-11-10 由 docker run 原样转来；AI 模型网关，升级时会断几秒，挑没有会话在跑时做。旧容器 `magpie-old` 暂留 |
 | ubuntu-1 | `docker run` | | 已退出，不再使用，待确认后清理 |
 | v2raya | `docker run` | | 已退出，不再使用，待确认后清理 |
 
