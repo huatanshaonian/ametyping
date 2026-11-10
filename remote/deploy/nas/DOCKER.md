@@ -56,7 +56,6 @@ sudo ame-docker-upgrade list
 | partdb | compose | `/volume2/docker/partdb/` | 升级走 `deploy.sh` |
 | ame-onlyoffice | compose | `/volume2/docker/onlyoffice/` | 字体目录还是匿名卷（目前为空），待改成具体目录 |
 | magpie | compose | `/volume2/docker/magpie/`（数据在 `/volume1/docker/magpie/`） | 2026-11-10 由 docker run 原样转来；AI 模型网关，升级时会断几秒，挑没有会话在跑时做。旧容器 `magpie-old` 暂留 |
-| ubuntu-1 | `docker run` | | 已退出，不再使用，待确认后清理 |
 | v2raya | `docker run` | | 已退出，不再使用，待确认后清理 |
 
 新装容器或把 `docker run` 容器转成 compose 后，更新上表。
