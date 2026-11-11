@@ -53,9 +53,15 @@ function createMagpie({ config = {}, dataDir, onChange = () => {}, onNotice = ()
       errors: { ...errors }, stale: !quotaAt || now() - Date.parse(quotaAt) > 20 * 60000, pollMs: 5 * 60000,
       models: models.map(({ id, name, provider }) => ({ id, name, provider })) };
   }
+  // the catalogue as the OpenCode guide's generator needs it (read-only; no key or account leaves the server)
+  function opencodeModels() {
+    return { enabled: client.enabled, error: errors.models || null,
+      models: models.map(({ id, name, provider, efforts, nativeMessages, context, input, output, modalities, tools, group }) =>
+        ({ id, name, provider, efforts, anthropic: nativeMessages, context, input, output, modalities, tools, group })) };
+  }
   let timer;
   if (autoStart && client.enabled) { timer = setInterval(poll, 5 * 60000); timer.unref(); setImmediate(poll); }
-  return { status, poll, models: () => modelsFor(models), activeNotices,
+  return { status, opencodeModels, poll, models: () => modelsFor(models), activeNotices,
     run: opts => runMagpie({ client, catalog: models, ...opts }),
     stop() { stopped = true; clearInterval(timer); } };
 }

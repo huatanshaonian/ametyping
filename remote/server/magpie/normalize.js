@@ -23,6 +23,10 @@ function catalog(raw) {
     efforts: (m.reasoning_levels || []).filter(x => /^[a-z]{2,10}$/.test(x)),
     nativeMessages: (m.native_endpoints || []).includes('/v1/messages') || /claude|group\/opus/i.test(m.id),
     context: num(m.context_window || m.context_length), output: num(m.max_output_tokens),
+    input: num(m.max_input_tokens),
+    modalities: (m.modalities?.input || []).filter(x => /^[a-z]{2,10}$/.test(x)),
+    tools: m.tool_call === true || (m.supported_parameters || []).includes('tools'),
+    group: /routing group/i.test(m.magpie_label || '') || /^(group|auto)\//.test(m.id),
   }));
 }
 function snapshot(quotas, usage, period, updatedAt) {

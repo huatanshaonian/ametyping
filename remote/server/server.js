@@ -730,6 +730,8 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/mail(\/|$)/.test(p) && await mail.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (lit && /^\/api\/lit(\/|$)/.test(p) && await lit.handle(req, res, url, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/magpie/status') return json(res, 200, magpie.status(url.searchParams.get('period')));
+  // OpenCode 配置指南's generator: every model and routing group the gateway offers, with what a config entry needs
+  if (req.method === 'GET' && p === '/api/magpie/opencode-models') return json(res, 200, magpie.opencodeModels());
   // AI 模型: each job's model / effort, Codex's version and updates (server/ai)
   if (summary && /^\/api\/ai(\/|$)/.test(p) && await summary.ai.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   // a copy of an artifact kept on the NAS (artifacts.js): pictures and text shown, anything else downloaded

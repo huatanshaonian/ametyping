@@ -32,6 +32,20 @@ const cfg = JSON.parse(fs.readFileSync(CFG)); cfg.web.port = PORT;
 const CHOME = path.join(T, 'claudehome'); fs.mkdirSync(CHOME);
 cfg.summary = { proxies: [], codex: [process.execPath, path.join(__dirname, 'fake-codex.js')], codexHome: HOME,
   claude: [process.execPath, path.join(__dirname, 'fake-claude.js')], claudeHome: CHOME,claudeApiBase:'http://127.0.0.1:'+API };
+// a stand-in Magpie gateway for the OpenCode guide's generator: two models in the base config, one new, one routing group
+const MAGPIE = 18892;
+const magpieSrv = http.createServer((req, res) => { res.setHeader('Content-Type', 'application/json');
+  if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [
+    { id: 'group/opus-main', magpie_label: 'opus-main · routing group', owned_by: 'kiro', context_window: 1000000, max_output_tokens: 128000, reasoning_levels: ['low', 'medium', 'high'], tool_call: true },
+    { id: 'devin/swe-2', magpie_label: 'SWE-2 · Devin', owned_by: 'devin', context_window: 262000, max_input_tokens: 262000, max_output_tokens: 128000, native_endpoints: ['/v1/chat/completions'], modalities: { input: ['text', 'image'] }, reasoning_levels: ['medium', 'high', 'max'], tool_call: true },
+    { id: 'cc-ubuntu/claude/claude-fable-5-2', magpie_label: 'Claude Fable 5.2 · Claude Code · cc-ubuntu', owned_by: 'cc-ubuntu', context_window: 1000000, max_output_tokens: 128000, native_endpoints: ['/v1/messages'], modalities: { input: ['text', 'image', 'pdf'] }, reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], tool_call: true },
+    { id: 'auto/claude-opus-5-5', magpie_label: 'Claude Opus 5.5 · routing group', owned_by: 'cc-ubuntu', context_window: 1000000, max_output_tokens: 128000, tool_call: true },
+  ] }));
+  if (req.url === '/v1/magpie/quotas') return res.end('{"data":[]}');
+  if (req.url.startsWith('/v1/magpie/usage')) return res.end('{}');
+  res.writeHead(404); res.end('{}');
+}).listen(MAGPIE, '127.0.0.1');
+cfg.magpie = { baseURL: 'http://127.0.0.1:' + MAGPIE + '/v1' };
 fs.writeFileSync(CFG, JSON.stringify(cfg));
 fs.mkdirSync(path.join(T, 'srv', 'data'), { recursive: true });
 fs.writeFileSync(path.join(T, 'srv', 'data', 'codex-check.json'), JSON.stringify({ version: '0.160.0', at: Date.now() - 2 * 86400e3, error: '' }));
@@ -106,8 +120,9 @@ function login() {
     // both tools' state
     await sleep(800);
     const ai = await evalJs("(() => { const s = [...document.querySelectorAll('.aim-row select')]; return { rows: document.querySelectorAll('.aim-row').length, models: [...s[0].options].map(o => o.value).join(), groups: [...s[0].querySelectorAll('optgroup')].map(g => g.label).join('|'), codex: document.querySelector('.aim-cli[data-tool=codex]').textContent, claude: document.querySelector('.aim-cli[data-tool=claude]').textContent }; })()");
+    // (the stand-in gateway's four models are offered as a Magpie group after the native ones)
     chk('AI 模型: default + backup rows and the thirteen jobs, both accounts\' models grouped, Codex and Claude Code version / newest / login', ai.rows === 15 &&
-      ai.models === ',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna' && ai.groups === 'Claude|OpenAI（Codex）' &&
+      ai.models.startsWith(',claude-opus-5-5,claude-fable-5-1,claude-sonnet-5-5,claude-haiku-4-5-20251001,gpt-6-astra,gpt-6-sol,gpt-6-luna,magpie:') && ai.groups === 'Claude|OpenAI（Codex）|Magpie' &&
       /2\.1\.288/.test(ai.claude) && /已登录（Claude 账号 · Max 订阅）/.test(ai.claude) &&
       /0\.158\.0/.test(ai.codex) && /0\.160\.0（有新版本）/.test(ai.codex) && /已登录（ChatGPT 账号）/.test(ai.codex) && !/SECRET/.test(ai.codex), ai);
     const api = await evalJs("(() => { const b = document.querySelector('.aim-cli[data-tool=api]'); return { text: b.textContent, field: b.querySelector('input.aim-key').type, btns: [...b.querySelectorAll('button')].map(x => x.textContent).join() }; })()");
@@ -130,8 +145,31 @@ function login() {
     chk('OpenCode guide replaces the old Claude Code API entry', await evalJs("!!document.querySelector('.ocg') && ![...document.querySelectorAll('.cp-item')].some(b=>b.textContent.includes('Claude Code API')) && !document.querySelector('.capi-editor')"));
     await evalJs("document.querySelector('.ocg [data-os=windows]').click()");
     chk('Windows instructions cover install, secure key file, proxy and connectivity checks', await evalJs("(() => {const t=document.querySelector('.ocg-body').textContent;return t.includes('opencode.exe --version')&&t.includes('AsSecureString')&&t.includes('icacls.exe')&&t.includes('service set env NO_PROXY')&&t.includes('Resolve-DnsName')&&t.includes('不带 http://、端口或 full:');})()"));
-    const template = await evalJs("fetch(document.querySelector('.ocg a[download=\"opencode.json\"]').href).then(r=>r.json())");
-    chk('portable configuration contains six named models and a file reference, no local credential or drive path', Object.keys(template.providers.magpie.models).length===6 && template.model==='magpie/group/opus-main' && template.agents.explore.model==='magpie/group/deepseek-worker' && template.providers.magpie.settings.baseURL==='https://magapi.huatan.org/v1' && template.providers.magpie.settings.apiKey==='{file:~/.config/opencode/.secrets/magpie-nas.key}' && !/[A-Z]:[\\/]/.test(JSON.stringify(template)));
+    chk('Windows install defaults to npm with no pinned version, standalone CLI folded away', await evalJs("(() => {const c=[...document.querySelectorAll('.ocg-body .ocg-step')][1];const first=c.querySelector(':scope > div > .ocg-code code').textContent;return first.startsWith('npm.cmd install -g @opencode/cli\\n')&&!/@opencode\\/cli@/.test(c.textContent)&&c.querySelector('details').textContent.includes('opencode.exe --version');})()"));
+    // the generator: the gateway's models listed, the base config ticked, a new model added, roles picked, output updated
+    for (let n = 0; n < 40 && !(await evalJs("/提供 4 个/.test(document.querySelector('.ocg-gen-status').textContent)")); n++) await sleep(100);
+    const gen0 = await evalJs("(() => { const rows=[...document.querySelectorAll('.ocg-gen-row')]; const cfg=JSON.parse(document.querySelector('.ocg-gen pre code').textContent); return { status: document.querySelector('.ocg-gen-status').textContent, rows: rows.length, ticked: rows.filter(r=>r.querySelector('input[type=checkbox]').checked).length, legends: [...document.querySelectorAll('.ocg-gen-group legend')].map(l=>l.textContent), models: Object.keys(cfg.providers.magpie.models).length, model: cfg.model, explore: cfg.agents.explore.model, key: cfg.providers.magpie.settings.apiKey, gone: document.querySelectorAll('.ocg-gen-row.gone').length }; })()");
+    const baseCount = Object.keys(JSON.parse(fs.readFileSync(R + '/public/downloads/opencode-magpie.json', 'utf8')).providers.magpie.models).length;
+    // the fake gateway's four: group/opus-main, devin/swe-2 and auto/claude-opus-5-5 are in the base, the Fable on cc-ubuntu is new;
+    // the base's other models are not on this gateway (shown greyed, kept as they are)
+    chk('generator lists the gateway models grouped by source, base config ticked and generated', /提供 4 个/.test(gen0.status) && gen0.ticked === baseCount && gen0.models === baseCount && gen0.rows === baseCount + 1 &&
+      gen0.legends.includes('路由组') && gen0.legends.includes('cc-ubuntu') && gen0.model === 'magpie/group/opus-main' && gen0.explore === 'magpie/group/deepseek-worker' && gen0.key === '{file:~/.config/opencode/.secrets/magpie-nas.key}' && gen0.gone > 0, gen0);
+    await evalJs("(() => { const row=document.querySelector('.ocg-gen-row[data-id=\"cc-ubuntu/claude/claude-fable-5-2\"]'); const c=row.querySelector('input[type=checkbox]'); c.click(); const n=row.querySelector('.ocg-gen-name'); n.value='Fable · VM'; n.dispatchEvent(new Event('input')); const s=document.querySelector('.ocg-gen select[data-role=main]'); s.value='cc-ubuntu/claude/claude-fable-5-2'; s.dispatchEvent(new Event('change')); })()");
+    const gen1 = await evalJs("(() => { const cfg=JSON.parse(document.querySelector('.ocg-gen pre code').textContent); const e=cfg.providers.magpie.models['cc-ubuntu/claude/claude-fable-5-2']; return { model: cfg.model, name: e && e.name, pkg: e && e.package, input: e && e.capabilities.input.join(), effort: e && e.capabilities.reasoning.effort.join(), ctx: e && e.limit.context }; })()");
+    chk('ticking a new model builds its entry from gateway data and it can be the main model', gen1.model === 'magpie/cc-ubuntu/claude/claude-fable-5-2' && gen1.name === 'Fable · VM' && gen1.pkg === '@opencode/ai/providers/anthropic-compatible' && gen1.input === 'text,image' && gen1.effort === 'low,medium,high,xhigh,max' && gen1.ctx === 1000000, gen1);
+    await evalJs("(() => { const s=document.querySelector('.ocg-gen-tools input[type=search]'); s.value='swe'; s.dispatchEvent(new Event('input')); [...document.querySelectorAll('.ocg-gen-tools .btn')].find(b=>b.textContent==='全不选').click(); s.value=''; s.dispatchEvent(new Event('input')); })()");
+    const gen2 = await evalJs("(() => { const cfg=JSON.parse(document.querySelector('.ocg-gen pre code').textContent); return { swe: !!cfg.providers.magpie.models['devin/swe-2'], fable: !!cfg.providers.magpie.models['cc-ubuntu/claude/claude-fable-5-2'] }; })()");
+    chk('filter + 全不选 only affects the rows shown', !gen2.swe && gen2.fable, gen2);
+    await evalJs("[...document.querySelectorAll('.ocg-gen-tools .btn')].find(b=>b.textContent==='恢复默认').click()");
+    chk('恢复默认 brings back the base configuration exactly', await evalJs("document.querySelector('.ocg-gen pre code').textContent") === fs.readFileSync(R + '/public/downloads/opencode-magpie.json', 'utf8'));
+    await evalJs("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{window.genCopied=t;}}});document.querySelector('.ocg-gen [data-gen=copy]').click()"); await sleep(100);
+    chk('复制配置 copies exactly the generated JSON', await evalJs("window.genCopied===document.querySelector('.ocg-gen pre code').textContent"));
+    const genFile = path.join(downloadDir, 'opencode.json'); if (fs.existsSync(genFile)) fs.unlinkSync(genFile);
+    await evalJs("document.querySelector('.ocg-gen [data-gen=download]').click()");
+    for (let n = 0; n < 60 && !fs.existsSync(genFile); n++) await sleep(100);
+    chk('下载 opencode.json saves the generated file', fs.existsSync(genFile) && fs.readFileSync(genFile, 'utf8') === await evalJs("document.querySelector('.ocg-gen pre code').textContent"));
+    chk('the generator API rejects anonymous clients', (await new Promise((ok) => http.get(`http://127.0.0.1:${PORT}/api/magpie/opencode-models`, (r) => { r.resume(); ok(r.statusCode); }))) === 401);
+    await shot('81-control-opencode-generator.png');
     const downloaded=path.join(downloadDir,'opencode-magpie-usage.zip');
     if(fs.existsSync(downloaded))fs.unlinkSync(downloaded);
     await evalJs("const detail=[...document.querySelectorAll('.ocg details')].find(x=>x.textContent.includes('把 /usage'));detail.open=true;document.querySelector('.ocg [data-download=usage-plugin]').click()");
@@ -141,7 +179,7 @@ function login() {
     chk('guide command copy uses the displayed command and reports success', await evalJs("window.guideCopied===document.querySelector('.ocg-code code').textContent && document.querySelector('.ocg-copy-note').textContent==='已复制'"));
     await evalJs("document.querySelector('.ocg [data-os=linux]').click()");
     chk('Linux instructions have Bash key permissions, lowercase proxy bypass and service setup', await evalJs("(() => {const t=document.querySelector('.ocg-body').textContent;return document.querySelector('.ocg-body').dataset.os==='linux'&&t.includes('opencode.ai/v2/install')&&t.includes('chmod 600')&&t.includes('export no_proxy=')&&t.includes('getent ahostsv4')&&t.includes('sudo tailscale up');})()"));
-    chk('guide explains HTTP80 and HTTPS443 and provides no credential editor', await evalJs("document.querySelector('.ocg-body').textContent.includes('现在使用 HTTPS 默认443') && !document.querySelector('.ocg input, .ocg form')"));
+    chk('guide explains HTTP80 and HTTPS443 and provides no credential editor', await evalJs("document.querySelector('.ocg-body').textContent.includes('现在使用 HTTPS 默认443') && !document.querySelector('.ocg form, .ocg input[type=password]') && [...document.querySelectorAll('.ocg input')].every(i => i.closest('.ocg-gen'))"));
     await shot('81-control-opencode-guide.png');
     await evalJs("[...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");await sleep(900);
     chk('记忆与存档 opens as a standalone app with memory icon, SQLite status and scope management',await evalJs("document.querySelector('.knowledge').textContent.includes('NAS SQLite') && document.querySelector('.knowledge').textContent.includes('共享全局') && [...document.querySelectorAll('.dicon')].find(b=>b.textContent.includes('记忆与存档')).querySelector('img').src.endsWith('/icons/memory.png')") && (await winTitle()).includes('记忆与存档'));
@@ -213,7 +251,7 @@ function login() {
     await shot('85-control-phone-opencode.png');
     ws.close();
   } catch (e) { errors.push('test: ' + e.stack); }
-  finally { try { chrome && chrome.kill(); } catch {} srv.kill();memoryApi.close(); }
+  finally { try { chrome && chrome.kill(); } catch {} srv.kill();memoryApi.close();magpieSrv.close(); }
   for (const r of res) console.log(r);
   console.log(errors.length ? 'page errors:\n' + errors.join('\n') : 'no page errors');
   await sleep(800);

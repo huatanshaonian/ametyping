@@ -1,164 +1,12 @@
-// Read-only instructions for connecting another computer to the NAS gateway.
+// Read-only instructions for connecting another computer to the NAS gateway, with a generator for opencode.json:
+// the models and routing groups the gateway offers (read on the server, the key stays there), ticked, renamed and
+// assigned to the main model / sub-agents here; the configuration in use on huatanshaonian is the starting point.
 import { h, prefs } from '../util.js';
+import { BASE_CONFIG } from './opencode-base.js';
+import { buildConfig, rows as modelRows } from './opencode-config.js';
 
-const CONFIG = {
-  "$schema": "https://opencode.ai/config.json",
-  "model": "magpie/group/opus-main",
-  "agents": {
-    "general": {
-      "model": "magpie/group/deepseek-worker"
-    },
-    "explore": {
-      "model": "magpie/group/deepseek-worker"
-    }
-  },
-  "providers": {
-    "magpie": {
-      "name": "Magpie",
-      "settings": {
-        "baseURL": "https://magapi.huatan.org/v1",
-        "apiKey": "{file:~/.config/opencode/.secrets/magpie-nas.key}"
-      },
-      "models": {
-        "group/opus-main": {
-          "name": "Opus · 日常",
-          "modelID": "group/opus-main",
-          "package": "@opencode/ai/providers/anthropic-compatible",
-          "limit": {
-            "context": 1000000,
-            "input": 1000000,
-            "output": 64000
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ]
-          }
-        },
-        "devin/claude-opus-5-5": {
-          "name": "Opus 5.5 · Devin",
-          "modelID": "devin/claude-opus-5-5",
-          "package": "@opencode/ai/providers/anthropic-compatible",
-          "limit": {
-            "context": 1000000,
-            "input": 1000000,
-            "output": 128000
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ],
-            "reasoning": {
-              "supported": true,
-              "effort": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ]
-            }
-          }
-        },
-        "devin/claude-fable-5-1": {
-          "name": "Fable 5.1 · Devin",
-          "modelID": "devin/claude-fable-5-1",
-          "package": "@opencode/ai/providers/anthropic-compatible",
-          "limit": {
-            "context": 1000000,
-            "input": 1000000,
-            "output": 128000
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ],
-            "reasoning": {
-              "supported": true,
-              "effort": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ]
-            }
-          }
-        },
-        "group/gemini-argon": {
-          "name": "Gemini Argon",
-          "modelID": "group/gemini-argon",
-          "package": "@opencode/ai/providers/openai-compatible",
-          "limit": {
-            "context": 1048576,
-            "input": 1048576,
-            "output": 65536
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ]
-          }
-        },
-        "group/deepseek-worker": {
-          "name": "DeepSeek Flash · 子 Agent",
-          "modelID": "group/deepseek-worker",
-          "package": "@opencode/ai/providers/openai-compatible",
-          "limit": {
-            "context": 1048576,
-            "input": 1048576,
-            "output": 393216
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ]
-          }
-        },
-        "kiro/claude-opus-5.5": {
-          "name": "Opus 5.5 · Kiro",
-          "modelID": "kiro/claude-opus-5.5",
-          "package": "@opencode/ai/providers/anthropic-compatible",
-          "limit": {
-            "context": 1000000,
-            "input": 1000000,
-            "output": 64000
-          },
-          "capabilities": {
-            "tools": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          }
-        }
-      },
-      "package": "@opencode/ai/providers/openai-compatible"
-    }
-  }
-};
 const BASE = 'https://magapi.huatan.org/v1';
 const WEB = 'https://magpie.huatan.org/';
-const configText = JSON.stringify(CONFIG, null, 2) + '\n';
 const link = (text, href) => h('a', { text, href, target: '_blank', rel: 'noopener noreferrer' });
 const para = text => h('p', { text });
 function code(title, text) {
@@ -173,6 +21,8 @@ function code(title, text) {
 const step = (title, ...children) => h('section', { class: 'ocg-step' }, h('h3', { text: title }), ...children);
 const fold = (title, ...children) => h('details', {}, h('summary', { text: title }), ...children);
 
+const WIN_NPM = String.raw`npm.cmd install -g @opencode/cli
+opencode.cmd --version`;
 const WIN_INSTALL = String.raw`$bin = Join-Path $env:LOCALAPPDATA 'Programs\OpenCode'
 $env:Path = "$bin;$env:Path"
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -240,8 +90,99 @@ opencode run --model magpie/group/deepseek-worker '不要调用工具，只回�
 # 在自己的项目目录启动
 opencode`;
 
+// 第 4 步: the gateway's models as ticked rows -> opencode.json
+function createGenerator(urls) {
+  const state = { gateway: [], rows: [], picked: new Map(), names: new Map(), main: '', general: '', explore: '', filter: '' };
+  const base = BASE_CONFIG, baseModels = base.providers.magpie.models;
+  const strip = (s) => String(s || '').replace(/^magpie\//, '');
+  state.main = strip(base.model); state.general = strip(base.agents?.general?.model); state.explore = strip(base.agents?.explore?.model);
+  for (const [id, e] of Object.entries(baseModels)) { state.picked.set(id, true); state.names.set(id, e.name); }
+
+  const status = h('p', { class: 'ocg-gen-status', 'aria-live': 'polite', text: '正在读取 NAS Magpie 的模型…' });
+  const search = h('input', { type: 'search', placeholder: '筛选模型 ID 或名称', 'aria-label': '筛选模型', oninput: () => { state.filter = search.value.trim().toLowerCase(); renderList(); } });
+  const count = h('span', { class: 'ocg-gen-count' });
+  const list = h('div', { class: 'ocg-gen-list' });
+  const selects = Object.fromEntries(['main', 'general', 'explore'].map((k) => [k, h('select', { dataset: { role: k }, onchange: (e) => { state[k] = e.target.value; renderOut(); } })]));
+  const out = h('code', {});
+  const copyNote = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });
+  const bulk = (fn) => () => { for (const r of visible()) state.picked.set(r.id, fn(r)); renderList(); };
+  const root = h('div', { class: 'ocg-gen' },
+    status,
+    h('div', { class: 'ocg-gen-tools' }, search,
+      h('button', { class: 'btn', type: 'button', text: '全选', onclick: bulk(() => true) }),
+      h('button', { class: 'btn', type: 'button', text: '全不选', onclick: bulk(() => false) }),
+      h('button', { class: 'btn', type: 'button', text: '恢复默认', onclick: () => {
+        state.picked = new Map(Object.keys(baseModels).map((id) => [id, true])); state.names = new Map(Object.entries(baseModels).map(([id, e]) => [id, e.name]));
+        state.main = strip(base.model); state.general = strip(base.agents?.general?.model); state.explore = strip(base.agents?.explore?.model); renderList();
+      } }),
+      count),
+    list,
+    h('div', { class: 'ocg-gen-roles' },
+      h('label', {}, '主模型 ', selects.main), h('label', {}, 'general 子 Agent ', selects.general), h('label', {}, 'explore 子 Agent ', selects.explore)),
+    h('div', { class: 'ocg-code' },
+      h('div', { class: 'ocg-code-head' }, h('b', { text: 'opencode.json' }),
+        h('button', { class: 'btn', type: 'button', text: '复制配置', dataset: { gen: 'copy' }, onclick: async () => {
+          try { await navigator.clipboard.writeText(text()); copyNote.textContent = '已复制'; } catch { copyNote.textContent = '复制失败，请手动选中'; }
+        } }),
+        h('button', { class: 'btn', type: 'button', text: '下载 opencode.json', dataset: { gen: 'download' }, onclick: () => {
+          const url = URL.createObjectURL(new Blob([text()], { type: 'application/json' })); urls.add(url);
+          h('a', { href: url, download: 'opencode.json' }).click();
+          setTimeout(() => { URL.revokeObjectURL(url); urls.delete(url); }, 10000);
+        } }),
+        copyNote),
+      h('pre', { tabindex: '0' }, out)));
+
+  const visible = () => state.rows.filter((r) => !state.filter || r.id.toLowerCase().includes(state.filter) || String(state.names.get(r.id) || r.name).toLowerCase().includes(state.filter));
+  const picks = () => state.rows.filter((r) => state.picked.get(r.id) && (r.offered || r.inBase)).map((r) => ({ id: r.id, name: state.names.get(r.id) || r.name }));
+  const config = () => buildConfig(base, state.gateway, picks(), { main: state.main, general: state.general, explore: state.explore });
+  const text = () => JSON.stringify(config(), null, 2) + '\n';
+  const fmt = (n) => (n >= 1e6 ? (n / 1048576 >= 0.99 && n % 1000 ? '1M' : (n / 1e6) + 'M') : n >= 1000 ? Math.round(n / 1000) + 'K' : String(n || '—'));
+
+  function renderList() {
+    const groups = new Map();
+    for (const r of visible()) { if (!groups.has(r.source)) groups.set(r.source, []); groups.get(r.source).push(r); }
+    list.replaceChildren(...[...groups].map(([source, items]) => h('fieldset', { class: 'ocg-gen-group' }, h('legend', { text: source }),
+      ...items.map((r) => {
+        const g = r.gateway, meta = g ? `${g.anthropic ? 'Anthropic' : 'OpenAI'} · 上下文 ${fmt(g.context)} · 输出 ${fmt(g.output)}${g.efforts?.length ? ' · 推理 ' + g.efforts.join('/') : ''}` : '';
+        return h('div', { class: 'ocg-gen-row' + (r.offered ? '' : ' gone'), dataset: { id: r.id } },
+          h('input', { type: 'checkbox', checked: !!state.picked.get(r.id), 'aria-label': '选用 ' + r.id, onchange: (e) => { state.picked.set(r.id, e.target.checked); renderOut(); } }),
+          h('div', { class: 'ocg-gen-main' },
+            h('code', { text: r.id }),
+            h('span', { class: 'ocg-gen-meta', text: r.offered ? meta : 'NAS 现在没有提供这个模型（保留原配置）' })),
+          h('input', { type: 'text', class: 'ocg-gen-name', value: state.names.get(r.id) || r.name, 'aria-label': r.id + ' 的显示名',
+            oninput: (e) => { state.names.set(r.id, e.target.value.trim()); renderOut(); } }));
+      }))));
+    renderOut();
+  }
+  function renderOut() {
+    const chosen = picks();
+    count.textContent = `已选 ${chosen.length} / ${state.rows.length}`;
+    for (const [k, sel] of Object.entries(selects)) {
+      sel.replaceChildren(...chosen.map((p) => h('option', { value: p.id, text: `${p.name} (${p.id})` })));
+      if (!chosen.some((p) => p.id === state[k])) state[k] = chosen[0]?.id || '';
+      sel.value = state[k];
+    }
+    out.textContent = text();
+  }
+  async function load() {
+    try {
+      const r = await fetch('/api/magpie/opencode-models');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      state.gateway = Array.isArray(d.models) ? d.models : [];
+      status.textContent = state.gateway.length ? `NAS Magpie 现在提供 ${state.gateway.length} 个模型和路由组。` :
+        (d.enabled === false ? 'Windose 尚未连接 Magpie，只能使用默认配置。' : (d.error || '暂时读不到模型目录') + '，只能使用默认配置。');
+    } catch { status.textContent = '读取 NAS 模型列表失败，只能使用默认配置；刷新页面重试。'; }
+    state.rows = modelRows(base, state.gateway);
+    renderList();
+  }
+  state.rows = modelRows(base, []); renderList(); load();
+  return { root };
+}
+
 export function panel() {
   const downloads = new Set(), urls = new Set();
+  const generator = createGenerator(urls);
   function pluginDownload() {
     const note = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });
     const button = h('button', { class: 'btn', type: 'button', dataset: { download: 'usage-plugin' }, text: '下载 Magpie 用量插件', onclick: async () => {
@@ -289,23 +230,24 @@ export function panel() {
           code('Tailscale 安装与连接', 'curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up\ntailscale status')),
       step('2. 安装 OpenCode',
         win ? h('div', {},
-          h('p', {}, '从 ', link('官方 CLI 下载页', 'https://opencode.ai/docs/#cli'), ' 选择 Windows x64 / ARM64，解压，将 opencode.exe 放到 %LOCALAPPDATA%\\Programs\\OpenCode。然后执行下面的 PATH 设置。'),
-          code('独立 CLI：加入用户 PATH 并检查版本', WIN_INSTALL),
-          fold('已有 Node.js LTS：也可以通过 npm 安装', h('p', {}, link('Node.js 官方下载', 'https://nodejs.org/en/download')),
-            code('npm 安装（后续命令把 opencode.exe 换成 opencode.cmd）', 'npm.cmd install -g @opencode/cli@2.2.0\nopencode.cmd --version'),
-            para('PowerShell 使用 .cmd 可避开 npm 的 .ps1 启动脚本执行策略问题。安装后新开终端；不要安装旧版 opencode-ai 包。'))) :
+          h('p', {}, '先装 ', link('Node.js LTS', 'https://nodejs.org/en/download'), '，再用 npm 安装最新版 OpenCode。以后升级再运行一次同一条命令。'),
+          code('npm 安装最新版并检查版本', WIN_NPM),
+          para('PowerShell 里写 npm.cmd / opencode.cmd，可避开 .ps1 启动脚本的执行策略问题。安装后新开终端；包名是 @opencode/cli，不要装旧的 opencode-ai。后面的命令里 opencode.exe 换成 opencode.cmd 即可。'),
+          fold('不装 Node.js：用官方独立 CLI',
+            h('p', {}, '从 ', link('官方 CLI 下载页', 'https://opencode.ai/docs/#cli'), ' 选择 Windows x64 / ARM64，解压，将 opencode.exe 放到 %LOCALAPPDATA%\\Programs\\OpenCode。然后执行下面的 PATH 设置。'),
+            code('独立 CLI：加入用户 PATH 并检查版本', WIN_INSTALL))) :
           code('官方 OpenCode 2.x 安装器', 'curl -fsSL https://opencode.ai/v2/install | bash\n# 安装完成后新开终端，再检查\nopencode --version'),
         para('版本应为 2.x；已有旧版时先核对命令路径，再升级到 2.x。')),
       step('3. 保存这台电脑的 API key',
         h('p', {}, '到 ', link('Magpie 管理网页', WEB), ' 的 API key 管理页，为这台电脑创建或选择允许上述模型的调用 key。网页登录用的 MAGPIE_WEB_KEY 与这里的 API key 是两类密钥。'),
         para('下面的命令会隐藏输入，并写入当前用户的独立密钥文件。每台电脑单独保存自己的 key。'),
         code(win ? 'PowerShell：保存调用 key' : 'Bash：保存调用 key', win ? WIN_KEY : LINUX_KEY)),
-      step('4. 放置配置文件',
+      step('4. 生成配置文件',
         para(win ? '配置位置：%USERPROFILE%\\.config\\opencode\\opencode.json' : '配置位置：~/.config/opencode/opencode.json'),
-        h('p', {}, h('a', { class: 'btn', href: '/downloads/opencode-magpie.json', download: 'opencode.json', text: '下载六模型配置模板' })),
+        para('下面列出 NAS Magpie 现在提供的全部模型和路由组。默认勾选的是主力电脑正在用的配置；勾选、改名、选主模型和子 Agent 后，下方的 opencode.json 随之更新。'),
+        generator.root,
         para('新安装直接保存到上面的位置。已有配置先备份，再合并 providers.magpie、model 和 agents；不要覆盖自己已有的 MCP、插件或其他供应商。'),
-        para('模板用文件引用读取步骤 3 的 key。包含 Opus 日常、Devin Opus、Devin Fable、Gemini Argon、DeepSeek Flash 和直连 Kiro 六个入口。NAS 的账号优先级由 NAS 管理，无需在每台电脑重设。'),
-        fold('查看完整配置', code('opencode.json', configText))),
+        para('配置用文件引用读取步骤 3 的 key，不含任何密钥。NAS 的账号优先级由 NAS 管理，无需在每台电脑重设。')),
       step('5. 设置代理例外',
         para('只使用 NAS 模型时，客户端无需为模型请求设置外网代理；NAS 负责访问上游。如果机器已设置 HTTP_PROXY / HTTPS_PROXY，NAS 两个域名和本机回环必须直连。'),
         code(win ? 'PowerShell：保留已有条目并添加直连域名' : 'Bash：保留已有条目并添加直连域名', win ? WIN_PROXY : LINUX_PROXY),
@@ -316,7 +258,7 @@ export function panel() {
           para('这些是当前终端和 OpenCode 后台服务的代理设置。安装工具若也要长期使用代理，按该工具的方式保存；NAS 域名继续保留在直连例外中。'))),
       step('6. 验证并开始使用',
         code(win ? 'PowerShell：DNS、API 和模型检查' : 'Bash：DNS、API 和模型检查', win ? WIN_CHECK : LINUX_CHECK),
-        para('API 有效 key 应返回模型 JSON；在 models 列表中应能找到模板的六个 Magpie 入口。启动后用 /models 选择模型。')),
+        para('API 有效 key 应返回模型 JSON；在 models 列表中应能找到第 4 步勾选的 Magpie 入口。启动后用 /models 选择模型。')),
       fold('可选：把 /usage 换成 Magpie 用量弹窗',
         para('新安装的 /usage 默认是 OpenCode 自带统计。要像当前电脑一样看 NAS 订阅额度，可安装下面的本地插件。'),
         pluginDownload(),
