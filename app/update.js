@@ -36,6 +36,7 @@ async function update(root, { task = 'AmeTyping Agent' } = {}) {
   const head = async () => (await run('git', ['rev-parse', 'HEAD'], root)).out;
   const before = await head();
   if (!before) return { ok: false, msg: '没找到 git，或者这个文件夹不是一个仓库', detail: root };
+  await run('git', ['checkout', '--', 'app/package-lock.json', 'remote/package-lock.json'], root);
   const dirty = await run('git', ['status', '--porcelain', '--untracked-files=no'], root);
   if (dirty.out) return { ok: false, msg: '有文件被直接改过还没提交，先处理它们再更新', detail: tail(dirty.out) };
   const pull = await run('git', ['pull', '--ff-only'], root, 180e3);
