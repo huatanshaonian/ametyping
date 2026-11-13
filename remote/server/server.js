@@ -334,8 +334,12 @@ function mailAlert(alert) {
   for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) { try { sock.send(JSON.stringify({ t: 'mail-alert', alert: a })); } catch {} }
 }
 // a daily copy of config.json + data to another disk (config "backup": { dir, keep, at }; server/backup.js)
-if (cfg.backup && cfg.backup.dir) createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
-  before:()=>knowledge.vault.snapshot(path.join(path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),'knowledge-backup.sqlite')),log: console.log });
+if (cfg.backup && cfg.backup.dir) {
+  const snapFile = path.join(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), 'knowledge-backup.sqlite');
+  const cleanSnap = () => { for (const s of ['', '-wal', '-shm']) try { fs.rmSync(snapFile + s, { force: true }); } catch {} };
+  createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
+    before: () => knowledge.vault.snapshot(snapFile), after: cleanSnap, log: console.log });
+}
 function flushAndExit() { try { magpie.stop(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);

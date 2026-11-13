@@ -14,7 +14,7 @@ const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 
 // serverDir: where config.json is; dataDir: the data folder (inside serverDir)
 // firstMs: the first look after starting (a minute; tests shorter)
-function createBackup({ serverDir, dataDir, dir, keep = 0, at = '05:30', firstMs = 60e3, before = async () => {}, log = () => {} }) {
+function createBackup({ serverDir, dataDir, dir, keep = 0, at = '05:30', firstMs = 60e3, before = async () => {}, after = async () => {}, log = () => {} }) {
   serverDir = path.resolve(serverDir); dataDir = path.resolve(dataDir); dir = path.resolve(dir);   // (tar runs in `dir`)
   const [hh, mm] = String(at).split(':').map(Number);
   let last = null, running = false;                   // last: { at, file, size } | { at, error }
@@ -54,7 +54,7 @@ function createBackup({ serverDir, dataDir, dir, keep = 0, at = '05:30', firstMs
       last = { at: Date.now(), error: e.message };
       log('备份失败：' + e.message);
       return last;
-    } finally { running = false; }
+    } finally { try { await after(); } catch {} running = false; }
   }
 
   // today's copy is due once the time has come and it is not there yet

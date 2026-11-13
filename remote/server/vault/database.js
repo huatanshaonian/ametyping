@@ -54,9 +54,15 @@ function openVault(dir) {
     if (!/^[a-f0-9]{64}$/.test(d.key || '') || !['claude','codex','opencode','agy','kiro','workspace'].includes(d.provider) ||
         !Number.isSafeInteger(d.size) || d.size < 0 || !Number.isFinite(d.mtime) || typeof d.path !== 'string' || d.path.length > 4096) throw new Error('无效的采集源');
     let s = latest(machine, d.key);
-    if (s && s.complete && d.size === s.bytes && typeof d.sha256 === 'string' && d.sha256 === s.digest && !d.reset) {
-      db.prepare('UPDATE sources SET mtime=?,updated=? WHERE machine=? AND key=? AND generation=?')
-        .run(d.mtime, Date.now(), machine, d.key, s.generation);
+    let needHash = false;
+    if (s && s.complete && d.size === s.bytes && !d.reset && (d.mtime === s.mtime || (typeof d.sha256 === 'string' && d.sha256 === s.digest))) {
+      if (d.mtime !== s.mtime) {
+        db.prepare('UPDATE sources SET mtime=?,updated=? WHERE machine=? AND key=? AND generation=?')
+          .run(d.mtime, Date.now(), machine, d.key, s.generation);
+        s.mtime = d.mtime;
+      }
+    } else if (s && s.complete && d.size === s.bytes && d.mtime !== s.mtime && !d.reset && d.probe === true && typeof d.sha256 !== 'string') {
+      needHash = true;
     } else if (!s || d.reset === true || d.size < s.bytes || (s.complete && d.size === s.bytes && d.mtime !== s.mtime)) {
       const generation = crypto.randomUUID(), now = Date.now();
       transaction(() => {
@@ -69,11 +75,16 @@ function openVault(dir) {
           .run(machine,d.key,generation,d.provider,text(d.session,200),text(d.parent,200),text(d.kind,50),d.path,text(d.cwd),d.size,d.mtime,now,now);
       });
       s = source(machine,d.key,generation);
-    } else db.prepare('UPDATE sources SET size=?,mtime=?,complete=CASE WHEN bytes=? THEN complete ELSE 0 END,updated=? WHERE machine=? AND key=? AND generation=?')
-      .run(d.size,d.mtime,d.size,Date.now(),machine,d.key,s.generation);
+    } else {
+      db.prepare('UPDATE sources SET size=?,mtime=?,complete=CASE WHEN bytes=? THEN complete ELSE 0 END,updated=? WHERE machine=? AND key=? AND generation=?')
+        .run(d.size,d.mtime,d.size,Date.now(),machine,d.key,s.generation);
+      s = source(machine,d.key,s.generation);
+    }
     const tail = db.prepare('SELECT start,data FROM chunks WHERE machine=? AND key=? AND generation=? ORDER BY start DESC LIMIT 1').get(machine,d.key,s.generation);
     const b = tail ? Buffer.from(tail.data) : Buffer.alloc(0);
-    return { generation:s.generation,offset:s.bytes,tailStart:tail ? tail.start : 0,tailSize:b.length,tailHash:hash(b) };
+    return { generation:s.generation,offset:s.bytes,complete:!needHash && s.complete === 1 && s.bytes === d.size,
+      ...(needHash ? { needHash: true } : {}),
+      tailStart:tail ? tail.start : 0,tailSize:b.length,tailHash:hash(b) };
   }
   function append(machine,d) {
     const s = source(machine,d.key,d.generation);
@@ -121,7 +132,14 @@ function openVault(dir) {
   }
   return {db,file,transaction,begin,append,finish,source,latest,list,data,
     stats:()=>db.prepare('SELECT count(*) AS versions,coalesce(sum(bytes),0) AS bytes,sum(complete) AS verified FROM sources').get(),
-    async snapshot(dest) { await backup(db,dest); fs.chmodSync(dest,0o600); },
+    async snapshot(dest) {
+      for (const s of ['', '-wal', '-shm']) try { fs.rmSync(dest + s, { force: true }); } catch {}
+      const pages = (db.prepare('PRAGMA page_count').get() || {}).page_count || 0;
+      const free = (db.prepare('PRAGMA freelist_count').get() || {}).freelist_count || 0;
+      if (free > 16384 && free > pages * 0.2) try { db.exec('VACUUM'); } catch {}
+      await backup(db,dest);
+      fs.chmodSync(dest,0o600);
+    },
     close(){db.close();} };
 }
 module.exports={openVault,hash,CHUNK};

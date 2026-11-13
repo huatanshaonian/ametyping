@@ -158,18 +158,21 @@ function createNativeArchive({send,home=os.homedir(),enabled=true,scanMs=300000,
           if(prevSig===signature)continue;
           const prevSize=prevSig?+prevSig.split(':')[0]:-1;
           const sha256=(prevSize===st.size&&st.size>0)?await fileHash(c.file,st.size):undefined;
-          current={...c,size:st.size,mtime:st.mtimeMs,signature,...(sha256?{sha256}:{})};request('begin',current);return;
+          current={...c,size:st.size,mtime:st.mtimeMs,signature,...(sha256?{sha256}:{probe:true})};request('begin',current);return;
         }return;
       }
       const c=current;
-      if(!c.generation){request('begin',c);return;}
+      if(!c.generation){
+        if(c.needHash){delete c.needHash;delete c.probe;c.sha256=await fileHash(c.file,c.size);}
+        request('begin',c);return;
+      }
       if(c.offset<c.size){
         const fd=fs.openSync(c.file,'r');let b;try{b=Buffer.alloc(Math.min(CHUNK,c.size-c.offset));const n=fs.readSync(fd,b,0,b.length,c.offset);b=b.subarray(0,n);}finally{fs.closeSync(fd);}
         if(!b.length){current=null;return;}
         request('chunk',{key:c.key,generation:c.generation,start:c.offset,data:b.toString('base64'),sha256:hash(b)});
       }else{
         const sha256=await fileHash(c.file,c.size),st=fs.statSync(c.file);
-        if(st.size<c.size||st.mtimeMs!==c.mtime){current=null;return;}
+        if(st.size<c.size){current=null;return;}
         request('finish',{key:c.key,generation:c.generation,sha256});
       }
     }catch(e){log('完整存档读取失败：'+e.message);current=null;pending=null;}finally{busy=false;}
@@ -178,13 +181,15 @@ function createNativeArchive({send,home=os.homedir(),enabled=true,scanMs=300000,
     if(d.t!=='vault-result'||!pending||pending.rid!==d.rid)return false;
     const action=pending.action;pending=null;
     const c=current;if(!c)return true;
-    if(!d.ok){log('完整存档未完成：'+(d.msg||'请重新连接'));if(action==='finish'&&d.retryReset===true){delete c.generation;request('begin',{...c,reset:true});}else{current=null;pauseUntil=Date.now()+15000;}return true;}
+    if(!d.ok){log('完整存档未完成：'+(d.msg||'请重新连接'));if(action==='finish'&&d.retryReset===true){delete c.generation;delete c.probe;request('begin',{...c,reset:true});}else{current=null;pauseUntil=Date.now()+15000;}return true;}
     if(action==='begin'){
+      if(d.needHash&&!c.sha256){c.needHash=true;setImmediate(tick);return true;}
+      if(d.complete&&d.offset===c.size){sent.set(c.key,c.signature);current=null;setImmediate(tick);return true;}
       let good=Number.isSafeInteger(d.offset)&&d.offset<=c.size;
       try{
         if(good&&d.tailSize){const fd=fs.openSync(c.file,'r'),b=Buffer.alloc(d.tailSize);let n;try{n=fs.readSync(fd,b,0,b.length,d.tailStart);}finally{fs.closeSync(fd);}good=n===b.length&&hash(b)===d.tailHash;}
       }catch{good=false;}
-      if(!good){request('begin',{...c,reset:true});return true;}
+      if(!good){delete c.probe;request('begin',{...c,reset:true});return true;}
       c.generation=d.generation;c.offset=d.offset;
     }else if(action==='chunk')c.offset=d.offset;
     else if(action==='finish'){sent.set(c.key,c.signature);current=null;}

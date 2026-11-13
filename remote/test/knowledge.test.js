@@ -88,7 +88,28 @@ test('catalog includes all historical providers and children, excludes credentia
     }
     assert.equal(v.list().length,4);assert.ok(v.list().every(s=>s.complete));
     const s=v.list().find(x=>x.path===file);assert.deepEqual(Buffer.concat([...v.data('box',s.key,s.generation)]),b);
-    collector.reset();collector.ready();await collector.tick();assert.equal(queue.shift().action,'begin');
+    // Reconnect with unchanged files: begin returns complete=true, zero chunk/finish round-trips.
+    collector.reset();collector.ready();
+    const actions=[];
+    for(let i=0;i<20;i++){
+      await collector.tick();await new Promise(r=>setImmediate(r));
+      const d=queue.shift();if(!d)break;actions.push(d.action);
+      const r=(d.action==='begin'?v.begin:d.action==='chunk'?v.append:v.finish)('box',d);
+      collector.handle({t:'vault-result',rid:d.rid,ok:true,...r});
+    }
+    assert.deepEqual(actions,['begin','begin','begin','begin']);
+    // Touch mtime on a cold reconnect (sent cleared): probe asks for sha256 and keeps the same generation without re-uploading chunks.
+    const nextMtime=new Date(fs.statSync(file).mtimeMs+5000);fs.utimesSync(file,nextMtime,nextMtime);
+    collector.reset();collector.ready();
+    const touchActions=[];
+    for(let i=0;i<20;i++){
+      await collector.tick();await new Promise(r=>setImmediate(r));
+      const d=queue.shift();if(!d)break;touchActions.push(d.action);
+      const r=(d.action==='begin'?v.begin:d.action==='chunk'?v.append:v.finish)('box',d);
+      collector.handle({t:'vault-result',rid:d.rid,ok:true,...r});
+    }
+    assert.ok(!touchActions.includes('chunk')&&!touchActions.includes('finish'));
+    assert.equal(v.list().find(x=>x.path===file).generation,s.generation);
   }finally{collector.reset();v.close();fs.rmSync(home,{recursive:true,force:true});fs.rmSync(dir,{recursive:true,force:true});}
 });
 test('explicit adoption retires exact source after publication, keeps a backup, and refuses changed sources',async()=>{
