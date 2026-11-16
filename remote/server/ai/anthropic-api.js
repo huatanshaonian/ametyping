@@ -148,13 +148,24 @@ async function runApi({ key, model, effort = '', prompt, schema, images = [], eg
   }
 }
 
-// is the key good, without spending anything: the list of models it may use (one of them is enough)
+// is the key good: check /v1/models and, against the real Anthropic host, a 1-token /v1/messages probe so keys with 0 credit balance fail honestly
 async function checkKey({ key, egress = null, base = '' }) {
   const u = new URL(base || `https://${HOST}`);
   if (!base) {
     const { request } = require('../google/http');
     const r = await request(`https://${HOST}/v1/models?limit=1`, { headers: { 'x-api-key': key, 'anthropic-version': VERSION, 'User-Agent': 'Windose' } }, egress);
     if (r.status !== 200) throw new Error(explain(r.status, r.body.toString('utf8')));
+    let probeModel = 'claude-haiku-4-5';
+    try {
+      const j = JSON.parse(r.body.toString('utf8'));
+      if (j && Array.isArray(j.data) && j.data[0] && j.data[0].id) probeModel = j.data[0].id;
+    } catch {}
+    const m = await request(`https://${HOST}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': VERSION, 'content-type': 'application/json', 'User-Agent': 'Windose' },
+      body: JSON.stringify({ model: probeModel, max_tokens: 1, messages: [{ role: 'user', content: '1' }] }),
+    }, egress);
+    if (m.status !== 200) throw new Error(explain(m.status, m.body.toString('utf8')));
     return true;
   }
   return new Promise((resolve, reject) => {
