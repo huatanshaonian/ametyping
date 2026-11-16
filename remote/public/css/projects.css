@@ -194,4 +194,26 @@
 .rd-node-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
 .rd-agg-pill { padding: 0 6px; background: #dcfce7; color: #166534; border: 1px solid #86efac; font-weight: bold; }
 .rd-sec-box { padding: 6px 8px; background: var(--head-bg); border-left: 3px solid var(--border); margin-bottom: 8px; }
+
+/* Project Macro Overview, Research Tracks & Memory Candidates (ro-*) */
+.ro-wrap { margin: 4px 0 10px; }
+.ro-panel { border: 1px solid var(--border); background: var(--head-bg); }
+.ro-summary-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; background: var(--gamepink); border-bottom: 1px solid var(--edge); color: var(--border); }
+.ro-body { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.ro-eco { padding: 7px 10px; background: var(--surface); border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 6px; }
+.ro-eco-role { font-size: 12.5px; line-height: 1.5; }
+.ro-eco-edges { display: flex; flex-wrap: wrap; gap: 6px; }
+.ro-edge-pill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 2px 7px; font-size: 11.5px; background: var(--tint-soft); border: 1px solid var(--edge); }
+.ro-sec-title { font-weight: bold; font-size: 12.5px; color: var(--border); margin-top: 2px; }
+.ro-tracks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
+.ro-track-card, .ro-mem-card { padding: 8px 10px; background: var(--surface); border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 6px; }
+.ro-track-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.ro-track-sum { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
+.ro-stages { display: flex; flex-direction: column; gap: 4px; padding: 5px 7px; background: var(--head-bg); border-left: 2px solid var(--border); }
+.ro-stage-pill { font-size: 11.5px; padding: 2px 5px; background: var(--surface); border: 1px solid var(--edge); cursor: pointer; line-height: 1.4; }
+.ro-stage-pill:hover { background: var(--fill); color: var(--on-fill); }
+.ro-metrics { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 11.5px; }
+.ro-metric-pill { padding: 1px 6px; background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
+.ro-next { font-size: 11.5px; padding: 4px 6px; background: var(--tint-soft); border: 1px dashed var(--border); }
+.ro-mems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
 .pm-sec-hd { font-weight: bold; font-size: 12px; margin-bottom: 6px; color: var(--border); }

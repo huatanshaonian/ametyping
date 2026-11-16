@@ -14,14 +14,16 @@ const { createCodexAdmin } = require('./codex');
 const { createClaudeAdmin } = require('./claude');
 const { createApiKey } = require('./api-key');
 const { checkKey } = require('./anthropic-api');
+const { createGoogleAiKey, checkGoogleKey } = require('./google-ai-api');
 
 // codex / claude: { bin, pathPrefix, timeoutMs }; apiBase: another address for the Claude API (tests)
-function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', claudeApis = null, machine = 'nas', magpie = null, log = () => {}, audit = () => {} }) {
+function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', googleBase = '', claudeApis = null, machine = 'nas', magpie = null, log = () => {}, audit = () => {} }) {
   const apiKey = createApiKey({ dataDir });
-  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine, magpie });
-  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, magpie, log });
+  const googleKey = createGoogleAiKey({ dataDir });
+  const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine, magpie, googleAi: googleKey });
+  const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, googleAi: { key: googleKey.get, base: googleBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, magpie, log });
   // the key as last tried against the API: { at, ok, error }
-  let checked = null;
+  let checked = null, googleChecked = null;
   async function apiStatus(check) {
     if (apiKey.has() && (check || !checked)) {
       try { await checkKey({ key: apiKey.get(), egress, base: apiBase }); checked = { at: Date.now(), ok: true, error: '' }; }
@@ -29,8 +31,20 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
     }
     return { ...apiKey.view(), checked: apiKey.has() ? checked : null, down: apiKey.has() ? asker.apiState() : null };
   }
+  async function googleStatus(check) {
+    if (googleKey.has() && (check || !googleChecked)) {
+      try {
+        const res = await checkGoogleKey({ key: googleKey.get(), egress, base: googleBase });
+        if (res.models) googleKey.setModels(res.models);
+        googleChecked = { at: Date.now(), ok: true, error: '', count: (res.models || []).length };
+      } catch (e) {
+        googleChecked = { at: Date.now(), ok: false, error: String(e.message).slice(0, 300) };
+      }
+    }
+    return { ...googleKey.view(), checked: googleKey.has() ? googleChecked : null };
+  }
   const admins = { codex: createCodexAdmin({ dataDir, codex, egress, codexHome, log }), claude: createClaudeAdmin({ dataDir, claude, egress, log }) };
-  const view = () => ({ ...settings.view(), magpie: magpie ? { enabled: magpie.status().enabled, errors: magpie.status().errors } : null, down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null } });
+  const view = () => ({ ...settings.view(), magpie: magpie ? { enabled: magpie.status().enabled, errors: magpie.status().errors } : null, down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null }, google: googleKey.view() });
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;
@@ -38,6 +52,7 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
     if (req.method === 'GET' && p === '/api/ai') { json(res, 200, view()); return true; }
     if (req.method === 'GET' && tool && !tool[2]) { json(res, 200, await admins[tool[1]].status({ check: url.searchParams.get('check') === '1' })); return true; }
     if (req.method === 'GET' && p === '/api/ai/api') { json(res, 200, await apiStatus(url.searchParams.get('check') === '1')); return true; }
+    if (req.method === 'GET' && p === '/api/ai/google') { json(res, 200, await googleStatus(url.searchParams.get('check') === '1')); return true; }
     if (req.method !== 'POST') return false;
     if (p === '/api/ai/api/key') {
       if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
@@ -45,6 +60,14 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
       const r = apiKey.set(d.key);
       if (r.ok) { checked = null; audit(d.key ? 'ai-api-key-set' : 'ai-api-key-removed', ip); }
       json(res, 200, { ...r, api: r.ok ? await apiStatus(true) : undefined });
+      return true;
+    }
+    if (p === '/api/ai/google/key') {
+      if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
+      let d = {}; try { d = JSON.parse(await readBody(req, 4096)); } catch {}
+      const r = googleKey.set(d.key);
+      if (r.ok) { googleChecked = null; audit(d.key ? 'ai-google-key-set' : 'ai-google-key-removed', ip); }
+      json(res, 200, { ...r, google: r.ok ? await googleStatus(true) : undefined });
       return true;
     }
     if (p === '/api/ai/set') {

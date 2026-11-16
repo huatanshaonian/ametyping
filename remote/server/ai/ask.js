@@ -10,6 +10,7 @@ const path = require('path');
 const { runCodex } = require('../summary/codex');
 const { runClaude } = require('../summary/claude');
 const { runApi, plain } = require('./anthropic-api');
+const { runGoogleAi } = require('./google-ai-api');
 
 const REST_MS = 15 * 60e3;
 const HOST = { codex: 'chatgpt.com', claude: 'api.anthropic.com' };
@@ -18,7 +19,7 @@ const WHO = { codex: 'OpenAI', claude: 'Anthropic' };
 // codex / claude: { bin, pathPrefix, timeoutMs }; api: { key(), base, timeoutMs };
 // pick(task) -> { model, effort, provider, api?, backup: { ... } | null }
 // claudeApis: the Claude Code API aliases; an alias model runs through that API (base URL / key / proxy mode)
-function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis = null, machine = 'nas', magpie = null, log = () => {}, now = Date.now }) {
+function createAsk({ codex, claude, api = null, googleAi = null, egress = null, pick, claudeApis = null, machine = 'nas', magpie = null, log = () => {}, now = Date.now }) {
   const down = new Map();                     // model -> { at, error, task }
   let apiDown = null;                         // the Claude API as last failed: { at, error, task }
 
@@ -30,6 +31,10 @@ function createAsk({ codex, claude, api = null, egress = null, pick, claudeApis 
     if (use.provider === 'magpie') {
       if (!magpie) throw new Error('Magpie 尚未启用');
       return magpie.run({ model: use.model, effort: use.effort, prompt, schema, images, timeoutMs: codex.timeoutMs });
+    }
+    if (use.provider === 'google') {
+      if (!googleAi || !googleAi.key()) throw new Error('尚未配置 Google AI Studio API key（请打开控制面板 → AI 模型 → Google AI Studio API）');
+      return runGoogleAi({ key: googleAi.key(), model: use.model, effort: use.effort, prompt, schema, images, egress, base: googleAi.base, timeoutMs: googleAi.timeoutMs || codex.timeoutMs });
     }
     if(apiOnly&&use.provider!=='claude')throw new Error('仅 API 模式请选择 Claude API 模型或 NAS 上的 API 别名；Codex 当前走工具通道');
     if(apiOnly&&use.api){

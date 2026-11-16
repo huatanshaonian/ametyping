@@ -8,12 +8,12 @@ const {createReview}=require('./review');
 const {createDirectories}=require('./directories');
 
 function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
-  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null }) {
+  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null, egress = null, onMemoryChange = () => {} }) {
   const store = createResearchStore(vault), db = vault.db;
   const pilots=createPilots(path.dirname(vault.file));
   const review=createReview({vault,pilots,listProjects,saveProject});
   if(control)review.seed();
-  const directories=createDirectories({vault,review,store,getMagpie,listProjects,saveProject});
+  const directories=createDirectories({vault,review,store,getMagpie,egress,listProjects,saveProject});
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));
@@ -99,6 +99,7 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
     res.setHeader('Cache-Control','no-store');
     try {
       if (req.method === 'GET') {
+        if(url.pathname==='/api/research/overview'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,item:directories.getOverview(project)});return true;}
         if(url.pathname==='/api/research/directories'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,items:directories.list(project)});return true;}
         if(url.pathname==='/api/research/review/projects'){json(res,200,{ok:true,items:review.catalog()});return true;}
         if(url.pathname==='/api/research/review/items'){const project=checkProject(url.searchParams.get('project'));json(res,200,{ok:true,items:review.items(project)});return true;}
@@ -155,6 +156,17 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
         const body=JSON.parse(await readBody(req,64*1024));
         const item=await directories.discover(body);
         audit('research-discover',body.model||'');json(res,200,{ok:true,item});return true;
+      }
+      if(url.pathname==='/api/research/overview/generate'){
+        const body=JSON.parse(await readBody(req,64*1024));checkProject(body.project);
+        const item=await directories.generateOverview(body);
+        audit('research-overview-gen',body.project);json(res,200,{ok:true,item});return true;
+      }
+      if(url.pathname==='/api/research/overview/promote-memory'){
+        const body=JSON.parse(await readBody(req,128*1024));checkProject(body.project);
+        const item=directories.promoteMemory(body);
+        try{onMemoryChange();}catch{}
+        audit('research-overview-promote',body.project,item.name);json(res,200,{ok:true,item});return true;
       }
       if(url.pathname==='/api/research/review'){
         const body=JSON.parse(await readBody(req,256*1024)),items=review.change(body);

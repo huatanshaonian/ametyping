@@ -41,7 +41,7 @@ const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 
 // codexHome / claudeHome: the tools' own folders (~/.codex, ~/.claude); fallbackModel: config.json's summary.model
 // claudeApis: the NAS's local cc-environments profiles; machine is retained for injected test providers.
-function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas', magpie = null }) {
+function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas', magpie = null, googleAi = null }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -98,7 +98,8 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
   // [{ slug, name, note, efforts: [], defaultEffort, provider: 'codex' | 'claude', api?, model? }] -- what the accounts can use
   const models = () => {
     const claude = claudeModels();
-    return [...codexModels(), ...claude, ...aliasModels(claude), ...(magpie ? magpie.models() : [])];
+    const google = googleAi && typeof googleAi.models === 'function' ? googleAi.models() : [];
+    return [...codexModels(), ...claude, ...aliasModels(claude), ...google, ...(magpie ? magpie.models() : [])];
   };
 
   // a model + effort as it will run: the effort only when that model has it; who runs it (and which API alias)
@@ -107,6 +108,7 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     // Persisted gateway selections must never fall through to a CLI during an outage.
     const gatewayModel = decodeModel(model);
     if (String(model).startsWith('magpie:')) return { model: gatewayModel, effort: m && m.efforts.includes(effort) ? effort : '', provider: 'magpie' };
+    if (String(model).startsWith('google:')) return { model: String(model).slice(7), effort: m && m.efforts.includes(effort) ? effort : '', provider: 'google' };
     const am = /^api:([A-Za-z0-9._-]{1,40}):(.+)$/.exec(String(model || ''));
     if (effort && m && m.efforts.length && !m.efforts.includes(effort)) effort = '';      // (not one this model has)
     if (m && !m.efforts.length) effort = '';                                               // (one that does not think)
