@@ -246,13 +246,14 @@ function mount(initialProjectId) {
     const addBar = h('div', { class: 'pm-act-bar' },
       h('button', { class: 'btn go', type: 'button', text: '＋ 从已备注目录添加授权工作区…', onclick: () => openAddWorkspaceDialog(proj, allCat) }),
       h('button', { class: 'btn', type: 'button', text: '＋ 手动输入跨机路径授权…', onclick: () => openManualWorkspaceDialog(proj) }),
-      h('span', { class: 'pm-hint', text: '提示：分配给项目的文件夹将作为 Agent 派生与跨机传文件的安全边界；点击「展开结构树」无需拉取文件即可秒看群晖缓存的目录结构。' })
+      h('span', { class: 'pm-hint', text: '说明：此处汇总本项目散落在各台电脑上的代码分支（Git Worktree）与数据目录，作为 Agent 跨机派活的访问边界；点「展开结构树」无需拉取实际文件即可查看目录前 3 层结构与剩余空间。' })
     );
 
     const rows = wsList.map((w) => {
       const key = `${w.machine}|${w.path}`;
       const isExp = expandedTreeKey === key;
       const snap = w.snapshot;
+      const gitBranch = (snap && snap.gitBranch) || w.branch || '';
       return h('div', { class: 'pm-ws-card' },
         h('div', { class: 'pm-ws-head' },
           h('img', { src: icon('folder_tag', true), alt: '' }),
@@ -269,7 +270,7 @@ function mount(initialProjectId) {
             h('option', { value: 'ro', text: '只读参考 (RO)', selected: w.mode === 'ro' })
           ),
           snap && snap.freeBytes != null ? h('span', { class: 'pm-ws-free', text: `可用空间: ${size(snap.freeBytes)}` }) : null,
-          snap && snap.gitBranch ? h('span', { class: 'pm-ws-git', text: `Git: ${snap.gitBranch}` }) : null,
+          gitBranch ? h('span', { class: 'pm-ws-git', text: `Git: ${gitBranch}` }) : null,
           h('div', { class: 'pm-ws-actions' },
             h('button', { class: 'btn', type: 'button', text: isExp ? '▾ 收起结构树' : '▸ 展开结构树', onclick: () => {
               expandedTreeKey = isExp ? null : key;
@@ -300,10 +301,10 @@ function mount(initialProjectId) {
       );
     });
 
-    // Also show other annotated folders in NAS catalog not yet bound to this project
-    const unbound = allCat.filter((c) => !wsList.some((w) => w.machine === c.machine && w.path === c.path));
-    const unboundBox = unbound.length ? h('div', { class: 'pm-unbound-sec' },
-      h('div', { class: 'pm-sec-title', text: `群晖已登记的其他机器备注文件夹（共 ${unbound.length} 个，可一键授权加入本项目）：` }),
+    // Fold other annotated folders in NAS catalog not yet bound to this project so they don't clutter the view
+    const unbound = allCat.filter((c) => !wsList.some((w) => w.machine === c.machine && w.path.replace(/\\/g, '/').toLowerCase() === c.path.replace(/\\/g, '/').toLowerCase()));
+    const unboundBox = unbound.length ? h('details', { class: 'pm-unbound-sec' },
+      h('summary', { class: 'pm-sec-title', style: 'cursor:pointer', text: `查看群晖上登记的其他非本项目文件夹（共 ${unbound.length} 个，可按需加入本项目）` }),
       ...unbound.map((c) => h('div', { class: 'pm-unbound-row' },
         h('span', { class: 'xtag', text: c.tagLabel || c.tag || '目录' }),
         h('b', { text: `${c.machine} : ${c.path}` }),

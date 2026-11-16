@@ -8,12 +8,12 @@ const {createReview}=require('./review');
 const {createDirectories}=require('./directories');
 
 function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
-  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null }) {
+  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null }) {
   const store = createResearchStore(vault), db = vault.db;
   const pilots=createPilots(path.dirname(vault.file));
   const review=createReview({vault,pilots,listProjects,saveProject});
   if(control)review.seed();
-  const directories=createDirectories({vault,review});
+  const directories=createDirectories({vault,review,store,getMagpie,listProjects,saveProject});
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));
@@ -140,6 +140,21 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
       if(url.pathname==='/api/research/directory'){
         const body=JSON.parse(await readBody(req,300*1024));checkProject(body.project);const item=directories.change(body);
         audit('research-directory',body.action,body.id);json(res,200,{ok:true,item});return true;
+      }
+      if(url.pathname==='/api/research/directory/summarize'){
+        const body=JSON.parse(await readBody(req,64*1024));checkProject(body.project);
+        const item=await directories.summarize(body);
+        audit('research-dir-summarize',body.project,body.id);json(res,200,{ok:true,item});return true;
+      }
+      if(url.pathname==='/api/research/directories/summarize-all'){
+        const body=JSON.parse(await readBody(req,64*1024));checkProject(body.project);
+        const item=await directories.summarizeAll(body);
+        audit('research-dir-summarize-all',body.project);json(res,200,{ok:true,item});return true;
+      }
+      if(url.pathname==='/api/research/discover'){
+        const body=JSON.parse(await readBody(req,64*1024));
+        const item=await directories.discover(body);
+        audit('research-discover',body.model||'');json(res,200,{ok:true,item});return true;
       }
       if(url.pathname==='/api/research/review'){
         const body=JSON.parse(await readBody(req,256*1024)),items=review.change(body);

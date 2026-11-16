@@ -253,8 +253,9 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
+let magpie;
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
-  listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),
+  listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),getMagpie:()=>magpie,
   control:CONTROL,fresh:auth.isFresh,audit,log:console.error});
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
@@ -275,7 +276,7 @@ const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...t
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
 if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
 const sendQuota = (sock, notice) => { try { sock.send(JSON.stringify({ t: 'quota-alert', notice })); } catch {} };
-const magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
+magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
   onChange: () => broadcast({ t: 'magpie' }),
   onNotice: n => { for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) sendQuota(sock, n); } });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},

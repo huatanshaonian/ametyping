@@ -22,3 +22,63 @@ test('directory summaries combine sessions, preserve separate machines, validate
     assert.equal(v.db.prepare('select count(*) n from research_directory_history').get().n,2);
   }finally{v.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('AI discover and summarize workflow with Magpie gemini-4-hydrogen imports sessions and verifies verbatim evidence',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ame-dir-ai-')),v=openVault(dir),store=createResearchStore(v);
+  try{
+    const {createReview}=require('../server/research/review');
+    const projects=[{id:'proj_cem',name:'CEM_PO',workspaces:[]}];
+    const addSession=(machine,cwd,session,text)=>{
+      const bytes=Buffer.from(JSON.stringify({type:'assistant',message:{content:text}})+'\n'),key=hash(machine+':'+session);
+      const b=v.begin(machine,{key,path:cwd+'/'+session+'.jsonl',provider:'claude',session,kind:'native',cwd,size:bytes.length,mtime:1});
+      v.append(machine,{key,generation:b.generation,start:0,data:bytes.toString('base64'),sha256:hash(bytes)});
+      v.finish(machine,{key,generation:b.generation,sha256:hash(bytes)});
+    };
+    addSession('dell97','/home/dell/CEM_1/CEM_FDTD','fdtd-s1','FDTD 空域泄漏门控实测为 -62.7 dB，CW001 三档网格收敛验证完成。');
+    addSession('huatanshaonian','G:/feko_data/CW_geometry','cw-s1','乘波体 100 个算例 My_Merged_Surface.igs 对称面拼接与 OCC 闭合实体核验通过。');
+
+    const review=createReview({
+      vault:v,
+      pilots:{list:()=>({items:[]})},
+      listProjects:()=>projects,
+      saveProject:d=>{const p={id:'proj_'+projects.length,...d,workspaces:[]};projects.push(p);return{ok:true,project:p};},
+    });
+    review.directory('proj_cem','dell97','/home/dell/CEM_1/CEM_FDTD','Git Worktree','fdtd_dev');
+
+    const mockMagpie={
+      models:()=>[{id:'antigravity/gemini-4-hydrogen',name:'Gemini 4 Hydrogen'}],
+      poll:async()=>{},
+      run:async({prompt})=>{
+        if(prompt.includes('候选目录')){
+          return {classified_dirs:[{machine:'huatanshaonian',path:'G:/feko_data/CW_geometry',project_id:'proj_cem',branch:'geometry_prep'}]};
+        }
+        return {
+          overview:'该目录承载 GPU FDTD 求解器开发与 CW001 乘波体全波验证。',
+          work:[{
+            title:'FDTD 边界门控与 CW001 收敛对标',
+            description:'完成空域泄漏门控与三档网格验证',
+            results:['空域泄漏 -62.7 dB'],
+            outputs:['solvers/fdtd/grid.py'],
+            questions:[],
+            evidence_refs:['U1'],
+          }],
+          next_steps:['推进共形网格改造'],
+        };
+      },
+    };
+
+    const d=createDirectories({vault:v,review,store,getMagpie:()=>mockMagpie,listProjects:()=>projects});
+    const disc=await d.discover({model:'antigravity/gemini-4-hydrogen'});
+    assert.equal(disc.added.length,1);
+    assert.equal(disc.added[0].path,'G:/feko_data/CW_geometry');
+
+    const sumAll=await d.summarizeAll({project:'proj_cem',model:'antigravity/gemini-4-hydrogen'});
+    assert.equal(sumAll.completed.length,2);
+    const list=d.list('proj_cem');
+    assert.equal(list.length,2);
+    const fdtdDir=list.find(x=>x.path==='/home/dell/CEM_1/CEM_FDTD');
+    assert.equal(fdtdDir.branch,'fdtd_dev');
+    assert.ok(fdtdDir.body.overview.includes('GPU FDTD'));
+    assert.ok(fdtdDir.body.work[0].evidence[0].quote.includes('-62.7 dB'));
+  }finally{v.close();fs.rmSync(dir,{recursive:true,force:true});}
+});

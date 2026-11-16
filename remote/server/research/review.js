@@ -3,6 +3,8 @@ const crypto=require('crypto');
 const {hash}=require('./normalize');
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/$/,'');
 const canonical=p=>/^[A-Za-z]:/.test(p)?norm(p).toLowerCase():norm(p);
+const isInside=(child,parent)=>{const c=canonical(child),p=canonical(parent);return !!c&&!!p&&(c===p||c.startsWith(p+'/'));};
+const isTempOrNoiseCwd=p=>/^(?:\/tmp(?:\/|$)|\/var\/tmp|[a-z]:\/windows\/system32|[a-z]:\/users\/[^/]+(?:\/desktop|\/downloads|\/documents\/codex|\/appdata\/local\/temp|\/appdata\/roaming\/claude\/scratch-workspaces|\/\.claude\/projects)(?:\/|$)|.*\/\.claude\/worktrees\/|.*\/ame-(?:launch|mode|key|perm)test)/i.test(norm(p));
 const projectName=p=>norm(p).split('/').pop()||'待归类';
 const nameKey=s=>String(s).replace(/[-_\s]/g,'').toLowerCase();
 const unique=a=>[...new Map(a.map(x=>[JSON.stringify(x),x])).values()];
@@ -21,13 +23,19 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
     CREATE TABLE IF NOT EXISTS research_review_history(seq INTEGER PRIMARY KEY AUTOINCREMENT,item TEXT NOT NULL,batch TEXT NOT NULL,
       action TEXT NOT NULL,before_json TEXT NOT NULL,after_revision INTEGER NOT NULL,undone INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS research_review_history_item ON research_review_history(item,seq);
-    CREATE TABLE IF NOT EXISTS research_project_directories(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,source TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS research_project_directories(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,source TEXT NOT NULL,branch TEXT NOT NULL DEFAULT '');`);
+  if(!db.prepare('PRAGMA table_info(research_project_directories)').all().some(c=>c.name==='branch'))
+    db.exec("ALTER TABLE research_project_directories ADD COLUMN branch TEXT NOT NULL DEFAULT ''");
+  const hasTable=name=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
   const raw=id=>db.prepare('SELECT * FROM research_review_items WHERE id=?').get(id);
   const decode=r=>({...r,body:JSON.parse(r.body),origins:JSON.parse(r.origins),canUndo:!!db.prepare('SELECT 1 FROM research_review_history WHERE item=? AND undone=0 LIMIT 1').get(r.id)});
   const get=id=>{const r=raw(id);if(!r)throw Error('找不到工作事项');return decode(r);};
-  const directory=(project,machine,p,source)=>{
-    if(!machine||!p)return;db.prepare('INSERT OR IGNORE INTO research_project_directories VALUES(?,?,?,?,?)')
-      .run(hash(project+'\0'+machine+'\0'+canonical(p)),project,machine,norm(p),source);
+  const directory=(project,machine,p,source,branch='')=>{
+    if(!machine||!p)return;
+    const id=hash(project+'\0'+machine+'\0'+canonical(p));
+    db.prepare('INSERT OR IGNORE INTO research_project_directories(id,project,machine,path,source,branch) VALUES(?,?,?,?,?,?)')
+      .run(id,project,machine,norm(p),source,String(branch||''));
+    if(branch)db.prepare("UPDATE research_project_directories SET branch=? WHERE id=? AND (branch='' OR branch IS NULL)").run(String(branch),id);
   };
   function seed(){
     if(!saveProject)return;
@@ -49,6 +57,34 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
         }
       }
     }
+    // Bridge registered projects, project_dirs, and agent-expanded git worktrees from knowledge tables
+    const kProjMap=new Map(); // knowledge project id -> mesh project
+    if(hasTable('projects')&&hasTable('project_dirs')){
+      for(const kp of db.prepare('SELECT * FROM projects ORDER BY id').all()){
+        let projects=listProjects();
+        let mp=(kp.mesh&&projects.find(p=>p.id===kp.mesh))||
+          projects.find(p=>nameKey(p.name)===nameKey(kp.id)||nameKey(p.name)===nameKey(kp.name)||(kp.id==='cem'&&nameKey(p.name)==='cempo'));
+        if(!mp){
+          const res=saveProject({name:kp.name||kp.id});
+          if(res?.ok)mp=res.project;
+        }
+        if(!mp)continue;
+        if(kp.mesh!==mp.id){try{db.prepare('UPDATE projects SET mesh=? WHERE id=?').run(mp.id,kp.id);}catch{}}
+        kProjMap.set(kp.id,mp);
+        for(const pd of db.prepare('SELECT machine,path FROM project_dirs WHERE project=?').all(kp.id)){
+          directory(mp.id,pd.machine,pd.path,'项目登记目录');
+        }
+        if(hasTable('memory_deployments')){
+          for(const dep of db.prepare('SELECT machine,dirs FROM memory_deployments WHERE target=?').all(kp.id)){
+            let dlist=[];try{dlist=dep.dirs?JSON.parse(dep.dirs):[];}catch{}
+            for(const w of dlist){
+              if(!w||!w.ok||!w.path||isTempOrNoiseCwd(w.path))continue;
+              directory(mp.id,dep.machine,w.path,w.source==='worktree'?'Git Worktree':'项目登记目录',w.branch||'');
+            }
+          }
+        }
+      }
+    }
     for(const w of db.prepare(`SELECT w.*,d.machine,d.cwd,d.session,d.id document FROM research_work w
       JOIN research_jobs j ON j.id=w.job JOIN research_documents d ON d.id=j.document`).all()){
       if(!listProjects().some(p=>p.id===w.project))continue;
@@ -59,16 +95,31 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
       directory(w.project,w.machine,w.cwd,'会话工作目录');
     }
     const projects=listProjects();
+    const knownDirs=db.prepare('SELECT project,machine,path FROM research_project_directories').all();
     for(const d of db.prepare("SELECT DISTINCT machine,cwd FROM sources WHERE cwd<>''").all()){
-      const project=projects.find(p=>nameKey(p.name)===nameKey(projectName(d.cwd)));
+      if(isTempOrNoiseCwd(d.cwd))continue;
+      const base=projectName(d.cwd),bKey=nameKey(base);
+      let project=projects.find(p=>nameKey(p.name)===bKey);
+      if(!project){
+        const parentMatch=knownDirs.find(kd=>kd.machine===d.machine&&isInside(d.cwd,kd.path));
+        if(parentMatch)project=projects.find(p=>p.id===parentMatch.project);
+      }
+      if(!project){
+        for(const [kid,mp] of kProjMap.entries()){
+          const kKey=nameKey(kid);
+          if(bKey===kKey||base.toLowerCase().startsWith(kid.toLowerCase()+'-')||base.toLowerCase().startsWith(kid.toLowerCase()+'_')){
+            project=mp;break;
+          }
+        }
+      }
       if(project)directory(project.id,d.machine,d.cwd,'历史工作目录');
     }
   }
   function catalog(){return listProjects().map(p=>{
-    const dirs=db.prepare('SELECT machine,path,source FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
-    for(const w of p.workspaces||[])if(!dirs.some(d=>d.machine===w.machine&&canonical(d.path)===canonical(w.path)))dirs.push({machine:w.machine,path:w.path,source:'项目工作区'});
+    const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
+    for(const w of p.workspaces||[])if(!dirs.some(d=>d.machine===w.machine&&canonical(d.path)===canonical(w.path)))dirs.push({machine:w.machine,path:w.path,source:'项目工作区',branch:w.branch||''});
     for(const row of db.prepare('SELECT origins FROM research_review_items WHERE project=?').all(p.id))for(const o of JSON.parse(row.origins))
-      if(o.machine&&o.path&&!dirs.some(d=>d.machine===o.machine&&canonical(d.path)===canonical(o.path)))dirs.push({machine:o.machine,path:o.path,source:'工作事项目录'});
+      if(o.machine&&o.path&&!dirs.some(d=>d.machine===o.machine&&canonical(d.path)===canonical(o.path)))dirs.push({machine:o.machine,path:o.path,source:'工作事项目录',branch:''});
     const counts={pending:0,confirmed:0,ignored:0,merged:0};
     for(const r of db.prepare('SELECT status,count(*) n FROM research_review_items WHERE project=? GROUP BY status').all(p.id))counts[r.status]=r.n;
     return{id:p.id,name:p.name,directories:dirs,counts};
@@ -127,6 +178,6 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
       write(r,next);return[get(r.id)];
     });
   }
-  return{seed,catalog,items,get,change};
+  return{seed,catalog,items,get,change,directory};
 }
 module.exports={createReview};

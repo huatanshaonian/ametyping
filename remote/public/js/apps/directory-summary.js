@@ -14,6 +14,15 @@ export function directoryPanel(){
     const r=await post('/api/research/directory',{project: item.project,id:item.id,revision:item.revision,action,...extra});
     say.textContent=r.ok?'目录总结已保存':r.msg;if(r.ok)await load(project);return r.ok;
   }
+  async function aiSummarize(item,btn){
+    if(btn)btn.disabled=true;
+    say.textContent=`正在调用 Magpie (gemini-4-hydrogen) 总结 ${item.machine}:${item.path} 的会话工作…`;
+    try{
+      const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id,model:'antigravity/gemini-4-hydrogen'});
+      say.textContent=r.ok?`已生成 ${item.machine}:${item.path} 的目录工作总结`:(r.msg||'AI 生成失败');
+      if(r.ok)await load(project);
+    }finally{if(btn)btn.disabled=false;}
+  }
   async function evidence(ref,item){
     const r=await(await fetch('/api/research/evidence?project='+encodeURIComponent(item.project)+'&id='+encodeURIComponent(ref.event_id))).json();
     if(closed)return;if(!r.ok){say.textContent=r.msg;return;}
@@ -22,9 +31,15 @@ export function directoryPanel(){
   }
   const lines=(title,values)=>values?.length?h('section',{},h('b',{text:title}),h('ul',{},...values.map(text=>h('li',{text})))):null;
   function card(item){const b=item.body;
+    const aiBtn=h('button',{class:'btn',text:b?'🤖 AI 重新总结':'🤖 AI 生成总结',onclick:()=>aiSummarize(item,aiBtn)});
     return h('article',{class:'pr-card rd-card',dataset:{id:item.id}},
-      h('div',{class:'rr-item-head'},h('b',{text:item.machine}),h('span',{class:'rr-badge',text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})),
-      h('div',{class:'rr-directory'},h('code',{text:item.path}),h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)})),
+      h('div',{class:'rr-item-head'},
+        h('b',{text:'🖥️ '+item.machine}),
+        item.branch?h('span',{class:'xtag',text:'🌿 分支: '+item.branch}):null,
+        item.source?h('small',{class:'ghint',text:item.source}):null,
+        h('span',{class:'rr-badge',text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
+      ),
+      h('div',{class:'rr-directory'},h('code',{text:item.path}),h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),aiBtn),
       h('small',{text:item.sessions+' 份会话 · '+item.documents+' 份已归集资料'+(item.changed?' · 有新资料待更新':'')}),
       b?h('div',{class:'rd-summary'},h('p',{class:'rd-overview',text:b.overview}),
         ...b.work.map(w=>h('section',{class:'rd-work'},h('h4',{text:w.title}),h('p',{text:w.description}),lines('结果',w.results),lines('产物',w.outputs),lines('未决问题',w.questions),
@@ -32,7 +47,7 @@ export function directoryPanel(){
         lines('接下来',b.next_steps),
         h('div',{class:'pr-toolbar'},item.status!=='confirmed'?h('button',{class:'btn',text:'确认目录总结',onclick:()=>change(item,'confirm')}):null,
           h('button',{class:'btn',text:'修改目录总结',onclick:()=>edit(item)}),item.status==='confirmed'?h('button',{class:'btn',text:'恢复待核对',onclick:()=>change(item,'restore')}):null)):
-        h('p',{text:'目录工作总结待整理。'}));
+        h('p',{text:'目录工作总结待整理（可点击上方「🤖 AI 生成总结」自动抽取）。'}));
   }
   function edit(item){const b=item.body,overview=h('textarea',{class:'field',rows:6}),next=h('textarea',{class:'field',rows:4}),feedback=h('p');
     overview.value=b.overview;next.value=b.next_steps.join('\n');

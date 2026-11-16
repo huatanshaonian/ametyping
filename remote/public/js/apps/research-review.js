@@ -1,6 +1,7 @@
 import {h,icon} from '../util.js';
 import {post} from '../net.js';
 import * as wm from '../wm.js';
+import * as mesh from '../mesh.js';
 import {directoryPanel} from './directory-summary.js';
 const states={planned:'计划',started:'进行中',reported_complete:'已完成',reported_failed:'失败',unknown:'待整理'};
 const kinds={calculation:'计算',validation:'验证',exploration:'探索',analysis:'分析',implementation:'实现',other:'其他'};
@@ -14,13 +15,36 @@ export function reviewPanel(initialProject=null){
   const search=h('input',{class:'field',placeholder:'搜索工作标题和内容'});
   const merge=h('button',{class:'btn rr-action',text:'合并选中',disabled:true,onclick:mergeDialog});
   const directoryView=directoryPanel(),directories=directoryView.root;
+  const discoverBtn=h('button',{class:'btn',text:'🔍 AI 发现跨机目录',onclick:runDiscover});
+  const sumAllBtn=h('button',{class:'btn go',text:'🤖 AI 批量生成目录总结',onclick:runSummarizeAll});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
-    h('section',{class:'rr-main'},h('div',{class:'pr-toolbar'},title,h('button',{class:'btn',text:'刷新',onclick:reload})),directories,
+    h('section',{class:'rr-main'},h('div',{class:'pr-toolbar'},title,discoverBtn,sumAllBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
   function say(text){status.textContent=text;}
+  async function runDiscover(){
+    if(busy)return;busy=true;discoverBtn.disabled=true;
+    say('正在调用 Magpie (gemini-4-hydrogen) 扫描全网电脑会话与 Git Worktree，自动发现并归类项目目录…');
+    try{
+      const r=await post('/api/research/discover',{model:'antigravity/gemini-4-hydrogen'});
+      if(!r.ok){say(r.msg||'目录发现失败');return;}
+      await mesh.load();
+      await reload();
+      say(`已完成跨机目录发现：新归入 ${(r.item?.added||[]).length} 个目录`);
+    }finally{busy=false;discoverBtn.disabled=false;}
+  }
+  async function runSummarizeAll(){
+    if(busy||!project)return;busy=true;sumAllBtn.disabled=true;
+    say('正在调用 Magpie (gemini-4-hydrogen) 批量生成当前项目下所有待整理目录的工作总结…');
+    try{
+      const r=await post('/api/research/directories/summarize-all',{project,model:'antigravity/gemini-4-hydrogen'});
+      if(!r.ok){say(r.msg||'批量生成失败');return;}
+      await reload();
+      say(`批量总结完成：已生成 ${(r.item?.completed||[]).length} 个目录总结`+((r.item?.skipped||[]).length?`（跳过 ${r.item.skipped.length} 个无独立会话目录）`:''));
+    }finally{busy=false;sumAllBtn.disabled=false;}
+  }
   function drawCatalog(){
     side.replaceChildren(h('b',{text:'项目目录'}),...projects.map(p=>h('button',{class:'rr-project'+(project===p.id?' sel':''),type:'button',text:p.name+' · '+p.directories.length+' 个目录',onclick:()=>{project=p.id;selected.clear();reload();}})));
-    const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 目录工作总结':'目录工作总结';
+    const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 目录工作总结（共 '+p.directories.length+' 个跨机目录/分支）':'目录工作总结';
   }
   async function reload(){
     try{const r=await get('/api/research/review/projects');if(closed)return;if(!r.ok){say(r.msg);return;}projects=r.items;

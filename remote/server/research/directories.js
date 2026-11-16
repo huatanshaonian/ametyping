@@ -1,9 +1,58 @@
 'use strict';
 const crypto=require('crypto');
+const {normalize}=require('./normalize');
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/$/,'');
 const canonical=p=>/^[A-Za-z]:/.test(p)?norm(p).toLowerCase():norm(p);
+const isSubOrParent=(a,b)=>{const ca=canonical(a),cb=canonical(b);return !!ca&&!!cb&&(ca===cb||ca.startsWith(cb+'/')||cb.startsWith(ca+'/'));};
 const key=(project,machine,path)=>crypto.createHash('sha256').update([project,machine,canonical(path)].join('\0')).digest('hex');
-function createDirectories({vault,review}){
+
+const DEFAULT_MODEL='antigravity/gemini-4-hydrogen';
+
+const SUMMARY_SCHEMA={
+  type:'object',
+  properties:{
+    overview:{type:'string'},
+    work:{
+      type:'array',
+      items:{
+        type:'object',
+        properties:{
+          title:{type:'string'},
+          description:{type:'string'},
+          results:{type:'array',items:{type:'string'}},
+          outputs:{type:'array',items:{type:'string'}},
+          questions:{type:'array',items:{type:'string'}},
+          evidence_refs:{type:'array',items:{type:'string'}},
+        },
+        required:['title','description','results','outputs','questions','evidence_refs'],
+      },
+    },
+    next_steps:{type:'array',items:{type:'string'}},
+  },
+  required:['overview','work','next_steps'],
+};
+
+const DISCOVER_SCHEMA={
+  type:'object',
+  properties:{
+    classified_dirs:{
+      type:'array',
+      items:{
+        type:'object',
+        properties:{
+          machine:{type:'string'},
+          path:{type:'string'},
+          project_id:{type:'string'},
+          branch:{type:'string'},
+        },
+        required:['machine','path','project_id','branch'],
+      },
+    },
+  },
+  required:['classified_dirs'],
+};
+
+function createDirectories({vault,review,store=null,getMagpie=()=>null,listProjects=()=>[],saveProject=null}){
   const db=vault.db;
   db.exec(`CREATE TABLE IF NOT EXISTS research_directory_summaries(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,
     body TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,inputs TEXT NOT NULL,updated INTEGER NOT NULL);
@@ -19,7 +68,7 @@ function createDirectories({vault,review}){
       const own=x=>x.machine===d.machine&&canonical(x.cwd)===canonical(d.path);
       const archived=sources.filter(own),documents=docs.filter(own);
       const inputs=documents.map(x=>x.id).sort();
-      return {id,project,machine:d.machine,path:d.path,...(saved||{}),status:saved?.status||'pending',revision:saved?.revision||0,
+      return {id,project,machine:d.machine,path:d.path,source:d.source||'',branch:d.branch||'',...(saved||{}),status:saved?.status||'pending',revision:saved?.revision||0,
         body:saved?.body||null,documents:documents.length,sessions:new Set(archived.map(x=>x.session)).size,
         updated:saved?.updated||null,changed:!!saved&&JSON.stringify(saved.inputs)!==JSON.stringify(inputs),
         evidenceDocuments:saved?.inputs.length||0};
@@ -38,7 +87,7 @@ function createDirectories({vault,review}){
         for(const ref of w.evidence){
           const e=db.prepare(`SELECT e.text,d.machine,d.cwd FROM research_events e JOIN research_documents d ON d.id=e.document
             JOIN research_project_sources p ON p.document=d.id WHERE p.project=? AND e.id=?`).get(input.project,ref.event_id);
-          if(!e||e.machine!==current.machine||canonical(e.cwd)!==canonical(current.path)||typeof ref.quote!=='string'||!ref.quote.trim()||!e.text.includes(ref.quote))throw Error('目录总结引用与来源不匹配');
+          if(!e||e.machine!==current.machine||!isSubOrParent(e.cwd,current.path)||typeof ref.quote!=='string'||!ref.quote.trim()||!e.text.includes(ref.quote))throw Error('目录总结引用与来源不匹配');
         }
       }
       if(JSON.stringify(body).length>256*1024)throw Error('目录总结过长');
@@ -54,6 +103,209 @@ function createDirectories({vault,review}){
       JSON.stringify(body),status,current.revision+1,JSON.stringify(input.action==='save'?inputs:(before?JSON.parse(before.inputs):inputs)),Date.now());
     return list(input.project).find(d=>d.id===current.id);
   });}
-  return {list,change};
+
+  // Ensure native sources for (machine, path) — or parent repo if worktree has 0 direct sessions — are imported into research_documents
+  function ensureImportedForDir(project,machine,dirPath){
+    if(!store)return [];
+    const allNative=db.prepare(`SELECT s.* FROM sources s WHERE complete=1 AND kind='native' AND machine=? AND cwd<>''
+      AND rowid=(SELECT rowid FROM sources t WHERE t.machine=s.machine AND t.key=s.key ORDER BY created DESC,rowid DESC LIMIT 1)
+      ORDER BY updated DESC`).all(machine);
+    let matched=allNative.filter(s=>canonical(s.cwd)===canonical(dirPath));
+    let fromParent=false;
+    if(!matched.length){
+      matched=allNative.filter(s=>isSubOrParent(dirPath,s.cwd));
+      fromParent=true;
+    }
+    const importedDocs=[];
+    for(const s of matched){
+      if(s.size>64*1024*1024)continue;
+      if(s.provider!=='opencode'&&!/\.jsonl$/i.test(s.path))continue;
+      try{
+        const doc=store.importSource(project,{machine:s.machine,key:s.key,generation:s.generation});
+        if(doc)importedDocs.push(doc);
+      }catch{}
+    }
+    return {docs:importedDocs,fromParent};
+  }
+
+  // Build numbered verbatim evidence units from research_events of imported documents
+  function buildEvidenceUnits(project,machine,dirPath,branch='',maxUnits=110){
+    const {docs,fromParent}=ensureImportedForDir(project,machine,dirPath);
+    if(!docs.length)return [];
+    const baseName=norm(dirPath).split('/').pop()||'';
+    const kwRe=fromParent&&baseName?new RegExp(baseName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+(branch?'|'+branch.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'):''),'i'):null;
+    const allUnits=[];
+    for(const doc of docs){
+      const rows=db.prepare('SELECT id,role,kind,text FROM research_events WHERE document=? AND suppressed=0 ORDER BY line,part').all(doc.id);
+      const filtered=[];
+      for(const e of rows){
+        if(e.role!=='user'&&e.role!=='assistant'&&!(e.kind==='tool_result'&&/error|fail|pass|dB|RCS|npz|耗时|秒|通过|完成|commit/i.test(e.text)))continue;
+        const clean=String(e.text||'').trim();
+        if(clean.length<15||/^(Caveat:|The command below|The following is the Codex|Base directory for this skill)/.test(clean))continue;
+        filtered.push({id:e.id,role:e.role,kind:e.kind,text:clean,match:kwRe?kwRe.test(clean):false});
+      }
+      let picked=filtered;
+      if(kwRe&&filtered.some(x=>x.match)){
+        const matchedEvts=filtered.filter(x=>x.match);
+        const contextEvts=filtered.filter(x=>!x.match).slice(0,15);
+        picked=[...matchedEvts,...contextEvts];
+      }
+      const cap=Math.max(14,Math.floor(maxUnits/Math.max(1,docs.length)));
+      if(picked.length>cap){
+        picked=[
+          ...picked.slice(0,Math.floor(cap*0.35)),
+          ...picked.slice(Math.floor(picked.length/2)-3,Math.floor(picked.length/2)+3),
+          ...picked.slice(-Math.ceil(cap*0.55)),
+        ];
+      }
+      for(const e of picked){
+        const quote=e.text.slice(0,260).trim();
+        if(!quote)continue;
+        allUnits.push({
+          ref:'U'+(allUnits.length+1),
+          session:doc.session.slice(0,8),
+          role:e.role,
+          kind:e.kind,
+          event_id:e.id,
+          quote,
+        });
+        if(allUnits.length>=maxUnits)break;
+      }
+      if(allUnits.length>=maxUnits)break;
+    }
+    return allUnits;
+  }
+
+  async function summarize({project,id,model=DEFAULT_MODEL,confirm=false}){
+    const mp=typeof getMagpie==='function'?getMagpie():null;
+    if(!mp)throw Error('Magpie 服务未就绪');
+    if(!mp.models().length)await mp.poll();
+    const current=list(project).find(d=>d.id===id);
+    if(!current)throw Error('找不到该项目目录');
+    const units=buildEvidenceUnits(project,current.machine,current.path,current.branch,110);
+    if(!units.length)throw Error(`目录 ${current.machine}:${current.path} 尚无可用于总结的会话记录`);
+    const prompt=[
+      `请根据以下采集自设备「${current.machine}」目录「${current.path}」${current.branch?`（Git 分支：${current.branch}）`:''}的真实 AI 会话证据片段，生成该目录的科研与工程工作总结。`,
+      '要求：',
+      '1. overview：紧凑概括该目录在项目中的定位、所在分支/工作树角色、承担的核心研发/计算/验证任务及当前进展。',
+      '2. work：按研究或工程目标归并为 1～4 条工作主线。每条主线包含 title、description、results（具体量化结果、提交号或验证结论）、outputs（涉及的代码文件、脚本、数据或文档路径）、questions（未决问题或待办）、evidence_refs（只能从输入证据中选择真实存在的编号如 ["U1", "U5"]，至少 1 个）。',
+      '3. next_steps：后续推进建议（1～3 条）。',
+      '4. 严禁编造输入证据中没有的数值或路径；只输出符合 Schema 的 JSON。',
+      '',
+      '输入证据片段：',
+      JSON.stringify(units.map(({event_id,...u})=>u)),
+    ].join('\n');
+    const res=await mp.run({model:model||DEFAULT_MODEL,prompt,schema:SUMMARY_SCHEMA,timeoutMs:180000});
+    const unitMap=new Map(units.map(u=>[u.ref,u]));
+    const work=(res.work||[]).map(w=>{
+      const ev=(w.evidence_refs||[]).map(r=>unitMap.get(r)).filter(Boolean).map(u=>({event_id:u.event_id,quote:u.quote}));
+      return {
+        title:String(w.title||'工作主线').trim(),
+        description:String(w.description||'').trim(),
+        results:Array.isArray(w.results)?w.results.map(x=>String(x).trim()).filter(Boolean):[],
+        outputs:Array.isArray(w.outputs)?w.outputs.map(x=>String(x).trim()).filter(Boolean):[],
+        questions:Array.isArray(w.questions)?w.questions.map(x=>String(x).trim()).filter(Boolean):[],
+        evidence:ev.length?ev:[{event_id:units[0].event_id,quote:units[0].quote}],
+      };
+    }).filter(w=>w.title);
+    const fresh=list(project).find(d=>d.id===id);
+    return change({
+      project,
+      id,
+      revision:fresh.revision,
+      action:'save',
+      confirm:!!confirm,
+      body:{
+        overview:String(res.overview||'').trim(),
+        work,
+        next_steps:Array.isArray(res.next_steps)?res.next_steps.map(x=>String(x).trim()).filter(Boolean):[],
+      },
+    });
+  }
+
+  async function summarizeAll({project,model=DEFAULT_MODEL,force=false}){
+    const items=list(project);
+    const targets=items.filter(d=>force||!d.body||d.changed);
+    const completed=[],skipped=[];
+    for(const d of targets){
+      try{
+        const item=await summarize({project,id:d.id,model,confirm:false});
+        completed.push({id:d.id,machine:d.machine,path:d.path,title:item.body?.overview?.slice(0,80)||''});
+      }catch(e){
+        skipped.push({id:d.id,machine:d.machine,path:d.path,reason:e.message});
+      }
+    }
+    return {completed,skipped,items:list(project)};
+  }
+
+  async function discover({model=DEFAULT_MODEL}={}){
+    review.seed();
+    const mp=typeof getMagpie==='function'?getMagpie():null;
+    if(!mp)throw Error('Magpie 服务未就绪');
+    if(!mp.models().length)await mp.poll();
+    const projects=listProjects();
+    if(!projects.length)return {added:[],projects:review.catalog()};
+
+    const knownSet=new Set();
+    for(const p of review.catalog()){
+      for(const d of p.directories||[])knownSet.add(`${d.machine}|${canonical(d.path)}`);
+    }
+    const latestSources=db.prepare(`SELECT s.* FROM sources s WHERE complete=1 AND kind='native' AND cwd<>''
+      AND rowid=(SELECT rowid FROM sources t WHERE t.machine=s.machine AND t.key=s.key ORDER BY created DESC,rowid DESC LIMIT 1)
+      ORDER BY updated DESC`).all();
+    const byDir=new Map();
+    for(const s of latestSources){
+      const k=`${s.machine}|${canonical(s.cwd)}`;
+      if(knownSet.has(k))continue;
+      if(/^(?:\/tmp(?:\/|$)|\/var\/tmp|[a-z]:\/windows\/system32|[a-z]:\/users\/[^/]+(?:\/desktop|\/downloads|\/appdata\/local\/temp|\/\.claude\/projects)(?:\/|$)|.*\/\.claude\/worktrees\/|.*\/ame-(?:launch|mode|key|perm)test)/i.test(norm(s.cwd)))continue;
+      if(/^[a-z]:\/?$/i.test(norm(s.cwd))||/^\/home\/[^/]+$/i.test(norm(s.cwd))||/^[a-z]:\/users\/[^/]+$/i.test(norm(s.cwd)))continue;
+      if(!byDir.has(k))byDir.set(k,{machine:s.machine,cwd:norm(s.cwd),sessions:[]});
+      byDir.get(k).sessions.push(s);
+    }
+    const candidates=[];
+    for(const d of byDir.values()){
+      const snippets=[];
+      for(const s of d.sessions.slice(0,2)){
+        const chs=db.prepare('SELECT data FROM chunks WHERE machine=? AND key=? AND generation=? ORDER BY start LIMIT 4').all(s.machine,s.key,s.generation);
+        const buf=Buffer.concat(chs.map(c=>Buffer.isBuffer(c.data)?c.data:Buffer.from(c.data)));
+        try{
+          for(const ev of normalize(s,[buf])){
+            if(ev.suppressed||(ev.role!=='user'&&ev.role!=='assistant'))continue;
+            const t=ev.text.replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim();
+            if(t.length>10&&!/^(Caveat:|The command below|The following is the Codex)/.test(t)){
+              snippets.push(`${ev.role}: ${t.slice(0,180)}`);
+              if(snippets.length>=5)break;
+            }
+          }
+        }catch{}
+      }
+      if(snippets.length)candidates.push({machine:d.machine,path:d.cwd,sessions:d.sessions.length,samples:snippets});
+    }
+    const added=[];
+    if(candidates.length){
+      const prompt=[
+        '你是跨设备科研与工程项目目录归集引擎。',
+        '现有项目列表（请使用项目的 id 字段作为 project_id）：',
+        JSON.stringify(projects.map(p=>({id:p.id,name:p.name}))),
+        '',
+        '以下是尚未归入项目的候选目录及其真实 AI 会话摘要样本：',
+        JSON.stringify(candidates),
+        '',
+        '请判断每个候选目录属于哪个现有项目（填该项目的 id；若属于与上述项目均无关的杂项/测试/其他独立小工具，则 project_id 填 "ignore"）。如果摘要中能识别出 Git 分支或明确子模块角色，填入 branch，否则留空字符串。',
+      ].join('\n');
+      const res=await mp.run({model:model||DEFAULT_MODEL,prompt,schema:DISCOVER_SCHEMA,timeoutMs:180000});
+      for(const item of res.classified_dirs||[]){
+        if(!item||item.project_id==='ignore')continue;
+        const proj=projects.find(p=>p.id===item.project_id||p.name===item.project_id);
+        if(!proj)continue;
+        review.directory(proj.id,item.machine,item.path,'AI 发现目录',item.branch||'');
+        added.push({project:proj.id,projectName:proj.name,machine:item.machine,path:item.path,branch:item.branch||''});
+      }
+      review.seed();
+    }
+    return {added,projects:review.catalog()};
+  }
+
+  return {list,change,summarize,summarizeAll,discover,DEFAULT_MODEL};
 }
-module.exports={createDirectories};
+module.exports={createDirectories,DEFAULT_MODEL};
