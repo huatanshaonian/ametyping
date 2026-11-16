@@ -15,15 +15,17 @@ const { createClaudeAdmin } = require('./claude');
 const { createApiKey } = require('./api-key');
 const { checkKey } = require('./anthropic-api');
 const { createGoogleAiKey, checkGoogleKey } = require('./google-ai-api');
+const { createDeepseekKey, checkDeepseekKey } = require('./deepseek-api');
 
 // codex / claude: { bin, pathPrefix, timeoutMs }; apiBase: another address for the Claude API (tests)
 function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallbackModel, codexHome, claudeHome, apiBase = '', googleBase = '', claudeApis = null, machine = 'nas', magpie = null, log = () => {}, audit = () => {} }) {
   const apiKey = createApiKey({ dataDir });
   const googleKey = createGoogleAiKey({ dataDir });
+  const deepseekKey = createDeepseekKey({ dataDir });
   const settings = createAiSettings({ dataDir, fallbackModel, codexHome, claudeHome, claudeApis, machine, magpie, googleAi: googleKey });
   const asker = createAsk({ codex, claude, api: { key: apiKey.get, base: apiBase, timeoutMs: codex.timeoutMs }, googleAi: { key: googleKey.get, base: googleBase, timeoutMs: codex.timeoutMs }, egress, pick: settings.pick, claudeApis, machine, magpie, log });
   // the key as last tried against the API: { at, ok, error }
-  let checked = null, googleChecked = null;
+  let checked = null, googleChecked = null, deepseekChecked = null;
   async function apiStatus(check) {
     if (apiKey.has() && (check || !checked)) {
       try { await checkKey({ key: apiKey.get(), egress, base: apiBase }); checked = { at: Date.now(), ok: true, error: '' }; }
@@ -43,8 +45,20 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
     }
     return { ...googleKey.view(), checked: googleKey.has() ? googleChecked : null };
   }
+  async function deepseekStatus(check) {
+    if (deepseekKey.has() && check) {
+      try {
+        const cur = deepseekKey.get();
+        await checkDeepseekKey({ key: cur.key, base: cur.base });
+        deepseekChecked = { at: Date.now(), ok: true, error: '' };
+      } catch (e) {
+        deepseekChecked = { at: Date.now(), ok: false, error: String(e.message).slice(0, 300) };
+      }
+    }
+    return { ...deepseekKey.view(), checked: deepseekKey.has() ? deepseekChecked : null };
+  }
   const admins = { codex: createCodexAdmin({ dataDir, codex, egress, codexHome, log }), claude: createClaudeAdmin({ dataDir, claude, egress, log }) };
-  const view = () => ({ ...settings.view(), magpie: magpie ? { enabled: magpie.status().enabled, errors: magpie.status().errors } : null, down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null }, google: googleKey.view() });
+  const view = () => ({ ...settings.view(), magpie: magpie ? { enabled: magpie.status().enabled, errors: magpie.status().errors } : null, down: asker.state(), api: { has: apiKey.has(), down: apiKey.has() ? asker.apiState() : null }, google: googleKey.view(), deepseek: deepseekKey.view() });
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;
@@ -53,6 +67,7 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
     if (req.method === 'GET' && tool && !tool[2]) { json(res, 200, await admins[tool[1]].status({ check: url.searchParams.get('check') === '1' })); return true; }
     if (req.method === 'GET' && p === '/api/ai/api') { json(res, 200, await apiStatus(url.searchParams.get('check') === '1')); return true; }
     if (req.method === 'GET' && p === '/api/ai/google') { json(res, 200, await googleStatus(url.searchParams.get('check') === '1')); return true; }
+    if (req.method === 'GET' && p === '/api/ai/deepseek') { json(res, 200, await deepseekStatus(url.searchParams.get('check') === '1')); return true; }
     if (req.method !== 'POST') return false;
     if (p === '/api/ai/api/key') {
       if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
@@ -68,6 +83,14 @@ function createAi({ dataDir, codex, claude = { bin: 'claude' }, egress, fallback
       const r = googleKey.set(d.key);
       if (r.ok) { googleChecked = null; audit(d.key ? 'ai-google-key-set' : 'ai-google-key-removed', ip); }
       json(res, 200, { ...r, google: r.ok ? await googleStatus(true) : undefined });
+      return true;
+    }
+    if (p === '/api/ai/deepseek/key') {
+      if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
+      let d = {}; try { d = JSON.parse(await readBody(req, 8192)); } catch {}
+      const r = deepseekKey.set(d);
+      if (r.ok) { deepseekChecked = null; audit(d.remove ? 'ai-deepseek-key-removed' : 'ai-deepseek-key-set', ip); }
+      json(res, 200, { ...r, deepseek: r.ok ? await deepseekStatus(false) : undefined });
       return true;
     }
     if (p === '/api/ai/set') {

@@ -9,6 +9,7 @@ import * as net from '../net.js';
 import { cliBox, when } from './ai-cli.js';
 import { apiBox } from './ai-api.js';
 import { googleApiBox } from './ai-google.js';
+import { deepseekApiBox } from './ai-deepseek.js';
 
 const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
 const GROUP = { claude: 'Claude', codex: 'OpenAI（Codex）', google: 'Google AI Studio', magpie: 'Magpie' };
@@ -18,9 +19,9 @@ export function panel() {
   const msg = h('p', { class: 'gnote' });
   const down = h('div', { class: 'aim-down' });
   const table = h('div', { class: 'aim-table' });
-  const boxes = [cliBox('claude'), cliBox('codex'), apiBox(() => load()), googleApiBox(() => load())];
+  const boxes = [cliBox('claude'), cliBox('codex'), apiBox(() => load()), googleApiBox(() => load()), deepseekApiBox(() => load())];
   root.append(h('p', { class: 'ghint' }, 'Magpie 模型通过群晖上的网关调用，沿用网关的账号与路由。', h('a', { href: '#magpie', text: '查看账号用量', onclick: async e => { e.preventDefault(); (await import('./magpie.js')).open(); } })), msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：OpenAI 的模型走 Codex；Claude 的模型在填了 Claude API 的 key 后先走 API（用每月的 API 赠金），API 出错或赠金用完时自动改走 Claude Code（用订阅用量）；填了 Google AI Studio API key 后可直接选用官方 Gemini 模型。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
-    down, table, h('h4', { class: 'aim-h', text: 'Google AI Studio API' }), boxes[3].root, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
+    down, table, h('h4', { class: 'aim-h', text: 'Google AI Studio API' }), boxes[3].root, h('h4', { class: 'aim-h', text: 'DeepSeek API（研究与计算抽取）' }), boxes[4].root, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
   let view = null, dirty = false;
   const nameOf = (slug, api = '') => {
     const m = view.models.find((x) => x.slug === (api ? `api:${api}:${slug}` : slug)) || view.models.find((x) => x.slug === slug) || view.models.find((x) => x.provider === 'magpie' && x.model === slug);

@@ -74,4 +74,82 @@ async function runDeepseek({ key, base = 'https://api.deepseek.com', model = 'de
   return { data, usage, model: raw.model || model, requestId: raw.id || '' };
 }
 
-module.exports = { resolveDeepseek, runDeepseek };
+function createDeepseekKey({ dataDir }) {
+  const file = path.join(dataDir, 'research-api.json');
+  const readRaw = () => {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; }
+    catch { return {}; }
+  };
+  const getResolved = () => {
+    const raw = readRaw();
+    try { return { raw, resolved: resolveDeepseek(raw), error: '' }; }
+    catch (e) { return { raw, resolved: { key: raw.key || '', base: raw.base || 'https://api.deepseek.com', model: raw.model || 'deepseek-flash' }, error: e.message }; }
+  };
+  return {
+    get() { return getResolved().resolved; },
+    has() { return !!getResolved().resolved.key; },
+    view() {
+      const { raw, resolved, error } = getResolved();
+      const k = resolved.key || '';
+      return {
+        has: !!k,
+        explicit: !!raw.key,
+        tail: k ? k.slice(-4) : '',
+        model: resolved.model || 'deepseek-flash',
+        base: resolved.base || 'https://api.deepseek.com',
+        setAt: raw.setAt || 0,
+        error: error || undefined,
+      };
+    },
+    set(input = {}) {
+      if (input.remove === true || (input.key === '' && !input.model && !input.base)) {
+        try { fs.unlinkSync(file); } catch {}
+        return { ok: true };
+      }
+      const next = { ...readRaw() };
+      for (const k of ['model', 'base']) {
+        if (typeof input[k] === 'string' && input[k].trim()) next[k] = input[k].trim();
+      }
+      if (typeof input.key === 'string' && input.key.trim()) {
+        if (input.key.length > 8000 || /[\r\n]/.test(input.key)) return { ok: false, msg: 'API 密钥格式无效' };
+        next.key = input.key.trim();
+        next.setAt = Date.now();
+      }
+      if (next.model && !/^[A-Za-z0-9._-]{1,120}$/.test(next.model)) return { ok: false, msg: '模型名称无效' };
+      try { resolveDeepseek(next); } catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 });
+        fs.chmodSync(file + '.tmp', 0o600);
+        fs.renameSync(file + '.tmp', file);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, msg: e.message };
+      }
+    },
+  };
+}
+
+async function checkDeepseekKey({ key, base = 'https://api.deepseek.com' }) {
+  if (!key) throw Error('尚未配置 DeepSeek API key');
+  const u = new URL(base.replace(/\/$/, '') + '/models');
+  return new Promise((resolve, reject) => {
+    const req = (u.protocol === 'http:' ? http : https).request(u, {
+      method: 'GET',
+      headers: { Authorization: 'Bearer ' + key, 'User-Agent': 'Windose' },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { text = (text + c).slice(0, 4000); });
+      res.on('end', () => {
+        if (res.statusCode === 200) resolve({ ok: true });
+        else reject(Error(`DeepSeek API HTTP ${res.statusCode}：${text.slice(0, 180)}`));
+      });
+    });
+    req.setTimeout(15000, () => { req.destroy(); reject(Error('DeepSeek API 超时')); });
+    req.on('error', (e) => reject(Error('DeepSeek API 连接失败：' + e.message)));
+    req.end();
+  });
+}
+
+module.exports = { resolveDeepseek, runDeepseek, createDeepseekKey, checkDeepseekKey };

@@ -80,5 +80,16 @@ test('AI discover and summarize workflow with Magpie gemini-4-hydrogen imports s
     assert.equal(fdtdDir.branch,'fdtd_dev');
     assert.ok(fdtdDir.body.overview.includes('GPU FDTD'));
     assert.ok(fdtdDir.body.work[0].evidence[0].quote.includes('-62.7 dB'));
+
+    // Manual add and delete directory actions
+    const manual=d.change({project:'proj_cem',action:'add',machine:'dell97',path:'/home/dell/CEM_1/manual_worktree',branch:'manual_branch'});
+    assert.equal(manual.path,'/home/dell/CEM_1/manual_worktree');
+    assert.equal(manual.branch,'manual_branch');
+    assert.equal(d.list('proj_cem').length,3);
+    const del=d.change({project:'proj_cem',action:'delete',id:manual.id,machine:'dell97',path:'/home/dell/CEM_1/manual_worktree'});
+    assert.equal(del.removed,true);
+    assert.equal(d.list('proj_cem').length,2);
+    review.seed();
+    assert.equal(d.list('proj_cem').length,2);
   }finally{v.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

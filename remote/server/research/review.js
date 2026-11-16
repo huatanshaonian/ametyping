@@ -23,20 +23,73 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
     CREATE TABLE IF NOT EXISTS research_review_history(seq INTEGER PRIMARY KEY AUTOINCREMENT,item TEXT NOT NULL,batch TEXT NOT NULL,
       action TEXT NOT NULL,before_json TEXT NOT NULL,after_revision INTEGER NOT NULL,undone INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS research_review_history_item ON research_review_history(item,seq);
-    CREATE TABLE IF NOT EXISTS research_project_directories(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,source TEXT NOT NULL,branch TEXT NOT NULL DEFAULT '');`);
+    CREATE TABLE IF NOT EXISTS research_project_directories(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,source TEXT NOT NULL,branch TEXT NOT NULL DEFAULT '');
+    CREATE TABLE IF NOT EXISTS research_dismissed_directories(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,created INTEGER NOT NULL);`);
   if(!db.prepare('PRAGMA table_info(research_project_directories)').all().some(c=>c.name==='branch'))
     db.exec("ALTER TABLE research_project_directories ADD COLUMN branch TEXT NOT NULL DEFAULT ''");
   const hasTable=name=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
   const raw=id=>db.prepare('SELECT * FROM research_review_items WHERE id=?').get(id);
   const decode=r=>({...r,body:JSON.parse(r.body),origins:JSON.parse(r.origins),canUndo:!!db.prepare('SELECT 1 FROM research_review_history WHERE item=? AND undone=0 LIMIT 1').get(r.id)});
   const get=id=>{const r=raw(id);if(!r)throw Error('找不到工作事项');return decode(r);};
+  const isDismissed=(project,machine,p)=>!!db.prepare('SELECT 1 FROM research_dismissed_directories WHERE id=?').get(hash(project+'\0'+machine+'\0'+canonical(p)));
   const directory=(project,machine,p,source,branch='')=>{
     if(!machine||!p)return;
     const id=hash(project+'\0'+machine+'\0'+canonical(p));
+    if(source!=='手动添加'&&isDismissed(project,machine,p))return;
     db.prepare('INSERT OR IGNORE INTO research_project_directories(id,project,machine,path,source,branch) VALUES(?,?,?,?,?,?)')
       .run(id,project,machine,norm(p),source,String(branch||''));
     if(branch)db.prepare("UPDATE research_project_directories SET branch=? WHERE id=? AND (branch='' OR branch IS NULL)").run(String(branch),id);
   };
+  function addDirectory({project,machine,path:dirPath,branch='',source='手动添加'}){
+    const cleanMach=String(machine||'').trim(),cleanPath=norm(String(dirPath||'').trim()),cleanBranch=String(branch||'').trim();
+    if(!cleanMach||cleanMach.length>80)throw Error('请填写有效的设备名称');
+    if(!cleanPath||cleanPath.length>500)throw Error('请填写有效的文件夹路径');
+    const id=hash(project+'\0'+cleanMach+'\0'+canonical(cleanPath));
+    db.prepare('DELETE FROM research_dismissed_directories WHERE id=?').run(id);
+    db.prepare(`INSERT INTO research_project_directories(id,project,machine,path,source,branch) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET path=excluded.path,source=excluded.source,
+      branch=CASE WHEN excluded.branch<>'' THEN excluded.branch ELSE research_project_directories.branch END`)
+      .run(id,project,cleanMach,cleanPath,source||'手动添加',cleanBranch);
+    if(saveProject){
+      const p=listProjects().find(x=>x.id===project);
+      if(p){
+        const ws=Array.isArray(p.workspaces)?[...p.workspaces]:[];
+        const ex=ws.find(w=>w.machine===cleanMach&&canonical(w.path)===canonical(cleanPath));
+        if(!ex){
+          ws.push({machine:cleanMach,path:cleanPath,mode:'rw',tag:'',branch:cleanBranch});
+          try{saveProject({id:p.id,name:p.name,workspaces:ws});}catch{}
+        }else if(cleanBranch&&ex.branch!==cleanBranch){
+          ex.branch=cleanBranch;
+          try{saveProject({id:p.id,name:p.name,workspaces:ws});}catch{}
+        }
+      }
+    }
+    return {id,project,machine:cleanMach,path:cleanPath,source:source||'手动添加',branch:cleanBranch};
+  }
+  function removeDirectory({project,id,machine,path:dirPath}){
+    const cat=catalog().find(p=>p.id===project);
+    if(!cat)throw Error('找不到项目');
+    const target=(cat.directories||[]).find(d=>{
+      const dId=hash(project+'\0'+d.machine+'\0'+canonical(d.path));
+      return (id&&dId===id)||(machine&&dirPath&&d.machine===machine&&canonical(d.path)===canonical(dirPath));
+    });
+    if(!target)throw Error('找不到要移除的项目目录');
+    const targetId=hash(project+'\0'+target.machine+'\0'+canonical(target.path));
+    db.prepare('INSERT OR REPLACE INTO research_dismissed_directories(id,project,machine,path,created) VALUES(?,?,?,?,?)')
+      .run(targetId,project,target.machine,norm(target.path),Date.now());
+    db.prepare('DELETE FROM research_project_directories WHERE id=?').run(targetId);
+    try{db.prepare('DELETE FROM research_directory_summaries WHERE id=?').run(targetId);}catch{}
+    if(saveProject){
+      const p=listProjects().find(x=>x.id===project);
+      if(p&&Array.isArray(p.workspaces)){
+        const nextWs=p.workspaces.filter(w=>!(w.machine===target.machine&&canonical(w.path)===canonical(target.path)));
+        if(nextWs.length!==p.workspaces.length){
+          try{saveProject({id:p.id,name:p.name,workspaces:nextWs});}catch{}
+        }
+      }
+    }
+    return {id:targetId,project,machine:target.machine,path:target.path,removed:true};
+  }
   function seed(){
     if(!saveProject)return;
     for(const entry of pilots.list().items){
@@ -133,10 +186,11 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
     }
   }
   function catalog(){return listProjects().map(p=>{
-    const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
-    for(const w of p.workspaces||[])if(!dirs.some(d=>d.machine===w.machine&&canonical(d.path)===canonical(w.path)))dirs.push({machine:w.machine,path:w.path,source:'项目工作区',branch:w.branch||''});
+    const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id)
+      .filter(d=>!isDismissed(p.id,d.machine,d.path));
+    for(const w of p.workspaces||[])if(!isDismissed(p.id,w.machine,w.path)&&!dirs.some(d=>d.machine===w.machine&&canonical(d.path)===canonical(w.path)))dirs.push({machine:w.machine,path:w.path,source:'项目工作区',branch:w.branch||''});
     for(const row of db.prepare('SELECT origins FROM research_review_items WHERE project=?').all(p.id))for(const o of JSON.parse(row.origins))
-      if(o.machine&&o.path&&!dirs.some(d=>d.machine===o.machine&&canonical(d.path)===canonical(o.path)))dirs.push({machine:o.machine,path:o.path,source:'工作事项目录',branch:''});
+      if(o.machine&&o.path&&!isDismissed(p.id,o.machine,o.path)&&!dirs.some(d=>d.machine===o.machine&&canonical(d.path)===canonical(o.path)))dirs.push({machine:o.machine,path:o.path,source:'工作事项目录',branch:''});
     const counts={pending:0,confirmed:0,ignored:0,merged:0};
     for(const r of db.prepare('SELECT status,count(*) n FROM research_review_items WHERE project=? GROUP BY status').all(p.id))counts[r.status]=r.n;
     return{id:p.id,name:p.name,directories:dirs,counts};
@@ -195,6 +249,6 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
       write(r,next);return[get(r.id)];
     });
   }
-  return{seed,catalog,items,get,change,directory};
+  return{seed,catalog,items,get,change,directory,addDirectory,removeDirectory,isDismissed};
 }
 module.exports={createReview};

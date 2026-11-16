@@ -182,6 +182,13 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
   }
 
   function change(input){return vault.transaction(()=>{
+    if(input.action==='add'){
+      const added=review.addDirectory({project:input.project,machine:input.machine,path:input.path,branch:input.branch,source:input.source||'手动添加'});
+      return list(input.project).find(d=>d.id===added.id)||added;
+    }
+    if(input.action==='delete'){
+      return review.removeDirectory({project:input.project,id:input.id,machine:input.machine,path:input.path});
+    }
     const current=list(input.project).find(d=>d.id===input.id);if(!current)throw Error('找不到项目目录');
     if(input.revision!==current.revision)throw Error('目录总结已有更新，请刷新后保存');
     const before=db.prepare('SELECT * FROM research_directory_summaries WHERE id=?').get(current.id);

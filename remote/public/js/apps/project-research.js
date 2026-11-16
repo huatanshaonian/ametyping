@@ -9,14 +9,6 @@ const KINDS={calculation:'计算',validation:'验证',exploration:'探索',analy
 export function researchTab(project) {
   const root=h('div',{class:'pr-root'}),status=h('div',{class:'pm-status',text:'读取 NAS 研究档案…'});
   const review=reviewPanel(project.id);
-  const settings=h('details',{class:'pr-card'},h('summary',{text:'DeepSeek API 设置（保存在 NAS）'}));
-  const model=h('input',{class:'field',placeholder:'模型名称'}),base=h('input',{class:'field',placeholder:'API 地址'});
-  const key=h('input',{class:'field',type:'password',autocomplete:'new-password',placeholder:'密钥：留空保留现有值'});
-  const form=h('div',{class:'pr-form'},h('label',{},'模型',model),h('label',{},'API 地址',base),h('label',{},'密钥',key),
-    h('button',{class:'btn',text:'保存 API 设置',onclick:async()=>{
-      const r=await post('/api/research/config',{project:project.id,model:model.value,base:base.value,key:key.value});
-      if(r.ok){key.value='';status.textContent='已保存 NAS 的 API 设置';await refresh();}else status.textContent=r.msg;
-    }}));settings.append(form);
   const sourceSelect=h('select',{class:'field'}),docs=h('div'),jobs=h('div'),work=h('div');
   const query=h('input',{class:'field',placeholder:'搜索本项目已导入的原文、命令和计算输出'}),hits=h('div');
   const toolbar=h('div',{class:'pr-toolbar'},sourceSelect,h('button',{class:'btn',text:'导入选中会话',onclick:async()=>{
@@ -31,8 +23,8 @@ export function researchTab(project) {
       hits.replaceChildren(...(r.items||[]).map(e=>h('div',{class:'pr-card'},h('b',{text:e.machine+' · '+e.kind}),h('pre',{text:e.text}),evidenceButton(e.id))));
       if(!r.ok)status.textContent=r.msg;
     }})),hits);
-  root.append(review.root,settings,processing);
-  let sources=[],closed=false,initialized=false;
+  root.append(review.root,processing);
+  let sources=[],closed=false;
   async function get(suffix=''){const i=suffix.indexOf('&'),route=i<0?suffix:suffix.slice(0,i),extra=i<0?'':suffix.slice(i);
     try{return await(await fetch('/api/research'+route+'?project='+encodeURIComponent(project.id)+extra)).json();}catch{return{ok:false,msg:'无法读取 NAS 研究档案'};}}
   function evidenceButton(id){return h('button',{class:'btn',text:'原文与前后文',onclick:async()=>{
@@ -46,7 +38,6 @@ export function researchTab(project) {
   function refs(evidence){return h('div',{class:'pr-refs'},...(evidence||[]).map(e=>h('details',{},h('summary',{text:'证据引用'}),h('blockquote',{text:e.quote}),evidenceButton(e.event_id))));}
   async function refresh(reloadSources=false){
     const r=await get();if(closed)return;if(!r.ok){status.textContent=r.msg;return;}
-    if(!initialized){model.value=r.provider.model||'';base.value=r.provider.base||'';initialized=true;}
     status.textContent=`${r.provider.model||'DeepSeek 未配置'} · ${r.documents.length} 份已导入资料 · ${r.totals.work} 个抽取结果`;
     if(!sources.length||reloadSources){const sr=await get('/sources');if(closed)return;sources=sr.items||[];
       sourceSelect.replaceChildren(...sources.map(s=>h('option',{value:JSON.stringify([s.machine,s.key]),text:s.machine+' · '+s.provider+' · '+s.session+' · '+s.path.split(/[\\/]/).pop()})));}

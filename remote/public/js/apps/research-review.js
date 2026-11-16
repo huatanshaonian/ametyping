@@ -15,14 +15,21 @@ export function reviewPanel(initialProject=null){
   const filter=h('select',{class:'field'},...Object.entries({pending:'待核对',confirmed:'已确认',all:'全部',ignored:'已忽略',merged:'已合并'}).map(([value,text])=>h('option',{value,text})));
   const search=h('input',{class:'field',placeholder:'搜索工作标题和内容'});
   const merge=h('button',{class:'btn rr-action',text:'合并选中',disabled:true,onclick:mergeDialog});
-  const directoryView=directoryPanel(),directories=directoryView.root;
+  const directoryView=directoryPanel(async()=>{
+    try{
+      await mesh.load();
+      const r=await get('/api/research/review/projects');
+      if(!closed&&r.ok){projects=r.items;drawCatalog();}
+    }catch{}
+  }),directories=directoryView.root;
   const overviewBtn=h('button',{class:'btn go',text:'🧭 AI 生成项目总览',onclick:runGenerateOverview});
+  const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
   const discoverBtn=h('button',{class:'btn',text:'🔍 AI 发现跨机目录',onclick:runDiscover});
   const sumAllBtn=h('button',{class:'btn',text:'🤖 AI 批量生成目录总结',onclick:runSummarizeAll});
-  const apiCfgBtn=h('button',{class:'btn',text:'⚙️ Google AI Studio / 模型设置',onclick:async()=>{const c=await import('./control.js');c.open('ai');}});
+  const apiCfgBtn=h('button',{class:'btn',text:'⚙️ AI 模型与 API 设置',onclick:async()=>{const c=await import('./control.js');c.open('ai');}});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
-      h('div',{class:'pr-toolbar'},title,overviewBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
+      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
       overviewBox,
       directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));

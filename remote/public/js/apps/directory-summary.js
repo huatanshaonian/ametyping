@@ -11,7 +11,7 @@ const shortName=(p,parentPath='')=>{
   return np;
 };
 
-export function directoryPanel(){
+export function directoryPanel(onChanged=()=>{}){
   const root=h('div',{class:'rd-root'});
   let project=null,closed=false,requestId=0,viewMode='graph',lastItems=[];
   const say=h('p',{class:'pm-status'});
@@ -30,8 +30,75 @@ export function directoryPanel(){
   async function change(item,action,extra={}){
     const r=await post('/api/research/directory',{project:item.project,id:item.id,revision:item.revision,action,...extra});
     say.textContent=r.ok?'目录总结已保存':r.msg;
-    if(r.ok)await load(project);
+    if(r.ok){await load(project);onChanged();}
     return r.ok;
+  }
+
+  function openAddDialog(){
+    if(!project)return;
+    const knownMachines=[...new Set(['huatanshaonian','dell97','nas',...lastItems.map(x=>x.machine).filter(Boolean)])];
+    const machInput=h('input',{class:'field',placeholder:'例如 huatanshaonian 或 dell97',value:knownMachines[0]||'huatanshaonian'});
+    const pathInput=h('input',{class:'field',placeholder:'例如 G:/CEM/new_branch 或 /home/dell/CEM_1/new_worktree'});
+    const branchInput=h('input',{class:'field',placeholder:'例如 master、mom_dev（可选，留空即可）'});
+    const feedback=h('p',{class:'pm-status'});
+    const machPills=h('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-top:4px'},
+      ...knownMachines.map(m=>h('button',{
+        class:'btn',
+        type:'button',
+        style:'font-size:11px;padding:1px 6px',
+        text:'🖥️ '+m,
+        onclick:()=>{machInput.value=m;},
+      }))
+    );
+    const submit=async()=>{
+      const machine=machInput.value.trim(),dirPath=pathInput.value.trim(),branch=branchInput.value.trim();
+      if(!machine||!dirPath){feedback.textContent='请填写电脑名称和文件夹路径';return;}
+      const r=await post('/api/research/directory',{project,action:'add',machine,path:dirPath,branch});
+      if(!r.ok){feedback.textContent=r.msg||'添加目录失败';return;}
+      dlg.close();
+      say.textContent=`已添加目录 ${machine}:${dirPath}`;
+      await load(project);
+      onChanged();
+    };
+    const form=h('div',{class:'pr-form'},
+      h('label',{},'所在电脑（点击下方快捷标签或直接输入）',machInput,machPills),
+      h('label',{},'文件夹路径',pathInput),
+      h('label',{},'Git 分支（可选）',branchInput),
+      feedback,
+      h('div',{class:'pr-toolbar',style:'justify-content:flex-end;margin-top:8px'},
+        h('button',{class:'btn go',type:'button',text:'＋ 确认添加',onclick:submit}),
+        h('button',{class:'btn',type:'button',text:'取消',onclick:()=>dlg.close()})
+      )
+    );
+    const dlg=h('dialog',{class:'pr-evidence rr-editor rd-add-dlg'},h('h3',{text:'＋ 手动添加项目文件夹目录'}),form);
+    dlg.addEventListener('close',()=>dlg.remove());
+    root.append(dlg);
+    dlg.showModal();
+  }
+
+  function openDeleteDialog(item){
+    const dlg=h('dialog',{class:'pr-evidence rd-del-dlg'},
+      h('h3',{text:'删除项目目录'}),
+      h('p',{text:`确定要从当前项目中移除目录「${item.machine} : ${norm(item.path)}」吗？`}),
+      h('p',{class:'ghint',text:'说明：仅将该目录从本项目的归类与工作区列表中移除，不会删除电脑硬盘上的任何实际文件。'}),
+      h('div',{class:'pr-toolbar',style:'justify-content:flex-end;margin-top:10px'},
+        h('button',{class:'btn go',type:'button',text:'🗑️ 确认删除',onclick:async()=>{
+          const r=await post('/api/research/directory',{project:item.project,id:item.id,machine:item.machine,path:item.path,action:'delete'});
+          dlg.close();
+          if(r.ok){
+            say.textContent=`已从项目中移除目录 ${item.machine}:${norm(item.path)}`;
+            await load(project);
+            onChanged();
+          }else{
+            say.textContent=r.msg||'删除目录失败';
+          }
+        }}),
+        h('button',{class:'btn',type:'button',text:'取消',onclick:()=>dlg.close()})
+      )
+    );
+    dlg.addEventListener('close',()=>dlg.remove());
+    root.append(dlg);
+    dlg.showModal();
   }
 
   async function aiSummarize(item,btn){
@@ -128,6 +195,7 @@ export function directoryPanel(){
         b&&item.status!=='confirmed'?h('button',{class:'btn go',text:'确认目录总结',onclick:async()=>{await change(item,'confirm');dlg.close();}}):null,
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>{dlg.close();edit(item);}}):null,
         h('button',{class:'btn',text:b?'🤖 AI 重新总结':'🤖 AI 生成总结',onclick:async(e)=>{await aiSummarize(item,e.currentTarget);dlg.close();}}),
+        h('button',{class:'btn',text:'🗑️ 删除目录',onclick:()=>{dlg.close();openDeleteDialog(item);}}),
         h('button',{class:'btn',text:'关闭',onclick:()=>dlg.close()})
       )
     );
@@ -182,7 +250,8 @@ export function directoryPanel(){
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>edit(item)}):null,
         b&&item.status==='confirmed'?h('button',{class:'btn',text:'恢复待核对',onclick:()=>change(item,'restore')}):null,
         h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),
-        aiBtn
+        aiBtn,
+        h('button',{class:'btn',title:'从当前项目中移除此目录',text:'🗑️ 删除目录',onclick:(e)=>{e.stopPropagation();openDeleteDialog(item);}})
       )
     );
   }
@@ -259,7 +328,12 @@ export function directoryPanel(){
         item.source?h('small',{class:'ghint',text:item.source}):null,
         h('span',{class:'rr-badge '+(item.status==='confirmed'?'confirmed':''),text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
       ),
-      h('div',{class:'rr-directory'},h('code',{text:item.path}),h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),aiBtn),
+      h('div',{class:'rr-directory'},
+        h('code',{text:item.path}),
+        h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),
+        aiBtn,
+        h('button',{class:'btn',text:'🗑️ 删除目录',onclick:()=>openDeleteDialog(item)})
+      ),
       h('small',{text:item.sessions+' 份会话 · '+item.documents+' 份已归集资料'+(item.changed?' · 有新资料待更新':'')}),
       b?h('div',{class:'rd-summary'},h('p',{class:'rd-overview',text:b.overview}),
         ...b.work.map(w=>h('section',{class:'rd-work'},h('h4',{text:w.title}),h('p',{text:w.description}),lines('结果',w.results),lines('产物',w.outputs),lines('未决问题',w.questions),
@@ -277,13 +351,14 @@ export function directoryPanel(){
     const bar=h('div',{class:'rd-view-bar'},
       h('span',{class:'rd-view-summary',text:`📊 跨机拓扑总览：${machCount} 台电脑 · ${items.length} 个目录/分支 · 累计 ${totalSess} 份对话（点击节点「查看详情」或摘要文字可展开完整结果与原文依据）`}),
       h('div',{class:'rd-view-btns'},
+        h('button',{class:'btn go',type:'button',text:'＋ 添加目录',onclick:openAddDialog}),
         h('button',{class:'btn '+(viewMode==='graph'?'go':''),type:'button',text:'🕸️ 结构拓扑图',onclick:()=>{viewMode='graph';render();}}),
         h('button',{class:'btn '+(viewMode==='list'?'go':''),type:'button',text:'📋 展开详细列表',onclick:()=>{viewMode='list';render();}})
       )
     );
     root.replaceChildren(
       say,
-      items.length?bar:null,
+      project?bar:null,
       viewMode==='graph'?renderGraphView(items):h('div',{},...items.map(renderListCard))
     );
   }
@@ -301,5 +376,5 @@ export function directoryPanel(){
     dialog.addEventListener('close',()=>dialog.remove());root.append(dialog);dialog.showModal();
   }
 
-  return{root,load,destroy(){closed=true;root.querySelectorAll('dialog').forEach(d=>d.close());}};
+  return{root,load,openAddDialog,destroy(){closed=true;root.querySelectorAll('dialog').forEach(d=>d.close());}};
 }
