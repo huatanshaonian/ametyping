@@ -148,4 +148,50 @@
 .pm-evt-src.run { background: #55efc4; color: #00b894; }
 .pm-evt-src.folder { background: #74b9ff; color: #0984e3; }
 .pm-evt-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Directory Topology Graph View (rd-graph-canvas) */
+.rd-view-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin: 4px 0 8px; background: var(--head-bg); border: 1px solid var(--edge); }
+.rd-view-summary { font-size: 12px; color: var(--ink); font-weight: bold; }
+.rd-view-btns { display: inline-flex; gap: 4px; }
+.rd-graph-canvas { display: flex; flex-direction: column; gap: 14px; }
+.rd-machine-cluster { border: 1px solid var(--border); background: var(--head-bg); padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
+.rd-machine-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 5px; border-bottom: 1px solid var(--edge); color: var(--border); }
+.rd-mach-stat { font-size: 11.5px; padding: 1px 6px; background: var(--surface); border: 1px solid var(--edge); color: var(--ink); }
+.rd-mach-branches { font-size: 11.5px; color: var(--muted); }
+.rd-machine-body { display: flex; flex-direction: column; gap: 10px; }
+
+.rd-hub-group { display: flex; flex-direction: column; gap: 6px; }
+.rd-children-tree { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; margin-left: 18px; padding-left: 12px; border-left: 2px solid var(--border); }
+.rd-child-branch { position: relative; display: flex; }
+.rd-child-branch > .rd-node { flex: 1; margin: 0; }
+
+.rd-node { margin: 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 5px; transition: box-shadow 0.2s, border-color 0.2s; }
+.rd-node.rd-is-hub { border-left: 4px solid var(--border); background: var(--gamepink); }
+.rd-node.rd-is-child { border-left: 3px solid #2b7a78; }
+.rd-node.rd-flash { border-color: #d97706; box-shadow: 0 0 0 2px #ffd166; }
+.rd-node-head { flex-wrap: wrap; gap: 6px; }
+.rd-role-icon { font-size: 11px; font-weight: bold; padding: 1px 5px; background: var(--tint-soft); border: 1px solid var(--edge); }
+.rd-node-path { font-weight: bold; color: var(--border); font-size: 12.5px; }
+.rd-branch-pill { background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; font-weight: bold; }
+.rd-sess-pill { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+.rd-overview-clamp { margin: 2px 0; font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; color: var(--ink); }
+.rd-overview-clamp:hover { text-decoration: underline; }
+.rd-empty-hint { margin: 2px 0; font-size: 11.5px; color: var(--muted); font-style: italic; }
+
+.rd-work-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.rd-work-pill { font-size: 11px; padding: 1px 6px; background: var(--tint-soft); border: 1px solid var(--edge); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-work-pill:hover { background: var(--fill); color: var(--on-fill); }
+
+.rd-rels { display: flex; flex-wrap: wrap; gap: 4px; }
+.rd-rel-pill { font-size: 11px; padding: 1px 6px; background: var(--head-bg); border: 1px dashed var(--border); color: var(--ink); cursor: pointer; }
+.rd-rel-pill.branch { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
+.rd-rel-pill.children { background: #dcfce7; color: #166534; border-color: #86efac; }
+.rd-node-actions { margin-top: auto; padding-top: 4px; border-top: 1px dotted var(--edge); gap: 4px; }
+
+.rd-detail-dlg { width: min(860px, 92vw); max-height: 86vh; padding: 12px 14px; }
+.rd-detail-head { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--edge); margin-bottom: 8px; }
+.rd-node-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+.rd-agg-pill { padding: 0 6px; background: #dcfce7; color: #166534; border: 1px solid #86efac; font-weight: bold; }
+.rd-sec-box { padding: 6px 8px; background: var(--head-bg); border-left: 3px solid var(--border); margin-bottom: 8px; }
 .pm-sec-hd { font-weight: bold; font-size: 12px; margin-bottom: 6px; color: var(--border); }
