@@ -114,6 +114,23 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
       }
       if(project)directory(project.id,d.machine,d.cwd,'历史工作目录');
     }
+    for(const p of [...listProjects()]){
+      if(!String(p.id||'').startsWith('proj_'))continue;
+      const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
+      if(!dirs.length)continue;
+      const curWs=Array.isArray(p.workspaces)?[...p.workspaces]:[];
+      let changed=false;
+      for(const d of dirs){
+        const ex=curWs.find(w=>w.machine===d.machine&&canonical(w.path)===canonical(d.path));
+        if(!ex){
+          curWs.push({machine:d.machine,path:d.path,mode:'rw',tag:d.source==='Git Worktree'?'code':'',branch:d.branch||''});
+          changed=true;
+        }else if(d.branch&&!ex.branch){
+          ex.branch=d.branch;changed=true;
+        }
+      }
+      if(changed){try{saveProject({id:p.id,name:p.name,workspaces:curWs});}catch{}}
+    }
   }
   function catalog(){return listProjects().map(p=>{
     const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
