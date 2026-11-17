@@ -1,346 +1,158 @@
 'use strict';
+// Registers Windose's MCP servers with every coding agent found on this computer (Claude Code, Antigravity, Codex,
+// OpenCode, Kiro), and removes them again with --remove. Run by the agent when it starts (remote/agent/agent.js), by the
+// deploy, or by hand:  node install-mesh-mcp.js [--remove] [--status]
+//   ame-mesh            tools/ame-mesh.js mcp              协同：拓扑、派活、汇报、后台作业
+//   windose-literature  remote/mcp/client.js literature    文献：按 DOI 下载（共用图书馆通道队列）
+//   windose-research    remote/mcp/client.js research      研究档案：只读查询
+// All three talk only to this computer's agent (127.0.0.1:3941, its token in ~/.ametyping), which passes them on over
+// its own connection to the dashboard server: nothing here needs SSH or any key of its own. Other entries in the
+// agents' configs are left as they are; the first change to a file keeps a copy beside it (.ame-backup-mcp).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function mergeClaudeJson(existingObj, { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
-  const out = existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)
-    ? JSON.parse(JSON.stringify(existingObj))
-    : {};
-  if (remove) {
-    if (out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)) {
-      delete out.mcpServers['ame-mesh'];
-    }
+const MESH_SCRIPT = path.join(__dirname, 'tools', 'ame-mesh.js');
+const CLIENT_SCRIPT = path.join(__dirname, 'remote', 'mcp', 'client.js');
+const NAMES = ['ame-mesh', 'windose-literature', 'windose-research'];
+
+// the entries to write: [{ name, args }] (command is node); only ame-mesh unless asked (the older callers)
+function entriesOf({ script = MESH_SCRIPT, client = CLIENT_SCRIPT, entries = null } = {}) {
+  return entries || [{ name: 'ame-mesh', args: [script, 'mcp'] }];
+}
+function allEntries({ script = MESH_SCRIPT, client = CLIENT_SCRIPT } = {}) {
+  return [{ name: 'ame-mesh', args: [script, 'mcp'] }, { name: 'windose-literature', args: [client, 'literature'] }, { name: 'windose-research', args: [client, 'research'] }];
+}
+const isObj = (o) => o && typeof o === 'object' && !Array.isArray(o);
+const clone = (o) => (isObj(o) ? JSON.parse(JSON.stringify(o)) : {});
+
+// one JSON config with a map of servers under `key`; shape(entry) is that agent's form of one
+function mergeMap(existingObj, opts, key, shape) {
+  const out = clone(existingObj);
+  const list = entriesOf(opts);
+  if (opts.remove) {
+    if (isObj(out[key])) for (const n of opts.entries ? list.map((e) => e.name) : NAMES) delete out[key][n];
   } else {
-    out.mcpServers = out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)
-      ? out.mcpServers
-      : {};
-    out.mcpServers['ame-mesh'] = {
-      type: 'stdio',
-      command: node,
-      args: [script, 'mcp'],
-      env: {},
-    };
+    out[key] = isObj(out[key]) ? out[key] : {};
+    for (const e of list) out[key][e.name] = shape(opts.node || process.execPath, e);
   }
   return out;
 }
+const mergeClaudeJson = (o, opts = {}) => mergeMap(o, opts, 'mcpServers', (node, e) => ({ type: 'stdio', command: node, args: e.args, env: {} }));
+const mergeAgyJson = (o, opts = {}) => mergeMap(o, opts, 'mcpServers', (node, e) => ({ command: node, args: e.args }));
+const mergeKiroJson = (o, opts = {}) => mergeMap(o, opts, 'mcpServers', (node, e) => ({ command: node, args: e.args }));
+const mergeOpenCodeJson = (o, opts = {}) => mergeMap(o, opts, 'mcp', (node, e) => ({ type: 'local', command: [node, ...e.args], enabled: true }));
 
-function mergeAgyJson(existingObj, { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
-  const out = existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)
-    ? JSON.parse(JSON.stringify(existingObj))
-    : {};
-  if (remove) {
-    if (out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)) {
-      delete out.mcpServers['ame-mesh'];
-    }
-  } else {
-    out.mcpServers = out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)
-      ? out.mcpServers
-      : {};
-    out.mcpServers['ame-mesh'] = {
-      command: node,
-      args: [script, 'mcp'],
-    };
-  }
-  return out;
-}
-
-function mergeCodexToml(existingText = '', { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
+// Codex's TOML: our [mcp_servers.<name>] sections taken out, then written again at the end
+function mergeCodexToml(existingText = '', opts = {}) {
+  const list = entriesOf(opts), node = opts.node || process.execPath;
+  const ours = new Set(opts.remove && !opts.entries ? NAMES : [...NAMES, ...list.map((e) => e.name)]);
   const lines = String(existingText || '').split(/\r?\n/);
   const outLines = [];
   let inSection = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\s*\[mcp_servers\.(?:ame-mesh|"ame-mesh"|'ame-mesh')\]\s*$/.test(line)) {
-      inSection = true;
+  for (const line of lines) {
+    const m = /^\s*\[mcp_servers\.(?:"([^"]+)"|'([^']+)'|([\w-]+))\]\s*$/.exec(line);
+    if (m && ours.has(m[1] || m[2] || m[3])) { inSection = true; continue; }
+    if (inSection) {
+      if (/^\s*\[.+\]\s*$/.test(line)) { inSection = false; outLines.push(line); }
       continue;
     }
-    if (inSection) {
-      if (/^\s*\[.+\]\s*$/.test(line)) {
-        inSection = false;
-        outLines.push(line);
-      } else {
-        continue;
-      }
-    } else {
-      outLines.push(line);
-    }
+    outLines.push(line);
   }
-
-  let cleaned = outLines.join('\n').trimEnd();
-  if (remove) {
-    return cleaned ? cleaned + '\n' : '';
-  }
-
-  const block = `[mcp_servers.ame-mesh]\ncommand = ${JSON.stringify(node)}\nargs = [${JSON.stringify(script)}, "mcp"]`;
-  return cleaned ? `${cleaned}\n\n${block}\n` : `${block}\n`;
-}
-
-function mergeOpenCodeJson(existingObj, { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
-  const out = existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)
-    ? JSON.parse(JSON.stringify(existingObj))
-    : {};
-  if (remove) {
-    if (out.mcp && typeof out.mcp === 'object' && !Array.isArray(out.mcp)) {
-      delete out.mcp['ame-mesh'];
-    }
-  } else {
-    out.mcp = out.mcp && typeof out.mcp === 'object' && !Array.isArray(out.mcp)
-      ? out.mcp
-      : {};
-    out.mcp['ame-mesh'] = {
-      type: 'local',
-      command: [node, script, 'mcp'],
-      enabled: true,
-    };
-  }
-  return out;
-}
-
-function mergeKiroJson(existingObj, { node = process.execPath, script = path.join(__dirname, 'tools', 'ame-mesh.js'), remove = false } = {}) {
-  const out = existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)
-    ? JSON.parse(JSON.stringify(existingObj))
-    : {};
-  if (remove) {
-    if (out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)) {
-      delete out.mcpServers['ame-mesh'];
-    }
-  } else {
-    out.mcpServers = out.mcpServers && typeof out.mcpServers === 'object' && !Array.isArray(out.mcpServers)
-      ? out.mcpServers
-      : {};
-    out.mcpServers['ame-mesh'] = {
-      command: node,
-      args: [script, 'mcp'],
-    };
-  }
-  return out;
-}
-
-function installKiro({
-  home = os.homedir(),
-  node = process.execPath,
-  script = path.join(__dirname, 'tools', 'ame-mesh.js'),
-  remove = false,
-} = {}) {
-  const kiroBaseDir = process.env.KIRO_HOME || path.join(home, '.kiro');
-  const kiroSettingsDir = path.join(kiroBaseDir, 'settings');
-  const kiroPath = path.join(kiroSettingsDir, 'mcp.json');
-  if (!Boolean(process.env.KIRO_HOME) && !fs.existsSync(kiroBaseDir)) {
-    return { status: 'skipped', path: kiroPath };
-  }
-  let existing = {};
-  let oldRaw = '';
-  if (fs.existsSync(kiroPath)) {
-    try {
-      oldRaw = fs.readFileSync(kiroPath, 'utf8');
-      const clean = oldRaw.replace(/^\uFEFF/, '').trim();
-      existing = clean ? JSON.parse(clean) : {};
-    } catch {
-      return { status: 'skipped', path: kiroPath, error: 'json_parse_error' };
-    }
-  }
-  if (!fs.existsSync(kiroPath) && remove) {
-    return { status: 'unchanged', path: kiroPath };
-  }
-  const nextObj = mergeKiroJson(existing, { node, script, remove });
-  const nextRaw = JSON.stringify(nextObj, null, 2) + '\n';
-  if (fs.existsSync(kiroPath) && oldRaw === nextRaw) {
-    return { status: 'unchanged', path: kiroPath };
-  }
-  safeAtomicWrite(kiroPath, nextRaw);
-  return { status: 'updated', path: kiroPath };
+  const cleaned = outLines.join('\n').trimEnd();
+  if (opts.remove) return cleaned ? cleaned + '\n' : '';
+  const blocks = list.map((e) => `[mcp_servers.${e.name}]\ncommand = ${JSON.stringify(node)}\nargs = [${e.args.map((a) => JSON.stringify(a)).join(', ')}]`).join('\n\n');
+  return cleaned ? `${cleaned}\n\n${blocks}\n` : `${blocks}\n`;
 }
 
 function safeAtomicWrite(filePath, content) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const backupFile = filePath + '.ame-backup-mcp';
-  if (fs.existsSync(filePath) && !fs.existsSync(backupFile)) {
-    try {
-      fs.copyFileSync(filePath, backupFile);
-    } catch {}
-  }
-
+  if (fs.existsSync(filePath) && !fs.existsSync(backupFile)) { try { fs.copyFileSync(filePath, backupFile); } catch {} }
   const tmpFile = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmpFile, content, 'utf8');
   fs.renameSync(tmpFile, filePath);
 }
+const readJson = (file) => { const raw = fs.readFileSync(file, 'utf8'); const clean = raw.replace(/^\uFEFF/, '').trim(); return { raw, obj: clean ? JSON.parse(clean) : {} }; };
 
-function installAll({
-  home = os.homedir(),
-  node = process.execPath,
-  script = path.join(__dirname, 'tools', 'ame-mesh.js'),
-  remove = false,
-  quiet = false,
-} = {}) {
-  const updated = [];
-  const unchanged = [];
-  const skipped = [];
-
-  // 1. Claude Code
-  const claudePath = path.join(home, '.claude.json');
-  const claudeDir = path.join(home, '.claude');
-  if (fs.existsSync(claudePath) || fs.existsSync(claudeDir)) {
-    let existing = {};
-    let oldRaw = '';
-    let parseOk = true;
-    if (fs.existsSync(claudePath)) {
-      try {
-        oldRaw = fs.readFileSync(claudePath, 'utf8');
-        const clean = oldRaw.replace(/^\uFEFF/, '').trim();
-        existing = clean ? JSON.parse(clean) : {};
-      } catch {
-        parseOk = false;
-        skipped.push('claude');
-      }
-    }
-    if (parseOk) {
-      if (!fs.existsSync(claudePath) && remove) {
-        unchanged.push('claude');
-      } else {
-        const nextObj = mergeClaudeJson(existing, { node, script, remove });
-        const nextRaw = JSON.stringify(nextObj, null, 2) + '\n';
-        if (fs.existsSync(claudePath) && oldRaw === nextRaw) {
-          unchanged.push('claude');
-        } else {
-          safeAtomicWrite(claudePath, nextRaw);
-          updated.push('claude');
-        }
-      }
-    }
-  } else {
-    skipped.push('claude');
-  }
-
-  // 2. Antigravity
+// where each agent keeps its MCP servers, and whether it is there at all
+function targets(home = os.homedir()) {
   const agyDir = process.env.AGY_CONFIG_DIR || path.join(home, '.gemini', 'config');
-  const agyPath = path.join(agyDir, 'mcp_config.json');
-  const agyHomeDir = path.join(home, '.gemini');
-  if (Boolean(process.env.AGY_CONFIG_DIR) || fs.existsSync(agyHomeDir)) {
-    let existing = {};
-    let oldRaw = '';
-    let parseOk = true;
-    if (fs.existsSync(agyPath)) {
-      try {
-        oldRaw = fs.readFileSync(agyPath, 'utf8');
-        const clean = oldRaw.replace(/^\uFEFF/, '').trim();
-        existing = clean ? JSON.parse(clean) : {};
-      } catch {
-        parseOk = false;
-        skipped.push('agy');
-      }
-    }
-    if (parseOk) {
-      if (!fs.existsSync(agyPath) && remove) {
-        unchanged.push('agy');
-      } else {
-        const nextObj = mergeAgyJson(existing, { node, script, remove });
-        const nextRaw = JSON.stringify(nextObj, null, 2) + '\n';
-        if (fs.existsSync(agyPath) && oldRaw === nextRaw) {
-          unchanged.push('agy');
-        } else {
-          safeAtomicWrite(agyPath, nextRaw);
-          updated.push('agy');
-        }
-      }
-    }
-  } else {
-    skipped.push('agy');
-  }
-
-  // 3. Codex
   const codexDir = process.env.CODEX_HOME || path.join(home, '.codex');
-  const codexPath = path.join(codexDir, 'config.toml');
-  if (fs.existsSync(codexPath) || fs.existsSync(codexDir)) {
-    let oldRaw = '';
-    if (fs.existsSync(codexPath)) {
-      oldRaw = fs.readFileSync(codexPath, 'utf8');
-    }
-    if (!fs.existsSync(codexPath) && remove) {
-      unchanged.push('codex');
-    } else {
-      const nextRaw = mergeCodexToml(oldRaw, { node, script, remove });
-      if (fs.existsSync(codexPath) && oldRaw === nextRaw) {
-        unchanged.push('codex');
-      } else {
-        safeAtomicWrite(codexPath, nextRaw);
-        updated.push('codex');
-      }
-    }
-  } else {
-    skipped.push('codex');
-  }
-
-  // 4. OpenCode
   const openCodeDir = process.env.OPENCODE_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode');
-  const openCodePath = path.join(openCodeDir, 'opencode.json');
-  if (fs.existsSync(openCodePath) || fs.existsSync(openCodeDir)) {
-    let existing = {};
-    let oldRaw = '';
-    let parseOk = true;
-    if (fs.existsSync(openCodePath)) {
-      oldRaw = fs.readFileSync(openCodePath, 'utf8');
-      try {
-        const clean = oldRaw.replace(/^\uFEFF/, '').trim();
-        existing = clean ? JSON.parse(clean) : {};
-      } catch {
-        // 若 JSON.parse 失败（例如是带注释的 JSONC），跳过不覆盖
-        parseOk = false;
-        skipped.push('opencode');
-      }
-    }
-    if (parseOk) {
-      if (!fs.existsSync(openCodePath) && remove) {
-        unchanged.push('opencode');
-      } else {
-        const nextObj = mergeOpenCodeJson(existing, { node, script, remove });
-        const nextRaw = JSON.stringify(nextObj, null, 2) + '\n';
-        if (fs.existsSync(openCodePath) && oldRaw === nextRaw) {
-          unchanged.push('opencode');
-        } else {
-          safeAtomicWrite(openCodePath, nextRaw);
-          updated.push('opencode');
-        }
-      }
-    }
-  } else {
-    skipped.push('opencode');
-  }
+  const kiroBase = process.env.KIRO_HOME || path.join(home, '.kiro');
+  return [
+    { id: 'claude', label: 'Claude Code', file: path.join(home, '.claude.json'), present: (f) => fs.existsSync(f) || fs.existsSync(path.join(home, '.claude')), kind: 'json', key: 'mcpServers', merge: mergeClaudeJson },
+    { id: 'agy', label: 'Antigravity', file: path.join(agyDir, 'mcp_config.json'), present: () => !!process.env.AGY_CONFIG_DIR || fs.existsSync(path.join(home, '.gemini')), kind: 'json', key: 'mcpServers', merge: mergeAgyJson },
+    { id: 'codex', label: 'Codex', file: path.join(codexDir, 'config.toml'), present: (f) => fs.existsSync(f) || fs.existsSync(codexDir), kind: 'toml', merge: mergeCodexToml },
+    { id: 'opencode', label: 'OpenCode', file: path.join(openCodeDir, 'opencode.json'), present: (f) => fs.existsSync(f) || fs.existsSync(openCodeDir), kind: 'json', key: 'mcp', merge: mergeOpenCodeJson },
+    { id: 'kiro', label: 'Kiro', file: path.join(kiroBase, 'settings', 'mcp.json'), present: () => !!process.env.KIRO_HOME || fs.existsSync(kiroBase), kind: 'json', key: 'mcpServers', merge: mergeKiroJson },
+  ];
+}
 
-  // 5. Kiro CLI
-  const kiroRes = installKiro({ home, node, script, remove });
-  if (kiroRes.status === 'updated') {
-    updated.push('kiro');
-  } else if (kiroRes.status === 'unchanged') {
-    unchanged.push('kiro');
-  } else {
-    skipped.push('kiro');
+// one agent: -> 'updated' | 'unchanged' | 'skipped'
+function installOne(t, opts) {
+  if (!t.present(t.file)) return 'skipped';
+  const exists = fs.existsSync(t.file);
+  if (!exists && opts.remove) return 'unchanged';
+  let raw = '', next;
+  if (t.kind === 'toml') { raw = exists ? fs.readFileSync(t.file, 'utf8') : ''; next = t.merge(raw, opts); }
+  else {
+    let obj = {};
+    if (exists) { try { ({ raw, obj } = readJson(t.file)); } catch { return 'skipped'; } }        // (JSONC and the like: left alone)
+    next = JSON.stringify(t.merge(obj, opts), null, 2) + '\n';
   }
+  if (exists && raw === next) return 'unchanged';
+  safeAtomicWrite(t.file, next);
+  return 'updated';
+}
 
+function installKiro({ home = os.homedir(), node = process.execPath, script = MESH_SCRIPT, remove = false, entries = null } = {}) {
+  const t = targets(home).find((x) => x.id === 'kiro');
+  if (!t.present(t.file)) return { status: 'skipped', path: t.file };
+  if (fs.existsSync(t.file)) { try { readJson(t.file); } catch { return { status: 'skipped', path: t.file, error: 'json_parse_error' }; } }
+  return { status: installOne(t, { node, script, remove, entries }), path: t.file };
+}
+
+// installAll(): every agent found, the three servers (entries: just these; script / client: other paths)
+function installAll({ home = os.homedir(), node = process.execPath, script = MESH_SCRIPT, client = CLIENT_SCRIPT, entries = null, remove = false, quiet = false } = {}) {
+  const updated = [], unchanged = [], skipped = [];
+  const opts = { node, script, remove, entries: entries || allEntries({ script, client }) };
+  if (remove && !entries) opts.entries = null;                                   // (removing: every name of ours)
+  let kiro = null;
+  for (const t of targets(home)) {
+    const s = installOne(t, opts);
+    (s === 'updated' ? updated : s === 'unchanged' ? unchanged : skipped).push(t.id);
+    if (t.id === 'kiro') kiro = { status: s, path: t.file };
+  }
   if (!quiet) {
-    if (updated.length) console.log(`[ame-mesh-mcp] updated: ${updated.join(', ')}`);
-    if (unchanged.length) console.log(`[ame-mesh-mcp] unchanged: ${unchanged.join(', ')}`);
-    if (skipped.length) console.log(`[ame-mesh-mcp] skipped: ${skipped.join(', ')}`);
+    if (updated.length) console.log(`[ame-mcp] updated: ${updated.join(', ')}`);
+    if (unchanged.length) console.log(`[ame-mcp] unchanged: ${unchanged.join(', ')}`);
+    if (skipped.length) console.log(`[ame-mcp] skipped: ${skipped.join(', ')}`);
   }
+  return { updated, unchanged, skipped, kiro };
+}
 
-  return { updated, unchanged, skipped, kiro: kiroRes };
+// what is registered where (for the dashboard's 控制面板 › MCP): [{ id, label, present, file, servers: [names], error }]
+function status({ home = os.homedir() } = {}) {
+  return targets(home).map((t) => {
+    const present = t.present(t.file), out = { id: t.id, label: t.label, present, file: t.file, servers: [] };
+    if (!present || !fs.existsSync(t.file)) return out;
+    try {
+      if (t.kind === 'toml') {
+        const text = fs.readFileSync(t.file, 'utf8');
+        out.servers = NAMES.filter((n) => new RegExp(`^\\s*\\[mcp_servers\\.(?:"${n}"|'${n}'|${n})\\]\\s*$`, 'm').test(text));
+      } else { const { obj } = readJson(t.file); out.servers = NAMES.filter((n) => isObj(obj[t.key]) && obj[t.key][n]); }
+    } catch { out.error = '配置文件读不了（可能带注释），没有改动'; }
+    return out;
+  });
 }
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  const remove = args.includes('--remove');
-  installAll({ remove });
+  if (args.includes('--status')) {
+    for (const s of status()) console.log(`${s.label.padEnd(12)} ${!s.present ? '（没装）' : s.error ? s.error : s.servers.length ? s.servers.join(', ') : '（还没登记）'}  ${s.present ? s.file : ''}`);
+  } else installAll({ remove: args.includes('--remove') });
 }
 
-module.exports = {
-  mergeClaudeJson,
-  mergeAgyJson,
-  mergeCodexToml,
-  mergeOpenCodeJson,
-  mergeKiroJson,
-  installKiro,
-  installAll,
-};
+module.exports = { mergeClaudeJson, mergeAgyJson, mergeCodexToml, mergeOpenCodeJson, mergeKiroJson, installKiro, installAll, status, allEntries, NAMES, CLIENT_SCRIPT, MESH_SCRIPT };

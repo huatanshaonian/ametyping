@@ -229,3 +229,15 @@
 .ocg-gen-roles select { max-width: 100%; min-width: 0; }
 @media (max-width: 560px) { .ocg-gen-row { grid-template-columns: auto minmax(0, 1fr); } .ocg-gen-name { grid-column: 2; } }
 .ocg-sources { margin-top: 14px; padding-top: 7px; border-top: 1px dotted var(--edge); font-size: 11.5px; color: var(--muted); }
+
+/* 控制面板 › MCP (apps/mcp-panel.js) */
+.mcp { padding: 8px 14px 18px; font-size: 13px; line-height: 1.6; }
+.mcp-card { margin: 6px 0 10px; padding: 6px 10px; border: 1px solid var(--edge); border-left: 4px solid var(--border); background: var(--surface); }
+.mcp-card.off { opacity: .65; } .mcp-card p { margin: 3px 0; }
+.mcp-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; } .mcp-h b { color: var(--border); } .mcp-h code { font: 11.5px Consolas, monospace; background: var(--tint); padding: 0 4px; }
+.mcp .tag { font-style: normal; font-size: 10.5px; padding: 0 4px; border: 1px solid var(--edge); color: var(--muted); }
+.mcp-lim { color: var(--muted); font-size: 12px; } .mcp-tools { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.mcp-t { width: 100%; border-collapse: collapse; font-size: 12.5px; } .mcp-t th { text-align: left; font-weight: normal; color: var(--muted); border-bottom: 1px solid var(--edge); }
+.mcp-t td { padding: 4px 6px 4px 0; border-bottom: 1px dotted var(--edge); vertical-align: top; } .mcp-t td small { color: var(--muted); } .mcp-t small.bad { color: var(--bad); }
+.mcp-cl { display: flex; flex-direction: column; gap: 1px; } .mcp-c b { font-weight: normal; color: var(--ink); }
+.mcp pre { max-width: 100%; overflow: auto; margin: 0; padding: 6px 8px; white-space: pre; font: 11.5px/1.5 Consolas, monospace; }

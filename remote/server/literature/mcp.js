@@ -199,4 +199,4 @@ if (require.main === module) {
   } catch (e) { process.stderr.write(e.message + '\n'); process.exit(1); }
 }
 
-module.exports = { createMcp, serve, direct, TOOLS };
+module.exports = { createMcp, serve, direct, TOOLS, INSTRUCTIONS };
