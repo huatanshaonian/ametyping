@@ -30,6 +30,18 @@ function createCrossref({ http, base = 'https://api.crossref.org', mailto = '' }
           abstract: w.abstract || '', type: w.type === 'proceedings-article' ? 'conferencePaper' : 'journalArticle', issn });
       });
     },
+    // one work by DOI (下载: when OpenAlex does not know it yet), or null
+    async byDoi(doi) {
+      const s = new URLSearchParams(M() ? { mailto: M() } : {}).toString();
+      let j;
+      try { j = await http.json(`${base}/works/${encodeURIComponent(doi)}${s ? '?' + s : ''}`); } catch (e) { if (e.status === 404) return null; throw e; }
+      const w = j && j.message;
+      if (!w || !w.DOI) return null;
+      const dp = ((w.published || w['published-online'] || w['published-print'] || w.issued || {})['date-parts'] || [[]])[0];
+      return paper({ source: 'crossref', doi: w.DOI, title: (w.title || [])[0], authors: (w.author || []).map((a) => [a.family, a.given].filter(Boolean).join(', ')),
+        venue: (w['container-title'] || [])[0], year: dp[0], date: dp[0] ? `${dp[0]}-${String(dp[1] || 1).padStart(2, '0')}-${String(dp[2] || 1).padStart(2, '0')}` : '',
+        abstract: w.abstract || '', type: w.type === 'proceedings-article' ? 'conferencePaper' : w.type === 'report' ? 'report' : 'journalArticle', issn: (w.ISSN || [])[0] || '' });
+    },
   };
 }
 

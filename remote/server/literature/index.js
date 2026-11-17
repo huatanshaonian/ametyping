@@ -10,6 +10,8 @@
 //   openalexKey      a free OpenAlex key (a larger daily budget)
 //   browserPort      the DevTools port of the browser signed in to the library (图书馆通道; also in 控制面板 › 文献)
 //   daily 2, at "07:30", minScore 6, reviewCollection "气动隐身", inboxCollection "每日文献", writeNotes true
+//   downloadCollection "文献下载"  where papers asked for by DOI go (下载: downloads.js)
+//   agentSocket      the local socket agents' MCP talks to (default <dataDir>/literature/agent.sock; false = none)
 // Web API (all under /api/lit, the page's login applies; POSTs are same-origin): see handle() below.
 'use strict';
 const fs = require('fs');
@@ -45,6 +47,8 @@ const { createPdfQueue } = require('./pdfqueue');
 const { createNotes } = require('./notes');
 const { createAnnots } = require('./annots');
 const { createDigest } = require('./digest');
+const { createDownloads, doisIn, pdfName } = require('./downloads');
+const { createAgentSocket, defaultSocket } = require('./agent-socket');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
@@ -115,6 +119,10 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // abstracts the indexes lack, read off the articles' pages in that browser while the PDF queue has nothing to do
   const absjob = createAbsJob({ feed, library: libAccess, idle: () => !pdfq.status().running, log, ...(cfg.absJob || {}) });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, pdfq, log, onChange: () => changed('feed') });
+  // 下载: papers by DOI, from 文献库's box or an agent (the MCP, over a local socket only: agent-socket.js, mcp.js)
+  const downloads = createDownloads({ dir, cfg: conf, api, mirror, fulltext, pdfq, fetchPdf: intake.fetchPdf, log, onChange: () => changed('downloads'),
+    lookups: [sources.openalex && ((d) => sources.openalex.byDoi(d)), sources.crossref && ((d) => sources.crossref.byDoi(d))].filter(Boolean), ...(cfg.downloadsOpts || {}) });
+  const agentSock = cfg.agentSocket === false ? null : createAgentSocket({ socket: cfg.agentSocket || defaultSocket(dir), downloads, log, audit });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, pdfq, log, onChange: () => changed('survey') });
   const stats = createStats({ kb, feed, todos });
@@ -125,6 +133,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   mirror.start();
   intake.start();
   pdfq.start();
+  downloads.start();
+  if (agentSock) agentSock.start();
   absjob.start();
   if (cfg.feed !== false) feed.start();
   let authError = '';
@@ -189,13 +199,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       if (!f) { json(res, 404, { error: '这篇还没有 PDF（或还没同步到群晖）' }); return true; }
       // dl=1: saved as a file (下载), named the way Zotero names them -- "Wang 等 - 2026 - Title.pdf" -- since the stored
       // names are often the DOI or a report number, no use outside
-      const dl = qs('dl') === '1', it = mirror.item(qs('key'));
-      let name = f.name;
-      if (dl && it && it.title) {
-        const who = it.creators.length ? it.creators[0].split(',')[0].trim() + (it.creators.length > 1 ? ' 等' : '') : '';
-        const t = it.title.length > 100 ? it.title.slice(0, 100).trim() : it.title;
-        name = [who, it.year || '', t].filter(Boolean).join(' - ').replace(/[\\/:*?"<>|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() + '.pdf';
-      }
+      const dl = qs('dl') === '1';
+      const name = dl ? pdfName(mirror.item(qs('key')), f.name) : f.name;
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': f.buf.length, 'Content-Disposition': `${dl ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`,
         'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Cache-Control': 'private, max-age=600' });
       res.end(f.buf); audit('lit-pdf', ip, qs('key'));
@@ -224,6 +229,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/reviews') { history.seed(profile.get()); json(res, 200, { items: review.list(), job: review.state(), graph: history.graph(), has: !!(profile.get() && (profile.get().questions || []).length) }); return true; }
     if (G && p === '/api/lit/review') { const r = review.get(qs('id')); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/pdfq') { json(res, 200, pdfq.status()); return true; }
+    if (G && p === '/api/lit/downloads') { json(res, 200, { items: downloads.list(), limits: downloads.limits() }); return true; }
     if (G && p === '/api/lit/stats') { json(res, 200, stats.range(Math.min(90, Math.max(1, +qs('days') || 7)))); return true; }
     if (p.startsWith('/api/lit/notes')) return notes.handle(req, res, url, json, readBody);
     if (p.startsWith('/api/lit/annots')) return annots.handle(req, res, url, json, readBody);
@@ -314,6 +320,11 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       const cols = [conf().inboxCollection, conf().surveyCollection].map((n) => mirror.collectionByName(n)).filter(Boolean).map((c) => c.key);
       r = !pdfq.status().enabled ? { ok: false, msg: '图书馆通道没有开启（控制面板 › 文献）' } : { ok: true, n: pdfq.fill(cols) };
     }
+    // 下载: the DOIs in what was typed (several at once), a failed one tried again at once
+    else if (what === 'download') {
+      const list = typeof d.text === 'string' ? doisIn(d.text.slice(0, 20000)) : Array.isArray(d.dois) ? d.dois.map(String) : [];
+      r = list.length ? downloads.submit(list, { by: 'windose', force: true }) : { ok: false, msg: '没找到 DOI（要像 10.1109/TAP.2020.1234567 这样）' };
+    }
     else if (what === 'pdfq/continue') r = pdfq.resume(String(d.site || ''));
     else if (what === 'pdfq/retry') r = pdfq.retry(key);
     else if (what === 'pdfq/drop') r = pdfq.drop(key);
@@ -332,7 +343,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, notes, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); } };
+  return { handle, morning, mirror, feed, cards, notes, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, downloads,
+    stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); downloads.stop(); if (agentSock) agentSock.stop(); } };
 }
 
 module.exports = { createLiterature };
