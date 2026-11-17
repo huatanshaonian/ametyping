@@ -139,7 +139,17 @@ function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext,
     const b = st.blocks[it.site];
     return b ? '图书馆通道：' + b.msg : key === running ? '正在通过图书馆通道下载…' : browser ? '图书馆通道暂停：' + browser : '排队通过图书馆通道下载';
   }
-  return { add, fill, retry, drop, got, resume, status, note, tick, start, stop, has: (key) => !!st.items[key] };
+  // where one paper stands, for 下载 (downloads.js): its state, what its site waits for, the pause, the day's cap, how
+  // many wait before it
+  function info(key) {
+    const it = st.items[key];
+    if (!it) return null;
+    const b = st.blocks[it.site];
+    const ahead = it.state === 'waiting' ? Object.values(st.items).filter((x) => x.state === 'waiting' && x.key !== key && x.added < it.added).length : 0;
+    return { state: key === running ? 'running' : it.state, why: it.why, site: byId(it.site).name, block: b ? { need: b.need, msg: b.msg, name: b.name } : null,
+      paused: browser, limit: perDay() >= 0 && today() >= perDay(), ahead };
+  }
+  return { add, fill, retry, drop, got, resume, status, note, info, tick, start, stop, has: (key) => !!st.items[key] };
 }
 
 module.exports = { createPdfQueue };

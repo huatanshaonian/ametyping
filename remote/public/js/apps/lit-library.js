@@ -8,6 +8,7 @@ import { get, post, authors, STATUS } from './lit-api.js';
 import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
 import { pdfqBox } from './lit-pdfq.js';
+import { downloadBox } from './lit-download.js';
 import * as backnav from '../backnav.js';
 
 export function mount(el, ctx) {
@@ -22,7 +23,8 @@ export function mount(el, ctx) {
   const view = h('div', { class: 'lb-view' }, h('p', { class: 'lit-empty', text: '点左边的一篇看详情。' }));
   el.classList.add('lb');
   const pdfq = pdfqBox(ctx);                                                    // 图书馆通道: PDFs on their way, what waits for the user
-  el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), pdfq.el, h('div', { class: 'lb-main' }, listEl, view));
+  const dl = downloadBox(ctx);                                                  // 按 DOI 下载 (also what agents asked for)
+  el.append(h('div', { class: 'lit-sub' }, back, colSel, q, filt, count), dl.el, pdfq.el, h('div', { class: 'lb-main' }, listEl, view));
   let items = [], cur = null, cols = [], qT = null, vbox = null, absOpen = '';
 
   async function loadCols() {
@@ -129,6 +131,6 @@ export function mount(el, ctx) {
   colSel.addEventListener('change', loadList); filt.addEventListener('change', loadList);
   q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(loadList, 250); });
   let first = true;
-  async function refresh() { pdfq.refresh(); if (first) { first = false; await loadCols(); } await loadList(); }
-  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (w === 'pdfq') pdfq.refresh(); if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
+  async function refresh() { pdfq.refresh(); dl.refresh(); if (first) { first = false; await loadCols(); } await loadList(); }
+  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (w === 'pdfq') pdfq.refresh(); if (/^(downloads|pdfq|library)$/.test(w)) dl.refresh(); if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
 }

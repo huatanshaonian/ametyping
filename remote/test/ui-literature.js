@@ -153,6 +153,13 @@ async function until(fn, ms = 20000, step = 250) { const end = Date.now() + ms; 
     chk('no stray "null" text in the paper', !(await evalJs("/null/.test(document.querySelector('.lb-view').textContent)")), 0);
     chk('文献库: 读图 says the short paper was read as images (the deep card made on keeping it did that)', await waitFor("/读图：已看原图转写 全部 2 页/.test((document.querySelector('.lb-view .lv') || {}).textContent || '')"), await evalJs("(document.querySelector('.lb-view .lv')||{}).textContent"));
     await shot('82-lit-library.png');
+    // 按 DOI 下载: the box above the library; a DOI pasted with words around it, the job shown until its PDF is there
+    chk('按 DOI 下载: the box and the queue\'s limits above the library', await waitFor("!!document.querySelector('.ldl .ldl-in') && /一次最多 20 个 DOI/.test(document.querySelector('.ldl').textContent)"), await evalJs("(document.querySelector('.ldl')||{}).textContent"));
+    await evalJs("(() => { const i = document.querySelector('.ldl-in'); i.value = '这篇 https://doi.org/10.1000/survey1。'; document.querySelector('.ldl-f .btn').click(); })()");
+    chk('按 DOI 下载: submitted, then 拿到 with its title (an open copy)', await waitFor("/提交了 1 篇/.test(document.querySelector('.ldl-msg').textContent) && [...document.querySelectorAll('.ldl-i.s-done')].some(r => /Hypersonic wake/.test(r.textContent))", 30000),
+      await evalJs("document.querySelector('.ldl').textContent"));
+    await evalJs("document.querySelector('.ldl-done').open = true");
+    await shot('82b-lit-download.png');
 
     // 深读卡 with its figures, and 卡片库 (before the card is changed by hand below: a card the user changed is not overwritten)
     await evalJs("[...document.querySelectorAll('.lit-tab')].find(b => b.textContent === '文献库').click()");
