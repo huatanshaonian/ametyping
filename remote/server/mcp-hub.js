@@ -14,20 +14,24 @@ const MESH_TOOLS = ['mesh_status', 'mesh_tree', 'mesh_note', 'mesh_spawn', 'mesh
 
 function createMcpHub({ machines, lit = null, researchDb = () => null, cfg = {}, audit = () => {}, log = () => {} }) {
   const on = (s) => cfg[s] !== false;
-  const litMcp = (() => { try { return require('./literature/mcp'); } catch { return null; } })();
-  const resMcp = (() => { try { return require('./research/mcp'); } catch (e) { log('MCP：研究档案的工具加载不了：' + e.message); return null; } })();
+  // (loaded on first use: nothing added to the server's start-up)
+  let litMod, resMod;
+  const litMcpOf = () => { if (litMod === undefined) { try { litMod = require('./literature/mcp'); } catch { litMod = null; } } return litMod; };
+  const resMcpOf = () => { if (resMod === undefined) { try { resMod = require('./research/mcp'); } catch (e) { resMod = null; log('MCP：研究档案的工具加载不了：' + e.message); } } return resMod; };
   let resTools = null;
   const research = () => {
     if (resTools) return resTools;
-    const db = researchDb();
+    const db = researchDb(), resMcp = resMcpOf();
     if (!db || !resMcp) return null;
     try { db.prepare('SELECT 1 FROM research_work LIMIT 1').get(); } catch { return null; }             // (the research tables not made yet)
     return (resTools = resMcp.createTools(db));
   };
-  const toolNames = (s) => s === 'literature' ? (litMcp ? litMcp.TOOLS.map((t) => t.name) : []) : s === 'research' ? (resMcp ? resMcp.createTools(null).tools.map((t) => t.name) : []) : MESH_TOOLS;
+  const toolNames = (s) => { const l = s === 'literature' && litMcpOf(), r = s === 'research' && resMcpOf();
+    return s === 'literature' ? (l ? l.TOOLS.map((t) => t.name) : []) : s === 'research' ? (r ? r.createTools(null).tools.map((t) => t.name) : []) : MESH_TOOLS; };
 
   // literature: the tools of literature/mcp.js, its requests answered by the downloads here (as agent-socket.js would)
   function litTools(machine, client) {
+    const litMcp = litMcpOf();
     const d = lit && lit.downloads;
     const by = () => `${machine}/${client || 'agent'}`.replace(/[^\w.@\-+/ ]/g, '').slice(0, 80);
     const call = async (m, p, b) => {
@@ -44,6 +48,7 @@ function createMcpHub({ machines, lit = null, researchDb = () => null, cfg = {},
 
   async function answer(m, d, send) {
     const s = d.service, args = d.args && typeof d.args === 'object' ? d.args : {}, client = String(d.client || '').replace(/[^\w.\-]/g, '').slice(0, 40);
+    const litMcp = s === 'literature' ? litMcpOf() : null, resMcp = s === 'research' ? resMcpOf() : null;
     if (s === 'literature') {
       if (!on('literature')) return { ok: false, msg: '看板服务器关掉了文献 MCP（config.json 的 "mcp"）' };
       if (!lit || !lit.downloads || !litMcp) return { ok: false, msg: '看板服务器没有开文献模块' };
