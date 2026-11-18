@@ -168,6 +168,13 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
         try{onMemoryChange();}catch{}
         audit('research-overview-promote',body.project,item.name);json(res,200,{ok:true,item});return true;
       }
+      if(url.pathname==='/api/research/assistant'){
+        const body=JSON.parse(await readBody(req,128*1024));
+        if(body.scope!=='all')checkProject(body.project);
+        const item=await directories.askAssistant(body);
+        audit('research-assistant',body.project||'all',String(body.question||'').slice(0,40));
+        json(res,200,{ok:true,item});return true;
+      }
       if(url.pathname==='/api/research/review'){
         const body=JSON.parse(await readBody(req,256*1024)),items=review.change(body);
         audit('research-review',body.action,items.map(i=>i.id).join(','));json(res,200,{ok:true,items});return true;

@@ -54,9 +54,11 @@ async function browser(project){
     await until(()=>evaluate("!!document.querySelector('dialog[open]')"));
     assert.ok(await evaluate("document.querySelector('dialog').textContent.includes('扫频')"));
     await evaluate("document.querySelector('dialog button').click()");
+    assert.ok(await evaluate("!!document.querySelector('.clippy-root') && !document.querySelector('.clippy-root').classList.contains('is-hidden')"));
+    assert.equal(await evaluate("[...document.querySelectorAll('.pm-side button')].some(x=>x.textContent==='目录工作总结')"),false);
     const out=path.join(__dirname,'out','shots');fs.mkdirSync(out,{recursive:true});
     const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,'research-pilot.png'),Buffer.from(shot.result.data,'base64'));
-    await evaluate("[...document.querySelectorAll('.pm-side button')].find(x=>x.textContent==='目录工作总结').click()");
+    await evaluate("(async()=>(await import('/js/apps/research-pilots.js')).open())()");
     await until(()=>evaluate("document.querySelector('.rr-root:not(.rr-embedded)')?.textContent.includes('历史计算候选')"));
     await evaluate("document.querySelector('.rr-root:not(.rr-embedded) .rr-raw').open=true");
     await evaluate("window.reviewRoot=()=>document.querySelector('.rr-root:not(.rr-embedded)');window.reviewCard=t=>[...reviewRoot().querySelectorAll('.rr-item')].find(c=>c.querySelector('.rr-item-head b').textContent===t);window.reviewClick=(t,b)=>[...reviewCard(t).querySelectorAll('button')].find(x=>x.textContent===b).click()");

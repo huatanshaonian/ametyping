@@ -43,7 +43,7 @@ const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 // claudeApis: the NAS's local cc-environments profiles; machine is retained for injected test providers.
 function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas', magpie = null, googleAi = null }) {
   const file = path.join(dataDir, 'ai-settings.json');
-  let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, tasks: {} };
+  let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, clippy: { model: '' }, tasks: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
   const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
 
@@ -130,6 +130,10 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     const clean = (x) => ({ model: SLUG.test(x && x.model) ? x.model : '', effort: EFFORT.test(x && x.effort) ? x.effort : '' });
     if (d.default) st.default = clean(d.default);
     if (d.backup) st.backup = clean(d.backup);
+    if (d.clippy && typeof d.clippy === 'object') {
+      const rawM = String(d.clippy.model || '').trim();
+      st.clippy = { model: /^[A-Za-z0-9._/:+-]{0,160}$/.test(rawM) ? rawM : '' };
+    }
     if (d.tasks) for (const t of TASKS) if (d.tasks[t.id]) {
       const c = clean(d.tasks[t.id]);
       if (c.model || c.effort) st.tasks[t.id] = c; else delete st.tasks[t.id];
@@ -138,9 +142,16 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
     return { ok: true };
   }
 
+  function clippyModel() {
+    const raw = (st.clippy && st.clippy.model) || '';
+    if (!raw) return 'antigravity/gemini-4-hydrogen';
+    if (raw.startsWith('magpie:')) return decodeModel(raw) || raw.slice(7) || 'antigravity/gemini-4-hydrogen';
+    return raw;
+  }
+
   const view = () => ({ tasks: TASKS.map((t) => ({ ...t, set: st.tasks[t.id] || { model: '', effort: '' }, uses: pick(t.id) })),
-    default: st.default, backup: st.backup || { model: '', effort: '' }, fallbackModel, models: models() });
-  return { pick, set, view, models, TASKS };
+    default: st.default, backup: st.backup || { model: '', effort: '' }, clippy: { model: (st.clippy && st.clippy.model) || '', resolved: clippyModel() }, fallbackModel, models: models() });
+  return { pick, set, view, models, clippyModel, TASKS };
 }
 
 module.exports = { createAiSettings, TASKS };

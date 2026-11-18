@@ -52,6 +52,17 @@ test('AI discover and summarize workflow with Magpie gemini-4-hydrogen imports s
         if(prompt.includes('候选目录')){
           return {classified_dirs:[{machine:'huatanshaonian',path:'G:/feko_data/CW_geometry',project_id:'proj_cem',branch:'geometry_prep'}]};
         }
+        if(prompt.includes('大眼夹 (Clippy)')){
+          return {
+            mood:'congratulate',
+            headline:'已在 dell97 的 /home/dell/CEM_1/CEM_FDTD [fdtd_dev] 完成空域泄漏门控与三档网格验证。',
+            answer:'FDTD 求解器在该工作树完成了空域泄漏门控（-62.7 dB）与 CW001 三档网格收敛验证。',
+            key_results:['空域泄漏 -62.7 dB','CW001 三档网格收敛验证完成'],
+            locations:[{machine:'dell97',path:'/home/dell/CEM_1/CEM_FDTD',branch:'fdtd_dev',files:['solvers/fdtd/grid.py'],role:'GPU FDTD 求解器主分支'}],
+            evidence_refs:['E1'],
+            follow_ups:['CW001 对称面共形网格提速多少？'],
+          };
+        }
         return {
           overview:'该目录承载 GPU FDTD 求解器开发与 CW001 乘波体全波验证。',
           work:[{
@@ -80,6 +91,13 @@ test('AI discover and summarize workflow with Magpie gemini-4-hydrogen imports s
     assert.equal(fdtdDir.branch,'fdtd_dev');
     assert.ok(fdtdDir.body.overview.includes('GPU FDTD'));
     assert.ok(fdtdDir.body.work[0].evidence[0].quote.includes('-62.7 dB'));
+
+    // Clippy assistant queries structured summaries and verbatim evidence
+    const ans=await d.askAssistant({project:'proj_cem',question:'FDTD 空域泄漏做过没有？结果在哪？',scope:'project'});
+    assert.equal(ans.mood,'congratulate');
+    assert.ok(ans.headline.includes('CEM_FDTD'));
+    assert.equal(ans.locations[0].path,'/home/dell/CEM_1/CEM_FDTD');
+    assert.ok(ans.evidence.length>=1);
 
     // Manual add and delete directory actions
     const manual=d.change({project:'proj_cem',action:'add',machine:'dell97',path:'/home/dell/CEM_1/manual_worktree',branch:'manual_branch'});

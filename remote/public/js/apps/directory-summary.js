@@ -24,7 +24,8 @@ export function directoryPanel(onChanged=()=>{}){
       if(!r.ok){root.replaceChildren(h('p',{text:r.msg}));return;}
       lastItems=r.items||[];
       render();
-    }catch{if(!closed&&request===requestId)say.textContent='读取目录总结失败';}
+      return lastItems;
+    }catch{if(!closed&&request===requestId)say.textContent='读取目录总结失败';return [];}
   }
 
   async function change(item,action,extra={}){

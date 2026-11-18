@@ -3,6 +3,7 @@ import {post} from '../net.js';
 import * as wm from '../wm.js';
 import * as mesh from '../mesh.js';
 import {directoryPanel} from './directory-summary.js';
+import {attachClippy} from './clippy.js';
 const states={planned:'计划',started:'进行中',reported_complete:'已完成',reported_failed:'失败',unknown:'待整理'};
 const kinds={calculation:'计算',validation:'验证',exploration:'analysis',analysis:'分析',implementation:'实现',other:'其他'};
 const reviews={pending:'待核对',confirmed:'已确认',ignored:'已忽略',merged:'已合并'};
@@ -23,13 +24,14 @@ export function reviewPanel(initialProject=null){
     }catch{}
   }),directories=directoryView.root;
   const overviewBtn=h('button',{class:'btn go',text:'🧭 AI 生成项目总览',onclick:runGenerateOverview});
+  const clippyBtn=h('button',{class:'btn',text:'📎 大眼夹助手',onclick:()=>summonClippy(true)});
   const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
   const discoverBtn=h('button',{class:'btn',text:'🔍 AI 发现跨机目录',onclick:runDiscover});
   const sumAllBtn=h('button',{class:'btn',text:'🤖 AI 批量生成目录总结',onclick:runSummarizeAll});
   const apiCfgBtn=h('button',{class:'btn',text:'⚙️ AI 模型与 API 设置',onclick:async()=>{const c=await import('./control.js');c.open('ai');}});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
-      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
+      h('div',{class:'pr-toolbar'},title,overviewBtn,clippyBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
       overviewBox,
       directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
@@ -149,13 +151,15 @@ export function reviewPanel(initialProject=null){
 
   async function runGenerateOverview(){
     if(busy||!project)return;busy=true;overviewBtn.disabled=true;
-    say('正在聚合当前项目所有目录总结与记忆，生成跨目录课题演进总览…');
+    say('正在自动补齐增量目录总结并合成项目宏观总览…');
     try{
       const r=await post('/api/research/overview/generate',{project});
       if(!r.ok){say(r.msg||'生成项目总览失败');return;}
       overview=r.item;
       renderOverview();
-      say('已生成项目宏观总览与课题演进脉络');
+      const dirItems=await directoryView.load(project);
+      syncClippy(dirItems);
+      say('已更新全部目录总结与项目宏观总览');
     }finally{busy=false;overviewBtn.disabled=false;}
   }
 
@@ -187,6 +191,37 @@ export function reviewPanel(initialProject=null){
     const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 目录工作总结（共 '+p.directories.length+' 个跨机目录/分支）':'目录工作总结';
   }
 
+  function syncClippy(dirItems=[]){
+    const p=projects.find(x=>x.id===project);
+    const changedCount=(dirItems||[]).filter(d=>d.sessions>0&&(!d.body||d.changed)).length;
+    if(changedCount>0){
+      overviewBtn.textContent=`🧭 AI 生成项目总览（${changedCount} 个目录待更新）`;
+    }else{
+      overviewBtn.textContent='🧭 AI 生成项目总览';
+    }
+    attachClippy({
+      project,
+      projectName:p?.name||'',
+      dirCount:(dirItems||p?.directories||[]).length,
+      changedCount,
+      onJumpToDir:jumpToDirNode,
+      onShowEvidence:evidenceDialog,
+      onUpdateOverview:runGenerateOverview,
+    });
+  }
+  function summonClippy(){
+    const p=projects.find(x=>x.id===project);
+    const w=attachClippy({
+      project,
+      projectName:p?.name||'',
+      dirCount:(p?.directories||[]).length,
+      onJumpToDir:jumpToDirNode,
+      onShowEvidence:evidenceDialog,
+      onUpdateOverview:runGenerateOverview,
+    });
+    w.show();
+  }
+
   async function reload(){
     try{const r=await get('/api/research/review/projects');if(closed)return;if(!r.ok){say(r.msg);return;}projects=r.items;
       if(!projects.some(p=>p.id===project))project=projects[0]?.id||null;
@@ -203,7 +238,8 @@ export function reviewPanel(initialProject=null){
       selected.clear();
       renderOverview();
       render();
-      await directoryView.load(project);
+      const dirItems=await directoryView.load(project);
+      if(!closed&&requested===project)syncClippy(dirItems);
     }catch{if(!closed)say('读取项目工作失败');}
   }
   async function change(body,feedback=null){
@@ -257,7 +293,7 @@ export function reviewPanel(initialProject=null){
     form.append(h('div',{class:'pr-toolbar'},h('button',{class:'btn rr-action',text:'合并',onclick:async()=>{const ok=await change({action:'merge',ids:rows.map(r=>r.id),revisions:Object.fromEntries(rows.map(r=>[r.id,r.revision])),title:title.value},feedback);if(ok)dialog.close();}}),h('button',{class:'btn',text:'取消',onclick:()=>dialog.close()})));
   }
   filter.addEventListener('change',()=>{selected.clear();render();});search.addEventListener('input',()=>{selected.clear();render();});reload();
-  return{root,projectId:initialProject,destroy(){closed=true;directoryView.destroy();root.querySelectorAll('dialog').forEach(d=>d.close());}};
+  return{root,projectId:initialProject,destroy(){closed=true;directoryView.destroy();try{attachClippy().hide();}catch{}root.querySelectorAll('dialog').forEach(d=>d.close());}};
 }
 export function open(){
   if(instance){wm.open({id:'research-pilots'});return;}

@@ -1,4 +1,5 @@
 'use strict';
+const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 const {normalize}=require('./normalize');
@@ -121,6 +122,36 @@ const OVERVIEW_SCHEMA={
   required:['ecosystem','research_tracks','memory_candidates'],
 };
 
+const ASSISTANT_SCHEMA={
+  type:'object',
+  properties:{
+    mood:{
+      type:'string',
+      enum:['explain','congratulate','thinking','alert','writing'],
+    },
+    headline:{type:'string'},
+    answer:{type:'string'},
+    key_results:{type:'array',items:{type:'string'}},
+    locations:{
+      type:'array',
+      items:{
+        type:'object',
+        properties:{
+          machine:{type:'string'},
+          path:{type:'string'},
+          branch:{type:'string'},
+          files:{type:'array',items:{type:'string'}},
+          role:{type:'string'},
+        },
+        required:['machine','path','branch','files','role'],
+      },
+    },
+    evidence_refs:{type:'array',items:{type:'string'}},
+    follow_ups:{type:'array',items:{type:'string'}},
+  },
+  required:['mood','headline','answer','key_results','locations','evidence_refs','follow_ups'],
+};
+
 function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=null,listProjects=()=>[],saveProject=null}){
   const db=vault.db;
   const dataDir=path.dirname(vault.file);
@@ -130,16 +161,29 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     CREATE TABLE IF NOT EXISTS research_project_overviews(project TEXT PRIMARY KEY,body TEXT NOT NULL,updated INTEGER NOT NULL);`);
   const parse=r=>r?{...r,body:JSON.parse(r.body),inputs:JSON.parse(r.inputs)}:null;
 
+  function resolveDefaultModel(){
+    try{
+      const raw=JSON.parse(fs.readFileSync(path.join(dataDir,'ai-settings.json'),'utf8'))?.clippy?.model||'';
+      if(!raw)return DEFAULT_MODEL;
+      if(raw.startsWith('magpie:')){
+        const dec=Buffer.from(raw.slice(7),'base64url').toString('utf8');
+        return /^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,160}$/.test(dec)?dec:DEFAULT_MODEL;
+      }
+      return raw;
+    }catch{return DEFAULT_MODEL;}
+  }
+
   // Unified AI caller supporting Google AI Studio API (if key configured) and Magpie with automatic fallback on 403/429
-  async function callModel({model=DEFAULT_MODEL,prompt,schema,timeoutMs=180000}){
+  async function callModel({model='',prompt,schema,timeoutMs=180000}){
+    const chosen=model||resolveDefaultModel()||DEFAULT_MODEL;
     const gKey=createGoogleAiKey({dataDir});
-    if(String(model||'').startsWith('google:')){
+    if(String(chosen||'').startsWith('google:')){
       if(!gKey.has())throw Error('尚未配置 Google AI Studio API key（请打开控制面板 → AI 模型 → Google AI Studio API）');
-      return runGoogleAi({key:gKey.get(),model:String(model).slice(7)||'gemini-2.5-pro',prompt,schema,egress,timeoutMs});
+      return runGoogleAi({key:gKey.get(),model:String(chosen).slice(7)||'gemini-2.5-pro',prompt,schema,egress,timeoutMs});
     }
     const mp=typeof getMagpie==='function'?getMagpie():null;
     const candidates=[];
-    if(model)candidates.push(model);
+    if(chosen)candidates.push(chosen);
     for(const fm of FALLBACK_MAGPIE_MODELS)if(!candidates.includes(fm))candidates.push(fm);
 
     let lastErr=null;
@@ -425,13 +469,18 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     return {project,body,updated:now};
   }
 
-  async function generateOverview({project,model=DEFAULT_MODEL}){
+  async function generateOverview({project,model=''}){
     const cat=review.catalog();
     const curProj=cat.find(p=>p.id===project);
     if(!curProj)throw Error('找不到该项目');
-    const dirList=list(project);
+    let dirList=list(project);
+    const needSum=dirList.filter(d=>!d.body||d.changed);
+    if(needSum.length){
+      try{await summarizeAll({project,model,force:false});}catch{}
+      dirList=list(project);
+    }
     const dirWithBody=dirList.filter(d=>d.body);
-    if(!dirWithBody.length)throw Error('该项目下尚无已生成的目录总结，请先生成目录总结');
+    if(!dirWithBody.length)throw Error('该项目各目录下尚无可用于总结的 AI 会话记录');
 
     let memories=[];
     try{
@@ -507,6 +556,150 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     });
   }
 
-  return {list,change,summarize,summarizeAll,discover,getOverview,saveOverview,generateOverview,promoteMemory,DEFAULT_MODEL};
+  async function askAssistant({project,question,scope='project',history=[],model=''}){
+    const q=String(question||'').trim();
+    if(!q||q.length>2000)throw Error('请输入有效的问题（1～2000 字）');
+    const cat=review.catalog();
+    const targetProjs=scope==='all'?cat:cat.filter(p=>p.id===project);
+    if(!targetProjs.length)throw Error('找不到目标项目');
+
+    const projData=[];
+    const evidencePool=[];
+    const seenEv=new Set();
+    const addEv=(ev)=>{
+      if(!ev||!ev.event_id||seenEv.has(ev.event_id))return;
+      if(evidencePool.length>=28)return;
+      seenEv.add(ev.event_id);
+      evidencePool.push({
+        ref:'E'+(evidencePool.length+1),
+        event_id:ev.event_id,
+        project:ev.project||project,
+        machine:ev.machine||'',
+        cwd:ev.cwd||'',
+        session:ev.session||'',
+        quote:String(ev.quote||'').slice(0,280),
+      });
+    };
+
+    const tokens=[...new Set((q.match(/[A-Za-z0-9_.-]{2,}|[\u4e00-\u9fa5]{2,6}/g)||[])
+      .filter(t=>!/^(有没有|做过|什么|怎么|哪里|哪个|位置|结果|如何|一下|可以|能不能|请问|项目|目录|文件夹|功能|为什么|多少)$/.test(t)))].slice(0,8);
+
+    for(const p of targetProjs){
+      const ov=getOverview(p.id);
+      const dirs=list(p.id);
+      for(const d of dirs){
+        if(!d.body)continue;
+        for(const w of d.body.work||[]){
+          const wText=JSON.stringify(w).toLowerCase();
+          const hit=!tokens.length||tokens.some(tk=>wText.includes(tk.toLowerCase()));
+          if(hit){
+            for(const ref of (w.evidence||[]).slice(0,2)){
+              addEv({event_id:ref.event_id,project:p.id,machine:d.machine,cwd:d.path,session:'',quote:ref.quote});
+            }
+          }
+        }
+      }
+      projData.push({
+        id:p.id,
+        name:p.name,
+        overview:ov?.body||null,
+        directories:dirs.map(d=>({
+          machine:d.machine,
+          path:d.path,
+          branch:d.branch||'',
+          sessions:d.sessions,
+          changed:d.changed,
+          overview:d.body?.overview||'',
+          work:(d.body?.work||[]).map(w=>({
+            title:w.title,
+            description:w.description,
+            results:w.results,
+            outputs:w.outputs,
+            questions:w.questions,
+          })),
+          next_steps:d.body?.next_steps||[],
+        })),
+      });
+    }
+
+    // Also search raw research_events by tokens for fine-grained details
+    if(tokens.length){
+      try{
+        for(const tk of tokens.slice(0,5)){
+          const like='%'+tk.replace(/[%_]/g,'')+'%';
+          const rows=scope==='all'
+            ?db.prepare(`SELECT e.id,e.text,d.machine,d.cwd,d.session,ps.project FROM research_events e
+               JOIN research_documents d ON d.id=e.document
+               LEFT JOIN research_project_sources ps ON ps.document=d.id
+               WHERE e.suppressed=0 AND e.text LIKE ? ORDER BY d.created DESC LIMIT 6`).all(like)
+            :db.prepare(`SELECT e.id,e.text,d.machine,d.cwd,d.session,ps.project FROM research_events e
+               JOIN research_documents d ON d.id=e.document
+               JOIN research_project_sources ps ON ps.document=d.id
+               WHERE ps.project=? AND e.suppressed=0 AND e.text LIKE ? ORDER BY d.created DESC LIMIT 6`).all(project,like);
+          for(const r of rows){
+            addEv({event_id:r.id,project:r.project||project,machine:r.machine,cwd:r.cwd,session:r.session,quote:r.text});
+          }
+        }
+      }catch{}
+    }
+
+    let memories=[];
+    try{
+      memories=db.prepare("SELECT scope,owner,name,body FROM memory WHERE enabled=1 ORDER BY updated DESC LIMIT 30").all();
+    }catch{}
+
+    const recentTurns=Array.isArray(history)?history.slice(-4).map(h=>({
+      q:String(h.q||'').slice(0,300),
+      a:String(h.a||'').slice(0,500),
+    })):[];
+
+    const prompt=[
+      '你是 Windose 桌面上的经典 Office 回形针助手「大眼夹 (Clippy)」，专门借助结构化的跨设备项目档案、目录工作总结、项目记忆与原始对话证据，精准回答用户关于项目进度、算法实验、代码位置和量化结果的问题。',
+      '回答要求：',
+      '1. 严谨求实：严格依据输入的结构化目录总结、项目宏观总览、记忆与原文证据回答。如果做过相关工作，明确指出在哪台电脑（machine）、哪个目录（path）、哪个分支（branch）、涉及哪些代码/脚本/数据文件（files），以及具体的量化指标/误差/耗时结果（key_results）。如果确实没做过或仅在计划中，如实说明。',
+      '2. 科学表述：对于负面或受限算例结果，说明在特定算例/参数下存在什么限制或适用边界，严禁使用“已证伪”等绝对化字眼。',
+      '3. mood：根据回答内容选择最贴切的表情动作（"explain" 讲解说明、"congratulate" 找到明确成功成果、"writing" 罗列代码/路径清单、"alert" 提醒存在适用边界/限制或未完成项、"thinking" 探讨开放问题）。',
+      '4. headline：1 句话精炼结论（放在气泡最上方）。',
+      '5. answer：条理清晰的详细解答（2～5 句话）。',
+      '6. locations：列出最相关的电脑与文件夹目录 [{ machine, path, branch, files, role }]，path 必须与输入中的目录 path 保持一致以便前端一键定位。',
+      '7. evidence_refs：从输入原文证据池中选择支撑结论的编号（如 ["E1", "E3"]）。',
+      '8. follow_ups：给出 2～3 个有价值的追问建议（简短问句）。',
+      '',
+      recentTurns.length?('最近对话上下文：\n'+JSON.stringify(recentTurns)+'\n'):'',
+      '输入 1：结构化项目总览与各目录工作总结：',
+      JSON.stringify(projData),
+      '',
+      '输入 2：相关全局与项目记忆：',
+      JSON.stringify(memories.map(m=>({scope:m.scope,owner:m.owner,name:m.name,body:String(m.body||'').slice(0,320)}))),
+      '',
+      '输入 3：原文证据池（编号 E1..En）：',
+      JSON.stringify(evidencePool.map(({event_id,...rest})=>rest)),
+      '',
+      '用户当前问题：',
+      q,
+    ].filter(Boolean).join('\n');
+
+    const res=await callModel({model,prompt,schema:ASSISTANT_SCHEMA,timeoutMs:180000});
+    const evMap=new Map(evidencePool.map(e=>[e.ref,e]));
+    const matchedEv=(res.evidence_refs||[]).map(r=>evMap.get(r)).filter(Boolean);
+    return {
+      mood:res.mood||'explain',
+      headline:String(res.headline||'').trim(),
+      answer:String(res.answer||'').trim(),
+      key_results:Array.isArray(res.key_results)?res.key_results.map(x=>String(x).trim()).filter(Boolean):[],
+      locations:Array.isArray(res.locations)?res.locations.map(l=>({
+        machine:String(l.machine||'').trim(),
+        path:norm(String(l.path||'').trim()),
+        branch:String(l.branch||'').trim(),
+        files:Array.isArray(l.files)?l.files.map(f=>String(f).trim()).filter(Boolean):[],
+        role:String(l.role||'').trim(),
+      })).filter(l=>l.path):[],
+      evidence:matchedEv.length?matchedEv:evidencePool.slice(0,2),
+      follow_ups:Array.isArray(res.follow_ups)?res.follow_ups.map(x=>String(x).trim()).filter(Boolean).slice(0,3):[],
+      model:model||resolveDefaultModel()||DEFAULT_MODEL,
+    };
+  }
+
+  return {list,change,summarize,summarizeAll,discover,getOverview,saveOverview,generateOverview,promoteMemory,askAssistant,resolveDefaultModel,DEFAULT_MODEL};
 }
 module.exports={createDirectories,DEFAULT_MODEL};
