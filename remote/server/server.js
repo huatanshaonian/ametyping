@@ -48,6 +48,7 @@ const { createVaultService } = require('./vault/service');
 const { attachLocal } = require('./vault/local');
 const { sendFile } = require('./static');
 const { createLiterature } = require('./literature');
+const { createMcpHub } = require('./mcp-hub');
 const { createPush } = require('./push');
 const { createPushEvents } = require('./push/events');
 const { createOffice } = require('./office');
@@ -324,6 +325,8 @@ if (searchIndex && summary) {
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
   ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
   audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
+// MCP 中转 (mcp-hub.js): 文献下载 / 研究档案 MCP calls from the agents' computers, over their agent's connection
+const mcpHub = createMcpHub({ machines, lit, researchDb: () => knowledge.vault && knowledge.vault.db, cfg: cfg.mcp || {}, audit: (...a) => audit(...a), log: console.error });
 // 画板 (board/index.js): boards drawn by hand, read by a model into a clean page; open pages hear of every change
 const boards = createBoards({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null,
   onChange: () => broadcast({ t: 'boards' }), audit: (...a) => audit(...a), log: console.log });
@@ -437,6 +440,7 @@ function onAgentMessage(m, raw, ws) {
   if (d.t === 'fs-res' && typeof d.rid === 'string' && fsCatalog.fromAgent(m, d)) return;
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'mesh-req' && typeof d.rid === 'string') return mesh.fromAgentRpc(m.name, d, ws);
+  if ((d.t === 'mcp-req' || d.t === 'mcp-status') && mcpHub.fromAgent(m, d, ws)) return;
   if (d.t === 'result' && typeof d.rid === 'string' && mesh.fromAgentResult(m.name, d)) return;
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);
   // Only the socket that received the request can complete it.
@@ -659,6 +663,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, { data: snapshot() });
   if(await knowledge.handle(req,res,url,sess,json,send,readBody))return;
   if(await research.handle(req,res,url,sess,json,readBody))return;
+  if (mcpHub.handle(req, res, url, json)) return;                       // 控制面板 › MCP
   if (req.method === 'POST' && p === '/api/stepup') return apiStepUp(req, res, ip, sess);
   // the machines allowed to connect (添加电脑): listing is free, changing needs a code entered within the hour
   if (req.method === 'GET' && p === '/api/agents') return json(res, 200, { items: agentsAdmin.list() });

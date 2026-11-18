@@ -421,6 +421,7 @@ function connect() {
     tick(true);
     pushInfra(true);
     flushPendingMeshEvents();
+    sendMcpStatus();
   });
   socket.on('message', (raw) => {
     if (socket !== ws) return;
@@ -487,6 +488,7 @@ function connect() {
       const f = meshPending.get(d.rid);
       if (f) { meshPending.delete(d.rid); f(d); }
     }
+    else if ((d.t === 'mcp-res' || d.t === 'mcp-chunk') && typeof d.rid === 'string') mcpFromServer(d);
     else if (d.t === 'mesh-triggers' && Array.isArray(d.triggers)) {
       updateMeshFolderTriggers(d.triggers);
     }
@@ -507,7 +509,7 @@ function connect() {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });
-  socket.on('close', () => { if (socket !== ws) return; ws = null; nativeArchive.reset();memorySync.reset();fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
+  socket.on('close', () => { if (socket !== ws) return; ws = null; for (const p of [...mcpPending.values()]) p.done({ ok: false, msg: '和看板服务器的连接断了' }); nativeArchive.reset();memorySync.reset();fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
   socket.on('error', () => { try { socket.close(); } catch {} });
 }
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
@@ -625,6 +627,7 @@ function startMeshBridge() {
     if (req.method === 'GET' && req.url === '/mesh/local-info') {
       return out(200, { ok: true, machine: NAME, online: !!(ws && ws.readyState === 1), sessions: stateList().map((s) => ({ id: s.id, label: s.label, project: s.project, state: s.state })) });
     }
+    if (req.method === 'POST' && req.url === '/mcp/call') return mcpCall(req, res, out);
     if (req.method !== 'POST' || req.url !== '/mesh/rpc') return out(404, { ok: false });
     let body = '';
     req.setEncoding('utf8');
@@ -660,8 +663,58 @@ function startMeshBridge() {
     if (CONTROL && !process.env.AME_NO_MCP_INSTALL && MESH_PORT === 3941) {
       try { require('../../install-mesh-mcp').installAll({ quiet: true }); } catch {}
     }
+    sendMcpStatus();
   });
   srv.unref();
+}
+
+// Windose's other MCP servers (remote/mcp/client.js: 文献下载, 研究档案) through the same bridge: a call goes to the
+// server as "mcp-req" and comes back as "mcp-res" -- a PDF first in "mcp-chunk" pieces (the server takes 4 MB a message
+// from an agent, and sends a large file in parts too). Off with agent.json "mcp": false.
+const mcpPending = new Map();
+const MCP_MAX = 100 * 1024 * 1024;
+function mcpCall(req, res, out) {
+  let body = '';
+  req.setEncoding('utf8');
+  req.on('data', (c) => { body += c; if (body.length > 65536) req.destroy(); });
+  req.on('end', () => {
+    let d = {}; try { d = JSON.parse(body || '{}'); } catch { return out(400, { ok: false, msg: 'invalid json' }); }
+    if (cfg.mcp === false) return out(200, { ok: false, msg: '这台电脑的 agent 关掉了 MCP 转发（agent.json 里 "mcp": false）' });
+    if (!['literature', 'research'].includes(d.service) || !['info', 'call', 'pdf'].includes(d.op)) return out(400, { ok: false, msg: '不支持的请求' });
+    if (!ws || ws.readyState !== 1) return out(200, { ok: false, msg: '本机 agent 还没连上看板服务器' });
+    const rid = 'mcp-' + crypto.randomBytes(8).toString('hex');
+    const timer = setTimeout(() => { if (mcpPending.delete(rid)) out(200, { ok: false, msg: '看板服务器响应超时' }); }, d.op === 'pdf' ? 600e3 : 120e3);
+    if (timer.unref) timer.unref();
+    mcpPending.set(rid, { parts: [], size: 0, done: (r) => {
+      clearTimeout(timer);
+      const { t, rid: _r, file, ...rest } = r;
+      const p = mcpPending.get(rid); mcpPending.delete(rid);
+      if (file && p) {
+        const buf = Buffer.concat(p.parts);
+        if (buf.length !== file.bytes) return out(200, { ok: false, msg: 'PDF 传到一半断了' });
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': buf.length, 'X-Job': encodeURIComponent(JSON.stringify(file.job || null)) });
+        return res.end(buf);
+      }
+      out(200, rest);
+    } });
+    sendJSON({ t: 'mcp-req', rid, service: d.service, op: d.op, args: d.args && typeof d.args === 'object' ? d.args : {}, client: String(d.client || '').slice(0, 40) });
+  });
+}
+function mcpFromServer(d) {
+  const p = mcpPending.get(d.rid);
+  if (!p) return;
+  if (d.t === 'mcp-chunk') {
+    const b = Buffer.from(String(d.b64 || ''), 'base64');
+    p.size += b.length;
+    if (p.size > MCP_MAX) return p.done({ ok: false, msg: '文件太大' });
+    p.parts.push(b);
+  } else p.done(d);
+}
+// which coding agents here have which of the MCP servers (install-mesh-mcp.js), for 控制面板 › MCP
+function sendMcpStatus() {
+  let clients = [];
+  try { clients = require('../../install-mesh-mcp').status().map(({ id, label, present, servers, error }) => ({ id, label, present, servers, error })); } catch {}
+  sendJSON({ t: 'mcp-status', clients, forward: cfg.mcp !== false, auto: CONTROL && !process.env.AME_NO_MCP_INSTALL && MESH_PORT === 3941 });
 }
 startMeshBridge();
 connect();
