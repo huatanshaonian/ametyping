@@ -1,7 +1,5 @@
-// Classic Office 97 / Windows 98 Clippy ("大眼夹") AI Assistant for Windose:
-// Animated using original Microsoft Agent Clippy frames (Dimava/codex-clippy WebP sprites) and an authentic
-// Office 97 pale-yellow speech balloon (#FFFFCC). Queries structured cross-machine project overviews, directory
-// summaries, memories, and verbatim conversation evidence.
+// Desktop-resident Classic Office 97 Clippy ("大眼夹") AI Assistant for Windose:
+// Sits quietly in the desktop corner with no label; double-clicking opens the classic #FFFFCC speech balloon.
 import { h } from '../util.js';
 import { post } from '../net.js';
 import { open as openExplorer } from './explorer.js';
@@ -29,10 +27,16 @@ const IDLE_POOL = ['tap', 'eyebrow', 'scratch', 'wave'];
 
 let singleton = null;
 
+export function initDesktopClippy() {
+  if (!singleton) singleton = createClippyWidget();
+  singleton.mountDesktop();
+  return singleton;
+}
+
 export function attachClippy(opts = {}) {
   if (!singleton) singleton = createClippyWidget();
+  singleton.mountDesktop();
   singleton.bindContext(opts);
-  singleton.show();
   return singleton;
 }
 
@@ -40,14 +44,14 @@ function createClippyWidget() {
   let ctx = {
     project: null,
     projectName: '',
+    projects: [],
     dirCount: 0,
     changedCount: 0,
     onJumpToDir: null,
     onShowEvidence: null,
     onUpdateOverview: null,
   };
-  let balloonOpen = true;
-  let hidden = false;
+  let balloonOpen = false; // Speech balloon is closed by default; only opens on double-click
   let busy = false;
   let scope = 'project';
   let history = [];
@@ -58,58 +62,78 @@ function createClippyWidget() {
   const spriteImg = h('img', {
     class: 'clippy-sprite',
     src: SPRITES.rest,
-    alt: 'Clippy Office 助手',
+    alt: '',
     draggable: false,
   });
-  const miniHint = h('span', { class: 'clippy-mini-pill', text: '💬 点我提问' });
+
+  // Pure character sprite: single-click plays a subtle animation; double-click toggles the speech balloon
   const characterBox = h('div', {
     class: 'clippy-char',
-    title: '点击展开/收起大眼夹助手气泡（可拖拽移动位置）',
+    title: '双击打开/关闭对话气泡（按住可拖拽移动）',
     onclick: () => {
       if (dragMoved) return;
+      if (!busy) playOnce('tap', 1800);
+    },
+    ondblclick: async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       balloonOpen = !balloonOpen;
       syncVisibility();
-      playOnce(balloonOpen ? 'wave' : 'tap', 2200);
+      if (balloonOpen) {
+        playOnce('wave', 2200);
+        await ensureProjectsLoaded();
+        if (!lastAnswer && !busy) renderWelcome();
+        setTimeout(() => qInput.focus(), 60);
+      }
     },
-  }, spriteImg, miniHint);
+  }, spriteImg);
 
-  const balloonHeadTitle = h('b', { text: '📎 大眼夹 (Clippy) · 项目助手' });
+  const projSelect = h('select', { class: 'field clippy-proj-sel', title: '选择项目' });
+  projSelect.addEventListener('change', () => {
+    const picked = ctx.projects.find((p) => p.id === projSelect.value);
+    if (picked) {
+      ctx.project = picked.id;
+      ctx.projectName = picked.name;
+      ctx.dirCount = (picked.directories || []).length;
+      history = [];
+      lastAnswer = null;
+      if (!busy) renderWelcome();
+    }
+  });
+
+  const scopeSelect = h('select', { class: 'field clippy-scope', title: '检索范围' },
+    h('option', { value: 'project', text: '当前项目' }),
+    h('option', { value: 'all', text: '跨全部项目' })
+  );
+  scopeSelect.addEventListener('change', () => {
+    scope = scopeSelect.value;
+    projSelect.style.display = scope === 'all' ? 'none' : '';
+  });
+
   const modelBtn = h('button', {
     class: 'clippy-head-btn',
     type: 'button',
-    title: '在控制面板 → AI 模型中切换大眼夹使用的模型（默认 gemini-4-hydrogen）',
-    text: '⚙️ 模型',
+    title: '打开控制面板 → AI 模型设置',
+    text: '⚙',
     onclick: async () => {
       const c = await import('./control.js');
       c.open('ai');
     },
   });
-  const minBtn = h('button', {
+  const closeBtn = h('button', {
     class: 'clippy-head-btn',
     type: 'button',
-    title: '收起对话气泡（保留回形针在角落）',
-    text: '＿',
+    title: '收起气泡（双击回形针再次打开）',
+    text: '×',
     onclick: () => {
       balloonOpen = false;
       syncVisibility();
     },
   });
-  const closeBtn = h('button', {
-    class: 'clippy-head-btn',
-    type: 'button',
-    title: '隐藏大眼夹助手（可随时从项目管理工具栏重新召唤）',
-    text: '×',
-    onclick: () => hide(),
-  });
-  const balloonHead = h('div', { class: 'clippy-head' }, balloonHeadTitle, h('span', { style: 'margin-left:auto' }), modelBtn, minBtn, closeBtn);
 
-  const ctxBar = h('div', { class: 'clippy-ctx-bar' });
+  // Compact top bar inside balloon without any title/name text
+  const topBar = h('div', { class: 'clippy-top-bar' }, scopeSelect, projSelect, h('span', { style: 'margin-left:auto' }), modelBtn, closeBtn);
   const bodyArea = h('div', { class: 'clippy-body' });
-  const scopeSelect = h('select', { class: 'field clippy-scope', title: '检索范围' },
-    h('option', { value: 'project', text: '当前项目' }),
-    h('option', { value: 'all', text: '跨全部项目' })
-  );
-  scopeSelect.addEventListener('change', () => { scope = scopeSelect.value; });
 
   const qInput = h('input', {
     class: 'field clippy-input',
@@ -129,11 +153,11 @@ function createClippyWidget() {
     }
   });
 
-  const inputBar = h('div', { class: 'clippy-input-bar' }, scopeSelect, qInput, askBtn);
-  const balloon = h('div', { class: 'clippy-balloon' }, balloonHead, ctxBar, bodyArea, inputBar);
+  const inputBar = h('div', { class: 'clippy-input-bar' }, qInput, askBtn);
+  const balloon = h('div', { class: 'clippy-balloon is-collapsed' }, topBar, bodyArea, inputBar);
   const root = h('div', { class: 'clippy-root' }, balloon, characterBox);
 
-  // Make Clippy widget draggable via balloonHead or characterBox
+  // Draggable via characterBox or topBar
   let dragMoved = false;
   function makeDraggable(handle) {
     handle.addEventListener('pointerdown', (e) => {
@@ -147,8 +171,8 @@ function createClippyWidget() {
         const dx = ev.clientX - startX, dy = ev.clientY - startY;
         if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved = true;
         if (!dragMoved) return;
-        const nextRight = Math.max(8, Math.min(window.innerWidth - 160, origRight - dx));
-        const nextBottom = Math.max(36, Math.min(window.innerHeight - 140, origBottom - dy));
+        const nextRight = Math.max(8, Math.min(window.innerWidth - 130, origRight - dx));
+        const nextBottom = Math.max(34, Math.min(window.innerHeight - 110, origBottom - dy));
         root.style.right = nextRight + 'px';
         root.style.bottom = nextBottom + 'px';
       };
@@ -161,12 +185,11 @@ function createClippyWidget() {
       window.addEventListener('pointerup', onUp);
     });
   }
-  makeDraggable(balloonHead);
+  makeDraggable(topBar);
   makeDraggable(characterBox);
 
   function setSprite(name) {
     const url = SPRITES[name] || SPRITES.rest;
-    // Append a cache-key on non-rest animations so animated WebP replays from frame 0
     spriteImg.src = name === 'rest' ? url : `${url}?t=${Date.now() % 100000}`;
   }
 
@@ -179,37 +202,84 @@ function createClippyWidget() {
   }
 
   function startIdleLoop() {
-    clearInterval(idleTimer);
+    if (idleTimer) return;
     idleTimer = setInterval(() => {
-      if (hidden || busy || ! document.body.contains(root)) return;
+      if (busy || !document.body.contains(root)) return;
       const pick = IDLE_POOL[Math.floor(Math.random() * IDLE_POOL.length)];
       playOnce(pick, 2500);
-    }, 18000);
+    }, 20000);
   }
 
   function syncVisibility() {
-    root.classList.toggle('is-hidden', hidden);
     balloon.classList.toggle('is-collapsed', !balloonOpen);
-    miniHint.style.display = balloonOpen ? 'none' : 'inline-block';
   }
 
-  function renderContextBar() {
-    const pName = ctx.projectName || '未选项目';
-    const pills = [
-      h('span', { class: 'clippy-ctx-tag', text: `📂 ${pName}（${ctx.dirCount || 0} 个目录）` }),
-    ];
-    if (ctx.changedCount > 0) {
-      pills.push(h('button', {
-        class: 'clippy-update-alert',
-        type: 'button',
-        title: '检测到有目录新增了对话或尚未生成总结，点击一键增量更新目录总结与项目总览',
-        text: `🔔 ${ctx.changedCount} 个目录待更新，点此一键同步`,
-        onclick: () => {
-          if (typeof ctx.onUpdateOverview === 'function') ctx.onUpdateOverview();
-        },
-      }));
+  function syncProjectSelect() {
+    if (!ctx.projects.length) return;
+    projSelect.replaceChildren(
+      ...ctx.projects.map((p) => h('option', {
+        value: p.id,
+        text: `${p.name} (${(p.directories || []).length})`,
+      }))
+    );
+    if (ctx.project) projSelect.value = ctx.project;
+  }
+
+  async function ensureProjectsLoaded() {
+    if (ctx.projects.length && ctx.project) {
+      syncProjectSelect();
+      return;
     }
-    ctxBar.replaceChildren(...pills);
+    try {
+      const r = await (await fetch('/api/research/review/projects')).json();
+      if (r && r.ok && Array.isArray(r.items) && r.items.length) {
+        ctx.projects = r.items;
+        if (!ctx.project) {
+          const def = r.items.find((x) => /cem_po/i.test(x.name)) || r.items[0];
+          ctx.project = def.id;
+          ctx.projectName = def.name;
+          ctx.dirCount = (def.directories || []).length;
+        }
+        syncProjectSelect();
+      }
+    } catch {}
+  }
+
+  async function jumpToDir(machine, dirPath) {
+    if (typeof ctx.onJumpToDir === 'function') {
+      ctx.onJumpToDir(machine, dirPath);
+      return;
+    }
+    try {
+      const pm = await import('./projects.js');
+      pm.open(ctx.project);
+      setTimeout(() => {
+        if (typeof ctx.onJumpToDir === 'function') ctx.onJumpToDir(machine, dirPath);
+      }, 600);
+    } catch {}
+  }
+
+  async function showEvidence(ev) {
+    if (typeof ctx.onShowEvidence === 'function') {
+      ctx.onShowEvidence(ev);
+      return;
+    }
+    try {
+      const pId = ev.project || ctx.project;
+      const r = await (await fetch('/api/research/evidence?project=' + encodeURIComponent(pId) + '&id=' + encodeURIComponent(ev.event_id))).json();
+      if (!r || !r.ok) return;
+      const e = r.item;
+      const dlg = h('dialog', { class: 'pr-evidence' },
+        h('b', { text: e.machine + ' · ' + e.cwd }),
+        h('p', { text: '会话 ' + e.session + ' · 记录 ' + e.line }),
+        h('blockquote', { text: ev.quote }),
+        h('pre', { text: e.text }),
+        h('button', { class: 'btn', text: '关闭', onclick: () => dlg.close() })
+      );
+      dlg.addEventListener('close', () => dlg.remove());
+      document.body.append(dlg);
+      dlg.showModal();
+    } catch {}
   }
 
   function renderWelcome() {
@@ -220,9 +290,15 @@ function createClippyWidget() {
       '目前各工作树还有哪些未决问题和下一步计划？',
     ];
     bodyArea.replaceChildren(
+      ctx.changedCount > 0 && typeof ctx.onUpdateOverview === 'function' ? h('button', {
+        class: 'clippy-update-alert',
+        type: 'button',
+        text: `🔔 检测到 ${ctx.changedCount} 个目录有新对话，点此一键同步项目总览`,
+        onclick: () => ctx.onUpdateOverview(),
+      }) : null,
       h('p', {
         class: 'clippy-greet',
-        text: `你好！我是项目小助手大眼夹。我已经读取了「${ctx.projectName || '当前项目'}」的跨机目录总结、课题演进主线、项目记忆与历史对话索引。你想查什么工作进展、代码位置或算例结果？`,
+        text: `已连接「${ctx.projectName || '当前项目'}」的结构化目录总结、课题主线、项目记忆与对话原文。你想查什么功能、结果或目录位置？`,
       }),
       h('div', { class: 'clippy-starters' },
         ...starters.map((q) => h('button', {
@@ -247,7 +323,7 @@ function createClippyWidget() {
         h('button', {
           class: 'clippy-back-btn',
           type: 'button',
-          text: '返回常用问题',
+          text: '返回',
           onclick: () => renderWelcome(),
         })
       ),
@@ -267,12 +343,12 @@ function createClippyWidget() {
           loc.role ? h('div', { class: 'clippy-loc-role', text: loc.role }) : null,
           loc.files && loc.files.length ? h('div', { class: 'clippy-loc-files', text: '📄 涉及文件/产物：' + loc.files.join('、') }) : null,
           h('div', { class: 'clippy-loc-btns' },
-            ctx.onJumpToDir ? h('button', {
+            h('button', {
               class: 'btn',
               type: 'button',
               text: '🎯 定位到拓扑图节点',
-              onclick: () => ctx.onJumpToDir(loc.machine, loc.path),
-            }) : null,
+              onclick: () => jumpToDir(loc.machine, loc.path),
+            }),
             h('button', {
               class: 'btn',
               type: 'button',
@@ -287,11 +363,11 @@ function createClippyWidget() {
         h('div', { class: 'clippy-ev-list' },
           ...evs.map((ev) => h('div', { class: 'clippy-ev-item' },
             h('span', { class: 'clippy-ev-quote', text: `“${String(ev.quote || '').slice(0, 110)}…”` }),
-            ctx.onShowEvidence && ev.event_id ? h('button', {
+            ev.event_id ? h('button', {
               class: 'btn',
               type: 'button',
               text: '查看原文',
-              onclick: () => ctx.onShowEvidence(ev),
+              onclick: () => showEvidence(ev),
             }) : null
           ))
         )
@@ -306,14 +382,14 @@ function createClippyWidget() {
             onclick: () => submitQuestion(fq),
           }))
         )
-      ) : null,
-      res.model ? h('div', { class: 'clippy-foot-meta', text: `由 ${res.model} 驱动` }) : null
+      ) : null
     );
   }
 
   async function submitQuestion(rawQ) {
     const q = String(rawQ || '').trim();
     if (!q || busy) return;
+    await ensureProjectsLoaded();
     if (!ctx.project && scope !== 'all') return;
     busy = true;
     askBtn.disabled = true;
@@ -325,7 +401,7 @@ function createClippyWidget() {
     const thinkSwitch = setTimeout(() => { if (busy) setSprite('thinking'); }, 3200);
     bodyArea.replaceChildren(
       h('div', { class: 'clippy-loading' },
-        h('b', { text: `🔍 正在翻阅「${scope === 'all' ? '全部项目' : (ctx.projectName || '当前项目')}」的结构化总结、记忆与对话原文…` }),
+        h('b', { text: `🔍 正在检索「${scope === 'all' ? '全部项目' : (ctx.projectName || '当前项目')}」的结构化总结、记忆与对话原文…` }),
         h('p', { class: 'ghint', text: '问题：' + q })
       )
     );
@@ -353,7 +429,7 @@ function createClippyWidget() {
       lastAnswer = { q, res: item };
       renderAnswer(item, q);
       playOnce(item.mood || 'explain', 3500);
-    } catch (e) {
+    } catch {
       clearTimeout(thinkSwitch);
       busy = false;
       askBtn.disabled = false;
@@ -365,41 +441,28 @@ function createClippyWidget() {
     }
   }
 
-  function show() {
-    if (!document.body.contains(root)) document.body.append(root);
-    hidden = false;
-    balloonOpen = true;
-    syncVisibility();
-    renderContextBar();
-    if (!lastAnswer) renderWelcome();
-    playOnce('greeting', 2600);
-    startIdleLoop();
-  }
-
-  function hide() {
-    playOnce('hide', 900);
-    setTimeout(() => {
-      hidden = true;
+  function mountDesktop() {
+    if (!document.body.contains(root)) {
+      document.body.append(root);
       syncVisibility();
-    }, 650);
+      startIdleLoop();
+    }
   }
 
   function bindContext(next = {}) {
     const prevProject = ctx.project;
     ctx = { ...ctx, ...next };
-    renderContextBar();
+    syncProjectSelect();
     if (prevProject !== ctx.project) {
       history = [];
       lastAnswer = null;
-      if (!busy) renderWelcome();
-      if (ctx.changedCount > 0) playOnce('attention', 2800);
+      if (balloonOpen && !busy) renderWelcome();
     }
   }
 
   return {
     root,
-    show,
-    hide,
+    mountDesktop,
     bindContext,
     ask: submitQuestion,
     playOnce,

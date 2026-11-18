@@ -24,14 +24,13 @@ export function reviewPanel(initialProject=null){
     }catch{}
   }),directories=directoryView.root;
   const overviewBtn=h('button',{class:'btn go',text:'🧭 AI 生成项目总览',onclick:runGenerateOverview});
-  const clippyBtn=h('button',{class:'btn',text:'📎 大眼夹助手',onclick:()=>summonClippy(true)});
   const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
   const discoverBtn=h('button',{class:'btn',text:'🔍 AI 发现跨机目录',onclick:runDiscover});
   const sumAllBtn=h('button',{class:'btn',text:'🤖 AI 批量生成目录总结',onclick:runSummarizeAll});
   const apiCfgBtn=h('button',{class:'btn',text:'⚙️ AI 模型与 API 设置',onclick:async()=>{const c=await import('./control.js');c.open('ai');}});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
-      h('div',{class:'pr-toolbar'},title,overviewBtn,clippyBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
+      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
       overviewBox,
       directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
@@ -149,40 +148,135 @@ export function reviewPanel(initialProject=null){
     );
   }
 
+  function createBtnProgress(btn,defaultText){
+    let timer=null;
+    const setPct=(pct,label)=>{
+      const p=Math.max(0,Math.min(100,Math.round(pct)));
+      btn.classList.add('is-progress');
+      btn.style.setProperty('--pct',p+'%');
+      btn.textContent=`${label} (${p}%)`;
+    };
+    return {
+      stage(label,fromPct,toPct,expectedMs=22000){
+        clearInterval(timer);
+        let p=fromPct;
+        setPct(p,label);
+        const stepMs=250;
+        const span=Math.max(1,toPct-fromPct);
+        const baseInc=span/Math.max(4,expectedMs/stepMs);
+        timer=setInterval(()=>{
+          if(p<toPct){
+            const rem=(toPct-p)/span;
+            p=Math.min(toPct,p+Math.max(0.25,baseInc*rem*1.35));
+            setPct(p,label);
+          }
+        },stepMs);
+      },
+      async done(doneLabel,restoreText=defaultText){
+        clearInterval(timer);
+        setPct(100,doneLabel);
+        await new Promise(r=>setTimeout(r,650));
+        btn.classList.remove('is-progress');
+        btn.style.removeProperty('--pct');
+        btn.textContent=restoreText;
+      },
+      reset(restoreText=defaultText){
+        clearInterval(timer);
+        btn.classList.remove('is-progress');
+        btn.style.removeProperty('--pct');
+        btn.textContent=restoreText;
+      },
+    };
+  }
+
   async function runGenerateOverview(){
     if(busy||!project)return;busy=true;overviewBtn.disabled=true;
-    say('正在自动补齐增量目录总结并合成项目宏观总览…');
+    const prog=createBtnProgress(overviewBtn,'🧭 AI 生成项目总览');
     try{
+      const curDirs=await directoryView.load(project);
+      const pending=(curDirs||[]).filter(d=>d.sessions>0&&(!d.body||d.changed));
+      const totalSteps=pending.length+1;
+      for(let i=0;i<pending.length;i++){
+        const d=pending[i];
+        const shortPath=String(d.path||'').replace(/\\/g,'/').split('/').pop()||d.path;
+        const fromPct=Math.round((i/totalSteps)*100);
+        const toPct=Math.round(((i+0.88)/totalSteps)*100);
+        prog.stage(`🧭 目录总结 ${i+1}/${pending.length}`,fromPct,toPct,22000);
+        say(`正在生成目录总结 (${i+1}/${pending.length})：${d.machine}:${shortPath}…`);
+        await post('/api/research/directory/summarize',{project,id:d.id});
+        await directoryView.load(project);
+      }
+      const ovStartPct=Math.round((pending.length/totalSteps)*100);
+      prog.stage('🧭 合成项目总览',Math.max(5,ovStartPct),95,24000);
+      say('正在聚合当前项目所有目录总结与记忆，生成跨目录课题演进总览…');
       const r=await post('/api/research/overview/generate',{project});
-      if(!r.ok){say(r.msg||'生成项目总览失败');return;}
+      if(!r.ok){
+        prog.reset();
+        say(r.msg||'生成项目总览失败');
+        return;
+      }
       overview=r.item;
       renderOverview();
       const dirItems=await directoryView.load(project);
+      await prog.done('🧭 已完成');
       syncClippy(dirItems);
       say('已更新全部目录总结与项目宏观总览');
+    }catch{
+      prog.reset();
+      say('生成项目总览失败');
     }finally{busy=false;overviewBtn.disabled=false;}
   }
 
   async function runDiscover(){
     if(busy)return;busy=true;discoverBtn.disabled=true;
+    const prog=createBtnProgress(discoverBtn,'🔍 AI 发现跨机目录');
+    prog.stage('🔍 扫描全网目录',6,92,20000);
     say('正在扫描全网电脑会话与 Git Worktree，自动发现并归类项目目录…');
     try{
       const r=await post('/api/research/discover',{});
-      if(!r.ok){say(r.msg||'目录发现失败');return;}
+      if(!r.ok){prog.reset();say(r.msg||'目录发现失败');return;}
       await mesh.load();
       await reload();
+      await prog.done('🔍 发现完成');
       say(`已完成跨机目录发现：新归入 ${(r.item?.added||[]).length} 个目录`);
+    }catch{
+      prog.reset();
+      say('目录发现失败');
     }finally{busy=false;discoverBtn.disabled=false;}
   }
 
   async function runSummarizeAll(){
     if(busy||!project)return;busy=true;sumAllBtn.disabled=true;
+    const prog=createBtnProgress(sumAllBtn,'🤖 AI 批量生成目录总结');
     say('正在批量生成当前项目下所有待整理目录的工作总结…');
     try{
-      const r=await post('/api/research/directories/summarize-all',{project});
-      if(!r.ok){say(r.msg||'批量生成失败');return;}
-      await reload();
-      say(`批量总结完成：已生成 ${(r.item?.completed||[]).length} 个目录总结`+((r.item?.skipped||[]).length?`（跳过 ${r.item.skipped.length} 个无独立会话目录）`:''));
+      const curDirs=await directoryView.load(project);
+      const pending=(curDirs||[]).filter(d=>d.sessions>0&&(!d.body||d.changed));
+      if(pending.length>0){
+        let doneCount=0;
+        for(let i=0;i<pending.length;i++){
+          const d=pending[i];
+          const shortPath=String(d.path||'').replace(/\\/g,'/').split('/').pop()||d.path;
+          prog.stage(`🤖 总结中 ${i+1}/${pending.length}`,Math.round((i/pending.length)*100),Math.round(((i+0.88)/pending.length)*100),22000);
+          say(`正在生成目录总结 (${i+1}/${pending.length})：${d.machine}:${shortPath}…`);
+          const sr=await post('/api/research/directory/summarize',{project,id:d.id});
+          if(sr.ok)doneCount++;
+          await directoryView.load(project);
+        }
+        await reload();
+        await prog.done('🤖 批量总结完成');
+        say(`批量总结完成：已生成 ${doneCount} 个目录总结`);
+      }else{
+        prog.stage('🤖 检查并总结目录',8,92,20000);
+        const r=await post('/api/research/directories/summarize-all',{project});
+        if(!r.ok){prog.reset();say(r.msg||'批量生成失败');return;}
+        await reload();
+        await prog.done('🤖 批量总结完成');
+        say(`批量总结完成：已生成 ${(r.item?.completed||[]).length} 个目录总结`+((r.item?.skipped||[]).length?`（跳过 ${r.item.skipped.length} 个无独立会话目录）`:''));
+      }
+    }catch{
+      prog.reset();
+      say('批量总结失败');
     }finally{busy=false;sumAllBtn.disabled=false;}
   }
 
@@ -194,32 +288,19 @@ export function reviewPanel(initialProject=null){
   function syncClippy(dirItems=[]){
     const p=projects.find(x=>x.id===project);
     const changedCount=(dirItems||[]).filter(d=>d.sessions>0&&(!d.body||d.changed)).length;
-    if(changedCount>0){
-      overviewBtn.textContent=`🧭 AI 生成项目总览（${changedCount} 个目录待更新）`;
-    }else{
-      overviewBtn.textContent='🧭 AI 生成项目总览';
+    if(!overviewBtn.classList.contains('is-progress')){
+      overviewBtn.textContent=changedCount>0?`🧭 AI 生成项目总览（${changedCount} 个目录待更新）`:'🧭 AI 生成项目总览';
     }
     attachClippy({
       project,
       projectName:p?.name||'',
+      projects,
       dirCount:(dirItems||p?.directories||[]).length,
       changedCount,
       onJumpToDir:jumpToDirNode,
       onShowEvidence:evidenceDialog,
       onUpdateOverview:runGenerateOverview,
     });
-  }
-  function summonClippy(){
-    const p=projects.find(x=>x.id===project);
-    const w=attachClippy({
-      project,
-      projectName:p?.name||'',
-      dirCount:(p?.directories||[]).length,
-      onJumpToDir:jumpToDirNode,
-      onShowEvidence:evidenceDialog,
-      onUpdateOverview:runGenerateOverview,
-    });
-    w.show();
   }
 
   async function reload(){
@@ -293,7 +374,7 @@ export function reviewPanel(initialProject=null){
     form.append(h('div',{class:'pr-toolbar'},h('button',{class:'btn rr-action',text:'合并',onclick:async()=>{const ok=await change({action:'merge',ids:rows.map(r=>r.id),revisions:Object.fromEntries(rows.map(r=>[r.id,r.revision])),title:title.value},feedback);if(ok)dialog.close();}}),h('button',{class:'btn',text:'取消',onclick:()=>dialog.close()})));
   }
   filter.addEventListener('change',()=>{selected.clear();render();});search.addEventListener('input',()=>{selected.clear();render();});reload();
-  return{root,projectId:initialProject,destroy(){closed=true;directoryView.destroy();try{attachClippy().hide();}catch{}root.querySelectorAll('dialog').forEach(d=>d.close());}};
+  return{root,projectId:initialProject,destroy(){closed=true;directoryView.destroy();root.querySelectorAll('dialog').forEach(d=>d.close());}};
 }
 export function open(){
   if(instance){wm.open({id:'research-pilots'});return;}

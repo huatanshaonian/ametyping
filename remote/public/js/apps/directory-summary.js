@@ -103,13 +103,41 @@ export function directoryPanel(onChanged=()=>{}){
   }
 
   async function aiSummarize(item,btn){
-    if(btn)btn.disabled=true;
-    say.textContent=`正在调用 Magpie (gemini-4-hydrogen) 总结 ${item.machine}:${item.path} 的会话工作…`;
+    const origText=btn?btn.textContent:'🤖 AI 总结';
+    let timer=null,pct=6;
+    if(btn){
+      btn.disabled=true;
+      btn.classList.add('is-progress');
+      btn.style.setProperty('--pct',pct+'%');
+      btn.textContent=`🤖 总结中 (${pct}%)`;
+      timer=setInterval(()=>{
+        if(pct<92){
+          pct=Math.min(92,Math.round(pct+Math.max(1,(92-pct)*0.08)));
+          btn.style.setProperty('--pct',pct+'%');
+          btn.textContent=`🤖 总结中 (${pct}%)`;
+        }
+      },350);
+    }
+    say.textContent=`正在调用 AI 总结 ${item.machine}:${item.path} 的会话工作…`;
     try{
-      const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id,model:'antigravity/gemini-4-hydrogen'});
+      const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id});
+      clearInterval(timer);
+      if(r.ok&&btn){
+        btn.style.setProperty('--pct','100%');
+        btn.textContent='✓ 总结完成 (100%)';
+        await new Promise(res=>setTimeout(res,500));
+      }
       say.textContent=r.ok?`已生成 ${item.machine}:${item.path} 的目录工作总结`:(r.msg||'AI 生成失败');
-      if(r.ok)await load(project);
-    }finally{if(btn)btn.disabled=false;}
+      if(r.ok){await load(project);onChanged();}
+    }finally{
+      clearInterval(timer);
+      if(btn){
+        btn.disabled=false;
+        btn.classList.remove('is-progress');
+        btn.style.removeProperty('--pct');
+        btn.textContent=origText;
+      }
+    }
   }
 
   async function evidence(ref,item){

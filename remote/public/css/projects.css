@@ -218,6 +218,17 @@
 .ro-mems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
 .pm-sec-hd { font-weight: bold; font-size: 12px; margin-bottom: 6px; color: var(--border); }
 
+/* Progress-fill AI Button */
+.btn.is-progress {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, #86efac var(--pct, 0%), var(--surface, #fff) var(--pct, 0%)) !important;
+  color: #064e3b !important;
+  border-color: #16a34a !important;
+  font-weight: bold;
+  transition: background 0.25s ease;
+}
+
 /* Classic Office 97 Clippy Assistant Widget */
 .clippy-root {
   position: fixed;
@@ -230,7 +241,6 @@
   pointer-events: none;
   user-select: none;
 }
-.clippy-root.is-hidden { display: none !important; }
 
 .clippy-balloon {
   pointer-events: auto;
@@ -269,7 +279,7 @@
   border-color: #ffffcc transparent transparent transparent;
 }
 
-.clippy-head {
+.clippy-top-bar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -279,8 +289,9 @@
   border-radius: 7.5px 7.5px 0 0;
   cursor: move;
   color: #000;
-  font-size: 12px;
+  font-size: 11.5px;
 }
+.clippy-proj-sel { max-width: 185px; font-size: 11px; padding: 2px; }
 .clippy-head-btn {
   background: #ffffcc;
   border: 1px solid #666;
@@ -291,26 +302,16 @@
   line-height: 1.2;
 }
 .clippy-head-btn:hover { background: #000080; color: #fff; }
-
-.clippy-ctx-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  background: #fff9b3;
-  border-bottom: 1px dotted #c4b454;
-  font-size: 11px;
-}
-.clippy-ctx-tag { font-weight: bold; color: #333; }
 .clippy-update-alert {
   background: #fef08a;
   border: 1px solid #b45309;
   color: #92400e;
   font-size: 11px;
-  padding: 1px 6px;
+  padding: 3px 7px;
   cursor: pointer;
   font-weight: bold;
+  text-align: left;
+  border-radius: 4px;
 }
 .clippy-update-alert:hover { background: #fde047; }
 

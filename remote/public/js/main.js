@@ -24,6 +24,7 @@ import * as mail from './apps/mail.js';
 import * as literature from './apps/literature.js';
 import * as knowledge from './apps/knowledge.js';
 import * as control from './apps/control.js';
+import { initDesktopClippy } from './apps/clippy.js';
 import * as sound from './sound.js';
 import * as push from './push.js';
 import * as shade from './shade.js';
@@ -103,6 +104,7 @@ const widgets = h('div', { id: 'desktopwidgets' });
 document.getElementById('desktop').append(widgets);
 todo.initWidget(widgets);
 magpie.initWidget(widgets);
+initDesktopClippy();
 // a phone's back gesture: each window on screen is a level; back puts the one in front away (to the taskbar)
 wm.onChange((list) => backnav.level('windows', list.filter((w) => !w.minimized).length));
 backnav.step(() => { const l = wm.list().filter((w) => !w.minimized); const w = l.find((x) => x.active) || l[l.length - 1]; if (!w) return false; wm.minimize(w.id); return true; }, 0);
