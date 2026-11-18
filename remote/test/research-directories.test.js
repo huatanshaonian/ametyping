@@ -52,7 +52,7 @@ test('AI discover and summarize workflow with Magpie gemini-4-hydrogen imports s
         if(prompt.includes('候选目录')){
           return {classified_dirs:[{machine:'huatanshaonian',path:'G:/feko_data/CW_geometry',project_id:'proj_cem',branch:'geometry_prep'}]};
         }
-        if(prompt.includes('大眼夹 (Clippy)')){
+        if(prompt.includes('Clippy')){
           return {
             mood:'congratulate',
             headline:'已在 dell97 的 /home/dell/CEM_1/CEM_FDTD [fdtd_dev] 完成空域泄漏门控与三档网格验证。',

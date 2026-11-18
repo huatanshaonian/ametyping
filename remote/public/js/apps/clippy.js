@@ -1,4 +1,4 @@
-// Desktop-resident Classic Office 97 Clippy ("大眼夹") AI Assistant for Windose:
+// Desktop-resident Classic Office 97 Clippy AI Assistant for Windose:
 // Sits quietly in the desktop corner with no label; double-clicking opens the classic #FFFFCC speech balloon.
 import { h } from '../util.js';
 import { post } from '../net.js';

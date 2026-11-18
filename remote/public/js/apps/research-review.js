@@ -282,7 +282,7 @@ export function reviewPanel(initialProject=null){
 
   function drawCatalog(){
     side.replaceChildren(h('b',{text:'项目目录'}),...projects.map(p=>h('button',{class:'rr-project'+(project===p.id?' sel':''),type:'button',text:p.name+' · '+p.directories.length+' 个目录',onclick:()=>{project=p.id;selected.clear();reload();}})));
-    const p=projects.find(p=>p.id===project);title.textContent=p?p.name+' · 目录工作总结（共 '+p.directories.length+' 个跨机目录/分支）':'目录工作总结';
+    const p=projects.find(p=>p.id===project);title.textContent=p?`${p.name}（${p.directories.length} 个目录/分支）`:'';
   }
 
   function syncClippy(dirItems=[]){
