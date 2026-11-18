@@ -218,13 +218,15 @@
 .ro-mems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
 .pm-sec-hd { font-weight: bold; font-size: 12px; margin-bottom: 6px; color: var(--border); }
 
-/* Progress-fill AI Button */
-.btn.is-progress {
+/* Progress-fill AI Button (uses theme purple tokens) */
+.btn.is-progress, .btn.go.is-progress {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(90deg, #86efac var(--pct, 0%), var(--surface, #fff) var(--pct, 0%)) !important;
-  color: #064e3b !important;
-  border-color: #16a34a !important;
+  opacity: 1 !important;
+  background: linear-gradient(90deg, var(--fill) var(--pct, 0%), var(--title) var(--pct, 0%)) !important;
+  color: var(--on-fill) !important;
+  border-color: var(--border) !important;
+  text-shadow: 1px 1px 0 var(--border), -1px -1px 0 var(--border), 1px -1px 0 var(--border), -1px 1px 0 var(--border);
   font-weight: bold;
   transition: background 0.25s ease;
 }
