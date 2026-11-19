@@ -24,9 +24,9 @@ export function reviewPanel(initialProject=null){
       if(!closed&&r.ok){projects=r.items;drawCatalog();}
     }catch{}
   }),directories=directoryView.root;
-  const overviewBtn=h('button',{class:'btn go',text:'🧭 生成项目总览',onclick:runGenerateOverview});
+  const overviewBtn=h('button',{class:'btn go',text:'生成项目总览',onclick:runGenerateOverview});
   const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
-  const discoverBtn=h('button',{class:'btn',text:'🔍 发现跨机目录',onclick:runDiscover});
+  const discoverBtn=h('button',{class:'btn',text:'发现跨机目录',onclick:runDiscover});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
       h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
@@ -63,7 +63,7 @@ export function reviewPanel(initialProject=null){
     const mems=Array.isArray(b.memory_candidates)?b.memory_candidates:[];
 
     const ecoBlock=h('div',{class:'ro-eco'},
-      h('div',{class:'ro-eco-role'},h('b',{text:'🌐 跨项目生态定位：'}),h('span',{text:eco.role||''})),
+      h('div',{class:'ro-eco-role'},h('b',{text:'跨项目生态定位：'}),h('span',{text:eco.role||''})),
       Array.isArray(eco.edges)&&eco.edges.length?h('div',{class:'ro-eco-edges'},
         ...eco.edges.map(e=>h('span',{class:'ro-edge-pill'},
           h('b',{text:e.from}),
@@ -78,7 +78,7 @@ export function reviewPanel(initialProject=null){
       const stCls=/已合入|完成/.test(t.status)?'done':/限制|边界/.test(t.status)?'warn':'run';
       return h('div',{class:'ro-track-card'},
         h('div',{class:'ro-track-head'},
-          h('b',{text:'📌 '+t.title}),
+          h('b',{text:'▸ '+t.title}),
           h('span',{class:'pm-rev-badge '+stCls,text:t.status||'进行中'})
         ),
         h('p',{class:'ro-track-sum',text:t.summary||''}),
@@ -94,15 +94,15 @@ export function reviewPanel(initialProject=null){
           ))
         ):null,
         Array.isArray(t.key_metrics)&&t.key_metrics.length?h('div',{class:'ro-metrics'},
-          h('b',{text:'📊 关键指标：'}),
+          h('b',{text:'关键指标：'}),
           ...t.key_metrics.map(m=>h('span',{class:'ro-metric-pill',text:m}))
         ):null,
-        t.next_action?h('div',{class:'ro-next'},h('b',{text:'🚀 下一步规划：'}),h('span',{text:t.next_action})):null
+        t.next_action?h('div',{class:'ro-next'},h('b',{text:'下一步规划：'}),h('span',{text:t.next_action})):null
       );
     });
 
     const memCards=mems.map(m=>{
-      const promoteBtn=h('button',{class:'btn go',type:'button',text:'📥 一键写入项目记忆',onclick:async()=>{
+      const promoteBtn=h('button',{class:'btn go',type:'button',text:'写入项目记忆',onclick:async()=>{
         promoteBtn.disabled=true;
         const r=await post('/api/research/overview/promote-memory',{
           project,
@@ -133,14 +133,14 @@ export function reviewPanel(initialProject=null){
     overviewBox.replaceChildren(
       h('details',{class:'ro-panel',open:true},
         h('summary',{class:'ro-summary-bar'},
-          h('b',{text:`🧭 项目宏观总览与课题演进脉络（${tracks.length} 条跨目录课题主线 · ${mems.length} 条可沉淀项目经验）`}),
+          h('b',{text:`项目宏观总览与课题演进脉络（${tracks.length} 条跨目录课题主线 · ${mems.length} 条可沉淀项目经验）`}),
           overview.updated?h('small',{class:'ghint',style:'margin-left:auto',text:'更新于 '+new Date(overview.updated).toLocaleString()}):null
         ),
         h('div',{class:'ro-body'},
           ecoBlock,
-          tracks.length?h('div',{class:'ro-sec-title',text:'🛠️ 跨电脑/跨目录课题演进主线（点击阶段节点可定位下方目录卡片）：'}):null,
+          tracks.length?h('div',{class:'ro-sec-title',text:'跨电脑/跨目录课题演进主线（点击阶段节点可定位下方目录卡片）：'}):null,
           tracks.length?h('div',{class:'ro-tracks-grid'},...trackCards):null,
-          mems.length?h('div',{class:'ro-sec-title',text:'💡 提炼出的适用边界、选型结论与工程基线（可一键沉淀为项目专属记忆）：'}):null,
+          mems.length?h('div',{class:'ro-sec-title',text:'提炼出的适用边界、选型结论与工程基线（可一键沉淀为项目专属记忆）：'}):null,
           mems.length?h('div',{class:'ro-mems-grid'},...memCards):null
         )
       )
@@ -190,7 +190,7 @@ export function reviewPanel(initialProject=null){
 
   async function runGenerateOverview(){
     if(busy||!project)return;busy=true;overviewBtn.disabled=true;
-    const prog=createBtnProgress(overviewBtn,'🧭 生成项目总览');
+    const prog=createBtnProgress(overviewBtn,'生成项目总览');
     try{
       const curDirs=await directoryView.load(project);
       const pending=(curDirs||[]).filter(d=>d.sessions>0&&(!d.body||d.changed));
@@ -200,13 +200,13 @@ export function reviewPanel(initialProject=null){
         const shortPath=String(d.path||'').replace(/\\/g,'/').split('/').pop()||d.path;
         const fromPct=Math.round((i/totalSteps)*100);
         const toPct=Math.round(((i+0.88)/totalSteps)*100);
-        prog.stage(`🧭 目录总结 ${i+1}/${pending.length}`,fromPct,toPct,22000);
+        prog.stage(`目录总结 ${i+1}/${pending.length}`,fromPct,toPct,22000);
         say(`正在生成目录总结 (${i+1}/${pending.length})：${d.machine}:${shortPath}…`);
         await post('/api/research/directory/summarize',{project,id:d.id});
         await directoryView.load(project);
       }
       const ovStartPct=Math.round((pending.length/totalSteps)*100);
-      prog.stage('🧭 合成项目总览',Math.max(5,ovStartPct),95,24000);
+      prog.stage('合成项目总览',Math.max(5,ovStartPct),95,24000);
       say('正在聚合当前项目所有目录总结与记忆，生成跨目录课题演进总览…');
       const r=await post('/api/research/overview/generate',{project});
       if(!r.ok){
@@ -218,7 +218,7 @@ export function reviewPanel(initialProject=null){
       overview=r.item;
       renderOverview();
       const dirItems=await directoryView.load(project);
-      await prog.done(r.item?.cached&&!pending.length?'🧭 哈希未变':'🧭 已完成');
+      await prog.done(r.item?.cached&&!pending.length?'哈希未变':'已完成');
       syncClippy(dirItems);
       say(r.item?.cached&&!pending.length?'所有目录会话记录哈希均未变化，总览保持最新':'已更新增量目录总结与项目宏观总览');
     }catch{
@@ -229,55 +229,20 @@ export function reviewPanel(initialProject=null){
 
   async function runDiscover(){
     if(busy)return;busy=true;discoverBtn.disabled=true;
-    const prog=createBtnProgress(discoverBtn,'🔍 发现跨机目录');
-    prog.stage('🔍 扫描全网目录',6,92,20000);
+    const prog=createBtnProgress(discoverBtn,'发现跨机目录');
+    prog.stage('扫描全网目录',6,92,20000);
     say('正在扫描全网电脑会话与 Git Worktree，自动发现并归类项目目录…');
     try{
       const r=await post('/api/research/discover',{});
       if(!r.ok){prog.reset();say(r.msg||'目录发现失败');alertBox(r.msg||'目录发现失败',{title:'目录发现失败',bad:true});return;}
       await mesh.load();
       await reload();
-      await prog.done('🔍 发现完成');
+      await prog.done('发现完成');
       say(`已完成跨机目录发现：新归入 ${(r.item?.added||[]).length} 个目录`);
     }catch{
       prog.reset();
       say('目录发现失败');
     }finally{busy=false;discoverBtn.disabled=false;}
-  }
-
-  async function runSummarizeAll(){
-    if(busy||!project)return;busy=true;sumAllBtn.disabled=true;
-    const prog=createBtnProgress(sumAllBtn,'🤖 批量生成目录总结');
-    say('正在批量生成当前项目下所有待整理目录的工作总结…');
-    try{
-      const curDirs=await directoryView.load(project);
-      const pending=(curDirs||[]).filter(d=>d.sessions>0&&(!d.body||d.changed));
-      if(pending.length>0){
-        let doneCount=0;
-        for(let i=0;i<pending.length;i++){
-          const d=pending[i];
-          const shortPath=String(d.path||'').replace(/\\/g,'/').split('/').pop()||d.path;
-          prog.stage(`🤖 总结中 ${i+1}/${pending.length}`,Math.round((i/pending.length)*100),Math.round(((i+0.88)/pending.length)*100),22000);
-          say(`正在生成目录总结 (${i+1}/${pending.length})：${d.machine}:${shortPath}…`);
-          const sr=await post('/api/research/directory/summarize',{project,id:d.id});
-          if(sr.ok)doneCount++;
-          await directoryView.load(project);
-        }
-        await reload();
-        await prog.done('🤖 批量总结完成');
-        say(`批量总结完成：已生成 ${doneCount} 个目录总结`);
-      }else{
-        prog.stage('🤖 检查并总结目录',8,92,20000);
-        const r=await post('/api/research/directories/summarize-all',{project});
-        if(!r.ok){prog.reset();say(r.msg||'批量生成失败');alertBox(r.msg||'批量生成失败',{title:'批量生成失败',bad:true});return;}
-        await reload();
-        await prog.done('🤖 批量总结完成');
-        say(`批量总结完成：已生成 ${(r.item?.completed||[]).length} 个目录总结`+((r.item?.skipped||[]).length?`（跳过 ${r.item.skipped.length} 个无独立会话目录）`:''));
-      }
-    }catch{
-      prog.reset();
-      say('批量总结失败');
-    }finally{busy=false;sumAllBtn.disabled=false;}
   }
 
   function drawCatalog(){
@@ -289,7 +254,7 @@ export function reviewPanel(initialProject=null){
     const p=projects.find(x=>x.id===project);
     const changedCount=(dirItems||[]).filter(d=>d.sessions>0&&(!d.body||d.changed)).length;
     if(!overviewBtn.classList.contains('is-progress')){
-      overviewBtn.textContent=changedCount>0?`🧭 生成项目总览（${changedCount} 个目录待更新）`:'🧭 生成项目总览';
+      overviewBtn.textContent=changedCount>0?`生成项目总览（${changedCount} 个目录待更新）`:'生成项目总览';
     }
     attachClippy({
       project,

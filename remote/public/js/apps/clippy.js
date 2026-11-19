@@ -293,7 +293,7 @@ function createClippyWidget() {
       ctx.changedCount > 0 && typeof ctx.onUpdateOverview === 'function' ? h('button', {
         class: 'clippy-update-alert',
         type: 'button',
-        text: `🔔 检测到 ${ctx.changedCount} 个目录有新对话，点此一键同步项目总览`,
+        text: `检测到 ${ctx.changedCount} 个目录有新对话，点此一键同步项目总览`,
         onclick: () => ctx.onUpdateOverview(),
       }) : null,
       h('p', {
@@ -304,7 +304,7 @@ function createClippyWidget() {
         ...starters.map((q) => h('button', {
           class: 'clippy-chip',
           type: 'button',
-          text: '💡 ' + q,
+          text: '▸ ' + q,
           onclick: () => submitQuestion(q),
         }))
       )
@@ -319,7 +319,7 @@ function createClippyWidget() {
 
     bodyArea.replaceChildren(
       h('div', { class: 'clippy-q-echo' },
-        h('span', { text: '🙋 ' + askedQ }),
+        h('span', { text: '问：' + askedQ }),
         h('button', {
           class: 'clippy-back-btn',
           type: 'button',
@@ -327,39 +327,39 @@ function createClippyWidget() {
           onclick: () => renderWelcome(),
         })
       ),
-      h('div', { class: 'clippy-headline', text: '💡 ' + (res.headline || '') }),
+      h('div', { class: 'clippy-headline', text: res.headline || '' }),
       h('p', { class: 'clippy-ans-text', text: res.answer || '' }),
       metrics.length ? h('div', { class: 'clippy-sec' },
-        h('b', { text: '📊 关键结果与指标：' }),
+        h('b', { text: '关键结果与指标：' }),
         h('ul', { class: 'clippy-list' }, ...metrics.map((m) => h('li', { text: m })))
       ) : null,
       locs.length ? h('div', { class: 'clippy-sec' },
-        h('b', { text: '📍 所在电脑与目录位置：' }),
+        h('b', { text: '所在电脑与目录位置：' }),
         ...locs.map((loc) => h('div', { class: 'clippy-loc-card' },
           h('div', { class: 'clippy-loc-top' },
             h('code', { text: `${loc.machine} : ${loc.path}` }),
             loc.branch ? h('span', { class: 'clippy-branch', text: `[${loc.branch}]` }) : null
           ),
           loc.role ? h('div', { class: 'clippy-loc-role', text: loc.role }) : null,
-          loc.files && loc.files.length ? h('div', { class: 'clippy-loc-files', text: '📄 涉及文件/产物：' + loc.files.join('、') }) : null,
+          loc.files && loc.files.length ? h('div', { class: 'clippy-loc-files', text: '涉及文件/产物：' + loc.files.join('、') }) : null,
           h('div', { class: 'clippy-loc-btns' },
             h('button', {
               class: 'btn',
               type: 'button',
-              text: '🎯 定位到拓扑图节点',
+              text: '定位到拓扑图节点',
               onclick: () => jumpToDir(loc.machine, loc.path),
             }),
             h('button', {
               class: 'btn',
               type: 'button',
-              text: '📂 打开目录',
+              text: '打开目录',
               onclick: () => openExplorer(loc.machine, loc.path),
             })
           )
         ))
       ) : null,
       evs.length ? h('div', { class: 'clippy-sec' },
-        h('b', { text: '📜 原文对话依据：' }),
+        h('b', { text: '原文对话依据：' }),
         h('div', { class: 'clippy-ev-list' },
           ...evs.map((ev) => h('div', { class: 'clippy-ev-item' },
             h('span', { class: 'clippy-ev-quote', text: `“${String(ev.quote || '').slice(0, 110)}…”` }),
@@ -373,7 +373,7 @@ function createClippyWidget() {
         )
       ) : null,
       followUps.length ? h('div', { class: 'clippy-sec' },
-        h('b', { text: '🔍 继续追问：' }),
+        h('b', { text: '继续追问：' }),
         h('div', { class: 'clippy-starters' },
           ...followUps.map((fq) => h('button', {
             class: 'clippy-chip',
@@ -401,7 +401,7 @@ function createClippyWidget() {
     const thinkSwitch = setTimeout(() => { if (busy) setSprite('thinking'); }, 3200);
     bodyArea.replaceChildren(
       h('div', { class: 'clippy-loading' },
-        h('b', { text: `🔍 正在检索「${scope === 'all' ? '全部项目' : (ctx.projectName || '当前项目')}」的结构化总结、记忆与对话原文…` }),
+        h('b', { text: `正在检索「${scope === 'all' ? '全部项目' : (ctx.projectName || '当前项目')}」的结构化总结、记忆与对话原文…` }),
         h('p', { class: 'ghint', text: '问题：' + q })
       )
     );
@@ -418,7 +418,7 @@ function createClippyWidget() {
       if (!r.ok || !r.item) {
         playOnce('alert', 3000);
         bodyArea.replaceChildren(
-          h('p', { class: 'aim-bad', text: '⚠️ ' + (r.msg || '查询失败，请稍后重试') }),
+          h('p', { class: 'aim-bad', text: r.msg || '查询失败，请稍后重试' }),
           h('button', { class: 'btn', type: 'button', text: '返回', onclick: () => (lastAnswer ? renderAnswer(lastAnswer.res, lastAnswer.q) : renderWelcome()) })
         );
         return;
@@ -435,7 +435,7 @@ function createClippyWidget() {
       askBtn.disabled = false;
       playOnce('alert', 3000);
       bodyArea.replaceChildren(
-        h('p', { class: 'aim-bad', text: '⚠️ 网络请求失败' }),
+        h('p', { class: 'aim-bad', text: '网络请求失败' }),
         h('button', { class: 'btn', type: 'button', text: '返回', onclick: () => renderWelcome() })
       );
     }

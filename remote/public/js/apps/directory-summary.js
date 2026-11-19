@@ -48,7 +48,7 @@ export function directoryPanel(onChanged=()=>{}){
         class:'btn',
         type:'button',
         style:'font-size:11px;padding:1px 6px',
-        text:'🖥️ '+m,
+        text:m,
         onclick:()=>{machInput.value=m;},
       }))
     );
@@ -84,7 +84,7 @@ export function directoryPanel(onChanged=()=>{}){
       h('p',{text:`确定要从当前项目中移除目录「${item.machine} : ${norm(item.path)}」吗？`}),
       h('p',{class:'ghint',text:'说明：仅将该目录从本项目的归类与工作区列表中移除，不会删除电脑硬盘上的任何实际文件。'}),
       h('div',{class:'pr-toolbar',style:'justify-content:flex-end;margin-top:10px'},
-        h('button',{class:'btn go',type:'button',text:'🗑️ 确认删除',onclick:async()=>{
+        h('button',{class:'btn go',type:'button',text:'确认删除',onclick:async()=>{
           const r=await post('/api/research/directory',{project:item.project,id:item.id,machine:item.machine,path:item.path,action:'delete'});
           dlg.close();
           if(r.ok){
@@ -104,22 +104,22 @@ export function directoryPanel(onChanged=()=>{}){
   }
 
   async function aiSummarize(item,btn){
-    const origText=btn?btn.textContent:'🤖 生成总结';
+    const origText=btn?btn.textContent:'生成总结';
     let timer=null,pct=6;
     if(btn){
       btn.disabled=true;
       btn.classList.add('is-progress');
       btn.style.setProperty('--pct',pct+'%');
-      btn.textContent=`🤖 总结中 (${pct}%)`;
+      btn.textContent=`总结中 (${pct}%)`;
       timer=setInterval(()=>{
         if(pct<92){
           pct=Math.min(92,Math.round(pct+Math.max(1,(92-pct)*0.08)));
           btn.style.setProperty('--pct',pct+'%');
-          btn.textContent=`🤖 总结中 (${pct}%)`;
+          btn.textContent=`总结中 (${pct}%)`;
         }
       },350);
     }
-    say.textContent=`正在调用 AI 总结 ${item.machine}:${item.path} 的会话工作…`;
+    say.textContent=`正在总结 ${item.machine}:${item.path} 的会话工作…`;
     try{
       const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id,force:!!item.body});
       clearInterval(timer);
@@ -128,7 +128,7 @@ export function directoryPanel(onChanged=()=>{}){
         btn.textContent='✓ 总结完成 (100%)';
         await new Promise(res=>setTimeout(res,500));
       }
-      say.textContent=r.ok?`已生成 ${item.machine}:${item.path} 的目录工作总结`:(r.msg||'AI 生成失败');
+      say.textContent=r.ok?`已生成 ${item.machine}:${item.path} 的目录工作总结`:(r.msg||'生成失败');
       if(!r.ok){
         const card=btn?.closest('.rd-card');
         if(card){
@@ -138,9 +138,9 @@ export function directoryPanel(onChanged=()=>{}){
             const act=card.querySelector('.rd-node-actions, .pr-toolbar');
             act?card.insertBefore(errEl,act):card.append(errEl);
           }
-          errEl.textContent='⚠️ '+(r.msg||'AI 生成失败');
+          errEl.textContent='错误：'+(r.msg||'生成失败');
         }
-        alertBox(r.msg||'AI 生成失败',{title:'目录工作总结失败',bad:true});
+        alertBox(r.msg||'生成失败',{title:'目录工作总结失败',bad:true});
       }
       if(r.ok){await load(project);onChanged();}
     }finally{
@@ -173,10 +173,10 @@ export function directoryPanel(onChanged=()=>{}){
   function computeRelations(item,allItems,parentItem,childItems){
     const rels=[];
     if(parentItem){
-      rels.push({kind:'parent',text:`⬆️ 隶属母工作区: ${norm(parentItem.path)}`,target:parentItem});
+      rels.push({kind:'parent',text:`↑ 隶属母工作区: ${norm(parentItem.path)}`,target:parentItem});
     }
     if(childItems&&childItems.length){
-      rels.push({kind:'children',text:`🌿 下辖 ${childItems.length} 个子分支/目录: ${childItems.map(c=>shortName(c.path,item.path)+(c.branch?`[${c.branch}]`:'')).join('、')}`});
+      rels.push({kind:'children',text:`↳ 下辖 ${childItems.length} 个子分支/目录: ${childItems.map(c=>shortName(c.path,item.path)+(c.branch?`[${c.branch}]`:'')).join('、')}`});
     }
     if(item.branch){
       const peers=allItems.filter(x=>x.id!==item.id&&x.branch&&x.branch.toLowerCase()===item.branch.toLowerCase());
@@ -189,7 +189,7 @@ export function directoryPanel(onChanged=()=>{}){
     if(myBase&&myBase.length>=4&&!/^(?:CEM_PO|CEM_1|CEM)$/i.test(myBase)){
       const refsMe=allItems.filter(x=>x.id!==item.id&&(!parentItem||x.id!==parentItem.id)&&x.body&&JSON.stringify(x.body).includes(myBase));
       if(refsMe.length){
-        rels.push({kind:'ref',text:`🔗 被关联引用: ${refsMe.map(r=>`${r.machine}:${norm(r.path).split('/').pop()}`).slice(0,3).join('、')}`,target:refsMe[0]});
+        rels.push({kind:'ref',text:`→ 被关联引用: ${refsMe.map(r=>`${r.machine}:${norm(r.path).split('/').pop()}`).slice(0,3).join('、')}`,target:refsMe[0]});
       }
     }
     return rels;
@@ -203,26 +203,26 @@ export function directoryPanel(onChanged=()=>{}){
     const dlg=h('dialog',{class:'pr-evidence rd-detail-dlg'},
       h('div',{class:'rd-detail-head'},
         h('div',{class:'rr-item-head'},
-          h('b',{style:'font-size:14px',text:`🖥️ ${item.machine} : ${norm(item.path)}`}),
-          item.branch?h('span',{class:'xtag',text:'🌿 分支: '+item.branch}):null,
+          h('b',{style:'font-size:14px',text:`${item.machine} : ${norm(item.path)}`}),
+          item.branch?h('span',{class:'xtag',text:'分支: '+item.branch}):null,
           item.source?h('small',{class:'ghint',text:item.source}):null,
           h('span',{class:'rr-badge '+(item.status==='confirmed'?'confirmed':''),text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
         ),
         h('div',{class:'rd-node-meta'},
-          h('span',{text:`💬 本目录直接会话 ${item.sessions} 份 · 已归集资料 ${item.documents} 份`}),
-          childItems&&childItems.length?h('span',{class:'rd-agg-pill',text:`📊 含下属 ${childItems.length} 个子目录共 ${item.sessions+totalChildSessions} 份会话`}):null
+          h('span',{text:`本目录直接会话 ${item.sessions} 份 · 已归集资料 ${item.documents} 份`}),
+          childItems&&childItems.length?h('span',{class:'rd-agg-pill',text:`含下属 ${childItems.length} 个子目录共 ${item.sessions+totalChildSessions} 份会话`}):null
         ),
         rels.length?h('div',{class:'rd-rels'},...rels.map(r=>h('span',{class:'rd-rel-pill '+r.kind,text:r.text}))):null
       ),
       b?h('div',{class:'rd-summary'},
-        h('section',{class:'rd-sec-box'},h('b',{text:'📌 目录定位与总览'}),h('p',{class:'rd-overview',text:b.overview})),
-        h('b',{text:`🛠️ 工作主线（共 ${b.work.length} 条）`}),
+        h('section',{class:'rd-sec-box'},h('b',{text:'目录定位与总览'}),h('p',{class:'rd-overview',text:b.overview})),
+        h('b',{text:`工作主线（共 ${b.work.length} 条）`}),
         ...b.work.map(w=>h('section',{class:'rd-work'},
           h('h4',{text:'▸ '+w.title}),
           h('p',{text:w.description}),
-          lines('✅ 结果与验证指标',w.results),
-          lines('📦 产物与代码路径',w.outputs),
-          lines('❓ 未决问题',w.questions),
+          lines('结果与验证指标',w.results),
+          lines('产物与代码路径',w.outputs),
+          lines('未决问题',w.questions),
           h('details',{},
             h('summary',{text:'查看原文证据引用 · '+w.evidence.length}),
             ...w.evidence.map(ref=>h('div',{},
@@ -231,14 +231,14 @@ export function directoryPanel(onChanged=()=>{}){
             ))
           )
         )),
-        lines('🚀 下一步计划',b.next_steps)
+        lines('下一步计划',b.next_steps)
       ):h('p',{text:'该目录尚无工作总结。'}),
       h('div',{class:'pr-toolbar',style:'margin-top:10px;justify-content:flex-end'},
         h('button',{class:'btn',text:'在我的电脑打开目录',onclick:()=>openExplorer(item.machine,item.path)}),
         b&&item.status!=='confirmed'?h('button',{class:'btn go',text:'确认目录总结',onclick:async()=>{await change(item,'confirm');dlg.close();}}):null,
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>{dlg.close();edit(item);}}):null,
-        h('button',{class:'btn',text:b?'🤖 重新总结':'🤖 生成总结',onclick:async(e)=>{await aiSummarize(item,e.currentTarget);dlg.close();}}),
-        h('button',{class:'btn',text:'🗑️ 删除目录',onclick:()=>{dlg.close();openDeleteDialog(item);}}),
+        h('button',{class:'btn',text:b?'重新总结':'生成总结',onclick:async(e)=>{await aiSummarize(item,e.currentTarget);dlg.close();}}),
+        h('button',{class:'btn',text:'删除目录',onclick:()=>{dlg.close();openDeleteDialog(item);}}),
         h('button',{class:'btn',text:'关闭',onclick:()=>dlg.close()})
       )
     );
@@ -253,7 +253,7 @@ export function directoryPanel(onChanged=()=>{}){
     const isHub=childItems.length>0;
     const totalChildSessions=childItems.reduce((s,c)=>s+(c.sessions||0),0);
     const rels=computeRelations(item,allItems,parentItem,childItems);
-    const aiBtn=h('button',{class:'btn',text:b?'🤖 重总结':'🤖 生成总结',onclick:(e)=>{e.stopPropagation();aiSummarize(item,aiBtn);}});
+    const aiBtn=h('button',{class:'btn',text:b?'重总结':'生成总结',onclick:(e)=>{e.stopPropagation();aiSummarize(item,aiBtn);}});
     const displayPath=parentItem?`↳ ${shortName(item.path,parentItem.path)}`:norm(item.path);
 
     return h('article',{
@@ -261,20 +261,20 @@ export function directoryPanel(onChanged=()=>{}){
       dataset:{id:item.id},
     },
       h('div',{class:'rr-item-head rd-node-head'},
-        h('span',{class:'rd-role-icon',text:isHub?'🏛️ 母工作区':parentItem?'🌿 子工作树':'📁 独立工作区'}),
+        h('span',{class:'rd-role-icon',text:isHub?'母工作区':parentItem?'子工作树':'独立工作区'}),
         h('code',{class:'rd-node-path',title:norm(item.path),text:displayPath}),
         item.branch?h('span',{class:'pm-ws-git rd-branch-pill',text:'Git: '+item.branch}):null,
         h('span',{class:'rd-sess-pill',text:isHub?`本目录 ${item.sessions} 份会话（全工作区共 ${item.sessions+totalChildSessions} 份）`:`${item.sessions} 份会话`}),
         h('span',{class:'rr-badge '+(item.status==='confirmed'?'confirmed':''),text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
       ),
       b?h('p',{class:'rd-overview rd-overview-clamp',title:b.overview,onclick:()=>openDetail(item,allItems,parentItem,childItems),text:b.overview})
-       :h('p',{class:'rd-overview rd-empty-hint',text:'目录工作总结待整理（点击下方 AI 总结生成）。'}),
+       :h('p',{class:'rd-overview rd-empty-hint',text:'目录工作总结待整理（点击下方「生成总结」生成）。'}),
       b&&b.work?.length?h('div',{class:'rd-work-pills'},
         ...b.work.map(w=>h('span',{
           class:'rd-work-pill',
           title:w.description,
           onclick:()=>openDetail(item,allItems,parentItem,childItems),
-          text:`📌 ${w.title}`,
+          text:`▸ ${w.title}`,
         }))
       ):null,
       rels.length?h('div',{class:'rd-rels'},
@@ -288,13 +288,13 @@ export function directoryPanel(onChanged=()=>{}){
         }))
       ):null,
       h('div',{class:'pr-toolbar rd-node-actions'},
-        b?h('button',{class:'btn go',text:`📖 查看详情 (${b.work.length}条主线)`,onclick:()=>openDetail(item,allItems,parentItem,childItems)}):null,
+        b?h('button',{class:'btn go',text:`查看详情 (${b.work.length}条主线)`,onclick:()=>openDetail(item,allItems,parentItem,childItems)}):null,
         b&&item.status!=='confirmed'?h('button',{class:'btn',text:'确认目录总结',onclick:()=>change(item,'confirm')}):null,
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>edit(item)}):null,
         b&&item.status==='confirmed'?h('button',{class:'btn',text:'恢复待核对',onclick:()=>change(item,'restore')}):null,
         h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),
         aiBtn,
-        h('button',{class:'btn',title:'从当前项目中移除此目录',text:'🗑️ 删除目录',onclick:(e)=>{e.stopPropagation();openDeleteDialog(item);}})
+        h('button',{class:'btn',title:'从当前项目中移除此目录',text:'删除目录',onclick:(e)=>{e.stopPropagation();openDeleteDialog(item);}})
       )
     );
   }
@@ -349,7 +349,7 @@ export function directoryPanel(onChanged=()=>{}){
 
       machineBoxes.push(h('section',{class:'rd-machine-cluster'},
         h('div',{class:'rd-machine-hd'},
-          h('b',{text:`🖥️ 设备节点：${mach}`}),
+          h('b',{text:`设备节点：${mach}`}),
           h('span',{class:'rd-mach-stat',text:`${mItems.length} 个目录/工作树 · 合计 ${totalMachSessions} 份会话`}),
           branches.length?h('span',{class:'rd-mach-branches',text:`涵盖分支: ${branches.join(' / ')}`}):null
         ),
@@ -363,11 +363,11 @@ export function directoryPanel(onChanged=()=>{}){
   // Full list card for List Mode
   function renderListCard(item){
     const b=item.body;
-    const aiBtn=h('button',{class:'btn',text:b?'🤖 重新总结':'🤖 生成总结',onclick:()=>aiSummarize(item,aiBtn)});
+    const aiBtn=h('button',{class:'btn',text:b?'重新总结':'生成总结',onclick:()=>aiSummarize(item,aiBtn)});
     return h('article',{class:'pr-card rd-card',dataset:{id:item.id}},
       h('div',{class:'rr-item-head'},
-        h('b',{text:'🖥️ '+item.machine}),
-        item.branch?h('span',{class:'xtag',text:'🌿 分支: '+item.branch}):null,
+        h('b',{text:item.machine}),
+        item.branch?h('span',{class:'xtag',text:'分支: '+item.branch}):null,
         item.source?h('small',{class:'ghint',text:item.source}):null,
         h('span',{class:'rr-badge '+(item.status==='confirmed'?'confirmed':''),text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
       ),
@@ -375,7 +375,7 @@ export function directoryPanel(onChanged=()=>{}){
         h('code',{text:item.path}),
         h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),
         aiBtn,
-        h('button',{class:'btn',text:'🗑️ 删除目录',onclick:()=>openDeleteDialog(item)})
+        h('button',{class:'btn',text:'删除目录',onclick:()=>openDeleteDialog(item)})
       ),
       h('small',{text:item.sessions+' 份会话 · '+item.documents+' 份已归集资料'+(item.changed?' · 有新资料待更新':'')}),
       b?h('div',{class:'rd-summary'},h('p',{class:'rd-overview',text:b.overview}),
@@ -384,7 +384,7 @@ export function directoryPanel(onChanged=()=>{}){
         lines('接下来',b.next_steps),
         h('div',{class:'pr-toolbar'},item.status!=='confirmed'?h('button',{class:'btn',text:'确认目录总结',onclick:()=>change(item,'confirm')}):null,
           h('button',{class:'btn',text:'修改目录总结',onclick:()=>edit(item)}),item.status==='confirmed'?h('button',{class:'btn',text:'恢复待核对',onclick:()=>change(item,'restore')}):null)):
-        h('p',{text:'目录工作总结待整理（可点击上方「🤖 AI 生成总结」自动抽取）。'}));
+        h('p',{text:'目录工作总结待整理（可点击上方「生成总结」自动抽取）。'}));
   }
 
   function render(){
@@ -392,11 +392,11 @@ export function directoryPanel(onChanged=()=>{}){
     const machCount=new Set(items.map(x=>x.machine)).size;
     const totalSess=items.reduce((s,x)=>s+(x.sessions||0),0);
     const bar=h('div',{class:'rd-view-bar'},
-      h('span',{class:'rd-view-summary',text:`📊 跨机拓扑总览：${machCount} 台电脑 · ${items.length} 个目录/分支 · 累计 ${totalSess} 份对话（点击节点「查看详情」或摘要文字可展开完整结果与原文依据）`}),
+      h('span',{class:'rd-view-summary',text:`跨机拓扑总览：${machCount} 台电脑 · ${items.length} 个目录/分支 · 累计 ${totalSess} 份对话（点击节点「查看详情」或摘要文字可展开完整结果与原文依据）`}),
       h('div',{class:'rd-view-btns'},
         h('button',{class:'btn go',type:'button',text:'＋ 添加目录',onclick:openAddDialog}),
-        h('button',{class:'btn '+(viewMode==='graph'?'go':''),type:'button',text:'🕸️ 结构拓扑图',onclick:()=>{viewMode='graph';render();}}),
-        h('button',{class:'btn '+(viewMode==='list'?'go':''),type:'button',text:'📋 展开详细列表',onclick:()=>{viewMode='list';render();}})
+        h('button',{class:'btn '+(viewMode==='graph'?'go':''),type:'button',text:'结构拓扑图',onclick:()=>{viewMode='graph';render();}}),
+        h('button',{class:'btn '+(viewMode==='list'?'go':''),type:'button',text:'展开详细列表',onclick:()=>{viewMode='list';render();}})
       )
     );
     root.replaceChildren(
