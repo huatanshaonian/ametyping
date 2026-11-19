@@ -104,7 +104,7 @@ export function directoryPanel(onChanged=()=>{}){
   }
 
   async function aiSummarize(item,btn){
-    const origText=btn?btn.textContent:'🤖 AI 总结';
+    const origText=btn?btn.textContent:'🤖 生成总结';
     let timer=null,pct=6;
     if(btn){
       btn.disabled=true;
@@ -237,7 +237,7 @@ export function directoryPanel(onChanged=()=>{}){
         h('button',{class:'btn',text:'在我的电脑打开目录',onclick:()=>openExplorer(item.machine,item.path)}),
         b&&item.status!=='confirmed'?h('button',{class:'btn go',text:'确认目录总结',onclick:async()=>{await change(item,'confirm');dlg.close();}}):null,
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>{dlg.close();edit(item);}}):null,
-        h('button',{class:'btn',text:b?'🤖 AI 重新总结':'🤖 AI 生成总结',onclick:async(e)=>{await aiSummarize(item,e.currentTarget);dlg.close();}}),
+        h('button',{class:'btn',text:b?'🤖 重新总结':'🤖 生成总结',onclick:async(e)=>{await aiSummarize(item,e.currentTarget);dlg.close();}}),
         h('button',{class:'btn',text:'🗑️ 删除目录',onclick:()=>{dlg.close();openDeleteDialog(item);}}),
         h('button',{class:'btn',text:'关闭',onclick:()=>dlg.close()})
       )
@@ -253,7 +253,7 @@ export function directoryPanel(onChanged=()=>{}){
     const isHub=childItems.length>0;
     const totalChildSessions=childItems.reduce((s,c)=>s+(c.sessions||0),0);
     const rels=computeRelations(item,allItems,parentItem,childItems);
-    const aiBtn=h('button',{class:'btn',text:b?'🤖 重总结':'🤖 AI 总结',onclick:(e)=>{e.stopPropagation();aiSummarize(item,aiBtn);}});
+    const aiBtn=h('button',{class:'btn',text:b?'🤖 重总结':'🤖 生成总结',onclick:(e)=>{e.stopPropagation();aiSummarize(item,aiBtn);}});
     const displayPath=parentItem?`↳ ${shortName(item.path,parentItem.path)}`:norm(item.path);
 
     return h('article',{
@@ -363,7 +363,7 @@ export function directoryPanel(onChanged=()=>{}){
   // Full list card for List Mode
   function renderListCard(item){
     const b=item.body;
-    const aiBtn=h('button',{class:'btn',text:b?'🤖 AI 重新总结':'🤖 AI 生成总结',onclick:()=>aiSummarize(item,aiBtn)});
+    const aiBtn=h('button',{class:'btn',text:b?'🤖 重新总结':'🤖 生成总结',onclick:()=>aiSummarize(item,aiBtn)});
     return h('article',{class:'pr-card rd-card',dataset:{id:item.id}},
       h('div',{class:'rr-item-head'},
         h('b',{text:'🖥️ '+item.machine}),

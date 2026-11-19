@@ -24,14 +24,13 @@ export function reviewPanel(initialProject=null){
       if(!closed&&r.ok){projects=r.items;drawCatalog();}
     }catch{}
   }),directories=directoryView.root;
-  const overviewBtn=h('button',{class:'btn go',text:'🧭 AI 生成项目总览',onclick:runGenerateOverview});
+  const overviewBtn=h('button',{class:'btn go',text:'🧭 生成项目总览',onclick:runGenerateOverview});
   const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
-  const discoverBtn=h('button',{class:'btn',text:'🔍 AI 发现跨机目录',onclick:runDiscover});
-  const sumAllBtn=h('button',{class:'btn',text:'🤖 AI 批量生成目录总结',onclick:runSummarizeAll});
-  const apiCfgBtn=h('button',{class:'btn',text:'⚙️ AI 模型与 API 设置',onclick:async()=>{const c=await import('./control.js');c.open('ai');}});
+  const discoverBtn=h('button',{class:'btn',text:'🔍 发现跨机目录',onclick:runDiscover});
+  const sumAllBtn=h('button',{class:'btn',text:'🤖 批量生成目录总结',onclick:runSummarizeAll});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
-      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,apiCfgBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
+      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
       overviewBox,
       directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
@@ -192,7 +191,7 @@ export function reviewPanel(initialProject=null){
 
   async function runGenerateOverview(){
     if(busy||!project)return;busy=true;overviewBtn.disabled=true;
-    const prog=createBtnProgress(overviewBtn,'🧭 AI 生成项目总览');
+    const prog=createBtnProgress(overviewBtn,'🧭 生成项目总览');
     try{
       const curDirs=await directoryView.load(project);
       const pending=(curDirs||[]).filter(d=>d.sessions>0&&(!d.body||d.changed));
@@ -231,7 +230,7 @@ export function reviewPanel(initialProject=null){
 
   async function runDiscover(){
     if(busy)return;busy=true;discoverBtn.disabled=true;
-    const prog=createBtnProgress(discoverBtn,'🔍 AI 发现跨机目录');
+    const prog=createBtnProgress(discoverBtn,'🔍 发现跨机目录');
     prog.stage('🔍 扫描全网目录',6,92,20000);
     say('正在扫描全网电脑会话与 Git Worktree，自动发现并归类项目目录…');
     try{
@@ -249,7 +248,7 @@ export function reviewPanel(initialProject=null){
 
   async function runSummarizeAll(){
     if(busy||!project)return;busy=true;sumAllBtn.disabled=true;
-    const prog=createBtnProgress(sumAllBtn,'🤖 AI 批量生成目录总结');
+    const prog=createBtnProgress(sumAllBtn,'🤖 批量生成目录总结');
     say('正在批量生成当前项目下所有待整理目录的工作总结…');
     try{
       const curDirs=await directoryView.load(project);
@@ -291,7 +290,7 @@ export function reviewPanel(initialProject=null){
     const p=projects.find(x=>x.id===project);
     const changedCount=(dirItems||[]).filter(d=>d.sessions>0&&(!d.body||d.changed)).length;
     if(!overviewBtn.classList.contains('is-progress')){
-      overviewBtn.textContent=changedCount>0?`🧭 AI 生成项目总览（${changedCount} 个目录待更新）`:'🧭 AI 生成项目总览';
+      overviewBtn.textContent=changedCount>0?`🧭 生成项目总览（${changedCount} 个目录待更新）`:'🧭 生成项目总览';
     }
     attachClippy({
       project,

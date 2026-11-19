@@ -218,9 +218,11 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       const own=x=>x.machine===d.machine&&canonical(x.cwd)===canonical(d.path);
       const archived=sources.filter(own),documents=docs.filter(own);
       const inputs=documents.map(x=>x.id).sort();
+      const sessionCount=new Set(archived.map(x=>x.session)).size;
+      const docSessionCount=new Set(documents.map(x=>x.session)).size;
       return {id,project,machine:d.machine,path:d.path,source:d.source||'',branch:d.branch||'',...(saved||{}),status:saved?.status||'pending',revision:saved?.revision||0,
-        body:saved?.body||null,documents:documents.length,sessions:new Set(archived.map(x=>x.session)).size,
-        updated:saved?.updated||null,changed:!!saved&&JSON.stringify(saved.inputs)!==JSON.stringify(inputs),
+        body:saved?.body||null,documents:documents.length,sessions:sessionCount,
+        updated:saved?.updated||null,changed:!!saved&&(JSON.stringify(saved.inputs)!==JSON.stringify(inputs)||sessionCount>docSessionCount),
         evidenceDocuments:saved?.inputs.length||0};
     });
   }
