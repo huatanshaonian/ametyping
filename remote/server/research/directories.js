@@ -2,7 +2,7 @@
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
-const {normalize}=require('./normalize');
+const {normalize,documentId}=require('./normalize');
 const {createGoogleAiKey,runGoogleAi}=require('../ai/google-ai-api');
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/$/,'');
 const canonical=p=>/^[A-Za-z]:/.test(p)?norm(p).toLowerCase():norm(p);
@@ -217,13 +217,17 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       const id=key(project,d.machine,d.path),saved=parse(db.prepare('SELECT * FROM research_directory_summaries WHERE id=?').get(id));
       const own=x=>x.machine===d.machine&&canonical(x.cwd)===canonical(d.path);
       const archived=sources.filter(own),documents=docs.filter(own);
-      const inputs=documents.map(x=>x.id).sort();
+      const validSources=archived.filter(s=>s.complete&&s.size<=64*1024*1024&&(s.provider==='opencode'||/\.jsonl$/i.test(s.path)));
+      const expectedInputs=(validSources.length?validSources.map(s=>documentId(s)):documents.map(x=>x.id)).sort();
+      const savedInputs=Array.isArray(saved?.inputs)?[...saved.inputs].sort():[];
+      const recordsHash=expectedInputs.length?crypto.createHash('sha256').update(expectedInputs.join('|')).digest('hex'):'';
+      const savedHash=savedInputs.length?crypto.createHash('sha256').update(savedInputs.join('|')).digest('hex'):'';
       const sessionCount=new Set(archived.map(x=>x.session)).size;
-      const docSessionCount=new Set(documents.map(x=>x.session)).size;
       return {id,project,machine:d.machine,path:d.path,source:d.source||'',branch:d.branch||'',...(saved||{}),status:saved?.status||'pending',revision:saved?.revision||0,
         body:saved?.body||null,documents:documents.length,sessions:sessionCount,
-        updated:saved?.updated||null,changed:!!saved&&(JSON.stringify(saved.inputs)!==JSON.stringify(inputs)||sessionCount>docSessionCount),
-        evidenceDocuments:saved?.inputs.length||0};
+        recordsHash,savedHash,
+        updated:saved?.updated||null,changed:!!saved&&recordsHash!==savedHash,
+        evidenceDocuments:savedInputs.length||0};
     });
   }
 
@@ -340,9 +344,10 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     return allUnits;
   }
 
-  async function summarize({project,id,model=DEFAULT_MODEL,confirm=false}){
+  async function summarize({project,id,model=DEFAULT_MODEL,confirm=false,force=false}){
     const current=list(project).find(d=>d.id===id);
     if(!current)throw Error('找不到该项目目录');
+    if(!force&&current.body&&!current.changed)return {...current,cached:true};
     const units=buildEvidenceUnits(project,current.machine,current.path,current.branch,110);
     if(!units.length)throw Error(`目录 ${current.machine}:${current.path} 尚无可用于总结的会话记录`);
     const prompt=[
@@ -467,22 +472,26 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
   function getOverview(project){
     const row=db.prepare('SELECT * FROM research_project_overviews WHERE project=?').get(project);
     if(!row)return null;
-    try{return {project:row.project,body:JSON.parse(row.body),updated:row.updated};}catch{return null;}
+    try{
+      const body=JSON.parse(row.body);
+      return {project:row.project,body,inputHash:body?._input_hash||'',updated:row.updated};
+    }catch{return null;}
   }
 
-  function saveOverview(project,body){
+  function saveOverview(project,body,inputHash=''){
     const now=Date.now();
+    const payload=inputHash?{...body,_input_hash:inputHash}:body;
     db.prepare('INSERT INTO research_project_overviews(project,body,updated) VALUES(?,?,?) ON CONFLICT(project) DO UPDATE SET body=excluded.body,updated=excluded.updated')
-      .run(project,JSON.stringify(body),now);
-    return {project,body,updated:now};
+      .run(project,JSON.stringify(payload),now);
+    return {project,body:payload,inputHash,updated:now};
   }
 
-  async function generateOverview({project,model=''}){
+  async function generateOverview({project,model='',force=false}){
     const cat=review.catalog();
     const curProj=cat.find(p=>p.id===project);
     if(!curProj)throw Error('找不到该项目');
     let dirList=list(project);
-    const needSum=dirList.filter(d=>!d.body||d.changed);
+    const needSum=dirList.filter(d=>d.sessions>0&&(!d.body||d.changed));
     if(needSum.length){
       try{await summarizeAll({project,model,force:false});}catch{}
       dirList=list(project);
@@ -496,6 +505,15 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       const owner=kp?kp.id:curProj.name.toLowerCase();
       memories=db.prepare("SELECT scope,owner,name,body FROM memory WHERE enabled=1 AND (scope='global' OR (scope='project' AND owner=?))").all(owner);
     }catch{}
+
+    const overviewHash=crypto.createHash('sha256').update(JSON.stringify({
+      dirs:dirWithBody.map(d=>({id:d.id,rev:d.revision,hash:d.recordsHash||d.savedHash||'',overview:d.body?.overview||''})),
+      mems:memories.map(m=>({name:m.name,body:m.body})),
+    })).digest('hex');
+    const existing=getOverview(project);
+    if(!force&&existing&&existing.body&&existing.inputHash===overviewHash){
+      return {...existing,cached:true};
+    }
 
     const prompt=[
       `你是科研与工程项目的宏观总览、规划与回顾引擎。请基于项目「${curProj.name}」下已核实的 ${dirWithBody.length} 个跨设备目录工作总结与现有记忆，生成该项目的宏观总览报告。`,
@@ -527,7 +545,7 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     ].join('\n');
 
     const res=await callModel({model:model||DEFAULT_MODEL,prompt,schema:OVERVIEW_SCHEMA,timeoutMs:180000});
-    return saveOverview(project,res);
+    return saveOverview(project,res,overviewHash);
   }
 
   function promoteMemory({project,name,category='',body}){

@@ -27,10 +27,9 @@ export function reviewPanel(initialProject=null){
   const overviewBtn=h('button',{class:'btn go',text:'🧭 生成项目总览',onclick:runGenerateOverview});
   const addDirBtn=h('button',{class:'btn',text:'＋ 添加目录',onclick:()=>directoryView.openAddDialog()});
   const discoverBtn=h('button',{class:'btn',text:'🔍 发现跨机目录',onclick:runDiscover});
-  const sumAllBtn=h('button',{class:'btn',text:'🤖 批量生成目录总结',onclick:runSummarizeAll});
   const root=h('div',{class:'rr-root pr-pilots'+(initialProject?' rr-embedded':'')},side,
     h('section',{class:'rr-main'},
-      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,sumAllBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
+      h('div',{class:'pr-toolbar'},title,overviewBtn,addDirBtn,discoverBtn,h('button',{class:'btn',text:'刷新',onclick:reload})),
       overviewBox,
       directories,
       h('details',{class:'rr-raw'},h('summary',{text:'抽取依据与核对'}),h('div',{class:'pr-toolbar'},filter,search,merge),status,list)));
@@ -219,9 +218,9 @@ export function reviewPanel(initialProject=null){
       overview=r.item;
       renderOverview();
       const dirItems=await directoryView.load(project);
-      await prog.done('🧭 已完成');
+      await prog.done(r.item?.cached&&!pending.length?'🧭 哈希未变':'🧭 已完成');
       syncClippy(dirItems);
-      say('已更新全部目录总结与项目宏观总览');
+      say(r.item?.cached&&!pending.length?'所有目录会话记录哈希均未变化，总览保持最新':'已更新增量目录总结与项目宏观总览');
     }catch{
       prog.reset();
       say('生成项目总览失败');

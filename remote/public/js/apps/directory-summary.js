@@ -121,7 +121,7 @@ export function directoryPanel(onChanged=()=>{}){
     }
     say.textContent=`正在调用 AI 总结 ${item.machine}:${item.path} 的会话工作…`;
     try{
-      const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id});
+      const r=await post('/api/research/directory/summarize',{project:item.project,id:item.id,force:!!item.body});
       clearInterval(timer);
       if(r.ok&&btn){
         btn.style.setProperty('--pct','100%');
