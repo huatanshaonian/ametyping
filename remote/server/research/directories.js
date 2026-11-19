@@ -274,20 +274,26 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       fromParent=true;
     }
     const importedDocs=[];
+    let lastImportError='';
     for(const s of matched){
       if(s.size>64*1024*1024)continue;
       if(s.provider!=='opencode'&&!/\.jsonl$/i.test(s.path))continue;
       try{
         const doc=store.importSource(project,{machine:s.machine,key:s.key,generation:s.generation});
         if(doc)importedDocs.push(doc);
-      }catch{}
+      }catch(e){
+        lastImportError=e.message||String(e);
+      }
     }
-    return {docs:importedDocs,fromParent};
+    return {docs:importedDocs,fromParent,matchedCount:matched.length,lastImportError};
   }
 
   function buildEvidenceUnits(project,machine,dirPath,branch='',maxUnits=110){
-    const {docs,fromParent}=ensureImportedForDir(project,machine,dirPath);
-    if(!docs.length)return [];
+    const {docs,fromParent,matchedCount,lastImportError}=ensureImportedForDir(project,machine,dirPath);
+    if(!docs.length){
+      if(matchedCount>0&&lastImportError)throw Error(`目录 ${machine}:${dirPath} 的会话记录解析失败：${lastImportError}`);
+      return [];
+    }
     const baseName=norm(dirPath).split('/').pop()||'';
     const kwRe=fromParent&&baseName?new RegExp(baseName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+(branch?'|'+branch.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'):''),'i'):null;
     const allUnits=[];

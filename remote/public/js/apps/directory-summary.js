@@ -1,5 +1,6 @@
 import {h} from '../util.js';
 import {post} from '../net.js';
+import {alertBox} from '../dialog.js';
 import {open as openExplorer} from './explorer.js';
 
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/+$/,'');
@@ -128,6 +129,19 @@ export function directoryPanel(onChanged=()=>{}){
         await new Promise(res=>setTimeout(res,500));
       }
       say.textContent=r.ok?`已生成 ${item.machine}:${item.path} 的目录工作总结`:(r.msg||'AI 生成失败');
+      if(!r.ok){
+        const card=btn?.closest('.rd-card');
+        if(card){
+          let errEl=card.querySelector('.rd-card-err');
+          if(!errEl){
+            errEl=h('p',{class:'rd-card-err aim-bad',style:'margin:4px 0;font-weight:bold'});
+            const act=card.querySelector('.rd-node-actions, .pr-toolbar');
+            act?card.insertBefore(errEl,act):card.append(errEl);
+          }
+          errEl.textContent='⚠️ '+(r.msg||'AI 生成失败');
+        }
+        alertBox(r.msg||'AI 生成失败',{title:'目录工作总结失败',bad:true});
+      }
       if(r.ok){await load(project);onChanged();}
     }finally{
       clearInterval(timer);

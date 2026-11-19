@@ -1,5 +1,6 @@
 import {h,icon} from '../util.js';
 import {post} from '../net.js';
+import {alertBox} from '../dialog.js';
 import * as wm from '../wm.js';
 import * as mesh from '../mesh.js';
 import {directoryPanel} from './directory-summary.js';
@@ -213,6 +214,7 @@ export function reviewPanel(initialProject=null){
       if(!r.ok){
         prog.reset();
         say(r.msg||'生成项目总览失败');
+        alertBox(r.msg||'生成项目总览失败',{title:'生成项目总览失败',bad:true});
         return;
       }
       overview=r.item;
@@ -234,7 +236,7 @@ export function reviewPanel(initialProject=null){
     say('正在扫描全网电脑会话与 Git Worktree，自动发现并归类项目目录…');
     try{
       const r=await post('/api/research/discover',{});
-      if(!r.ok){prog.reset();say(r.msg||'目录发现失败');return;}
+      if(!r.ok){prog.reset();say(r.msg||'目录发现失败');alertBox(r.msg||'目录发现失败',{title:'目录发现失败',bad:true});return;}
       await mesh.load();
       await reload();
       await prog.done('🔍 发现完成');
@@ -269,7 +271,7 @@ export function reviewPanel(initialProject=null){
       }else{
         prog.stage('🤖 检查并总结目录',8,92,20000);
         const r=await post('/api/research/directories/summarize-all',{project});
-        if(!r.ok){prog.reset();say(r.msg||'批量生成失败');return;}
+        if(!r.ok){prog.reset();say(r.msg||'批量生成失败');alertBox(r.msg||'批量生成失败',{title:'批量生成失败',bad:true});return;}
         await reload();
         await prog.done('🤖 批量总结完成');
         say(`批量总结完成：已生成 ${(r.item?.completed||[]).length} 个目录总结`+((r.item?.skipped||[]).length?`（跳过 ${r.item.skipped.length} 个无独立会话目录）`:''));

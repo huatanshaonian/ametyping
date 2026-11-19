@@ -32,7 +32,7 @@ function* normalize(source, chunks) {
     function ev(role, kind, text, extra = {}) {
       const rawText = cleanText(text); if (!rawText.trim()) return null;
       const n = part++, id = hash(sourceId + ':' + line + ':' + n);
-      const time = o.timestamp || o.created_at || o.createdAt || o.info?.time?.created || o.data?.meta?.timestamp || null;
+      const time = o.timestamp || o.created_at || o.createdAt || o.time?.created || o.info?.time?.created || o.data?.meta?.timestamp || null;
       const t = typeof time === 'number' ? (time < 1e11 ? time * 1000 : time) : Date.parse(time);
       return { id, source_id: sourceId, line, part: n, t: Number.isFinite(t) ? t : null, role, kind,
         text: rawText, suppressed: NOISE.test(rawText), details: extra };
@@ -75,14 +75,19 @@ function* normalize(source, chunks) {
         (d.content || []).filter(x => x.kind === 'text').map(x => x.data).join('\n')));
       if (o.kind === 'ToolResults') out.push(emit('tool', 'tool_result', JSON.stringify(d)));
     } else if (source.provider === 'opencode') {
-      // Official exports have message.info + message.parts; event logs are handled as separate sources.
-      const role = o.info?.role || o.role;
+      // Official exports have (info.role + parts) or newer (type + text/content); event logs are handled too.
+      const role = o.info?.role || o.role || o.type;
       if (['user', 'assistant'].includes(role)) {
-        for (const p of o.parts || []) {
-          if (p.type === 'text') out.push(emit(role, 'message', p.text));
+        if (typeof o.text === 'string' && o.text.trim()) out.push(emit(role, 'message', o.text));
+        const blocks = Array.isArray(o.parts) ? o.parts : Array.isArray(o.content) ? o.content : [];
+        for (const p of blocks) {
+          if (p.type === 'text' && p.text) out.push(emit(role, 'message', p.text));
           else if (p.type === 'tool') {
-            out.push(emit('tool', 'tool_call', JSON.stringify(p.state?.input || {}), toolDetails(p.tool,p.state?.input,p.callID)));
-            out.push(emit('tool', 'tool_result', textOf(p.state?.output || p.state?.error), { call_id: p.callID,origin:toolDetails(p.tool,p.state?.input,p.callID).origin }));
+            const tName = p.tool || p.name || '';
+            const cId = p.callID || p.id || '';
+            const details = toolDetails(tName, p.state?.input, cId);
+            out.push(emit('tool', 'tool_call', JSON.stringify(p.state?.input || {}), details));
+            out.push(emit('tool', 'tool_result', textOf(p.state?.output || p.state?.content || p.state?.error), { call_id: cId, origin: details.origin }));
           }
         }
       }
