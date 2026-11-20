@@ -351,13 +351,17 @@ function mount(initialProjectId) {
     );
 
     const cards = xfers.map((t) => {
+      const isTransferring = t.status === 'transferring';
       const isPending = t.status === 'pending';
-      return h('div', { class: `pm-xfer-card ${isPending ? 'pending' : 'done'}` },
+      const canConfirm = isPending || isTransferring;
+      const badgeClass = isTransferring ? 'run' : (isPending ? 'wait' : 'done');
+      const badgeText = isTransferring ? '正在自动传输…' : (isPending ? '等待拷贝就位' : '已就位完成');
+      return h('div', { class: `pm-xfer-card ${t.status === 'completed' ? 'done' : 'pending'}` },
         h('div', { class: 'pm-xfer-head' },
           h('img', { src: icon('handoff', true), alt: '' }),
           h('b', { text: t.mode === 'manual_disk' ? '📦 需移动硬盘人工摆渡 (Sneakernet)' : '⚡ 跨机文件传输' }),
           t.size ? h('span', { class: 'pm-xfer-size', text: size(t.size) }) : null,
-          h('span', { class: `pm-rev-badge ${isPending ? 'wait' : 'done'}`, text: isPending ? '等待拷贝就位' : '已就位完成' }),
+          h('span', { class: `pm-rev-badge ${badgeClass}`, text: badgeText }),
           h('span', { class: 'pm-xfer-time', text: ago(t.createdAt) })
         ),
         h('div', { class: 'pm-xfer-paths' },
@@ -365,7 +369,8 @@ function mount(initialProjectId) {
           h('div', {}, h('b', { text: '目标位置：' }), h('code', { text: `${t.toMachine} : ${t.toPath}` }))
         ),
         t.note ? h('div', { class: 'pm-xfer-note', text: `说明：${t.note}` }) : null,
-        isPending ? h('div', { class: 'pm-node-btns' },
+        t.error ? h('div', { class: 'pm-xfer-note', text: `自动传输提示：${t.error}` }) : null,
+        canConfirm ? h('div', { class: 'pm-node-btns' },
           h('button', { class: 'btn go', type: 'button', text: '✓ 我已用硬盘拷好，通知并唤醒会话', onclick: async () => {
             say('正在确认文件就位并唤醒目标会话…');
             const r = await mesh.confirmTransfer(proj.id, t.id, { wake: true });

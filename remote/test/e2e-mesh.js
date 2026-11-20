@@ -228,15 +228,45 @@ function api(cookie, method, p, body) {
     // Allow folder watcher to initialize its baseline scan
     await sleep(350);
 
-    // Write a new .ffe file
-    fs.writeFileSync(path.join(SHARE, 'CEM_Results', 'output_1.ffe'), 'FFE DATA 1\n');
+    // Write a new .ffe file inside nested 3-level subdirectory to verify recursive scanDirFiles
+    fs.mkdirSync(path.join(SHARE, 'CEM_Results', 'sweep', 'freq_10ghz'), { recursive: true });
+    fs.writeFileSync(path.join(SHARE, 'CEM_Results', 'sweep', 'freq_10ghz', 'output_1.ffe'), 'FFE DATA 1\n');
     // Wait ~900ms for 2 stable polls
     await sleep(900);
 
     const pAfterFolder = (await api(cookie, 'GET', '/api/mesh/projects')).json.projects.find((p) => p.id === projId);
-    ok('folder files_ready event recorded in proj.events', pAfterFolder && pAfterFolder.events && pAfterFolder.events.some((e) => e.source === 'folder' && e.kind === 'files_ready'), (pAfterFolder || {}).events);
+    ok('folder files_ready event recorded in proj.events (nested subdir)', pAfterFolder && pAfterFolder.events && pAfterFolder.events.some((e) => e.source === 'folder' && e.kind === 'files_ready'), (pAfterFolder || {}).events);
     const workerAfterFolder = (pAfterFolder && pAfterFolder.nodes) ? pAfterFolder.nodes.find((n) => n.id === n2.json.node.id) : null;
     ok('folder trigger event delivered to worker node inbox', workerAfterFolder && workerAfterFolder.inbox && workerAfterFolder.inbox.some((m) => m.text.includes('目录文件就绪事件') && m.text.includes('output_1.ffe')), (workerAfterFolder || {}).inbox);
+
+    // 8b. Test real <50MB auto file streaming transfer over live agent WebSocket + CRC-32 check
+    const autoDst = path.join(SHARE, 'CEM_Results', 'streamed_po.py');
+    const autoTx = await api(cookie, 'POST', '/api/mesh/transfer', {
+      projectId: projId,
+      fromMachine: 'dell97',
+      fromPath: path.join(SHARE, 'CEM_Solver', 'src', 'po.py'),
+      toMachine: 'dell97',
+      toPath: autoDst,
+      mode: 'auto',
+      notifyNodeId: n2.json.node.id,
+    });
+    ok('POST /api/mesh/transfer starts <50MB auto streaming transfer', autoTx.json && autoTx.json.ok && autoTx.json.transfer.mode === 'auto', autoTx.json);
+    for (let i = 0; i < 20 && !fs.existsSync(autoDst); i++) await sleep(150);
+    await sleep(200);
+    const pAfterAutoTx = (await api(cookie, 'GET', '/api/mesh/projects')).json.projects.find((p) => p.id === projId);
+    const doneTx = pAfterAutoTx && (pAfterAutoTx.transfers || []).find((x) => x.id === autoTx.json.transfer.id);
+    ok('real <50MB file streamed end-to-end with matching content and completed status',
+      fs.existsSync(autoDst) && fs.readFileSync(autoDst, 'utf8') === 'print("PO")\n' && doneTx && doneTx.status === 'completed',
+      doneTx);
+
+    // 8c. Test zero-sessionId callerCwd fallback report via CLI from worker directory
+    const cwdReport = JSON.parse(cp.execFileSync(process.execPath, [
+      path.resolve(R, '..', 'tools', 'ame-mesh.js'),
+      'report', '--summary', '无sessionId按cwd自动定位汇报成功',
+    ], { env: cliEnv, cwd: path.join(SHARE, 'CEM_Solver'), encoding: 'utf8' }));
+    ok('tools/ame-mesh.js report resolves worker node automatically by callerCwd without sessionId',
+      cwdReport.ok && cwdReport.project && cwdReport.project.nodes.find((n) => n.id === n2.json.node.id).lastReport === '无sessionId按cwd自动定位汇报成功',
+      cwdReport);
 
     // 9. Test Kiro tool spawn/node registration
     const nKiro = await api(cookie, 'POST', '/api/mesh/node', {

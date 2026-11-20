@@ -331,7 +331,25 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
-    r = await petCall('POST', '/control/launch', { cwd, prompt: d.prompt, tool: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', api: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? undefined : api || undefined });
+    let meshEnv;
+    if (d.meshEnv && typeof d.meshEnv === 'object' && !Array.isArray(d.meshEnv)) {
+      const cleanEnv = {};
+      if (typeof d.meshEnv.AME_PROJECT_ID === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(d.meshEnv.AME_PROJECT_ID)) {
+        cleanEnv.AME_PROJECT_ID = d.meshEnv.AME_PROJECT_ID;
+      }
+      if (typeof d.meshEnv.AME_NODE_ID === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(d.meshEnv.AME_NODE_ID)) {
+        cleanEnv.AME_NODE_ID = d.meshEnv.AME_NODE_ID;
+      }
+      if (Object.keys(cleanEnv).length > 0) meshEnv = cleanEnv;
+    }
+    const tool = ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude';
+    r = await petCall('POST', '/control/launch', {
+      cwd,
+      prompt: d.prompt,
+      tool,
+      api: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? undefined : api || undefined,
+      ...(meshEnv ? { meshEnv } : {}),
+    });
   } else if (d.t === 'resume' && typeof d.id === 'string' && (/^opencode:ses_[A-Za-z0-9]{6,80}$/.test(d.id) || /^(codex:|agy:|kiro:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d.id))) {
     // a past conversation of this machine opened again: the folder is the one its own transcript says it was in last
     const f = sessionFile(d.id);
@@ -736,15 +754,23 @@ function savePendingMeshEvent(evt) {
       if (!Array.isArray(list)) list = [];
     } catch {}
     list.push(evt);
-    fs.writeFileSync(pendingFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+    const tmpFile = `${pendingFile}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmpFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpFile, pendingFile);
   } catch {}
 }
 
 function flushPendingMeshEvents() {
   const pendingFile = path.join(os.homedir(), '.ametyping', 'pending-mesh-events.json');
   if (!fs.existsSync(pendingFile)) return;
+  const flushingFile = `${pendingFile}.flushing-${Date.now()}`;
   try {
-    const raw = fs.readFileSync(pendingFile, 'utf8');
+    fs.renameSync(pendingFile, flushingFile);
+  } catch {
+    return;
+  }
+  try {
+    const raw = fs.readFileSync(flushingFile, 'utf8');
     const events = JSON.parse(raw);
     if (Array.isArray(events) && events.length > 0) {
       for (const evt of events) {
@@ -752,47 +778,59 @@ function flushPendingMeshEvents() {
         sendJSON({ ...evt, t: 'mesh-req', rid, op: 'event', fromMachine: NAME });
       }
     }
-    fs.unlinkSync(pendingFile);
+  } catch {}
+  try {
+    fs.unlinkSync(flushingFile);
   } catch {}
 }
 
+const IGNORED_WATCH_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.idea', '.vs']);
+
 function globToRegex(glob = '*') {
-  if (!glob || glob === '*') return /^.*$/;
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                      .replace(/\*/g, '.*')
-                      .replace(/\?/g, '.');
+  const normalized = String(glob || '*').replace(/\\/g, '/');
+  if (!normalized || normalized === '*') return /^.*$/;
+  const escaped = normalized.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                            .replace(/\*/g, '.*')
+                            .replace(/\?/g, '.');
   return new RegExp('^' + escaped + '$', 'i');
 }
 
-function scanDirFiles(dirPath, globRe) {
+function scanDirFiles(dirPath, globRe, maxDepth = 4, maxFiles = 5000, matchRelPath = false) {
+  const depthLimit = Math.max(1, Math.min(6, Math.floor(+maxDepth || 4)));
+  const fileLimit = Math.max(1, Math.floor(+maxFiles || 5000));
+  const useRelPath = matchRelPath || globRe.source.includes('/');
   const result = [];
-  try {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+
+  function walk(curDir, relPrefix, depth) {
+    if (result.length >= fileLimit || depth > depthLimit) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(curDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const ent of entries) {
-      const fullPath = path.join(dirPath, ent.name);
+      if (result.length >= fileLimit) break;
+      const fullPath = path.join(curDir, ent.name);
+      const relPath = relPrefix ? path.join(relPrefix, ent.name) : ent.name;
       if (ent.isFile()) {
-        if (globRe.test(ent.name)) {
+        const target = useRelPath ? relPath.replace(/\\/g, '/') : ent.name;
+        if (globRe.test(target)) {
           try {
             const st = fs.statSync(fullPath);
-            result.push({ relPath: ent.name, size: st.size, mtimeMs: st.mtimeMs });
+            result.push({ relPath, size: st.size, mtimeMs: st.mtimeMs });
           } catch {}
         }
       } else if (ent.isDirectory()) {
-        try {
-          const subEntries = fs.readdirSync(fullPath, { withFileTypes: true });
-          for (const sub of subEntries) {
-            if (sub.isFile() && globRe.test(sub.name)) {
-              try {
-                const subFullPath = path.join(fullPath, sub.name);
-                const st = fs.statSync(subFullPath);
-                result.push({ relPath: path.join(ent.name, sub.name), size: st.size, mtimeMs: st.mtimeMs });
-              } catch {}
-            }
-          }
-        } catch {}
+        if (IGNORED_WATCH_DIRS.has(ent.name)) continue;
+        if (depth < depthLimit) {
+          walk(fullPath, relPath, depth + 1);
+        }
       }
     }
-  } catch {}
+  }
+
+  walk(dirPath, '', 1);
   return result;
 }
 
@@ -804,8 +842,11 @@ function pollFolderTriggers() {
       state = { initialized: false, files: new Map() };
       folderWatchState.set(trig.id, state);
     }
-    const globRe = globToRegex(trig.glob || '*');
-    const scanned = scanDirFiles(trig.path, globRe);
+    const globStr = trig.glob || '*';
+    const globRe = globToRegex(globStr);
+    const matchRelPath = /[\\/]/.test(globStr);
+    const maxDepth = Math.max(1, Math.min(6, Math.floor(+(trig.maxDepth || 4))));
+    const scanned = scanDirFiles(trig.path, globRe, maxDepth, 5000, matchRelPath);
     const scannedKeys = new Set();
     const readyFiles = [];
 

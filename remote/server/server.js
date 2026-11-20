@@ -438,6 +438,7 @@ function onAgentMessage(m, raw, ws) {
   }
   if ((d.t === 'art-res' || d.t === 'art-chunk') && typeof d.rid === 'string') return artifacts.fromAgent(m, d);
   if (d.t === 'fs-res' && typeof d.rid === 'string' && fsCatalog.fromAgent(m, d)) return;
+  if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string' && mesh.fromAgentFs(m, d)) return;
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'mesh-req' && typeof d.rid === 'string') return mesh.fromAgentRpc(m.name, d, ws);
   if ((d.t === 'mcp-req' || d.t === 'mcp-status') && mcpHub.fromAgent(m, d, ws)) return;

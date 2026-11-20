@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { createWatchdog, loadMeshConfig } = require('./mesh-watchdog');
 
 const MAX_PROJECTS = 50;
@@ -17,6 +18,22 @@ const TOOLS = ['claude', 'codex', 'opencode', 'agy', 'kiro']; // coding agents a
 
 const cleanStr = (v, n) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim().slice(0, n) : '');
 const idGen = (prefix = 'p') => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
+
+let CRC_TABLE = null;
+function crc32Of(buf, crc = 0) {
+  if (typeof zlib.crc32 === 'function') return zlib.crc32(buf, crc);
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      CRC_TABLE[n] = c >>> 0;
+    }
+  }
+  let c = ~crc >>> 0;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return ~c >>> 0;
+}
 
 function normFolderPath(p) {
   let s = String(p || '').trim().replace(/[\\/]+$/, '');
@@ -257,16 +274,68 @@ function createMesh({
     return null;
   }
 
-  // Scoped topology view for an agent session: ONLY returns the project & connected nodes it belongs to
-  function scopedViewFor({ projectId, machine, sessionId }) {
-    let proj = projectId ? data.projects.find((x) => x.id === projectId) : null;
-    let selfNode = null;
-    if (!proj && machine && sessionId) {
-      const found = findBySession(machine, sessionId);
-      if (found) { proj = found.project; selfNode = found.node; }
-    } else if (proj && machine && sessionId) {
-      selfNode = (proj.nodes || []).find((n) => n.machine === machine && n.sessionId === sessionId) || null;
+  // Resolve caller project and node using explicit ids, session, or machine + cwd fallback
+  function resolveCaller({ projectId, nodeId, machine, sessionId, callerCwd } = {}) {
+    const proj = projectId ? data.projects.find((x) => x.id === projectId) || null : null;
+    if (projectId && !proj) return { project: null, node: null };
+
+    // a) If projectId and nodeId match an existing project & node (by id or alias)
+    if (proj && nodeId) {
+      const node = (proj.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId) || null;
+      if (node) return { project: proj, node };
     }
+
+    // b) If nodeId alone matches a node across data.projects (when projectId is omitted)
+    if (!projectId && nodeId) {
+      for (const p of data.projects) {
+        const node = (p.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId);
+        if (node) return { project: p, node };
+      }
+    }
+
+    // c) If machine and sessionId are non-empty, try findBySession (or within proj if specified)
+    if (machine && sessionId) {
+      if (proj) {
+        const node = (proj.nodes || []).find((n) =>
+          (n.machine === machine && n.sessionId === sessionId) || n.id === sessionId || n.alias === sessionId
+        ) || null;
+        if (node) return { project: proj, node };
+      } else {
+        const found = findBySession(machine, sessionId);
+        if (found) return found;
+      }
+    }
+
+    // d) Fallback by machine + callerCwd
+    if (machine && callerCwd) {
+      const normCaller = normFolderPath(callerCwd);
+      const searchProjs = proj ? [proj] : data.projects;
+      const candidates = [];
+      for (const p of searchProjs) {
+        for (const n of p.nodes || []) {
+          if (n.machine !== machine || !n.cwd) continue;
+          if (normFolderPath(n.cwd) === normCaller || isSubPath(n.cwd, callerCwd)) {
+            candidates.push({ project: p, node: n });
+          }
+        }
+      }
+      if (candidates.length) {
+        candidates.sort((a, b) => {
+          const aRun = a.node.reviewStatus === 'running' ? 1 : 0;
+          const bRun = b.node.reviewStatus === 'running' ? 1 : 0;
+          if (bRun !== aRun) return bRun - aRun;
+          return (b.node.updatedAt || 0) - (a.node.updatedAt || 0);
+        });
+        return candidates[0];
+      }
+    }
+
+    return { project: proj, node: null };
+  }
+
+  // Scoped topology view for an agent session: ONLY returns the project & connected nodes it belongs to
+  function scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd }) {
+    const { project: proj, node: selfNode } = resolveCaller({ projectId, nodeId, machine, sessionId, callerCwd });
     if (!proj) {
       // Return only annotated catalog folders so a fresh master session can bootstrap a project
       return {
@@ -529,6 +598,7 @@ function createMesh({
     fromNodeId,
     fromMachine,
     fromSessionId,
+    callerCwd,
     machine,
     cwd,
     tool = 'claude',
@@ -538,22 +608,63 @@ function createMesh({
     stopCondition = '',
     prompt = '',
   }) {
-    let proj = projectId ? data.projects.find((x) => x.id === projectId) : null;
-    if (!proj && fromMachine && fromSessionId) {
-      const found = findBySession(fromMachine, fromSessionId);
-      if (found) proj = found.project;
-    }
+    const resolved = resolveCaller({
+      projectId,
+      nodeId: fromNodeId,
+      machine: fromMachine,
+      sessionId: fromSessionId,
+      callerCwd,
+    });
+    let proj = resolved.project;
     if (!proj) {
       const r = saveProject({ name: projectName || `协同项目 ${new Date().toISOString().slice(5, 10)}` });
       if (!r.ok) return r;
       proj = data.projects.find((x) => x.id === r.project.id);
     }
 
-    // Ensure master node is registered if caller provided fromMachine + fromSessionId
-    let masterNode = fromNodeId ? proj.nodes.find((n) => n.id === fromNodeId) : null;
+    // Ensure master node is registered if caller provided fromMachine + (fromSessionId or live session fallback)
+    let masterNode = resolved.node;
+    if (!masterNode && fromNodeId) {
+      masterNode = proj.nodes.find((n) => n.id === fromNodeId || n.alias === fromNodeId) || null;
+    }
     if (!masterNode && fromMachine && fromSessionId) {
-      const mr = upsertNode(proj.id, { machine: fromMachine, sessionId: fromSessionId, role: 'master', alias: '主控会话' });
+      const mr = upsertNode(proj.id, {
+        machine: fromMachine,
+        sessionId: fromSessionId,
+        role: 'master',
+        alias: '主控会话',
+        ...(callerCwd ? { cwd: callerCwd } : {}),
+      });
       if (mr.ok) masterNode = mr.node;
+    }
+    if (!masterNode && fromMachine && !fromSessionId) {
+      const liveSessions = machines && machines.get(fromMachine)?.sessions;
+      if (liveSessions && liveSessions.size > 0) {
+        let matchedSid = '';
+        if (callerCwd) {
+          const normCaller = normFolderPath(callerCwd);
+          for (const [sid, sess] of liveSessions.entries()) {
+            const scwd = (store && store.info && store.info(fromMachine, sid)?.cwd) || (sess && sess.cwd) || '';
+            if (scwd && (normFolderPath(scwd) === normCaller || isSubPath(scwd, callerCwd))) {
+              matchedSid = sid;
+              break;
+            }
+          }
+        }
+        if (!matchedSid && liveSessions.size === 1) {
+          matchedSid = [...liveSessions.keys()][0];
+        }
+        if (matchedSid) {
+          const mr = upsertNode(proj.id, {
+            machine: fromMachine,
+            sessionId: matchedSid,
+            role: 'master',
+            alias: '主控会话',
+            ...(callerCwd ? { cwd: callerCwd } : {}),
+          });
+          if (mr.ok) masterNode = mr.node;
+        }
+      }
     }
 
     // Workspace access boundary check
@@ -563,11 +674,14 @@ function createMesh({
       proj.workspaces.push({ machine: cleanStr(machine, 60), path: cleanStr(cwd, 500), mode: 'rw', tag: 'worker' });
     }
 
+    const workerNodeId = idGen('node');
+
     // Include folder notes from fsCatalog in the initial contract prompt so the worker knows folder roles
     const cat = fsCatalog ? fsCatalog.get(machine, cwd) : null;
     const contextLines = [
       `[AmeMesh 协同任务契约 | 项目：${proj.name}]`,
       masterNode ? `- 主控节点：${masterNode.alias || masterNode.id} (${masterNode.machine})` : null,
+      `- 节点身份标识（调用 mesh_report / mesh_send / mesh_run 时可传）：projectId="${proj.id}", nodeId="${workerNodeId}"`,
       `- 工作目录：${cwd}`,
       cat && cat.tag ? `- 目录角色标签：${fsCatalog.TAG_LABELS[cat.tag] || cat.tag}` : null,
       cat && cat.userNote ? `- 用户目录备注（请严格遵守）：${cat.userNote}` : null,
@@ -580,6 +694,7 @@ function createMesh({
     const fullPrompt = contextLines.join('\n').slice(0, 7800);
 
     const nr = upsertNode(proj.id, {
+      id: workerNodeId,
       machine,
       sessionId: '',
       alias: alias || `${machine}:${path.basename(cwd)}`,
@@ -605,6 +720,7 @@ function createMesh({
       prompt: fullPrompt,
       tool: TOOLS.includes(tool) ? tool : 'claude',
       api: api ? { id: api, local: true } : undefined,
+      meshEnv: { AME_PROJECT_ID: proj.id, AME_NODE_ID: workerNodeId },
     });
     if (!launchRes.ok) {
       nr.node.reviewStatus = 'blocked';
@@ -621,6 +737,7 @@ function createMesh({
     fromNodeId,
     fromMachine,
     fromSessionId,
+    callerCwd,
     toNodeId,
     toMachine,
     toSessionId,
@@ -633,19 +750,26 @@ function createMesh({
     const cleanText = cleanStr(text, 6000);
     if (!cleanText) return { ok: false, msg: '消息内容不能为空' };
 
-    let proj = projectId ? data.projects.find((x) => x.id === projectId) : null;
-    let fromNode = null;
-    if (!proj && fromMachine && fromSessionId) {
-      const f = findBySession(fromMachine, fromSessionId);
-      if (f) { proj = f.project; fromNode = f.node; }
-    }
+    const callerResolved = resolveCaller({
+      projectId,
+      nodeId: fromNodeId,
+      machine: fromMachine,
+      sessionId: fromSessionId,
+      callerCwd,
+    });
+    let proj = callerResolved.project;
+    let fromNode = callerResolved.node;
     if (!proj && toMachine && toSessionId) {
       const f = findBySession(toMachine, toSessionId);
       if (f) proj = f.project;
     }
+    if (!proj && toNodeId) {
+      const f = resolveCaller({ nodeId: toNodeId });
+      if (f.project) proj = f.project;
+    }
     if (!proj) return { ok: false, msg: '找不到对应的协同项目拓扑' };
 
-    if (!fromNode && fromNodeId) fromNode = proj.nodes.find((n) => n.id === fromNodeId) || null;
+    if (!fromNode && fromNodeId) fromNode = proj.nodes.find((n) => n.id === fromNodeId || n.alias === fromNodeId) || null;
     let toNode = toNodeId ? proj.nodes.find((n) => n.id === toNodeId || n.alias === toNodeId) : null;
     if (!toNode && toMachine && toSessionId) {
       toNode = proj.nodes.find((n) => n.machine === toMachine && n.sessionId === toSessionId) || null;
@@ -671,17 +795,18 @@ function createMesh({
     fromNodeId,
     fromMachine,
     fromSessionId,
+    callerCwd,
     summary,
     reviewStatus = 'waiting_review',
     artifacts = [],
   }) {
-    let proj = projectId ? data.projects.find((x) => x.id === projectId) : null;
-    let workerNode = null;
-    if (proj && fromNodeId) workerNode = proj.nodes.find((n) => n.id === fromNodeId);
-    if (!workerNode && fromMachine && fromSessionId) {
-      const f = findBySession(fromMachine, fromSessionId);
-      if (f) { proj = f.project; workerNode = f.node; }
-    }
+    const { project: proj, node: workerNode } = resolveCaller({
+      projectId,
+      nodeId: fromNodeId,
+      machine: fromMachine,
+      sessionId: fromSessionId,
+      callerCwd,
+    });
     if (!proj || !workerNode) return { ok: false, msg: '找不到汇报节点所属的项目拓扑' };
 
     workerNode.reviewStatus = ['waiting_review', 'done', 'blocked', 'approved'].includes(reviewStatus) ? reviewStatus : 'waiting_review';
@@ -716,6 +841,267 @@ function createMesh({
     return { ok: true, masterDelivery: deliv, project: enrichProject(proj) };
   }
 
+  const activeTransfers = new Map(); // readRid | upRid -> transfer state
+
+  function agentFileSock(machineName, needUpload = false) {
+    const m = machines && machines.get(machineName);
+    if (!m || !m.online || !m.files || !m.sockets || !m.sockets.size) return null;
+    const open = [...m.sockets].reverse().filter((s) => s && s.readyState === 1);
+    if (!open.length) return null;
+    if (needUpload) {
+      const hasUpload = m.upload || open.some((s) => s.uploadAllowed === true);
+      if (!hasUpload) return null;
+      return open.find((s) => s.uploadAllowed === true && s.filesAllowed !== false) ||
+        open.find((s) => s.filesAllowed !== false) ||
+        open[0];
+    }
+    return open.find((s) => s.filesAllowed === true) || open.find((s) => s.filesAllowed !== false) || open[0];
+  }
+
+  function sendAgentFs(machineName, needUpload, payload) {
+    const sock = agentFileSock(machineName, needUpload);
+    if (!sock) return false;
+    try {
+      sock.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function cleanupTransfer(st) {
+    if (st.done) return;
+    st.done = true;
+    clearTimeout(st.timer);
+    activeTransfers.delete(st.readRid);
+    activeTransfers.delete(st.upRid);
+  }
+
+  function failTransfer(st, reason) {
+    if (st.done) return;
+    cleanupTransfer(st);
+    st.item.status = 'pending';
+    st.item.error = cleanStr(reason || '传输失败', 300);
+    st.item.updatedAt = Date.now();
+    save();
+  }
+
+  function touchTransfer(st) {
+    clearTimeout(st.timer);
+    st.timer = setTimeout(() => {
+      if (st.done) return;
+      sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+      sendAgentFs(st.toMachine, true, { t: 'fs-cancel', rid: st.upRid, drop: false });
+      failTransfer(st, '跨机传输超时（60秒无响应）');
+    }, 60e3);
+    if (st.timer.unref) st.timer.unref();
+  }
+
+  function processTransferChunk(st, i, buf) {
+    const off = st.sentOff;
+    st.sentOff += buf.length;
+    st.crc = crc32Of(buf, st.crc);
+    const endOff = off + buf.length;
+    if (endOff <= st.have) {
+      sendAgentFs(st.fromMachine, false, { t: 'fs-ack', rid: st.readRid, i });
+      return true;
+    }
+    const sendOff = off < st.have ? st.have : off;
+    const slice = off < st.have ? buf.subarray(st.have - off) : buf;
+    st.awaitingAck.push({ i, endOff });
+    const ok = sendAgentFs(st.toMachine, true, {
+      t: 'fs-up',
+      rid: st.upRid,
+      off: sendOff,
+      data: slice.toString('base64'),
+    });
+    if (!ok) {
+      sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+      failTransfer(st, '向目标机器发送数据块失败');
+      return false;
+    }
+    return true;
+  }
+
+  function finishTransferReadIfReady(st) {
+    if (st.done || st.upEndSent || !st.readEnded || st.phase !== 'streaming') return;
+    st.upEndSent = true;
+    st.phase = 'finishing';
+    const ok = sendAgentFs(st.toMachine, true, { t: 'fs-up-end', rid: st.upRid, crc: st.crc >>> 0 });
+    if (!ok) {
+      failTransfer(st, '向目标机器发送结束校验请求失败');
+    }
+  }
+
+  function startAutoTransfer(proj, item) {
+    const readRid = 'mfs-r-' + crypto.randomBytes(8).toString('hex');
+    const upRid = 'mfs-u-' + crypto.randomBytes(8).toString('hex');
+    const remotePath = /^[A-Za-z]:[\\/]/.test(item.toPath) || /^\\\\/.test(item.toPath) ? path.win32 : path.posix;
+    const st = {
+      proj,
+      item,
+      readRid,
+      upRid,
+      fromMachine: item.fromMachine,
+      toMachine: item.toMachine,
+      dstDir: remotePath.dirname(item.toPath),
+      dstName: remotePath.basename(item.toPath),
+      phase: 'reading',
+      size: 0,
+      mtime: 0,
+      have: 0,
+      sentOff: 0,
+      crc: 0,
+      pendingChunks: [],
+      awaitingAck: [],
+      readEnded: false,
+      upEndSent: false,
+      timer: null,
+      done: false,
+    };
+    activeTransfers.set(readRid, st);
+    activeTransfers.set(upRid, st);
+    touchTransfer(st);
+    const ok = sendAgentFs(st.fromMachine, false, {
+      t: 'fs',
+      rid: readRid,
+      op: 'read',
+      path: item.fromPath,
+      dl: true,
+    });
+    if (!ok) {
+      failTransfer(st, '向源机器发送读取请求失败');
+    }
+  }
+
+  function fromAgentFs(machineObj, d) {
+    if (!d || typeof d.rid !== 'string' || !d.rid.startsWith('mfs-')) return false;
+    const st = activeTransfers.get(d.rid);
+    if (!st || st.done) return true;
+    const mName = typeof machineObj === 'string' ? machineObj : (machineObj && machineObj.name);
+    if (d.rid === st.readRid && mName && mName !== st.fromMachine) return true;
+    if (d.rid === st.upRid && mName && mName !== st.toMachine) return true;
+
+    touchTransfer(st);
+
+    if (d.rid === st.readRid) {
+      if (d.t === 'fs-res') {
+        if (!d.ok) {
+          failTransfer(st, '读取源文件失败：' + (d.msg || ''));
+          return true;
+        }
+        const sz = Number(d.size) || 0;
+        if (sz >= AUTO_FILE_LIMIT) {
+          sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+          cleanupTransfer(st);
+          st.item.size = sz;
+          st.item.mode = 'manual_disk';
+          st.item.status = 'pending';
+          st.item.error = '';
+          st.item.note = (st.item.note ? st.item.note + '；' : '') + '实际文件 >= 50MB，已自动转为移动硬盘人工摆渡';
+          st.item.updatedAt = Date.now();
+          save();
+          return true;
+        }
+        st.size = sz;
+        st.mtime = Number.isFinite(d.mtime) ? d.mtime : 0;
+        st.item.size = sz;
+        st.item.updatedAt = Date.now();
+        st.phase = 'up_opening';
+        save();
+        const ok = sendAgentFs(st.toMachine, true, {
+          t: 'fs',
+          rid: st.upRid,
+          op: 'up-open',
+          path: st.dstDir,
+          name: st.dstName,
+          size: sz,
+          mtime: st.mtime,
+          overwrite: true,
+        });
+        if (!ok) {
+          sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+          failTransfer(st, '向目标机器发送写入请求失败');
+        }
+        return true;
+      }
+      if (d.t === 'fs-chunk') {
+        const buf = typeof d.data === 'string' ? Buffer.from(d.data, 'base64') : Buffer.alloc(0);
+        if (st.phase === 'up_opening' || st.phase === 'reading') {
+          if (st.pendingChunks.length < 16) st.pendingChunks.push({ i: d.i, buf });
+        } else if (st.phase === 'streaming') {
+          processTransferChunk(st, d.i, buf);
+        }
+        return true;
+      }
+      if (d.t === 'fs-end') {
+        st.readEnded = true;
+        finishTransferReadIfReady(st);
+        return true;
+      }
+      return true;
+    }
+
+    if (d.rid === st.upRid) {
+      if (d.t === 'fs-res') {
+        if (!d.ok) {
+          sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+          failTransfer(st, '目标写入失败：' + (d.msg || ''));
+          return true;
+        }
+        st.have = Number.isSafeInteger(d.have) && d.have > 0 ? d.have : 0;
+        st.phase = 'streaming';
+        const buffered = st.pendingChunks.splice(0, st.pendingChunks.length);
+        for (const c of buffered) {
+          if (!processTransferChunk(st, c.i, c.buf)) return true;
+        }
+        finishTransferReadIfReady(st);
+        return true;
+      }
+      if (d.t === 'fs-up-ack') {
+        if (d.checking) return true;
+        while (
+          st.awaitingAck.length > 0 &&
+          (typeof d.have !== 'number' || st.awaitingAck[0].endOff <= d.have)
+        ) {
+          const acked = st.awaitingAck.shift();
+          sendAgentFs(st.fromMachine, false, { t: 'fs-ack', rid: st.readRid, i: acked.i });
+        }
+        return true;
+      }
+      if (d.t === 'fs-up-done') {
+        if (d.ok) {
+          cleanupTransfer(st);
+          st.item.status = 'completed';
+          st.item.error = '';
+          st.item.updatedAt = Date.now();
+          recordEvent(st.proj, {
+            source: 'transfer',
+            kind: 'auto_done',
+            machine: st.item.toMachine,
+            summary: '跨机文件自动传输完成：' + st.dstName,
+          });
+          const targetNode = (st.item.notifyNodeId && st.proj.nodes.find((n) => n.id === st.item.notifyNodeId)) ||
+            st.proj.nodes.find((n) => n.machine === st.item.toMachine) ||
+            st.proj.nodes.find((n) => n.role === 'master');
+          if (targetNode) {
+            const msg = formatEnvelope({
+              project: st.proj,
+              toNode: targetNode,
+              type: 'handoff_ready',
+              text: `跨机文件已自动传输就位：源 [${st.item.fromMachine}:${st.item.fromPath}] -> 目标 [${st.item.toMachine}:${d.path || st.item.toPath}]。请直接读取该路径继续后续任务。`,
+            });
+            deliverToNode(st.proj, targetNode, msg).catch(() => {});
+          }
+        } else {
+          failTransfer(st, d.msg || '传输校验失败');
+        }
+        return true;
+      }
+    }
+    return true;
+  }
+
   // Register a cross-machine file transfer or sneakernet (manual disk copy) handoff request
   function requestTransfer({
     projectId,
@@ -733,6 +1119,9 @@ function createMesh({
     const cleanFromM = cleanStr(fromMachine, 60), cleanFromP = cleanStr(fromPath, 600);
     const cleanToM = cleanStr(toMachine, 60), cleanToP = cleanStr(toPath, 600);
     if (!cleanFromM || !cleanFromP || !cleanToM || !cleanToP) return { ok: false, msg: '源路径和目标路径不能为空' };
+    if (cleanFromM === cleanToM && normFolderPath(cleanFromP) === normFolderPath(cleanToP)) {
+      return { ok: false, msg: '源路径与目标路径完全相同，无需传输' };
+    }
 
     // Check workspace write permission on destination
     const remotePath = /^[A-Za-z]:[\\/]/.test(cleanToP) || /^\\\\/.test(cleanToP) ? path.win32 : path.posix;
@@ -758,6 +1147,29 @@ function createMesh({
     proj.transfers = proj.transfers || [];
     if (proj.transfers.length >= MAX_TRANSFERS) proj.transfers.pop();
     proj.transfers.unshift(item);
+
+    if (finalMode === 'auto') {
+      const fromSock = agentFileSock(cleanFromM, false);
+      const toSock = agentFileSock(cleanToM, true);
+      if (fromSock && toSock) {
+        item.status = 'transferring';
+        item.error = '';
+        save();
+        startAutoTransfer(proj, item);
+        return { ok: true, transfer: item, project: enrichProject(proj) };
+      }
+      const fromM = machines && machines.get(cleanFromM);
+      const toM = machines && machines.get(cleanToM);
+      const toHasUpload = toM && (toM.upload || [...(toM.sockets || [])].some((s) => s && s.readyState === 1 && s.uploadAllowed === true));
+      if (!fromM || !fromM.online) item.error = `源机器「${cleanFromM}」不在线`;
+      else if (!fromM.files) item.error = `源机器「${cleanFromM}」未开启文件服务`;
+      else if (!fromSock) item.error = `源机器「${cleanFromM}」无可用文件连接`;
+      else if (!toM || !toM.online) item.error = `目标机器「${cleanToM}」不在线`;
+      else if (!toM.files) item.error = `目标机器「${cleanToM}」未开启文件服务`;
+      else if (!toHasUpload) item.error = `目标机器「${cleanToM}」未开启文件上传`;
+      else item.error = `目标机器「${cleanToM}」无可用上传连接`;
+    }
+
     save();
     return { ok: true, transfer: item, project: enrichProject(proj) };
   }
@@ -768,6 +1180,13 @@ function createMesh({
     if (!proj) return { ok: false, msg: '找不到该项目' };
     const xfer = (proj.transfers || []).find((t) => t.id === transferId);
     if (!xfer) return { ok: false, msg: '找不到该文件传输记录' };
+    for (const st of activeTransfers.values()) {
+      if (st.item === xfer && !st.done) {
+        sendAgentFs(st.fromMachine, false, { t: 'fs-cancel', rid: st.readRid });
+        sendAgentFs(st.toMachine, true, { t: 'fs-cancel', rid: st.upRid, drop: true });
+        cleanupTransfer(st);
+      }
+    }
     if (typeof newToPath === 'string' && newToPath.trim()) {
       xfer.toPath = cleanStr(newToPath, 600);
     }
@@ -885,6 +1304,7 @@ function createMesh({
             machine: t.machine,
             path: t.path,
             glob: t.glob,
+            maxDepth: t.maxDepth || 4,
             label: t.label,
           });
         }
@@ -901,7 +1321,7 @@ function createMesh({
   function upsertTrigger(projectId, d = {}) {
     const proj = data.projects.find((x) => x.id === projectId);
     if (!proj) return { ok: false, msg: '项目不存在' };
-    if (d.type === 'folder' && d.path) {
+    if (d.type !== 'process' && d.path) {
       const acc = checkWorkspaceAccess(proj, d.machine, d.path, false);
       if (!acc.ok) return { ok: false, msg: acc.msg };
     }
@@ -912,12 +1332,13 @@ function createMesh({
       trig = {
         id: idGen('trig'),
         projectId: proj.id,
-        type: d.type === 'process' ? 'process' : 'folder',
+        type: 'folder',
         machine: cleanStr(d.machine, 60),
         targetNodeId: cleanStr(d.targetNodeId, 40) || null,
         label: cleanStr(d.label, 80) || cleanStr(d.path, 120) || '触发器',
         path: cleanStr(d.path, 500),
         glob: cleanStr(d.glob, 80) || '*',
+        maxDepth: Math.max(1, Math.min(6, Math.floor(+d.maxDepth || 4))),
         enabled: d.enabled !== false,
         createdAt: Date.now(),
         lastTriggeredAt: null,
@@ -925,12 +1346,13 @@ function createMesh({
       };
       proj.triggers.push(trig);
     } else {
-      if (d.type) trig.type = d.type === 'process' ? 'process' : 'folder';
+      trig.type = 'folder';
       if (d.machine) trig.machine = cleanStr(d.machine, 60);
       if (d.targetNodeId !== undefined) trig.targetNodeId = cleanStr(d.targetNodeId, 40) || null;
       if (d.label) trig.label = cleanStr(d.label, 80);
       if (d.path) trig.path = cleanStr(d.path, 500);
       if (d.glob) trig.glob = cleanStr(d.glob, 80);
+      if (d.maxDepth !== undefined) trig.maxDepth = Math.max(1, Math.min(6, Math.floor(+d.maxDepth || 4)));
       if (d.enabled !== undefined) trig.enabled = !!d.enabled;
     }
     save();
@@ -1090,9 +1512,11 @@ function createMesh({
     }
     if (req.method === 'GET' && p === '/api/mesh/scope') {
       const projectId = url.searchParams.get('projectId') || '';
+      const nodeId = url.searchParams.get('nodeId') || '';
       const machine = url.searchParams.get('machine') || '';
       const sessionId = url.searchParams.get('sessionId') || '';
-      json(res, 200, scopedViewFor({ projectId, machine, sessionId }));
+      const callerCwd = url.searchParams.get('callerCwd') || '';
+      json(res, 200, scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd }));
       return true;
     }
     if (req.method === 'GET' && p === '/api/mesh/config') {
@@ -1191,8 +1615,10 @@ function createMesh({
     };
     try {
       const op = d.op;
+      const callerNodeId = d.fromNodeId || d.nodeId;
+      const callerCwd = d.callerCwd || d.cwd;
       if (op === 'status' || op === 'scope') {
-        return reply(scopedViewFor({ projectId: d.projectId, machine: d.machine || machineName, sessionId: d.sessionId }));
+        return reply(scopedViewFor({ projectId: d.projectId, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd }));
       }
       if (op === 'tree') {
         if (!fsCatalog) return reply({ ok: false, msg: '目录服务未启用' });
@@ -1218,15 +1644,15 @@ function createMesh({
         return reply(r);
       }
       if (op === 'spawn') {
-        const r = await spawnWorker({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
+        const r = await spawnWorker({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
       if (op === 'send') {
-        const r = await sendMessage({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
+        const r = await sendMessage({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
       if (op === 'report') {
-        const r = await reportResult({ ...d, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId });
+        const r = await reportResult({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
       if (op === 'transfer') {
@@ -1286,6 +1712,7 @@ function createMesh({
     onSessionMeta,
     fromAgentResult,
     fromAgentRpc,
+    fromAgentFs,
     handle,
     upsertTrigger,
     removeTrigger,

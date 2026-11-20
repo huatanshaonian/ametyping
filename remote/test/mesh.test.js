@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 const { createMarks } = require('../server/session-marks');
 const { createFsCatalog } = require('../server/fs-catalog');
 const { createMesh } = require('../server/mesh');
@@ -203,6 +204,180 @@ test('mesh topology isolation, auto group binding in session-marks, contract del
     assert.equal(conf.transfer.toPath, 'D:\\feko_data\\full_wave_field.h5');
     assert.equal(dispatched.length, 4, 'Confirming manual disk handoff should wake target session');
     assert.match(dispatched[3].payload.text, /超大文件已通过人工硬盘拷贝就位/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('caller identity injection, callerCwd resolution without sessionId, and auto <50MB streaming file transfer', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-mesh-xfer-'));
+  try {
+    const dispatched = [];
+    const fromSent = [];
+    const toSent = [];
+
+    const fromSock = {
+      readyState: 1,
+      filesAllowed: true,
+      send(raw) { fromSent.push(JSON.parse(raw)); },
+    };
+    const toSock = {
+      readyState: 1,
+      filesAllowed: true,
+      uploadAllowed: true,
+      send(raw) { toSent.push(JSON.parse(raw)); },
+    };
+
+    const machines = new Map();
+    machines.set('pc-a', {
+      name: 'pc-a',
+      online: true,
+      control: true,
+      files: true,
+      upload: true,
+      sockets: new Set([fromSock]),
+      sessions: new Map([
+        ['claude:master-a', { id: 'claude:master-a', label: 'Master A', state: 'idle', lines: [], perms: [] }],
+      ]),
+    });
+    machines.set('gpu-b', {
+      name: 'gpu-b',
+      online: true,
+      control: true,
+      files: true,
+      upload: true,
+      sockets: new Set([toSock]),
+      sessions: new Map(),
+    });
+
+    const store = {
+      sessions: () => ({}),
+      info: (m, sid) => (m === 'pc-a' && sid === 'claude:master-a' ? { cwd: 'G:\\proj_master' } : null),
+    };
+
+    const mesh = createMesh({
+      dataDir: tmp,
+      machines,
+      store,
+      marks: createMarks({ dataDir: tmp }),
+      fsCatalog: createFsCatalog({ dataDir: tmp, machines }),
+      dispatchControl: async (machineName, payload) => {
+        dispatched.push({ machine: machineName, payload });
+        return { ok: true, msg: 'ok' };
+      },
+    });
+
+    // a) spawnWorker with empty fromSessionId auto-registers master via callerCwd/store.info,
+    //    injects projectId & nodeId into prompt, and includes meshEnv in launch payload
+    const spawnRes = await mesh.spawnWorker({
+      projectName: '流式传输与身份注入测试',
+      fromMachine: 'pc-a',
+      fromSessionId: '',
+      callerCwd: 'G:\\proj_master',
+      machine: 'gpu-b',
+      cwd: '/data/work_b',
+      tool: 'claude',
+      goal: '计算后传回结果',
+      prompt: '运行求解器',
+    });
+    assert.equal(spawnRes.ok, true);
+    const projId = spawnRes.project.id;
+    const workerNodeId = spawnRes.node.id;
+    assert.ok(projId && workerNodeId);
+    assert.ok(spawnRes.project.nodes.some((n) => n.role === 'master' && n.sessionId === 'claude:master-a'), 'Master should be auto-registered');
+
+    const launch = dispatched[0].payload;
+    assert.equal(launch.t, 'launch');
+    assert.deepEqual(launch.meshEnv, { AME_PROJECT_ID: projId, AME_NODE_ID: workerNodeId });
+    assert.match(launch.prompt, new RegExp(`projectId="${projId}", nodeId="${workerNodeId}"`));
+
+    // b) scopedViewFor & reportResult resolve the worker node via callerCwd even when sessionId is empty
+    const scopeByCwd = mesh.scopedViewFor({ machine: 'gpu-b', sessionId: '', callerCwd: '/data/work_b' });
+    assert.equal(scopeByCwd.ok, true);
+    assert.equal(scopeByCwd.project.id, projId);
+    assert.equal(scopeByCwd.self.id, workerNodeId);
+
+    const repByCwd = await mesh.reportResult({
+      fromMachine: 'gpu-b',
+      fromSessionId: '',
+      callerCwd: '/data/work_b',
+      summary: '已完成第一阶段，准备汇报',
+      reviewStatus: 'waiting_review',
+    });
+    assert.equal(repByCwd.ok, true);
+    assert.equal(repByCwd.masterDelivery.delivered, true);
+    assert.equal(dispatched[1].machine, 'pc-a');
+    assert.equal(dispatched[1].payload.id, 'claude:master-a');
+    assert.match(dispatched[1].payload.text, /已完成第一阶段/);
+
+    // c) requestTransfer < 50MB auto mode streams chunks pc-a -> gpu-b with CRC-32 and notifies target node
+    const xferRes = mesh.requestTransfer({
+      projectId: projId,
+      fromMachine: 'pc-a',
+      fromPath: 'G:\\proj_master\\mesh_input.bin',
+      toMachine: 'gpu-b',
+      toPath: '/data/work_b/mesh_input.bin',
+      size: 12,
+      mode: 'auto',
+      notifyNodeId: workerNodeId,
+    });
+    assert.equal(xferRes.ok, true);
+    assert.equal(xferRes.transfer.status, 'transferring');
+    assert.equal(fromSent.length, 1);
+    assert.equal(fromSent[0].t, 'fs');
+    assert.equal(fromSent[0].op, 'read');
+    const readRid = fromSent[0].rid;
+    assert.ok(readRid.startsWith('mfs-'));
+
+    const part1 = Buffer.from('Hello ');
+    const part2 = Buffer.from('AmeMesh!');
+    const fullBuf = Buffer.concat([part1, part2]);
+    const expectedCrc = zlib.crc32(fullBuf) >>> 0;
+
+    // Source responds with fs-res -> server sends up-open to destination
+    assert.equal(mesh.fromAgentFs(machines.get('pc-a'), { t: 'fs-res', rid: readRid, ok: true, size: fullBuf.length, mtime: 12345 }), true);
+    assert.equal(toSent.length, 1);
+    assert.equal(toSent[0].t, 'fs');
+    assert.equal(toSent[0].op, 'up-open');
+    assert.equal(toSent[0].path, '/data/work_b');
+    assert.equal(toSent[0].name, 'mesh_input.bin');
+    assert.equal(toSent[0].size, fullBuf.length);
+    const upRid = toSent[0].rid;
+
+    // Source sends chunk 0 BEFORE up-open response arrives (tests pendingChunks buffering)
+    assert.equal(mesh.fromAgentFs(machines.get('pc-a'), { t: 'fs-chunk', rid: readRid, i: 0, data: part1.toString('base64') }), true);
+    assert.equal(toSent.length, 1, 'Should buffer chunk until up-open responds');
+
+    // Destination responds to up-open -> buffered chunk 0 is flushed as fs-up
+    assert.equal(mesh.fromAgentFs(machines.get('gpu-b'), { t: 'fs-res', rid: upRid, ok: true, have: 0 }), true);
+    assert.equal(toSent.length, 2);
+    assert.equal(toSent[1].t, 'fs-up');
+    assert.equal(toSent[1].off, 0);
+    assert.equal(Buffer.from(toSent[1].data, 'base64').toString(), 'Hello ');
+
+    // Destination acks chunk 0 -> server sends fs-ack i=0 back to source
+    assert.equal(mesh.fromAgentFs(machines.get('gpu-b'), { t: 'fs-up-ack', rid: upRid, have: part1.length }), true);
+    assert.equal(fromSent.length, 2);
+    assert.deepEqual(fromSent[1], { t: 'fs-ack', rid: readRid, i: 0 });
+
+    // Source sends chunk 1 & fs-end -> server forwards fs-up & fs-up-end with valid CRC-32
+    assert.equal(mesh.fromAgentFs(machines.get('pc-a'), { t: 'fs-chunk', rid: readRid, i: 1, data: part2.toString('base64') }), true);
+    assert.equal(mesh.fromAgentFs(machines.get('pc-a'), { t: 'fs-end', rid: readRid }), true);
+    assert.equal(toSent.length, 4);
+    assert.equal(toSent[2].t, 'fs-up');
+    assert.equal(toSent[2].off, part1.length);
+    assert.equal(Buffer.from(toSent[2].data, 'base64').toString(), 'AmeMesh!');
+    assert.equal(toSent[3].t, 'fs-up-end');
+    assert.equal(toSent[3].rid, upRid);
+    assert.equal(toSent[3].crc, expectedCrc);
+
+    // Destination finishes with fs-up-done -> transfer marked completed & target node notified
+    assert.equal(mesh.fromAgentFs(machines.get('gpu-b'), { t: 'fs-up-done', rid: upRid, ok: true, path: '/data/work_b/mesh_input.bin' }), true);
+    const updatedProj = mesh.getProject(projId);
+    const doneXfer = updatedProj.transfers.find((t) => t.id === xferRes.transfer.id);
+    assert.equal(doneXfer.status, 'completed');
+    const targetNode = updatedProj.nodes.find((n) => n.id === workerNodeId);
+    assert.ok(targetNode.inbox.some((m) => /跨机文件已自动传输就位/.test(m.text)), 'Target worker node should receive handoff_ready notification');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

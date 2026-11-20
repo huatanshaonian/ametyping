@@ -24,6 +24,20 @@ const { createProfiles } = claudeApi;
 const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'bksp', 'ctrlxs']);
 const CTRL = /^ctrl[abe-y]$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ps = (x) => "'" + String(x).replace(/'/g, "''") + "'";
+
+function cleanMeshEnv(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out = {};
+  for (const k of ['AME_PROJECT_ID', 'AME_NODE_ID']) {
+    if (typeof v[k] === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(v[k])) out[k] = v[k];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function meshPsPrefix(mEnv) {
+  return mEnv ? Object.entries(mEnv).map(([k, v]) => `$env:${k} = ${ps(v)}; `).join('') : '';
+}
 
 // deps: { sessions, permissions, bridge, procAlive, pushBubble, home, onBtw }
 function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home, onBtw = () => {} }) {
@@ -259,7 +273,8 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
   // tool: 'codex' | 'agy' -- a new Codex or Antigravity session instead of Claude Code's
-  async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null) {
+  async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null, meshEnv = null) {
+    const mEnv = cleanMeshEnv(meshEnv);
     const thread = /^codex:/.test(resume) ? resume.slice(6) : '';
     const agyThread = /^agy:/.test(resume) ? resume.slice(4) : '';
     const kiroThread = /^kiro:/.test(resume) ? resume.slice(5) : '';
@@ -274,7 +289,11 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       // OpenCode's TUI in a new console window: -s <session> continues one, --prompt <text> starts with a message
       const spec = opencode.launchSpec({ resume: ocThread, prompt });
       if (!spec) return { ok: false, msg: '找不到 opencode' };
-      const pid = await bridge.launch(spec.exe, spec.args, cwd);
+      let pid;
+      if (mEnv) {
+        const cmd = `${meshPsPrefix(mEnv)}& ${ps(spec.exe)}${spec.args.length ? ' ' + spec.args.map(ps).join(' ') : ''}`;
+        pid = await bridge.launch('powershell.exe', ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
+      } else pid = await bridge.launch(spec.exe, spec.args, cwd);
       if (!pid) return { ok: false, msg: '启动失败' };
       if (ocThread) adoptOpenCode(resume, cwd).catch(() => {});
       return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个 OpenCode 会话（第一次有动静后出现在列表里）' : '已在这台电脑上打开一个新的命令行窗口启动 OpenCode' };
@@ -299,10 +318,10 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.
     const pre = path.join(home(), '.ametyping', 'launch.ps1');
     let pid;
-    if (fs.existsSync(pre) || api) {
-      const ps = (x) => "'" + String(x).replace(/'/g, "''") + "'";
+    if (fs.existsSync(pre) || api || mEnv) {
       const preCmd = fs.existsSync(pre) && !api ? `. ${ps(pre)}; ` : '';
-      const cmd = api ? createProfiles().windowCommand(api.id, cwd, args) : `${preCmd}& ${ps(exe)} ${args.map(ps).join(' ')}`;
+      const baseCmd = api ? createProfiles().windowCommand(api.id, cwd, args) : `${preCmd}& ${ps(exe)} ${args.map(ps).join(' ')}`;
+      const cmd = `${meshPsPrefix(mEnv)}${baseCmd}`;
       pid = await bridge.launch('powershell.exe', ['-NoLogo', ...(api ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : []), '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
     } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
@@ -320,4 +339,4 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   return { chatSend, chatKey, chatScreen, launch, KEYS, btwList: (s) => (s && s.btw && s.btw.length ? btw.list(s) : undefined) };
 }
 
-module.exports = { createRemoteControl };
+module.exports = { createRemoteControl, cleanMeshEnv };

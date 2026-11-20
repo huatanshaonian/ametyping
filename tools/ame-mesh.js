@@ -66,7 +66,9 @@ function savePendingMeshEvent(evt, home = os.homedir()) {
       if (!Array.isArray(list)) list = [];
     } catch {}
     list.push(evt);
-    fs.writeFileSync(pendingFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+    const tmpFile = pendingFile + '.tmp-' + process.pid + '-' + Date.now();
+    fs.writeFileSync(tmpFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpFile, pendingFile);
   } catch {}
 }
 
@@ -119,8 +121,9 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
         nodeId: nodeId || '',
         sessionId: sessionId || '',
       };
+      const rpcOpts = { ...opts, cwd: cwd || opts.cwd };
       try {
-        const r = await rpc('event', evt, opts);
+        const r = await rpc('event', evt, rpcOpts);
         if (!r || !r.ok) {
           savePendingMeshEvent(evt);
         }
@@ -146,8 +149,9 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
         nodeId: nodeId || '',
         sessionId: sessionId || '',
       };
+      const rpcOpts = { ...opts, cwd: cwd || opts.cwd };
       try {
-        const r = await rpc('event', evt, opts);
+        const r = await rpc('event', evt, rpcOpts);
         if (!r || !r.ok) savePendingMeshEvent(evt);
       } catch {
         savePendingMeshEvent(evt);
@@ -184,7 +188,7 @@ function watchPidWorker({ pid, label, cwd, projectId, nodeId, sessionId, interva
           sessionId: sessionId || '',
         };
         try {
-          const r = await rpc('event', evt, opts);
+          const r = await rpc('event', evt, { ...opts, cwd: cwd || opts.cwd });
           if (!r || !r.ok) savePendingMeshEvent(evt);
         } catch {
           savePendingMeshEvent(evt);
@@ -198,11 +202,11 @@ function watchPidWorker({ pid, label, cwd, projectId, nodeId, sessionId, interva
 async function runBgMcp(args = {}, opts = {}) {
   const cmdStr = args.command;
   if (!cmdStr || typeof cmdStr !== 'string') return { ok: false, msg: '缺少 command 参数' };
-  const cwd = args.cwd || process.cwd();
+  const cwd = args.cwd || opts.cwd || process.cwd();
   const logFile = args.logFile || path.join(cwd, '.ame-run-' + Date.now() + '.log');
   const label = args.label || cmdStr.slice(0, 60);
   const sessionId = args.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
-  const projectId = args.projectId || '';
+  const projectId = args.projectId || process.env.AME_PROJECT_ID || '';
 
   const workerPayload = {
     commandArgs: [cmdStr],
@@ -210,7 +214,7 @@ async function runBgMcp(args = {}, opts = {}) {
     logFile,
     cwd,
     projectId,
-    nodeId: args.targetNodeId || args.nodeId || '',
+    nodeId: args.targetNodeId || args.nodeId || process.env.AME_NODE_ID || '',
     sessionId,
   };
   const child = child_process.spawn(
@@ -230,7 +234,20 @@ async function runBgMcp(args = {}, opts = {}) {
 
 function rpc(op, params = {}, opts = {}) {
   const sessionId = params.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
-  return callLocal('POST', '/mesh/rpc', { op, sessionId, ...params }, opts);
+  const projectId = params.projectId || process.env.AME_PROJECT_ID || '';
+  const fromNodeId = params.fromNodeId || process.env.AME_NODE_ID || '';
+  const nodeId = params.nodeId || process.env.AME_NODE_ID || '';
+  const callerCwd = params.callerCwd || opts.cwd || process.cwd();
+  const payload = {
+    op,
+    ...params,
+    sessionId,
+    callerCwd,
+  };
+  if (projectId) payload.projectId = projectId;
+  if (fromNodeId) payload.fromNodeId = fromNodeId;
+  if (nodeId) payload.nodeId = nodeId;
+  return callLocal('POST', '/mesh/rpc', payload, opts);
 }
 
 // ---- MCP Server (JSON-RPC 2.0 over stdio) ----
@@ -325,7 +342,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'mesh_transfer',
-    description: '请求跨机器传输文件，或针对超大文件（>50MB / 跨慢速网络）向用户发起「移动硬盘人工拷贝（Sneakernet）」请求卡片。用户拷贝完成后系统会自动唤醒目标会话。',
+    description: '请求跨机器传输文件：小于 50MB 的文件在目标机器在线且开启文件浏览与上传（files & upload）时会自动流式直传并做 CRC-32 校验；大于等于 50MB 或目标离线/不可写时，自动降级向用户发起「移动硬盘人工拷贝（Sneakernet）」请求卡片，用户拷贝完成后自动唤醒目标会话。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -359,17 +376,18 @@ const MCP_TOOLS = [
   },
   {
     name: 'mesh_trigger',
-    description: '管理项目的外部事件触发器（如监听指定文件夹内新生成的仿真结果文件，文件写入稳定后自动唤醒节点处理）。',
+    description: '管理项目的文件夹外部事件触发器（监听指定文件夹内新生成的仿真结果文件，文件写入稳定后自动唤醒节点处理；进程退出监听请使用 mesh_run 或 CLI watch-pid）。',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['add', 'list', 'remove', 'pause', 'resume'], description: '触发器操作' },
         projectId: { type: 'string', description: '项目 ID' },
         triggerId: { type: 'string', description: '触发器 ID（remove/pause/resume 时必填）' },
-        type: { type: 'string', enum: ['folder', 'process'], description: '触发器类型（默认 folder）' },
+        type: { type: 'string', enum: ['folder'], description: '触发器类型（仅支持 folder；进程退出监听由 mesh_run / CLI watch-pid 处理）' },
         machine: { type: 'string', description: '监听的目标电脑名称' },
         path: { type: 'string', description: '监听的文件夹绝对路径（需在项目授权工作区内）' },
         glob: { type: 'string', description: '文件名匹配通配符（如 *.ffe, *.out, *.csv，默认 *）' },
+        maxDepth: { type: 'number', description: '目录递归扫描深度（1~6，默认 4）' },
         targetNodeId: { type: 'string', description: '触发后通知的目标节点 ID（不填则通知主控节点）' },
         label: { type: 'string', description: '触发器说明标签' },
       },
@@ -482,8 +500,8 @@ async function runCli(argv = process.argv.slice(2)) {
     const cwd = runFlags.cwd || process.cwd();
     const label = runFlags.label || path.basename(commandArgs[0]);
     const logFile = runFlags.log || path.join(cwd, '.ame-run-' + Date.now() + '.log');
-    const projectId = runFlags.projectId || '';
-    const nodeId = runFlags.nodeId || '';
+    const projectId = runFlags.projectId || process.env.AME_PROJECT_ID || '';
+    const nodeId = runFlags.nodeId || runFlags.targetNodeId || process.env.AME_NODE_ID || '';
     const sessionId = runFlags.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
     const isFg = Boolean(runFlags.fg);
     if (isFg) {
@@ -510,8 +528,8 @@ async function runCli(argv = process.argv.slice(2)) {
     }
     const cwd = flags.cwd || process.cwd();
     const label = flags.label || ('PID ' + pid);
-    const projectId = flags.projectId || '';
-    const nodeId = flags.nodeId || '';
+    const projectId = flags.projectId || process.env.AME_PROJECT_ID || '';
+    const nodeId = flags.nodeId || flags.targetNodeId || process.env.AME_NODE_ID || '';
     const sessionId = flags.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
     const intervalMs = +flags.intervalMs || 2000;
     const isFg = Boolean(flags.fg);
@@ -530,7 +548,7 @@ async function runCli(argv = process.argv.slice(2)) {
     return;
   }
   if (cmd === 'mcp') return startMcpStdio();
-  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  if (flags.help || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log([
       'AmeMesh 跨机器/跨 Agent 协同工具 (CLI & MCP)',
       '用法:',
@@ -541,6 +559,9 @@ async function runCli(argv = process.argv.slice(2)) {
       '  node tools/ame-mesh.js send --toNodeId <node> --text <msg> [--goal <goal>] [--stopCondition <gate>]',
       '  node tools/ame-mesh.js report --summary <text> [--reviewStatus waiting_review|done|blocked] [--artifacts a.png,b.csv]',
       '  node tools/ame-mesh.js transfer --fromMachine <pc1> --fromPath <p1> --toMachine <pc2> --toPath <p2> [--size <bytes>] [--mode auto|manual_disk] [--note <text>]',
+      '  node tools/ame-mesh.js run [--cwd <dir>] [--label <name>] [--log <file>] [--projectId <id>] [--nodeId <id>] [--fg] -- <cmd> [args...]',
+      '  node tools/ame-mesh.js watch-pid --pid <pid> [--label <name>] [--cwd <dir>] [--projectId <id>] [--nodeId <id>] [--intervalMs <ms>] [--fg]',
+      '  node tools/ame-mesh.js trigger --action add|list|remove|pause|resume [--projectId <id>] [--triggerId <id>] [--machine <pc>] [--path <dir>] [--glob <pattern>] [--maxDepth <1-6>] [--targetNodeId <id>] [--label <text>]',
       '  node tools/ame-mesh.js mcp   (启动标准 stdio MCP Server)',
     ].join('\n'));
     return;
