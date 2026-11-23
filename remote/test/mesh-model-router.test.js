@@ -119,39 +119,39 @@ describe('mesh-model-router', () => {
       now: () => curTime,
     });
 
-    // In fast-coder: codex:gpt-6.2-terra (openai, 82%) is #1 and healthy; claude:sonnet (anthropic) is exhausted
+    // In fast-coder: agy:gemini-4-hydrogen-medium is #1 and healthy; claude:sonnet (anthropic) is exhausted
     const pick1 = router.selectCandidate('fast-coder');
     assert.equal(pick1.ok, true);
-    assert.equal(pick1.candidate.harness, 'codex');
-    assert.equal(pick1.candidate.model, 'gpt-6.2-terra');
+    assert.equal(pick1.candidate.harness, 'agy');
+    assert.equal(pick1.candidate.model, 'gemini-4-hydrogen-medium');
 
     const status1 = router.getPoolsStatus();
-    assert.equal(status1['fast-coder'][0].magpieInfo, '82%');
-    assert.equal(status1['fast-coder'][1].status, 'exhausted');
-    assert.equal(status1['fast-coder'][2].status, 'healthy');
+    assert.equal(status1['fast-coder'][0].status, 'healthy');
+    assert.equal(status1['fast-coder'][1].magpieInfo, '82%');
+    assert.equal(status1['fast-coder'][3].status, 'exhausted');
 
-    // Cooldown codex and both agy models -> falls back to opencode:gpt-6.2-sol
+    // Cooldown agy models and codex -> falls back to opencode:gpt-6.2-sol
+    router.markCooldown('agy', 'gemini-4-hydrogen-medium', '429 rate limit', curTime + 60e3);
     router.markCooldown('codex', 'gpt-6.2-terra', '429 rate limit', curTime + 60e3);
     router.markCooldown('agy', 'claude-sonnet-5-5-medium', '429 rate limit', curTime + 60e3);
-    router.markCooldown('agy', 'gemini-4-hydrogen-medium', '429 rate limit', curTime + 60e3);
     const pick2 = router.selectCandidate('fast-coder');
     assert.equal(pick2.ok, true);
     assert.equal(pick2.candidate.harness, 'opencode');
     assert.equal(pick2.candidate.model, 'gpt-6.2-sol');
 
-    // Advance past cooldown -> codex becomes healthy again
+    // Advance past cooldown -> agy Gemini becomes healthy again
     curTime += 61e3;
     const pick3 = router.selectCandidate('fast-coder');
     assert.equal(pick3.ok, true);
-    assert.equal(pick3.candidate.harness, 'codex');
-    assert.equal(pick3.candidate.model, 'gpt-6.2-terra');
+    assert.equal(pick3.candidate.harness, 'agy');
+    assert.equal(pick3.candidate.model, 'gemini-4-hydrogen-medium');
 
     // Error status on all matching Magpie accounts also marks exhausted
     magpieAccounts = [
       { provider: 'anthropic', name: 'Claude 1', status: 'error', windows: [] },
     ];
     const statusErr = router.getPoolsStatus();
-    assert.equal(statusErr['fast-coder'][1].status, 'exhausted');
+    assert.equal(statusErr['fast-coder'][3].status, 'exhausted');
   });
 });
 
@@ -244,7 +244,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
 
       // Claude should now be in cooldown inside flagship pool
       const poolsBefore = mesh.modelRouter.getPoolsStatus();
-      assert.equal(poolsBefore.flagship[0].status, 'cooldown');
+      assert.equal(poolsBefore.flagship.find((c) => c.harness === 'claude').status, 'cooldown');
 
       // 3. Exhaust entire pool -> returns { ok: false, exhausted: true } and posts watchdog alert on board
       failHarnesses = new Set(['claude', 'codex', 'agy', 'opencode']);
@@ -286,7 +286,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
 
       await mesh.handle({ method: 'GET' }, {}, new URL('http://localhost/api/mesh/pools'), '127.0.0.1', jsonFn, async () => '{}', () => true);
       assert.equal(responses[2].body.ok, true);
-      assert.equal(responses[2].body.pools.flagship[0].status, 'cooldown');
+      assert.equal(responses[2].body.pools.flagship.find((c) => c.harness === 'claude').status, 'cooldown');
 
       await mesh.handle(
         { method: 'POST' },
@@ -298,7 +298,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
         () => true
       );
       assert.equal(responses[3].body.ok, true);
-      assert.equal(responses[3].body.pools.flagship[0].status, 'healthy');
+      assert.equal(responses[3].body.pools.flagship.find((c) => c.harness === 'claude').status, 'healthy');
 
       await mesh.handle(
         { method: 'POST' },
@@ -333,13 +333,13 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
 
       const pick1 = router.selectCandidate('fast-coder');
       assert.equal(pick1.ok, true);
-      assert.equal(pick1.candidate.harness, 'codex');
+      assert.equal(pick1.candidate.harness, 'agy');
 
       const pick2 = router.selectCandidate('fast-coder', {
-        activeCounts: { byHarness: { codex: 1 }, byCandidate: { 'codex|gpt-6.2-sol': 1 } },
+        activeCounts: { byHarness: { agy: 1 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 1 } },
       });
       assert.equal(pick2.ok, true);
-      assert.equal(pick2.candidate.harness, 'agy');
+      assert.equal(pick2.candidate.harness, 'codex');
 
       const pick3 = router.selectCandidate('fast-coder', { availableHarnesses: ['claude'] });
       assert.equal(pick3.ok, true);

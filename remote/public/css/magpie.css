@@ -28,3 +28,22 @@ html[data-theme="win98"] .mpw-body{background:var(--surface);box-shadow:var(--su
 html[data-theme="win98"] .mpw-fold{border:0;background:#c0c0c0;color:#000;box-shadow:var(--raised)}
 @media(max-width:700px){#desktopwidgets{display:none}}
 @media(max-width:600px){.mp-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-body{padding:6px}.mp-stat strong{font-size:13px}}
+
+/* Desktop sticky approval widget (待我介入便签：平时静驻底层，有审批/告警自动置顶浮出) */
+.ap-widget.urgent { position: fixed; top: 14px; right: 16px; width: 316px; max-height: 70vh; z-index: 9500; box-shadow: 4px 4px 0 rgba(164,14,38,0.35), var(--raised-outer); }
+.ap-widget.urgent .apw-head { background: linear-gradient(90deg, #8b0000, #d9480f) !important; color: #fff !important; }
+.apw-body { max-height: 300px; }
+.apw-rows { display: flex; flex-direction: column; gap: 5px; padding: 3px 0; }
+.apw-card { border: 1px solid var(--edge); background: var(--surface); padding: 5px 6px; display: flex; flex-direction: column; gap: 4px; }
+.apw-card.perm { border-left: 3px solid #d9480f; }
+.apw-card.alert { border-left: 3px solid #c9184a; background: #fff5f5; }
+.apw-meta { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.apw-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apw-meta small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.apw-tag { font-size: 10px; padding: 0 4px; font-weight: bold; color: #fff; flex: none; }
+.apw-tag.perm { background: #d9480f; }
+.apw-tag.alert { background: #c9184a; }
+.apw-desc { font-size: 11px; color: var(--ink); font-family: Consolas, "Microsoft YaHei", monospace; word-break: break-all; line-height: 1.35; }
+.apw-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.apw-acts .btn { padding: 1px 7px; font-size: 11px; min-height: 20px; }
+.apw-jump { margin-left: auto; }

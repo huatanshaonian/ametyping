@@ -15,6 +15,7 @@ import * as magpie from './apps/magpie.js';
 import * as computers from './apps/computers.js';
 import * as reports from './apps/reports.js';
 import * as todo from './apps/todo.js';
+import * as approveWidget from './apps/approve-widget.js';
 import * as notepad from './apps/notepad.js';
 import * as officeApps from './apps/office-apps.js';
 import * as board from './apps/board.js';
@@ -105,6 +106,7 @@ const widgets = h('div', { id: 'desktopwidgets' });
 document.getElementById('desktop').append(widgets);
 todo.initWidget(widgets);
 magpie.initWidget(widgets);
+approveWidget.initWidget(widgets);
 initDesktopClippy();
 // a phone's back gesture: each window on screen is a level; back puts the one in front away (to the taskbar)
 wm.onChange((list) => backnav.level('windows', list.filter((w) => !w.minimized).length));

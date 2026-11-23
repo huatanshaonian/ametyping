@@ -3,6 +3,8 @@
 // Where the machine allows it, replies / keys / decisions are carried out by the pet (or headless service) there.
 import { $, h, esc, hhmm, prefs, ctxLeft, CTX_LOW, aiMark } from '../util.js';
 import * as net from '../net.js';
+import * as mesh from '../mesh.js';
+import * as projects from './projects.js';
 import * as ctxmenu from '../ctxmenu.js';
 import { inline, follow } from './dash-paths.js';
 import * as wm from '../wm.js';
@@ -176,8 +178,40 @@ function mount(current) {
   } });
   const btwText = new WeakMap();                     // answer element -> { text, t }
   convEl.addEventListener('click', (e) => { if (e.target.closest('a.fp')) return; const b = e.target.closest('.m.btw'); const a = b && btwText.get(b); if (a) btw.show(b.dataset.q || '', a.text, a.t); });
+  const meshBar = h('div', { class: 'dash-mesh-bar', hidden: true });
+  function renderMeshBar() {
+    const mn = sel ? mesh.nodeOfKey(sel) : null;
+    if (!mn) { meshBar.hidden = true; meshBar.replaceChildren(); return; }
+    const { project, node } = mn;
+    const roleLbl = node.role === 'master' ? 'Master' : node.role === 'verifier' ? 'Verifier' : node.role === 'peer' ? 'Peer' : 'Worker';
+    const modelTxt = [node.tool, node.model].filter(Boolean).join(':');
+    meshBar.hidden = false;
+    meshBar.replaceChildren(
+      h('span', { class: `mrole ${node.role || 'worker'}`, text: roleLbl }),
+      h('b', { class: 'dmb-proj', text: project.name }),
+      modelTxt ? h('span', { class: 'mrole mdl', text: modelTxt }) : null,
+      node.goal ? h('span', { class: 'dmb-goal', title: node.goal, text: '目标: ' + node.goal }) : null,
+      h('span', { class: 'dmb-acts' },
+        node.reviewStatus === 'waiting_review' ? h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '静默结单',
+          onclick: async () => {
+            const r = await mesh.reviewNode(project.id, node.id, 'approve');
+            showNote((r && r.msg) || '已批准结单', !(r && r.ok));
+          },
+        }) : null,
+        h('button', {
+          class: 'btn go',
+          type: 'button',
+          text: '打开项目拓扑/黑板',
+          onclick: () => projects.open(project.id),
+        })
+      )
+    );
+  }
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
-    resume, agents.el, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
+    meshBar, resume, agents.el, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);
   const side = h('div', { class: 'side' }, list);              // (the list's 活动 / 全部 and search bar go on top)
   const root = h('div', { class: 'dash' }, side, right);
   // file paths in what was said (dash-paths.js): a click opens the file on that session's computer; the menu also
@@ -243,6 +277,7 @@ function mount(current) {
     if (cached) renderConv(cached); else convEl.replaceChildren(h('div', { class: 'pick', text: '加载对话…' }));
     permsEl.replaceChildren(); permCards.clear(); showNote('');
     header(s);
+    renderMeshBar();
     renderNotes();
     say.value = drafts.get(key) || '';
     renderControls();

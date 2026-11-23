@@ -312,3 +312,19 @@
 .dash a.fp { color: var(--border); text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
 .dash a.fp:hover { text-decoration-style: solid; }
 .dash a.fp code { color: inherit; }
+
+/* AmeMesh multi-select role filter chips, model badge, archived fade, and chat project shuttle bar */
+.ltool-wrap { display: flex; flex-direction: column; border-bottom: 1px solid var(--edge); }
+.ltool-wrap .ltool { border-bottom: 0; }
+.lroles { display: flex; align-items: center; gap: 4px; padding: 0 6px 5px; flex-wrap: wrap; }
+.rchip { font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; line-height: 1.35; }
+.rchip:hover { background: var(--hover); }
+.rchip.on { background: #000080; color: #fff; border-color: #000080; font-weight: bold; }
+.mrole.verifier { background: #f3e8ff; border: 1px solid #6b46c1; color: #553c9a; }
+.mrole.mdl { background: var(--tint); border: 1px solid var(--edge); color: var(--muted); font-family: Consolas, monospace; font-size: 10px; }
+.mrole.arch { background: #e5e7eb; border: 1px solid #9ca3af; color: #4b5563; }
+.dash-mesh-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); font-size: 11.5px; flex-wrap: wrap; }
+.dmb-proj { color: var(--border); white-space: nowrap; }
+.dmb-goal { flex: 1; min-width: 120px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dmb-acts { margin-left: auto; display: flex; gap: 4px; flex: none; }
+.dmb-acts .btn { padding: 1px 7px; font-size: 11px; min-height: 20px; }

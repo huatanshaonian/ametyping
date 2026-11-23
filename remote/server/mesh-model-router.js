@@ -6,17 +6,17 @@ const path = require('path');
 
 const DEFAULT_POOLS = {
   'fast-coder': [
-    { harness: 'codex', model: 'gpt-6.2-terra', magpieProvider: 'openai', quirks: '' },
-    { harness: 'claude', model: 'sonnet', magpieProvider: 'anthropic', quirks: '' },
-    { harness: 'agy', model: 'claude-sonnet-5-5-medium', quirks: '' },
     { harness: 'agy', model: 'gemini-4-hydrogen-medium', quirks: '' },
+    { harness: 'codex', model: 'gpt-6.2-terra', magpieProvider: 'openai', quirks: '' },
+    { harness: 'agy', model: 'claude-sonnet-5-5-medium', quirks: '' },
+    { harness: 'claude', model: 'sonnet', magpieProvider: 'anthropic', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
   ],
   flagship: [
-    { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'gemini-4-neon-medium', quirks: '' },
     { harness: 'codex', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
     { harness: 'agy', model: 'claude-opus-5-5-medium', quirks: '' },
-    { harness: 'agy', model: 'gemini-4-neon-medium', quirks: '' },
+    { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
   ],
   'heavy-reasoner': [

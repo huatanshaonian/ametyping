@@ -9,14 +9,46 @@ import { h, prefs } from '../util.js';
 const RECENT = 24 * 3600e3;
 const DEBOUNCE = 300;
 
+const ROLE_KEYS = ['master', 'worker', 'verifier', 'solo'];
+const ROLE_LABELS = { master: 'Master', worker: 'Worker', verifier: 'Verifier', solo: '独立' };
+
 export function createFilter({ onChange }) {
   let view = prefs.get('dash.view', 'active') === 'all' ? 'all' : 'active';
+  const savedRoles = prefs.get('dash.roles', []);
+  const activeRoles = new Set(Array.isArray(savedRoles) ? savedRoles.filter((r) => ROLE_KEYS.includes(r)) : []);
   let q = '', hits = new Map(), pending = false, seq = 0, timer = null;
 
   const seg = (v, text) => h('button', { class: 'seg', type: 'button', dataset: { v }, text });
   const segs = h('span', { class: 'segs' }, seg('active', '活动'), seg('all', '全部'));
   const input = h('input', { class: 'lsearch', type: 'search', placeholder: '搜索对话', maxlength: 100, spellcheck: 'false' });
-  const el = h('div', { class: 'ltool' }, segs, input);
+
+  const roleAllBtn = h('button', { class: 'rchip', type: 'button', dataset: { r: 'all' }, text: '全部' });
+  const roleBtns = ROLE_KEYS.map((rk) => h('button', { class: 'rchip', type: 'button', dataset: { r: rk }, text: ROLE_LABELS[rk] }));
+  const roleBar = h('div', { class: 'lroles', title: '可多选组合筛选角色（未选或全选=全部）' }, roleAllBtn, ...roleBtns);
+
+  const syncRoleBtns = () => {
+    const isAll = activeRoles.size === 0 || activeRoles.size === ROLE_KEYS.length;
+    roleAllBtn.classList.toggle('on', isAll);
+    for (const b of roleBtns) b.classList.toggle('on', activeRoles.has(b.dataset.r));
+  };
+  roleBar.addEventListener('click', (e) => {
+    const b = e.target.closest('.rchip'); if (!b) return;
+    const r = b.dataset.r;
+    if (r === 'all') {
+      activeRoles.clear();
+    } else if (activeRoles.has(r)) {
+      activeRoles.delete(r);
+    } else {
+      activeRoles.add(r);
+      if (activeRoles.size === ROLE_KEYS.length) activeRoles.clear();
+    }
+    prefs.set('dash.roles', [...activeRoles]);
+    syncRoleBtns();
+    onChange();
+  });
+  syncRoleBtns();
+
+  const el = h('div', { class: 'ltool-wrap' }, h('div', { class: 'ltool' }, segs, input), roleBar);
 
   const mark = () => { for (const b of segs.children) b.classList.toggle('on', b.dataset.v === view && !q); };
   segs.addEventListener('click', (e) => {
@@ -51,16 +83,22 @@ export function createFilter({ onChange }) {
   const terms = () => q.toLowerCase().split(/\s+/).filter(Boolean);
   return {
     el,
-    // does this session belong in the list now? (text: what its card shows besides the name)
-    keep({ s, m, key, mk }, text) {
+    // does this session belong in the list now? (text: what its card shows besides the name; mn: mesh node info if any)
+    keep({ s, m, key, mk }, text, mn = null) {
+      if (activeRoles.size > 0 && activeRoles.size < ROLE_KEYS.length) {
+        const nr = mn && mn.node ? String(mn.node.role || 'worker') : '';
+        const cat = !nr ? 'solo' : nr === 'master' ? 'master' : nr === 'verifier' ? 'verifier' : 'worker';
+        if (!activeRoles.has(cat)) return false;
+      }
       if (q) {
-        const all = `${s.label} ${s.project || ''} ${m.machine} ${text}`.toLowerCase();
+        const all = `${s.label} ${s.project || ''} ${m.machine} ${s.model || ''} ${text}`.toLowerCase();
         return terms().every((t) => all.includes(t)) || hits.has(key);
       }
       // (parked: the window of a background session -- its history is under 全部, it is not something going on)
       // (ended: closed, but its machine still lists it for a while so that it can be replied to)
       return view === 'all' || !!mk.pinned || (s.state !== 'history' && s.state !== 'ended') || (!s.parked && Date.now() - (s.last || 0) < RECENT);
     },
+    roles: () => [...activeRoles],
     hit: (key) => (q ? hits.get(key) : undefined),     // the passage the server found, while searching
     searching: () => !!q,
     pending: () => pending,
