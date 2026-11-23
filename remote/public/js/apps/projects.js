@@ -38,7 +38,18 @@ export function open(projectId = null) {
   });
 }
 
-const ROLE_NAMES = { master: 'Master 主控', worker: 'Worker 执行', peer: 'Cowork 平级' };
+const ROLE_NAMES = { master: 'Master 主控', worker: 'Worker 执行', peer: 'Cowork 平级', verifier: 'Verifier 验收' };
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs = {}, ...kids) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'text') el.textContent = v;
+    else el.setAttribute(k, String(v));
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c);
+  return el;
+}
 const REVIEW_NAMES = {
   running: ['run', '执行中'],
   waiting_review: ['wait', '待检视 (Review Gate)'],
@@ -47,11 +58,41 @@ const REVIEW_NAMES = {
   blocked: ['err', '受阻'],
 };
 
+const TASK_STATUSES = [
+  ['pending', '待办'],
+  ['in_progress', '进行中'],
+  ['review', '待审'],
+  ['done', '完成'],
+  ['blocked', '受阻'],
+];
+const BOARD_KINDS = [
+  ['all', '全部'],
+  ['post', '帖子'],
+  ['brief', '契约'],
+  ['report', '汇报'],
+  ['task', '任务'],
+  ['watchdog', '看门狗'],
+  ['event', '事件'],
+];
+const BOARD_KIND_LABELS = {
+  brief: '契约',
+  post: '帖子',
+  report: '汇报',
+  task: '任务',
+  watchdog: '看门狗',
+  event: '事件',
+  control: '控制',
+};
+
 function mount(initialProjectId) {
   let selId = initialProjectId;
   let activeTab = 'research';
   let researchView = null;
+  let boardView = null;
+  let topoView = null;
+  let rolesView = null;
   let expandedTreeKey = null;
+  const boardDrafts = new Map();
 
   const sideList = h('div', { class: 'pm-side-list' });
   const mainHead = h('div', { class: 'pm-main-head' });
@@ -115,12 +156,14 @@ function mount(initialProjectId) {
 
   function renderTabs(proj) {
     const reviewCount = (proj.nodes || []).filter((n) => n.reviewStatus === 'waiting_review').length;
-    const xferCount = (proj.transfers || []).filter((t) => t.status === 'pending').length;
+    const taskCount = (proj.tasks || []).length;
+    const boardSuffix = proj.boardSeq ? ` (#${proj.boardSeq})` : (taskCount ? ` (${taskCount})` : '');
     const tabs = [
       ['research', '研究与计算', icon('projects', true), ''],
+      ['board', '黑板与任务', icon('projects', true), boardSuffix],
       ['topo', '协同拓扑与契约', icon('projects', true), reviewCount ? ` (${reviewCount})` : ''],
+      ['roles', '角色与模型池', icon('projects', true), ''],
       ['vfs', '跨机目录与结构树', icon('tree', true), ` (${(proj.workspaces || []).length})`],
-      ['xfer', '文件协同与硬盘摆渡', icon('handoff', true), xferCount ? ` (${xferCount})` : ''],
       ['events', '⚡ 触发器与看门狗', icon('clock', true), (proj.triggers || []).length ? ` (${(proj.triggers || []).length})` : ''],
     ];
     tabBar.replaceChildren(...tabs.map(([k, label, ic, suffix]) =>
@@ -132,20 +175,844 @@ function mount(initialProjectId) {
     ));
   }
 
-  // ---- Tab 1: Topology Graph & Contracts ----
-  function renderTopologyTab(proj) {
-    const nodes = proj.nodes || [];
-    const edges = proj.edges || [];
+  // ---- Tab: Board & Shared Tasks ----
+  function renderPostBody(text, onJumpSeq) {
+    const body = h('div', { class: 'pm-post-body' });
+    const src = String(text || '');
+    const re = /(@[A-Za-z0-9_\u4e00-\u9fa5-]+(?:\.[A-Za-z0-9_\u4e00-\u9fa5-]+)*|#\d+(?![A-Za-z0-9_]))/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const idx = m.index;
+      const tok = m[0];
+      if (tok.startsWith('@') && idx > 0 && /[A-Za-z0-9_]/.test(src[idx - 1])) continue;
+      if (idx > last) body.append(document.createTextNode(src.slice(last, idx)));
+      if (tok.startsWith('@')) {
+        body.append(h('span', { class: 'pm-mention', text: tok }));
+      } else {
+        const seqNum = tok.slice(1);
+        body.append(h('button', {
+          class: 'pm-ref-pill',
+          type: 'button',
+          text: tok,
+          title: `跳转到 #${seqNum}`,
+          onclick: () => onJumpSeq(seqNum),
+        }));
+      }
+      last = idx + tok.length;
+    }
+    if (last < src.length) body.append(document.createTextNode(src.slice(last)));
+    return body;
+  }
 
-    // Visual SVG + Card Topology Graph
-    const graphBox = h('div', { class: 'pm-graph-box' });
-    if (!nodes.length) {
-      graphBox.append(h('div', { class: 'pm-empty', text: '该项目还没有会话节点。你可以从下方「绑定现有会话」或「在远程电脑派生新节点」。' }));
-    } else {
-      // Group nodes by tier: Masters on top/left, Peers in middle, Workers on bottom/right
+  function formatAuditMessage(audit) {
+    if (!audit) return '';
+    const parts = [];
+    const oob = audit.outOfBounds || audit.outsideFiles || audit.outside || audit.violations || audit.unexpectedFiles;
+    if (Array.isArray(oob) && oob.length) parts.push(`越界改动文件: ${oob.join(', ')}`);
+    if (audit.emptyChange || audit.empty || audit.noChanges || audit.changedCount === 0) parts.push('未检测到实际代码改动（空变更）');
+    if (audit.reason || audit.msg || audit.summary) parts.push(String(audit.reason || audit.msg || audit.summary));
+    return parts.length ? parts.join('；') : 'Git 工作区审计未通过，请核查改动范围';
+  }
+
+  function openNewTaskDialog(proj) {
+    const nodes = proj.nodes || [];
+    const existingTasks = proj.tasks || [];
+    const titleIn = h('input', { class: 'field', type: 'text', placeholder: '例如：修复导出脚本中英混排字形映射' });
+    const ownerSel = h('select', { class: 'field' },
+      h('option', { value: '', text: '（暂不指派，放入待认领队列）' }),
+      ...nodes.map((n) => h('option', { value: n.id, text: `${n.alias || n.label || n.id} (${n.machine} · ${n.role || 'worker'})` }))
+    );
+    const blockedIn = h('input', {
+      class: 'field',
+      type: 'text',
+      placeholder: existingTasks.length
+        ? `可选，逗号分隔前置任务 ID，如 ${existingTasks.slice(0, 2).map((t) => t.id).join(', ')}`
+        : '可选，逗号分隔前置任务 ID，如 task_1, task_2',
+    });
+    const boundIn = h('textarea', {
+      class: 'field xnote-ta',
+      rows: 2,
+      placeholder: '可选，逗号或换行分隔允许修改的文件/目录边界，如 remote/public/js/mesh.js',
+    });
+
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '新建共享任务' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        h('label', { class: 'xnote-lbl', text: '任务标题：' }),
+        titleIn,
+        h('label', { class: 'xnote-lbl', text: '负责节点：' }),
+        ownerSel,
+        h('label', { class: 'xnote-lbl', text: '前置依赖 (blockedBy)：' }),
+        blockedIn,
+        h('label', { class: 'xnote-lbl', text: '文件边界 (boundaries)：' }),
+        boundIn,
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '创建任务' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = titleIn.value.trim();
+      if (!title) { titleIn.focus(); return; }
+      const blockedBy = blockedIn.value.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+      const boundaries = boundIn.value.split(/[\n,，]+/).map((s) => s.trim()).filter(Boolean);
+      done();
+      say('正在创建共享任务…');
+      const r = await mesh.task({
+        action: 'add',
+        projectId: proj.id,
+        title,
+        ownerNodeId: ownerSel.value || '',
+        blockedBy,
+        boundaries,
+      });
+      say(r.ok ? '已创建共享任务' : (r.msg || '创建任务失败'));
+    });
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(); } });
+    const wrap = h('div', { class: 'dlg' }, form);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done(); });
+    document.body.append(wrap);
+    titleIn.focus();
+  }
+
+  function renderBoardTab(proj) {
+    let curProj = proj;
+    let entries = [];
+    let activeChannel = 'main';
+    let filterKind = 'all';
+    let filterQuery = '';
+    let loadedSeq = -1;
+    let loading = false;
+    let loadToken = 0;
+    let destroyed = false;
+
+    const taskStripEl = h('div', { class: 'pm-task-strip' });
+    const channelBarEl = h('div', { class: 'pm-channel-bar' });
+    const kindSel = h('select', { class: 'field pm-board-kind' },
+      ...BOARD_KINDS.map(([val, lbl]) => h('option', { value: val, text: lbl }))
+    );
+    const searchIn = h('input', {
+      class: 'field pm-board-search',
+      type: 'search',
+      placeholder: '按关键词、作者或 #楼层筛选…',
+    });
+    const refreshBtn = h('button', { class: 'btn', type: 'button', text: '刷新' });
+    const filterBarEl = h('div', { class: 'pm-board-filter' },
+      h('span', { class: 'pm-sec-title', text: '共享黑板流' }),
+      kindSel,
+      searchIn,
+      refreshBtn
+    );
+    const feedEl = h('div', { class: 'pm-board-feed' });
+    const mentionBarEl = h('div', { class: 'pm-mention-bar' });
+    const draftTa = h('textarea', {
+      class: 'field pm-composer-ta',
+      rows: 3,
+      placeholder: '以人类管理员身份向黑板发帖（可用 @节点别名 唤醒，#楼层 引用上下文，Ctrl+Enter 发送）…',
+    });
+    draftTa.value = boardDrafts.get(proj.id) || '';
+    const sendBtn = h('button', { class: 'btn go', type: 'button', text: '发送到黑板' });
+    const composerEl = h('div', { class: 'pm-composer' },
+      mentionBarEl,
+      h('div', { class: 'pm-composer-row' }, draftTa, sendBtn)
+    );
+    const rootEl = h('div', { class: 'pm-board-wrap' }, taskStripEl, channelBarEl, filterBarEl, feedEl, composerEl);
+
+    function getChannels(p) {
+      const raw = Array.isArray(p && p.channels) && p.channels.length
+        ? p.channels
+        : [{ name: 'main', archived: false }];
+      const list = raw
+        .map((c) => (typeof c === 'string' ? { name: c, archived: false } : c))
+        .filter((c) => c && c.name && !c.archived);
+      return list.length ? list : [{ name: 'main', archived: false }];
+    }
+
+    function renderChannels(p) {
+      const channels = getChannels(p);
+      if (!channels.some((c) => c.name === activeChannel)) {
+        activeChannel = channels[0].name;
+      }
+      channelBarEl.replaceChildren(
+        h('span', { class: 'pm-sec-title', text: '频道:' }),
+        ...channels.map((ch) => h('button', {
+          class: 'pm-ch-btn' + (ch.name === activeChannel ? ' active' : ''),
+          type: 'button',
+          text: `#${ch.name}`,
+          onclick: () => {
+            if (activeChannel === ch.name) return;
+            activeChannel = ch.name;
+            entries = [];
+            renderChannels(curProj);
+            loadBoard();
+          },
+        })),
+        h('button', {
+          class: 'btn pm-ch-add',
+          type: 'button',
+          text: '＋ 新建频道',
+          onclick: async () => {
+            const rawName = await askText({
+              title: '新建黑板频道',
+              label: '频道名称（如 gpu-solver / verifier，不含 # 号）：',
+              max: 32,
+            });
+            if (!rawName) return;
+            const channel = rawName.trim().replace(/^#+/, '');
+            if (!channel) return;
+            say(`正在创建频道 #${channel}…`);
+            const r = await mesh.channel({ action: 'create', projectId: curProj.id, channel });
+            if (!r || !r.ok) {
+              say((r && r.msg) || '创建频道失败');
+              return;
+            }
+            activeChannel = channel;
+            entries = [];
+            renderChannels(curProj);
+            await loadBoard();
+            say(`已创建并切换到频道 #${channel}`);
+          },
+        })
+      );
+    }
+
+    function renderTasks(p) {
+      const tasks = p.tasks || [];
+      const nodes = p.nodes || [];
+      const counts = { pending: 0, in_progress: 0, review: 0, done: 0, blocked: 0 };
+      for (const t of tasks) {
+        if (Object.prototype.hasOwnProperty.call(counts, t.status)) counts[t.status]++;
+      }
+      const head = h('div', { class: 'pm-task-strip-head' },
+        h('div', { class: 'pm-task-counts' },
+          h('span', { class: 'pm-sec-title', text: `共享任务板 (${tasks.length})` }),
+          ...TASK_STATUSES.map(([st, lbl]) =>
+            h('span', { class: `pm-task-stat st-${st}`, text: `${lbl} ${counts[st]}` })
+          )
+        ),
+        h('button', {
+          class: 'btn go',
+          type: 'button',
+          text: '＋ 新建任务…',
+          onclick: () => openNewTaskDialog(curProj),
+        })
+      );
+
+      if (!tasks.length) {
+        taskStripEl.replaceChildren(
+          head,
+          h('div', { class: 'pm-task-empty', text: '暂无共享任务。点击右上角「＋ 新建任务…」或由 Master 调度创建。' })
+        );
+        return;
+      }
+
+      const cards = tasks.map((t) => {
+        const owner = nodes.find((n) => n.id === t.ownerNodeId);
+        const ownerName = owner ? (owner.alias || owner.label || owner.id) : (t.ownerNodeId || '未指派');
+        const statusSel = h('select', {
+          class: `field pm-task-status st-${t.status || 'pending'}`,
+          onchange: async (e) => {
+            const nextStatus = e.target.value;
+            statusSel.disabled = true;
+            const r = await mesh.task({ action: 'update', projectId: curProj.id, taskId: t.id, status: nextStatus });
+            statusSel.disabled = false;
+            say(r.ok ? `已更新任务 [${t.id}] 状态` : (r.msg || '更新任务状态失败'));
+          },
+        },
+          ...TASK_STATUSES.map(([st, lbl]) => h('option', { value: st, text: lbl, selected: (t.status || 'pending') === st }))
+        );
+
+        const deps = Array.isArray(t.blockedBy) ? t.blockedBy.filter(Boolean) : [];
+        const bounds = Array.isArray(t.boundaries) ? t.boundaries.filter(Boolean)
+          : (typeof t.boundaries === 'string' && t.boundaries.trim() ? [t.boundaries.trim()] : []);
+
+        return h('div', { class: `pm-task-card st-${t.status || 'pending'}` },
+          h('div', { class: 'pm-task-top' },
+            h('code', { class: 'pm-task-id', text: `[${t.id}]` }),
+            h('b', { class: 'pm-task-title', text: t.title || '(无标题)' }),
+            h('span', { class: 'pm-task-owner', text: `@${ownerName}` }),
+            statusSel
+          ),
+          (deps.length || bounds.length) ? h('div', { class: 'pm-task-pills' },
+            ...deps.map((depId) => {
+              const depTask = tasks.find((x) => x.id === depId);
+              const depDone = depTask && depTask.status === 'done';
+              return h('span', {
+                class: `pm-dep-pill${depDone ? ' done' : ''}`,
+                text: `前置: ${depId}${depDone ? ' (已完成)' : ''}`,
+              });
+            }),
+            ...bounds.map((b) => h('code', { class: 'pm-bound-pill', text: b }))
+          ) : null
+        );
+      });
+
+      taskStripEl.replaceChildren(head, h('div', { class: 'pm-task-cards' }, ...cards));
+    }
+
+    function jumpToSeq(seqNum) {
+      const targetId = `board-seq-${seqNum}`;
+      let card = document.getElementById(targetId);
+      if (!card && (filterKind !== 'all' || filterQuery)) {
+        filterKind = 'all';
+        filterQuery = '';
+        kindSel.value = 'all';
+        searchIn.value = '';
+        renderFeed();
+        card = document.getElementById(targetId);
+      }
+      if (!card) {
+        say(`未在当前黑板记录中找到 #${seqNum}`);
+        return;
+      }
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.remove('flash');
+      void card.offsetWidth;
+      card.classList.add('flash');
+      setTimeout(() => card.classList.remove('flash'), 1600);
+    }
+
+    function renderFeed() {
+      if (loading && !entries.length) {
+        feedEl.replaceChildren(h('div', { class: 'pm-empty', text: '正在加载共享黑板…' }));
+        return;
+      }
+      const q = filterQuery.trim().toLowerCase();
+      const filtered = entries.filter((e) => {
+        if (filterKind !== 'all' && (e.kind || 'post') !== filterKind) return false;
+        if (!q) return true;
+        const hay = `#${e.seq} ${e.agent || ''} ${e.text || ''} ${(e.artifacts || []).join(' ')}`.toLowerCase();
+        return hay.includes(q);
+      });
+
+      if (!filtered.length) {
+        feedEl.replaceChildren(h('div', {
+          class: 'pm-empty',
+          text: entries.length ? '当前筛选条件下没有匹配的黑板条目。' : '共享黑板暂无记录，可在下方输入内容发送第一条消息。',
+        }));
+        return;
+      }
+
+      const cards = filtered.map((e) => {
+        const kind = e.kind || 'post';
+        const kindText = BOARD_KIND_LABELS[kind] || kind;
+        const artifacts = Array.isArray(e.artifacts) ? e.artifacts.filter(Boolean) : [];
+        const showAuditWarn = !!(e.audit && e.audit.checked && e.audit.isGit && !e.audit.ok);
+
+        return h('article', { id: `board-seq-${e.seq}`, class: `pm-post-card kind-${kind}` },
+          h('div', { class: 'pm-post-head' },
+            h('span', { class: 'pm-post-seq', text: `#${e.seq}` }),
+            h('span', { class: `pm-kind-badge kind-${kind}`, text: kindText }),
+            h('b', { class: 'pm-post-author', text: e.agent || '系统' }),
+            e.channel && e.channel !== 'main' ? h('span', { class: 'pm-post-chan', text: `[${e.channel}]` }) : null,
+            e.done ? h('span', { class: 'pm-done-badge', text: '[done]' }) : null,
+            h('span', { class: 'pm-post-time', text: e.ts ? ago(e.ts) : '' })
+          ),
+          renderPostBody(e.text, jumpToSeq),
+          showAuditWarn ? h('div', { class: 'pm-audit-warn', text: formatAuditMessage(e.audit) }) : null,
+          artifacts.length ? h('div', { class: 'pm-post-artifacts' },
+            h('span', { class: 'pm-art-lbl', text: '产物:' }),
+            ...artifacts.map((a) => h('code', {
+              class: 'pm-art-pill',
+              text: typeof a === 'string' ? a : (a.path || a.name || JSON.stringify(a)),
+            }))
+          ) : null
+        );
+      });
+
+      feedEl.replaceChildren(...cards);
+    }
+
+    function insertMention(alias) {
+      const token = `@${alias} `;
+      const start = draftTa.selectionStart ?? draftTa.value.length;
+      const end = draftTa.selectionEnd ?? draftTa.value.length;
+      const before = draftTa.value.slice(0, start);
+      const after = draftTa.value.slice(end);
+      const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+      draftTa.value = before + sep + token + after;
+      const pos = (before + sep + token).length;
+      draftTa.focus();
+      try { draftTa.setSelectionRange(pos, pos); } catch {}
+      boardDrafts.set(curProj.id, draftTa.value);
+    }
+
+    function renderMentions(p) {
+      const nodes = p.nodes || [];
+      if (!nodes.length) {
+        mentionBarEl.replaceChildren(h('span', { class: 'pm-hint', text: '快速 @ 点名：当前项目暂无节点' }));
+        return;
+      }
+      mentionBarEl.replaceChildren(
+        h('span', { class: 'pm-mention-lbl', text: '点名:' }),
+        ...nodes.map((n) => {
+          const alias = n.alias || n.label || n.id;
+          return h('button', {
+            class: 'btn pm-mention-btn',
+            type: 'button',
+            title: `${n.machine || ''} · ${n.role || 'worker'}`,
+            text: `@${alias}`,
+            onclick: () => insertMention(alias),
+          });
+        })
+      );
+    }
+
+    async function loadBoard() {
+      if (destroyed) return;
+      const token = ++loadToken;
+      const reqChan = activeChannel;
+      loading = true;
+      refreshBtn.disabled = true;
+      if (!entries.length) renderFeed();
+      const r = await mesh.getBoard(curProj.id, { limit: 200, channel: reqChan });
+      if (destroyed || token !== loadToken) return;
+      loading = false;
+      refreshBtn.disabled = false;
+      if (r && r.ok) {
+        entries = Array.isArray(r.entries) ? r.entries : [];
+        loadedSeq = typeof r.latestSeq === 'number' ? r.latestSeq : (curProj.boardSeq || 0);
+      }
+      renderFeed();
+    }
+
+    async function submitPost() {
+      const text = draftTa.value.trim();
+      if (!text) { draftTa.focus(); return; }
+      sendBtn.disabled = true;
+      say('正在发送消息到共享黑板…');
+      const r = await mesh.postBoard({ projectId: curProj.id, channel: activeChannel, agent: '管理员', text });
+      sendBtn.disabled = false;
+      if (!r || !r.ok) {
+        say((r && r.msg) || '发送到黑板失败');
+        return;
+      }
+      draftTa.value = '';
+      boardDrafts.delete(curProj.id);
+      say('已发送到共享黑板');
+      await loadBoard();
+    }
+
+    kindSel.addEventListener('change', () => { filterKind = kindSel.value; renderFeed(); });
+    searchIn.addEventListener('input', () => { filterQuery = searchIn.value; renderFeed(); });
+    refreshBtn.addEventListener('click', loadBoard);
+    draftTa.addEventListener('input', () => { boardDrafts.set(curProj.id, draftTa.value); });
+    draftTa.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitPost();
+      }
+    });
+    sendBtn.addEventListener('click', submitPost);
+
+    renderTasks(curProj);
+    renderChannels(curProj);
+    renderMentions(curProj);
+    loadBoard();
+
+    return {
+      projectId: proj.id,
+      root: rootEl,
+      update(nextProj) {
+        curProj = nextProj;
+        renderTasks(nextProj);
+        renderChannels(nextProj);
+        renderMentions(nextProj);
+        const nextSeq = typeof nextProj.boardSeq === 'number' ? nextProj.boardSeq : 0;
+        if (loadedSeq !== -1 && nextSeq !== loadedSeq) loadBoard();
+      },
+      destroy() { destroyed = true; },
+    };
+  }
+
+  // ---- Tab 1: Topology Graph (Dynamic SVG @mention Replay + Static Tiers) & Contracts ----
+  function matchNodeByToken(nodes, tok) {
+    const t = String(tok || '').trim().toLowerCase();
+    if (!t) return null;
+    return nodes.find((n) => {
+      const a = String(n.alias || '').trim().toLowerCase();
+      const l = String(n.label || '').trim().toLowerCase();
+      const id = String(n.id || '').trim().toLowerCase();
+      return (a && a === t) || (l && l === t) || (id && id === t);
+    }) || null;
+  }
+
+  function extractMentionTokens(entry) {
+    if (Array.isArray(entry.mentions) && entry.mentions.length) {
+      return { tokens: entry.mentions, mentionAll: !!entry.mentionAll };
+    }
+    const src = String(entry.text || '');
+    const re = /@([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
+    const tokens = [];
+    let mentionAll = !!entry.mentionAll;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const tok = m[1];
+      if (!tok) continue;
+      if (tok.toLowerCase() === 'all') mentionAll = true;
+      else tokens.push(tok);
+    }
+    return { tokens, mentionAll };
+  }
+
+  function clipRayToBox(cx, cy, tx, ty, hw, hh) {
+    const dx = tx - cx;
+    const dy = ty - cy;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const rx = Math.abs(ux) > 1e-4 ? hw / Math.abs(ux) : 1e9;
+    const ry = Math.abs(uy) > 1e-4 ? hh / Math.abs(uy) : 1e9;
+    const t = Math.min(rx, ry, dist * 0.45);
+    return [cx + ux * t, cy + uy * t];
+  }
+
+  function nodeStatusInfo(n) {
+    if (n.watchdogAlert || n.reviewStatus === 'blocked' || n.liveState === 'error') {
+      return { color: '#c9184a', label: '告警/受阻' };
+    }
+    if (n.asking || n.reviewStatus === 'waiting_review' || n.liveState === 'waiting') {
+      return { color: '#d97706', label: '等待确认/检视' };
+    }
+    if (['working', 'thinking', 'reading', 'message'].includes(n.liveState)) {
+      return { color: '#16a34a', label: '执行中' };
+    }
+    if (n.reviewStatus === 'done' || n.reviewStatus === 'approved' || n.liveState === 'done') {
+      return { color: '#0284c7', label: '已完成' };
+    }
+    return { color: '#808080', label: '空闲/离线' };
+  }
+
+  function createTopologyView(proj) {
+    let curProj = proj;
+    let entries = [];
+    let maxSeq = 0;
+    let replaySeq = 0;
+    let pinnedToLatest = true;
+    let loadedBoardSeq = -1;
+    let loading = false;
+    let destroyed = false;
+
+    const actBar = h('div', { class: 'pm-act-bar' });
+    const svgHead = h('div', { class: 'pm-svg-topo-head' },
+      h('b', { class: 'pm-sec-title', text: '动态 @mention 交互拓扑图（按楼层时间轴回放）' }),
+      h('div', { class: 'pm-svg-legend' },
+        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot ok' }), '执行中'),
+        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot warn' }), '待确认/检视'),
+        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot cool' }), '已完成'),
+        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot' }), '空闲/离线')
+      )
+    );
+    const svgCanvasWrap = h('div');
+    const seqBadgeEl = h('span', { class: 'pm-timeline-seq', text: '#0 / #0' });
+    const rangeInput = h('input', {
+      class: 'pm-timeline-range',
+      type: 'range',
+      min: '0',
+      max: '0',
+      value: '0',
+      oninput: (e) => {
+        replaySeq = Number(e.target.value) || 0;
+        pinnedToLatest = replaySeq >= maxSeq;
+        renderSvgTopo();
+      },
+    });
+    const stepTo = (next) => {
+      replaySeq = Math.max(0, Math.min(maxSeq, next));
+      pinnedToLatest = replaySeq >= maxSeq;
+      renderSvgTopo();
+    };
+    const btnStart = h('button', { class: 'btn', type: 'button', title: '起点 #0', text: '|<', onclick: () => stepTo(0) });
+    const btnPrev = h('button', { class: 'btn', type: 'button', title: '上一楼', text: '<', onclick: () => stepTo(replaySeq - 1) });
+    const btnNext = h('button', { class: 'btn', type: 'button', title: '下一楼', text: '>', onclick: () => stepTo(replaySeq + 1) });
+    const btnEnd = h('button', { class: 'btn', type: 'button', title: '跳到最新', text: '最新', onclick: () => stepTo(maxSeq) });
+    const btnRefresh = h('button', { class: 'btn', type: 'button', text: '刷新', onclick: () => loadBoardHistory() });
+    const summaryEl = h('div', { class: 'pm-timeline-summary' });
+    const timelineBar = h('div', { class: 'pm-timeline-bar' },
+      seqBadgeEl,
+      rangeInput,
+      h('div', { class: 'pm-timeline-btns' }, btnStart, btnPrev, btnNext, btnEnd, btnRefresh),
+      summaryEl
+    );
+    const svgBox = h('div', { class: 'pm-svg-topo-box' }, svgHead, svgCanvasWrap, timelineBar);
+    const staticBox = h('div', { class: 'pm-graph-box' });
+    const rootEl = h('div', { class: 'pm-graph-box' }, actBar, svgBox, staticBox);
+
+    function renderActBar() {
+      const nodes = curProj.nodes || [];
+      actBar.replaceChildren(
+        h('button', { class: 'btn go', type: 'button', onclick: () => openSpawnDialog(curProj) },
+          h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在指定电脑派生新节点 (Spawn)'),
+        h('button', { class: 'btn', type: 'button', text: '＋ 挂载已有会话到拓扑…', onclick: () => openBindSessionDialog(curProj) }),
+        nodes.length >= 2 ? h('button', { class: 'btn', type: 'button', text: '⇄ 建立节点连线 (Master/Cowork)…', onclick: () => openLinkDialog(curProj) }) : null
+      );
+    }
+
+    function renderSvgTopo() {
+      const nodes = curProj.nodes || [];
+      const staticEdges = curProj.edges || [];
+
+      if (!nodes.length) {
+        svgCanvasWrap.replaceChildren(h('div', { class: 'pm-empty', text: '暂无拓扑节点，请先派生或挂载会话节点。' }));
+        timelineBar.hidden = true;
+        return;
+      }
+      timelineBar.hidden = false;
+
+      // Compute node layout in 760 x 220 SVG viewBox
+      const masters = nodes.filter((n) => n.role === 'master');
+      const mids = nodes.filter((n) => n.role === 'peer' || n.role === 'verifier');
+      const workers = nodes.filter((n) => n.role !== 'master' && n.role !== 'peer' && n.role !== 'verifier');
+      const tiers = [masters, mids, workers].filter((arr) => arr.length > 0);
+      const yRows = tiers.length === 1 ? [110] : tiers.length === 2 ? [46, 174] : [34, 110, 186];
+
+      const pos = new Map();
+      tiers.forEach((tierNodes, tIdx) => {
+        const y = yRows[tIdx];
+        const count = tierNodes.length;
+        const slotW = 720 / count;
+        const boxW = Math.min(136, Math.max(84, Math.floor(slotW - 14)));
+        const boxH = 38;
+        tierNodes.forEach((n, idx) => {
+          const x = 20 + slotW * (idx + 0.5);
+          pos.set(n.id, { x, y, w: boxW, h: boxH, node: n });
+        });
+      });
+
+      // Aggregate directed @mention edges for seq <= replaySeq
+      const edgeMap = new Map();
+      const activeNodes = new Set();
+      const activeEdges = new Set();
+      let currentEntry = null;
+
+      for (const e of entries) {
+        const seq = Number(e.seq) || 0;
+        if (seq > replaySeq) continue;
+        currentEntry = e;
+        const fromNode = (e.nodeId && nodes.find((n) => n.id === e.nodeId)) || matchNodeByToken(nodes, e.agent);
+        if (!fromNode) continue;
+        const { tokens, mentionAll } = extractMentionTokens(e);
+        const targets = new Set();
+        if (mentionAll) {
+          for (const n of nodes) if (n.id !== fromNode.id) targets.add(n.id);
+        }
+        for (const tok of tokens) {
+          const toNode = matchNodeByToken(nodes, tok);
+          if (toNode && toNode.id !== fromNode.id) targets.add(toNode.id);
+        }
+        if (seq === replaySeq) activeNodes.add(fromNode.id);
+        for (const toId of targets) {
+          const key = `${fromNode.id}->${toId}`;
+          const prev = edgeMap.get(key) || { from: fromNode.id, to: toId, count: 0, lastSeq: 0 };
+          prev.count += 1;
+          prev.lastSeq = seq;
+          edgeMap.set(key, prev);
+          if (seq === replaySeq) {
+            activeEdges.add(key);
+            activeNodes.add(toId);
+          }
+        }
+      }
+
+      const svg = svgEl('svg', {
+        class: 'pm-svg-topo',
+        viewBox: '0 0 760 220',
+        role: 'img',
+        'aria-label': '协同节点动态交互拓扑图',
+      });
+
+      const defs = svgEl('defs', {},
+        svgEl('marker', { id: 'pm-arrow-base', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#999999' })
+        ),
+        svgEl('marker', { id: 'pm-arrow-dyn', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#000080' })
+        ),
+        svgEl('marker', { id: 'pm-arrow-hot', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#b04a10' })
+        )
+      );
+      svg.append(defs);
+
+      // Faint baseline static edges
+      const baseLayer = svgEl('g', { opacity: '0.3' });
+      for (const se of staticEdges) {
+        const p1 = pos.get(se.from);
+        const p2 = pos.get(se.to);
+        if (!p1 || !p2) continue;
+        const [sx, sy] = clipRayToBox(p1.x, p1.y, p2.x, p2.y, p1.w / 2 + 2, p1.h / 2 + 2);
+        const [ex, ey] = clipRayToBox(p2.x, p2.y, p1.x, p1.y, p2.w / 2 + 5, p2.h / 2 + 5);
+        baseLayer.append(svgEl('line', {
+          x1: sx.toFixed(1), y1: sy.toFixed(1), x2: ex.toFixed(1), y2: ey.toFixed(1),
+          stroke: '#808080',
+          'stroke-width': '1',
+          'stroke-dasharray': se.type === 'cowork' ? '4,3' : '2,3',
+          'marker-end': 'url(#pm-arrow-base)',
+        }));
+      }
+      svg.append(baseLayer);
+
+      // Dynamic directed @mention curved edges
+      const edgeLayer = svgEl('g');
+      for (const [edgeKey, ed] of edgeMap.entries()) {
+        const p1 = pos.get(ed.from);
+        const p2 = pos.get(ed.to);
+        if (!p1 || !p2) continue;
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const nx = -dy / dist;
+        const ny = dx / dist;
+        const hasRev = edgeMap.has(`${ed.to}->${ed.from}`);
+        const curveOffset = hasRev
+          ? Math.min(38, Math.max(24, dist * 0.17))
+          : Math.min(24, Math.max(14, dist * 0.1));
+        const cx = (p1.x + p2.x) / 2 + nx * curveOffset;
+        const cy = (p1.y + p2.y) / 2 + ny * curveOffset;
+
+        const [sx, sy] = clipRayToBox(p1.x, p1.y, cx, cy, p1.w / 2 + 2, p1.h / 2 + 2);
+        const [ex, ey] = clipRayToBox(p2.x, p2.y, cx, cy, p2.w / 2 + 6, p2.h / 2 + 6);
+        const isHot = activeEdges.has(edgeKey);
+        const strokeWidth = Math.min(6, 1.4 + Math.log2(ed.count + 1) * 1.35);
+        const strokeColor = isHot ? '#b04a10' : '#000080';
+
+        const path = svgEl('path', {
+          d: `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`,
+          fill: 'none',
+          stroke: strokeColor,
+          'stroke-width': strokeWidth.toFixed(2),
+          'stroke-opacity': isHot ? '0.95' : '0.72',
+          'marker-end': isHot ? 'url(#pm-arrow-hot)' : 'url(#pm-arrow-dyn)',
+        }, svgEl('title', { text: `${p1.node.alias || ed.from} -> ${p2.node.alias || ed.to} (${ed.count} 次 @)` }));
+
+        const lx = 0.25 * sx + 0.5 * cx + 0.25 * ex;
+        const ly = 0.25 * sy + 0.5 * cy + 0.25 * ey;
+        const lblText = String(ed.count);
+        const pillW = Math.max(16, lblText.length * 7 + 8);
+        const lblBg = svgEl('rect', {
+          x: (lx - pillW / 2).toFixed(1),
+          y: (ly - 8).toFixed(1),
+          width: pillW,
+          height: 15,
+          rx: '2',
+          fill: isHot ? '#fff3cd' : '#ffffff',
+          stroke: strokeColor,
+          'stroke-width': '1',
+        });
+        const lbl = svgEl('text', {
+          x: lx.toFixed(1),
+          y: (ly + 3).toFixed(1),
+          'text-anchor': 'middle',
+          'font-size': '10',
+          'font-family': 'Consolas, monospace',
+          'font-weight': 'bold',
+          fill: strokeColor,
+          text: lblText,
+        });
+        edgeLayer.append(path, lblBg, lbl);
+      }
+      svg.append(edgeLayer);
+
+      // Node boxes
+      const nodeLayer = svgEl('g');
+      for (const [id, box] of pos.entries()) {
+        const n = box.node;
+        const st = nodeStatusInfo(n);
+        const isHot = activeNodes.has(id);
+        const rx = box.x - box.w / 2;
+        const ry = box.y - box.h / 2;
+        const rawName = n.alias || n.label || n.id;
+        const maxChars = Math.max(7, Math.floor((box.w - 22) / 7));
+        const shortName = rawName.length > maxChars ? rawName.slice(0, maxChars - 1) + '…' : rawName;
+        const roleShort = (n.role || 'worker').toUpperCase();
+        const subText = `${roleShort} · ${n.machine || ''}`;
+        const shortSub = subText.length > maxChars + 2 ? subText.slice(0, maxChars + 1) + '…' : subText;
+
+        const g = svgEl('g', {},
+          svgEl('title', { text: `${rawName} [${ROLE_NAMES[n.role] || n.role}] | ${n.machine} · ${n.tool || 'claude'} | ${st.label}` }),
+          svgEl('rect', {
+            x: rx.toFixed(1),
+            y: ry.toFixed(1),
+            width: box.w,
+            height: box.h,
+            fill: isHot ? '#ffffe1' : '#f4f4f4',
+            stroke: isHot ? '#b04a10' : '#000080',
+            'stroke-width': isHot ? '2' : '1.2',
+          }),
+          svgEl('circle', {
+            cx: (rx + 10).toFixed(1),
+            cy: (ry + 12).toFixed(1),
+            r: '4',
+            fill: st.color,
+            stroke: '#222222',
+            'stroke-width': '0.8',
+          }),
+          svgEl('text', {
+            x: (rx + 18).toFixed(1),
+            y: (ry + 15).toFixed(1),
+            'font-size': '11',
+            'font-weight': 'bold',
+            'font-family': 'Tahoma, "Microsoft YaHei UI", sans-serif',
+            fill: '#000000',
+            text: shortName,
+          }),
+          svgEl('text', {
+            x: (rx + 8).toFixed(1),
+            y: (ry + 30).toFixed(1),
+            'font-size': '9.5',
+            'font-family': 'Consolas, monospace',
+            fill: '#404040',
+            text: shortSub,
+          })
+        );
+        nodeLayer.append(g);
+      }
+      svg.append(nodeLayer);
+
+      // Update timeline bar controls in place (keeps slider drag active)
+      seqBadgeEl.textContent = `#${replaySeq} / #${maxSeq}`;
+      rangeInput.max = String(maxSeq);
+      rangeInput.value = String(replaySeq);
+      rangeInput.disabled = maxSeq === 0;
+      btnStart.disabled = replaySeq <= 0;
+      btnPrev.disabled = replaySeq <= 0;
+      btnNext.disabled = replaySeq >= maxSeq;
+      btnEnd.disabled = replaySeq >= maxSeq;
+
+      const entryAtK = entries.find((e) => Number(e.seq) === replaySeq) || currentEntry;
+      let summaryText = '';
+      if (loading && !entries.length) {
+        summaryText = '正在加载黑板交互历史…';
+      } else if (maxSeq === 0) {
+        summaryText = '黑板尚无消息，拖动时间轴可按楼层 #1..#N 回放 @mention 交互与返工路径。';
+      } else if (replaySeq === 0) {
+        summaryText = '#0 初始状态：尚未发生黑板 @mention 交互。';
+      } else if (entryAtK) {
+        const kLabel = BOARD_KIND_LABELS[entryAtK.kind] || entryAtK.kind || '帖子';
+        const bodyOneLine = String(entryAtK.text || '').replace(/\s+/g, ' ').trim();
+        summaryText = `#${entryAtK.seq} [${kLabel}] ${entryAtK.agent || '系统'}: ${bodyOneLine.slice(0, 120)}${bodyOneLine.length > 120 ? '…' : ''}`;
+      } else {
+        summaryText = `已重放至楼层 #${replaySeq}`;
+      }
+      summaryEl.textContent = summaryText;
+      svgCanvasWrap.replaceChildren(svg);
+    }
+
+    function renderStatic() {
+      const nodes = curProj.nodes || [];
+      const edges = curProj.edges || [];
+      if (!nodes.length) {
+        staticBox.replaceChildren(h('div', { class: 'pm-empty', text: '该项目还没有会话节点。你可以从上方「挂载已有会话到拓扑」或「在远程电脑派生新节点」。' }));
+        return;
+      }
       const masters = nodes.filter((n) => n.role === 'master');
       const peers = nodes.filter((n) => n.role === 'peer');
-      const workers = nodes.filter((n) => n.role !== 'master' && n.role !== 'peer');
+      const verifiers = nodes.filter((n) => n.role === 'verifier');
+      const workers = nodes.filter((n) => n.role !== 'master' && n.role !== 'peer' && n.role !== 'verifier');
 
       const edgeList = edges.map((e) => {
         const fn = nodes.find((n) => n.id === e.from);
@@ -153,45 +1020,643 @@ function mount(initialProjectId) {
         if (!fn || !tn) return null;
         return h('div', { class: 'pm-edge-pill' },
           h('span', { class: 'pm-edge-from', text: `${fn.alias || fn.id} (${fn.machine})` }),
-          h('span', { class: 'pm-edge-arrow', text: e.type === 'cowork' ? ' ⟷ 平级协同 (Cowork) ⟷ ' : ' ──(主从委派 Master→Worker)──► ' }),
+          h('span', { class: 'pm-edge-arrow', text: e.type === 'cowork' ? ' <-> 平级协同 (Cowork) <-> ' : ' --(主从委派 Master->Worker)--> ' }),
           h('span', { class: 'pm-edge-to', text: `${tn.alias || tn.id} (${tn.machine})` }),
           h('button', { class: 'pm-edge-del', type: 'button', title: '断开连线', text: '×', onclick: async () => {
-            await mesh.removeEdge(proj.id, e.from, e.to);
+            await mesh.removeEdge(curProj.id, e.from, e.to);
           } })
         );
       }).filter(Boolean);
 
       const lanes = h('div', { class: 'pm-lanes' },
-        masters.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '主控层 (Master)' }), ...masters.map((n) => nodeCard(proj, n))) : null,
-        peers.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '平级协作层 (Cowork Peers)' }), ...peers.map((n) => nodeCard(proj, n))) : null,
-        workers.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '执行层 (Workers)' }), ...workers.map((n) => nodeCard(proj, n))) : null
+        masters.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '主控层 (Master)' }), ...masters.map((n) => nodeCard(curProj, n))) : null,
+        peers.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '平级协作层 (Cowork Peers)' }), ...peers.map((n) => nodeCard(curProj, n))) : null,
+        verifiers.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '验收层 (Verifier)' }), ...verifiers.map((n) => nodeCard(curProj, n))) : null,
+        workers.length ? h('div', { class: 'pm-lane' }, h('div', { class: 'pm-lane-hd', text: '执行层 (Workers)' }), ...workers.map((n) => nodeCard(curProj, n))) : null
       );
 
-      graphBox.append(
-        edgeList.length ? h('div', { class: 'pm-edges-bar' }, h('b', { text: '拓扑关系边：' }), ...edgeList) : null,
+      staticBox.replaceChildren(
+        edgeList.length ? h('div', { class: 'pm-edges-bar' }, h('b', { text: '静态拓扑关系边：' }), ...edgeList) : null,
         lanes
       );
     }
 
-    // Action toolbar: Spawn Worker / Bind Existing Session / Add Edge
-    const actBar = h('div', { class: 'pm-act-bar' },
-      h('button', { class: 'btn go', type: 'button', onclick: () => openSpawnDialog(proj) },
-        h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在指定电脑派生新节点 (Spawn)'),
-      h('button', { class: 'btn', type: 'button', text: '＋ 挂载已有会话到拓扑…', onclick: () => openBindSessionDialog(proj) }),
-      nodes.length >= 2 ? h('button', { class: 'btn', type: 'button', text: '⇄ 建立节点连线 (Master/Cowork)…', onclick: () => openLinkDialog(proj) }) : null
-    );
+    async function loadBoardHistory() {
+      if (destroyed) return;
+      loading = true;
+      renderSvgTopo();
+      const r = await mesh.getBoard(curProj.id, { limit: 200 });
+      if (destroyed) return;
+      loading = false;
+      if (r && r.ok) {
+        entries = (Array.isArray(r.entries) ? r.entries : []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        const nextMax = entries.length ? Math.max(...entries.map((e) => Number(e.seq) || 0)) : 0;
+        loadedBoardSeq = typeof r.latestSeq === 'number' ? r.latestSeq : (curProj.boardSeq || nextMax);
+        maxSeq = Math.max(nextMax, Number(curProj.boardSeq) || 0);
+        if (pinnedToLatest) replaySeq = maxSeq;
+        else replaySeq = Math.min(replaySeq, maxSeq);
+      }
+      renderSvgTopo();
+    }
 
-    mainBody.replaceChildren(actBar, graphBox);
+    renderActBar();
+    renderSvgTopo();
+    renderStatic();
+    loadBoardHistory();
+
+    return {
+      projectId: proj.id,
+      root: rootEl,
+      update(nextProj) {
+        curProj = nextProj;
+        renderActBar();
+        renderStatic();
+        const nextSeq = typeof nextProj.boardSeq === 'number' ? nextProj.boardSeq : 0;
+        if (loadedBoardSeq !== -1 && nextSeq !== loadedBoardSeq) {
+          loadBoardHistory();
+        } else {
+          renderSvgTopo();
+        }
+      },
+      destroy() { destroyed = true; },
+    };
+  }
+
+  // ---- Tab 2: Roles & Model Pools (Phase 2) ----
+  function roleOriginOf(r) {
+    const src = String((r && (r.source || r.origin || r.status)) || '').toLowerCase();
+    if ((r && (r.overridden || r.isOverridden)) || src === 'overridden') return 'overridden';
+    if ((r && (r.builtin || r.isBuiltin)) || src === 'builtin') return 'builtin';
+    return 'custom';
+  }
+
+  function formatResetAt(resetAt) {
+    if (!resetAt) return '';
+    if (typeof resetAt === 'number') {
+      const diffMin = Math.ceil((resetAt - Date.now()) / 60000);
+      if (diffMin > 0 && diffMin < 24 * 60) return `约 ${diffMin} 分后恢复`;
+      const d = new Date(resetAt);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 恢复`;
+    }
+    return String(resetAt);
+  }
+
+  function createRolesTab() {
+    let roles = [];
+    let selectedRole = null;
+    let roleDraft = '';
+    let roleDirty = false;
+    let rolesLoading = false;
+    let rolesErr = '';
+
+    let poolsMap = {};       // poolName -> [{ harness, model, magpieProvider, quirks, ... }]
+    let poolShapes = {};     // poolName -> 'array' | { objMeta }
+    let healthMap = {};      // optional top-level health map
+    let poolsDirty = false;
+    let poolsLoading = false;
+    let poolsErr = '';
+    let probeHarness = 'agy';
+    let destroyed = false;
+
+    const rolesSec = h('section', { class: 'pm-roles-sec' });
+    const poolsSec = h('section', { class: 'pm-roles-sec' });
+    const harnessList = h('datalist', { id: 'pm-harness-list' },
+      ...['claude', 'agy', 'codex', 'opencode', 'kiro', 'devin'].map((x) => h('option', { value: x }))
+    );
+    const rootEl = h('div', { class: 'pm-roles-wrap' }, harnessList, rolesSec, poolsSec);
+
+    function openNewRoleDialog() {
+      const nameIn = h('input', { class: 'field', type: 'text', placeholder: '例如：solver-runner（仅限字母数字与 -/_）' });
+      const sumIn = h('input', { class: 'field', type: 'text', placeholder: '一句话适用场景，如：运行数值求解器并整理 RCS 误差' });
+      const poolNames = Object.keys(poolsMap);
+      const poolChoices = poolNames.length ? poolNames : ['fast-coder', 'flagship', 'heavy-reasoner', 'image-gen'];
+      const poolSel = h('select', { class: 'field' },
+        ...poolChoices.map((p) => h('option', { value: p, text: p }))
+      );
+      const wsSel = h('select', { class: 'field' },
+        h('option', { value: 'inherit', text: 'inherit（继承项目工作区）' }),
+        h('option', { value: 'worktree', text: 'worktree（独立 Git 分支工作树）' })
+      );
+      const roChk = h('input', { type: 'checkbox' });
+
+      const done = () => wrap.remove();
+      const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+        h('div', { class: 'dlgt' }, h('span', { text: '新建自定义角色模板' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+        h('div', { class: 'dlgb' },
+          h('label', { class: 'xnote-lbl', text: '角色标识 (filename.md)：' }),
+          nameIn,
+          h('label', { class: 'xnote-lbl', text: '适用场景一句话说明：' }),
+          sumIn,
+          h('label', { class: 'xnote-lbl', text: '默认绑定模型组 (defaultPool) 与工作区模式：' }),
+          h('div', { style: 'display:flex;gap:6px' }, poolSel, wsSel),
+          h('label', { class: 'pm-chk', style: 'margin-top:6px' }, roChk, '只读角色（禁止修改业务代码，仅核查与评审）'),
+          h('div', { class: 'dlga' },
+            h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+            h('button', { class: 'btn go', type: 'submit', text: '创建角色' })
+          )
+        )
+      );
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = nameIn.value.trim().replace(/\.md$/i, '');
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$/.test(name)) {
+          nameIn.focus();
+          say('角色标识仅允许字母、数字、连字符和下划线');
+          return;
+        }
+        const summary = sumIn.value.trim() || '自定义协同角色';
+        const raw = [
+          '---',
+          `name: ${name}`,
+          `summary: ${summary}`,
+          `defaultPool: ${poolSel.value}`,
+          `workspaceMode: ${wsSel.value}`,
+          `readOnly: ${roChk.checked ? 'true' : 'false'}`,
+          '---',
+          '',
+          `# ${name} 行为规范`,
+          '',
+          '- 严格遵守授权目录与 Stop Gate 边界。',
+          '- 通过 mesh_board_post 发布进展并用 #seq 引用证据。',
+          roChk.checked ? '- 仅核查与复现，不直接修改业务代码。' : '- 完成后附带 [done] 并 @master 或 @verifier。',
+          '',
+        ].join('\n');
+        done();
+        say(`正在创建角色「${name}」…`);
+        const r = await mesh.saveRole(name, raw);
+        if (!r || !r.ok) {
+          say((r && r.msg) || '创建角色失败');
+          return;
+        }
+        selectedRole = name;
+        roleDirty = false;
+        say(`已创建角色「${name}」`);
+        await loadRoles();
+      });
+      form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(); } });
+      const wrap = h('div', { class: 'dlg' }, form);
+      wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done(); });
+      document.body.append(wrap);
+      nameIn.focus();
+    }
+
+    function renderRolesSection() {
+      const originLabel = { builtin: '内置', overridden: '已覆盖默认', custom: '自定义' };
+      const head = h('div', { class: 'pm-act-bar' },
+        h('b', { class: 'pm-sec-title', text: 'Section A · 角色模板库 (mesh-roles/*.md)' }),
+        h('button', { class: 'btn go', type: 'button', text: '＋ 新建自定义角色…', onclick: openNewRoleDialog }),
+        h('button', { class: 'btn', type: 'button', text: '刷新', disabled: rolesLoading, onclick: loadRoles }),
+        h('span', { class: 'pm-hint', text: rolesErr || '点击左侧角色模板可编辑 .md 规范；覆盖内置模板后可随时恢复默认。' })
+      );
+
+      if (rolesLoading && !roles.length) {
+        rolesSec.replaceChildren(head, h('div', { class: 'pm-empty', text: '正在加载角色模板库…' }));
+        return;
+      }
+
+      if (!roles.length) {
+        rolesSec.replaceChildren(head, h('div', { class: 'pm-empty', text: rolesErr || '暂未发现角色模板，请检查后端 /api/mesh/roles 接口或点击「＋ 新建自定义角色…」。' }));
+        return;
+      }
+
+      const cur = roles.find((r) => r.name === selectedRole) || roles[0];
+      if (cur && cur.name !== selectedRole) {
+        selectedRole = cur.name;
+        roleDraft = cur.raw || '';
+        roleDirty = false;
+      }
+
+      const listEl = h('div', { class: 'pm-role-list' },
+        ...roles.map((r) => {
+          const orig = roleOriginOf(r);
+          const isSel = cur && r.name === cur.name;
+          return h('button', {
+            class: 'pm-role-item' + (isSel ? ' sel' : ''),
+            type: 'button',
+            onclick: async () => {
+              if (cur && r.name === cur.name) return;
+              if (roleDirty) {
+                const ok = await confirmBox(`角色「${cur.name}」有未保存修改，确定切换并放弃当前修改吗？`);
+                if (!ok) return;
+              }
+              selectedRole = r.name;
+              roleDraft = r.raw || '';
+              roleDirty = false;
+              renderRolesSection();
+            },
+          },
+            h('div', { class: 'pm-role-item-top' },
+              h('b', { text: r.name }),
+              h('span', { class: `pm-role-badge ${orig}`, text: originLabel[orig] }),
+              r.readOnly ? h('span', { class: 'pm-role-badge ro', text: '只读' }) : null,
+              r.defaultPool ? h('span', { class: 'pm-role-badge pool', text: r.defaultPool }) : null
+            ),
+            h('div', { class: 'pm-role-item-sum', text: r.summary || r.description || '（无描述）' })
+          );
+        })
+      );
+
+      const curOrigin = cur ? roleOriginOf(cur) : 'custom';
+      const dirtyTag = h('span', { class: 'pm-badge warn', text: '未保存', hidden: !roleDirty });
+      const ta = h('textarea', {
+        class: 'field pm-role-ta',
+        spellcheck: 'false',
+        oninput: (e) => {
+          roleDraft = e.target.value;
+          if (!roleDirty) {
+            roleDirty = true;
+            dirtyTag.hidden = false;
+          }
+        },
+      });
+      ta.value = roleDraft;
+
+      const saveBtn = h('button', {
+        class: 'btn go',
+        type: 'button',
+        text: '保存角色',
+        disabled: !cur,
+        onclick: async () => {
+          if (!cur) return;
+          say(`正在保存角色「${cur.name}」…`);
+          const r = await mesh.saveRole(cur.name, ta.value);
+          if (!r || !r.ok) {
+            say((r && r.msg) || '保存角色失败');
+            return;
+          }
+          roleDirty = false;
+          say(`已保存角色「${cur.name}」`);
+          await loadRoles();
+        },
+      });
+
+      const resetBtn = h('button', {
+        class: 'btn',
+        type: 'button',
+        text: '恢复默认',
+        disabled: !cur || curOrigin !== 'overridden',
+        title: curOrigin === 'overridden' ? '删除用户覆盖层，恢复仓库内置默认模板' : '仅已覆盖的内置角色可恢复默认',
+        onclick: async () => {
+          if (!cur || curOrigin !== 'overridden') return;
+          if (!(await confirmBox(`确定将「${cur.name}」恢复为内置默认模板吗？当前自定义修改将被移除。`, { danger: true }))) return;
+          say(`正在恢复默认角色「${cur.name}」…`);
+          const r = await mesh.resetRole(cur.name);
+          if (!r || !r.ok) {
+            say((r && r.msg) || '恢复默认失败');
+            return;
+          }
+          roleDirty = false;
+          say(`已恢复默认角色「${cur.name}」`);
+          await loadRoles();
+        },
+      });
+
+      const editorEl = h('div', { class: 'pm-role-editor' },
+        h('div', { class: 'pm-role-ed-head' },
+          h('b', { text: cur ? `正在编辑：${cur.name}.md` : '未选择角色' }),
+          cur ? h('span', { class: `pm-role-badge ${curOrigin}`, text: originLabel[curOrigin] }) : null,
+          cur && cur.readOnly ? h('span', { class: 'pm-role-badge ro', text: '只读约束' }) : null,
+          cur && cur.defaultPool ? h('span', { class: 'pm-role-badge pool', text: `默认模型池: ${cur.defaultPool}` }) : null,
+          dirtyTag
+        ),
+        ta,
+        h('div', { class: 'pm-role-ed-actions' }, saveBtn, resetBtn)
+      );
+
+      rolesSec.replaceChildren(head, h('div', { class: 'pm-roles-grid' }, listEl, editorEl));
+    }
+
+    function candidateHealth(c) {
+      const hObj = (c && typeof c.health === 'object' && c.health)
+        || healthMap[`${c.harness}:${c.model}`]
+        || healthMap[`${c.harness}/${c.model}`]
+        || null;
+      const rawStatus = String((hObj && (hObj.status || hObj.state)) || (typeof c.health === 'string' ? c.health : '') || c.status || c.state || 'healthy').toLowerCase();
+      const rem = (hObj && (hObj.magpieInfo ?? hObj.remaining ?? hObj.magpieRemaining ?? hObj.quotaRemaining ?? hObj.balance))
+        ?? c.magpieInfo ?? c.remaining ?? c.magpieRemaining ?? c.quotaRemaining;
+      const resetAt = (hObj && (hObj.resetAt ?? hObj.cooldownUntil)) ?? c.resetAt ?? c.cooldownUntil;
+      const reason = (hObj && (hObj.reason || hObj.msg)) || c.reason || '';
+
+      if (rawStatus === 'cooldown' || rawStatus === 'cooling') {
+        const rs = formatResetAt(resetAt);
+        return { cls: 'cool', label: `冷却中${rs ? ' (' + rs + ')' : ''}`, isCooldown: true, title: reason };
+      }
+      if (rawStatus === 'exhausted' || rawStatus === 'depleted') {
+        const remStr = rem != null && rem !== '' ? ` · ${rem}` : '';
+        return { cls: 'warn', label: `耗尽${remStr}`, isCooldown: true, title: reason };
+      }
+      if (rawStatus === 'low_quota' || rawStatus === 'low' || rawStatus === 'warn') {
+        const remStr = rem != null && rem !== '' ? ` (${rem})` : '';
+        return { cls: 'warn', label: `低额度${remStr}`, isCooldown: false, title: reason };
+      }
+      const remStr = rem != null && rem !== '' ? ` (${rem})` : '';
+      return { cls: 'ok', label: `健康${remStr}`, isCooldown: false, title: reason };
+    }
+
+    function serializePools() {
+      const out = {};
+      for (const [poolName, list] of Object.entries(poolsMap)) {
+        const cleanList = list.map((c) => {
+          const item = {
+            harness: String(c.harness || '').trim(),
+            model: String(c.model || '').trim(),
+          };
+          if (String(c.magpieProvider || '').trim()) item.magpieProvider = String(c.magpieProvider).trim();
+          if (String(c.quirks || '').trim()) item.quirks = String(c.quirks).trim();
+          return item;
+        }).filter((c) => c.harness || c.model);
+
+        const shape = poolShapes[poolName];
+        if (shape && typeof shape === 'object' && !Array.isArray(shape)) {
+          out[poolName] = { ...shape, candidates: cleanList };
+        } else {
+          out[poolName] = cleanList;
+        }
+      }
+      return out;
+    }
+
+    function renderPoolsSection() {
+      const poolNames = Object.keys(poolsMap);
+      const harnessesInPools = new Set(['claude', 'agy', 'codex', 'opencode', 'kiro']);
+      for (const list of Object.values(poolsMap)) {
+        for (const c of list) if (c.harness) harnessesInPools.add(c.harness);
+      }
+      const harnessOpts = [...harnessesInPools];
+      if (!harnessOpts.includes(probeHarness)) probeHarness = harnessOpts[0] || 'agy';
+
+      const probeSel = h('select', {
+        class: 'field',
+        onchange: (e) => { probeHarness = e.target.value; },
+      }, ...harnessOpts.map((hn) => h('option', { value: hn, text: hn, selected: hn === probeHarness })));
+
+      const head = h('div', { class: 'pm-act-bar' },
+        h('b', { class: 'pm-sec-title', text: 'Section B · 模型能力池与余额健康 (Model Pools)' }),
+        h('button', {
+          class: 'btn go',
+          type: 'button',
+          text: poolsDirty ? '保存模型池 *' : '保存模型池',
+          onclick: async () => {
+            say('正在保存模型能力池配置…');
+            const r = await mesh.savePools(serializePools());
+            if (!r || !r.ok) {
+              say((r && r.msg) || '保存模型池失败');
+              return;
+            }
+            poolsDirty = false;
+            say('已保存模型能力池配置');
+            await loadPools();
+          },
+        }),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '复位全部熔断',
+          onclick: async () => {
+            say('正在复位全部模型冷却熔断状态…');
+            const r = await mesh.resetPoolCooldown();
+            say(r && r.ok ? '已复位全部熔断状态' : ((r && r.msg) || '复位失败'));
+            await loadPools();
+          },
+        }),
+        probeSel,
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '按需探测余额',
+          onclick: async () => {
+            say(`正在探测 ${probeHarness} 可用性与额度…`);
+            const r = await mesh.probePool(probeHarness);
+            say(r && r.ok ? `已完成 ${probeHarness} 余额探测` : ((r && r.msg) || '探测失败'));
+            await loadPools();
+          },
+        }),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '＋ 新建模型池…',
+          onclick: async () => {
+            const name = await askText({ title: '新建模型能力池', label: '模型池名称（如 fast-coder / flagship / heavy-reasoner）：', max: 40 });
+            if (!name) return;
+            if (poolsMap[name]) return say(`模型池「${name}」已存在`);
+            poolsMap[name] = [{ harness: 'claude', model: '', magpieProvider: '', quirks: '' }];
+            poolShapes[name] = 'array';
+            poolsDirty = true;
+            renderPoolsSection();
+          },
+        }),
+        h('button', { class: 'btn', type: 'button', text: '刷新', disabled: poolsLoading, onclick: loadPools })
+      );
+
+      if (poolsLoading && !poolNames.length) {
+        poolsSec.replaceChildren(head, h('div', { class: 'pm-empty', text: '正在加载模型能力池…' }));
+        return;
+      }
+
+      if (!poolNames.length) {
+        poolsSec.replaceChildren(head, h('div', { class: 'pm-empty', text: poolsErr || '暂无模型能力池配置，可点击「＋ 新建模型池…」添加。' }));
+        return;
+      }
+
+      const cards = poolNames.map((poolName) => {
+        const list = poolsMap[poolName] || [];
+        const rows = list.map((c, idx) => {
+          const hp = candidateHealth(c);
+          const harnessIn = h('input', {
+            class: 'field pm-pool-field pm-pool-harness',
+            type: 'text',
+            list: 'pm-harness-list',
+            value: c.harness || '',
+            placeholder: 'harness',
+            oninput: (e) => { c.harness = e.target.value; poolsDirty = true; },
+          });
+          const modelIn = h('input', {
+            class: 'field pm-pool-field pm-pool-model',
+            type: 'text',
+            value: c.model || '',
+            placeholder: 'model (如 sonnet)',
+            oninput: (e) => { c.model = e.target.value; poolsDirty = true; },
+          });
+          const provIn = h('input', {
+            class: 'field pm-pool-field pm-pool-provider',
+            type: 'text',
+            value: c.magpieProvider || '',
+            placeholder: 'magpieProvider',
+            title: '可选：Magpie 额度渠道标识',
+            oninput: (e) => { c.magpieProvider = e.target.value; poolsDirty = true; },
+          });
+          const quirksIn = h('input', {
+            class: 'field pm-pool-field pm-pool-quirks',
+            type: 'text',
+            value: c.quirks || '',
+            placeholder: 'quirks 微调提示词（可选）',
+            oninput: (e) => { c.quirks = e.target.value; poolsDirty = true; },
+          });
+
+          return h('div', { class: 'pm-pool-row' },
+            h('span', { class: 'pm-pool-idx', text: `#${idx + 1}` }),
+            h('span', { class: 'pm-pool-health', title: hp.title || '' },
+              h('span', { class: `pm-health-dot ${hp.cls}` }),
+              h('span', { text: hp.label })
+            ),
+            harnessIn,
+            modelIn,
+            provIn,
+            quirksIn,
+            h('div', { class: 'pm-pool-row-btns' },
+              hp.isCooldown ? h('button', {
+                class: 'btn',
+                type: 'button',
+                text: '复位',
+                title: '复位该候选模型的熔断冷却状态',
+                onclick: async () => {
+                  const r = await mesh.resetPoolCooldown(c.harness, c.model);
+                  say(r && r.ok ? `已复位 ${c.harness}:${c.model}` : ((r && r.msg) || '复位失败'));
+                  await loadPools();
+                },
+              }) : null,
+              h('button', {
+                class: 'btn',
+                type: 'button',
+                text: '上移',
+                disabled: idx === 0,
+                onclick: () => {
+                  if (idx <= 0) return;
+                  const tmp = list[idx - 1];
+                  list[idx - 1] = list[idx];
+                  list[idx] = tmp;
+                  poolsDirty = true;
+                  renderPoolsSection();
+                },
+              }),
+              h('button', {
+                class: 'btn',
+                type: 'button',
+                text: '下移',
+                disabled: idx >= list.length - 1,
+                onclick: () => {
+                  if (idx >= list.length - 1) return;
+                  const tmp = list[idx + 1];
+                  list[idx + 1] = list[idx];
+                  list[idx] = tmp;
+                  poolsDirty = true;
+                  renderPoolsSection();
+                },
+              }),
+              h('button', {
+                class: 'btn no',
+                type: 'button',
+                text: '删除',
+                onclick: () => {
+                  list.splice(idx, 1);
+                  poolsDirty = true;
+                  renderPoolsSection();
+                },
+              })
+            )
+          );
+        });
+
+        return h('div', { class: 'pm-pool-card' },
+          h('div', { class: 'pm-pool-head' },
+            h('b', { text: poolName }),
+            h('span', { class: 'pm-role-badge pool', text: `${list.length} 个候选` }),
+            h('button', {
+              class: 'btn',
+              type: 'button',
+              style: 'margin-left:auto',
+              text: '＋ 添加候选',
+              onclick: () => {
+                list.push({ harness: 'claude', model: '', magpieProvider: '', quirks: '' });
+                poolsDirty = true;
+                renderPoolsSection();
+              },
+            })
+          ),
+          rows.length ? h('div', { class: 'pm-pool-rows' }, ...rows) : h('div', { class: 'pm-empty', text: '该模型池暂无候选条目，请点击「＋ 添加候选」。' })
+        );
+      });
+
+      poolsSec.replaceChildren(head, h('div', { class: 'pm-pools-list' }, ...cards));
+    }
+
+    async function loadRoles() {
+      if (destroyed) return;
+      rolesLoading = true;
+      rolesErr = '';
+      renderRolesSection();
+      const r = await mesh.getRoles();
+      if (destroyed) return;
+      rolesLoading = false;
+      if (r && r.ok) {
+        const list = Array.isArray(r.roles) ? r.roles : Object.values(r.roles || {});
+        roles = list;
+        const cur = roles.find((x) => x.name === selectedRole) || roles[0];
+        if (cur) {
+          selectedRole = cur.name;
+          if (!roleDirty) roleDraft = cur.raw || '';
+        }
+      } else {
+        rolesErr = (r && r.msg) || '无法加载角色模板（后端 /api/mesh/roles 未就绪或返回失败）';
+      }
+      renderRolesSection();
+    }
+
+    async function loadPools() {
+      if (destroyed) return;
+      poolsLoading = true;
+      poolsErr = '';
+      renderPoolsSection();
+      const r = await mesh.getPools();
+      if (destroyed) return;
+      poolsLoading = false;
+      if (r && r.ok) {
+        const rawPools = (r.pools && typeof r.pools === 'object') ? r.pools : {};
+        healthMap = (r.health && typeof r.health === 'object') ? r.health : {};
+        const nextMap = {};
+        const nextShapes = {};
+        for (const [k, v] of Object.entries(rawPools)) {
+          if (Array.isArray(v)) {
+            nextMap[k] = v.map((c) => ({ ...c }));
+            nextShapes[k] = 'array';
+          } else if (v && typeof v === 'object') {
+            const arr = Array.isArray(v.candidates) ? v.candidates : (Array.isArray(v.items) ? v.items : []);
+            nextMap[k] = arr.map((c) => ({ ...c }));
+            const meta = { ...v };
+            delete meta.candidates;
+            delete meta.items;
+            nextShapes[k] = meta;
+          }
+        }
+        poolsMap = nextMap;
+        poolShapes = nextShapes;
+        poolsDirty = false;
+      } else {
+        poolsErr = (r && r.msg) || '无法加载模型池配置（后端 /api/mesh/pools 未就绪或返回失败）';
+      }
+      renderPoolsSection();
+    }
+
+    loadRoles();
+    loadPools();
+
+    return {
+      root: rootEl,
+      destroy() { destroyed = true; },
+    };
   }
 
   function nodeCard(proj, n) {
     const [rCls, rText] = REVIEW_NAMES[n.reviewStatus] || ['run', n.reviewStatus || '就绪'];
     const inboxCount = Array.isArray(n.inbox) ? n.inbox.length : 0;
+    const hasWorktree = n.workspaceMode === 'worktree' || !!n.worktreeBranch;
+    const wtBranch = n.worktreeBranch || '隔离分支';
     return h('div', { class: `pm-node role-${n.role}` },
       h('div', { class: 'pm-node-top' },
         h('span', { class: `pm-role-tag ${n.role}`, text: ROLE_NAMES[n.role] || n.role }),
         h('b', { class: 'pm-node-name', text: n.alias || n.label || n.id }),
         h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}` }),
+        hasWorktree ? h('span', { class: 'pm-wt-badge', title: n.worktreePath || '', text: `worktree: ${wtBranch}` }) : null,
         h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
         n.asking ? h('span', { class: 'pm-badge err', text: '等你确认权限' }) : null
       ),
@@ -229,6 +1694,49 @@ function mount(initialProjectId) {
           '关闭时自动唤醒'
         ),
         h('button', { class: 'btn no', type: 'button', text: '移除', onclick: async () => {
+          if (n.workspaceMode === 'worktree' && n.worktreePath) {
+            say('正在检查节点工作树分支状态…');
+            const wt = await mesh.checkWorktree(proj.id, n.id);
+            const dirty = !!(wt && wt.dirty);
+            const unmergedCommits = Number(wt && wt.unmergedCommits) || 0;
+            if (wt && wt.ok === false) {
+              const ok = await confirmBox(`无法检查节点「${n.alias || n.id}」工作树状态（${wt.msg || '目标节点可能离线'}）。确定仍要从项目拓扑中移除节点吗？`, { danger: true });
+              if (!ok) return;
+              await mesh.removeNode(proj.id, n.id);
+              return;
+            }
+            if (dirty || unmergedCommits > 0) {
+              const ok = await confirmBox(
+                `该节点工作树分支「${n.worktreeBranch || (wt && wt.branch) || '隔离分支'}」存在未提交改动或 ${unmergedCommits} 个未合并提交。建议先合并分支再删除；确定要移除节点并保留/清理工作树吗？`,
+                { title: '未合并工作树警告', ok: '继续移除', danger: true }
+              );
+              if (!ok) return;
+              const clean = await confirmBox(
+                `是否同时强制清理工作树目录与分支「${n.worktreePath}」？（选「保留工作树」可稍后手动合并）`,
+                { title: '清理工作树', ok: '强制清理', cancel: '保留工作树', danger: true }
+              );
+              if (clean) {
+                const wr = await mesh.removeWorktree(proj.id, n.id, true);
+                if (!wr || !wr.ok) say((wr && wr.msg) || '清理工作树失败，将继续移除拓扑节点');
+              }
+              await mesh.removeNode(proj.id, n.id);
+              say(clean ? '已清理工作树并移除节点' : '已移除节点（工作树目录已保留）');
+              return;
+            }
+            const ok = await confirmBox(`从项目拓扑中移除节点「${n.alias || n.id}」？（不会删除原对话记录）`, { danger: true });
+            if (!ok) return;
+            const clean = await confirmBox(
+              `工作树分支「${n.worktreeBranch || '隔离分支'}」无未提交改动或未合并提交，是否同时清理工作树目录？`,
+              { title: '清理工作树', ok: '清理工作树', cancel: '保留目录' }
+            );
+            if (clean) {
+              const wr = await mesh.removeWorktree(proj.id, n.id, false);
+              if (!wr || !wr.ok) say((wr && wr.msg) || '清理工作树失败，将继续移除拓扑节点');
+            }
+            await mesh.removeNode(proj.id, n.id);
+            say(clean ? '已清理工作树并移除节点' : '已移除节点');
+            return;
+          }
           if (await confirmBox(`从项目拓扑中移除节点「${n.alias || n.id}」？（不会删除原对话记录）`, { danger: true })) {
             await mesh.removeNode(proj.id, n.id);
           }
@@ -393,13 +1901,104 @@ function mount(initialProjectId) {
   }
 
   // ---- Tab 4: External Triggers & Watchdog Event Timeline ----
+  async function openWatchdogConfigDialog() {
+    say('正在读取看门狗配置…');
+    const res = await mesh.getConfig();
+    const cfg = (res && res.ok && res.config) ? res.config : {};
+    const val = (k, def) => (cfg[k] != null ? cfg[k] : def);
+
+    const f = {
+      idleNudgeMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('idleNudgeMin', 3)) }),
+      idleAlertMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('idleAlertMin', 10)) }),
+      askingAlertMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('askingAlertMin', 10)) }),
+      silentAlertMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('silentAlertMin', 60)) }),
+      loopWindowMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('loopWindowMin', 10)) }),
+      loopCount: h('input', { class: 'field', type: 'number', min: '2', step: '1', value: String(val('loopCount', 5)) }),
+      loopNudge: h('input', { type: 'checkbox', checked: val('loopNudge', true) !== false }),
+      autoRestart: h('input', { type: 'checkbox', checked: val('autoRestart', true) !== false }),
+      restartWindowMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('restartWindowMin', 30)) }),
+      offlineAlertMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('offlineAlertMin', 2)) }),
+      mentionTimeoutMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('mentionTimeoutMin', 10)) }),
+      swarmStallMin: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('swarmStallMin', 5)) }),
+      folderPollSec: h('input', { class: 'field', type: 'number', min: '5', step: '5', value: String(val('folderPollSec', 30)) }),
+      triggerMaxPerHour: h('input', { class: 'field', type: 'number', min: '1', step: '1', value: String(val('triggerMaxPerHour', 6)) }),
+    };
+
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg pm-wd-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '看门狗与触发器参数配置 (W1~W8)' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        h('div', { class: 'pm-wd-sec', text: '基础看门狗阈值 (W1~W6)' }),
+        h('div', { class: 'pm-wd-grid' },
+          h('label', { text: 'W1 空闲提醒汇报超时(分钟)：' }), f.idleNudgeMin,
+          h('label', { text: 'W1 空闲升级告警追加(分钟)：' }), f.idleAlertMin,
+          h('label', { text: 'W2 权限确认卡死超时(分钟)：' }), f.askingAlertMin,
+          h('label', { text: 'W3 连续工作无汇报超时(分钟)：' }), f.silentAlertMin,
+          h('label', { text: 'W4 错误循环检测窗口(分钟)：' }), f.loopWindowMin,
+          h('label', { text: 'W4 同错重复触发次数阈值：' }), f.loopCount,
+          h('label', { class: 'pm-wd-chk' }, f.loopNudge, 'W4 检测到错误死循环时自动发消息提醒停止盲试'),
+          h('label', { class: 'pm-wd-chk' }, f.autoRestart, 'W5 会话意外退出时自动唤醒恢复 (窗口期内最多1次)'),
+          h('label', { text: 'W5 重启次数统计窗口(分钟)：' }), f.restartWindowMin,
+          h('label', { text: 'W6 机器掉线告警超时(分钟)：' }), f.offlineAlertMin
+        ),
+        h('div', { class: 'pm-wd-sec', text: 'Swarm 协同看门狗阈值 (W7~W8)' }),
+        h('div', { class: 'pm-wd-grid' },
+          h('label', { text: 'W7 点名未回帖超时(分钟)：' }), f.mentionTimeoutMin,
+          h('label', { text: 'W8 全组停滞超时(分钟)：' }), f.swarmStallMin
+        ),
+        h('div', { class: 'pm-wd-sec', text: '目录文件触发器参数' }),
+        h('div', { class: 'pm-wd-grid' },
+          h('label', { text: '目录轮询周期(秒)：' }), f.folderPollSec,
+          h('label', { text: '每小时最多触发次数：' }), f.triggerMaxPerHour
+        ),
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '保存配置' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const num = (el, d) => {
+        const n = Number(el.value);
+        return Number.isFinite(n) && n > 0 ? n : d;
+      };
+      const patch = {
+        idleNudgeMin: num(f.idleNudgeMin, 3),
+        idleAlertMin: num(f.idleAlertMin, 10),
+        askingAlertMin: num(f.askingAlertMin, 10),
+        silentAlertMin: num(f.silentAlertMin, 60),
+        loopWindowMin: num(f.loopWindowMin, 10),
+        loopCount: num(f.loopCount, 5),
+        loopNudge: f.loopNudge.checked,
+        autoRestart: f.autoRestart.checked,
+        restartWindowMin: num(f.restartWindowMin, 30),
+        offlineAlertMin: num(f.offlineAlertMin, 2),
+        mentionTimeoutMin: num(f.mentionTimeoutMin, 10),
+        swarmStallMin: num(f.swarmStallMin, 5),
+        folderPollSec: num(f.folderPollSec, 30),
+        triggerMaxPerHour: num(f.triggerMaxPerHour, 6),
+      };
+      done();
+      say('正在保存看门狗参数…');
+      const r = await mesh.saveConfig(patch);
+      say(r && r.ok ? '已保存看门狗参数 (W1~W8)' : ((r && r.msg) || '保存配置失败'));
+    });
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(); } });
+    const wrap = h('div', { class: 'dlg' }, form);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done(); });
+    document.body.append(wrap);
+    f.mentionTimeoutMin.focus();
+  }
+
   function renderEventsTab(proj) {
     const trigs = proj.triggers || [];
     const evts = [...(proj.events || [])].reverse().slice(0, 30);
 
     const bar = h('div', { class: 'pm-act-bar' },
       h('button', { class: 'btn go', type: 'button', text: '＋ 添加目录文件触发器…', onclick: () => openAddTriggerDialog(proj) }),
-      h('span', { class: 'pm-hint', text: '说明：看门狗自动巡检各节点状态（未汇报、权限超时、卡死、错误循环、意外退出恢复）；目录触发器与 ame-mesh run 进程结束事件会自动唤醒目标节点。' })
+      h('button', { class: 'btn', type: 'button', text: '看门狗参数配置 (W1~W8)…', onclick: openWatchdogConfigDialog }),
+      h('span', { class: 'pm-hint', text: '说明：看门狗自动巡检各节点状态（W1~W6 基础巡检 + W7 点名未回帖 + W8 全组停滞）；目录触发器与 ame-mesh run 进程结束事件会自动唤醒目标节点。' })
     );
 
     const trigCards = trigs.map((t) => {
@@ -532,6 +2131,20 @@ function mount(initialProjectId) {
       h('option', { value: 'opencode', text: 'OpenCode' }),
       h('option', { value: 'kiro', text: 'Kiro CLI' })
     );
+    const wsModeSel = h('select', { class: 'field' },
+      h('option', { value: 'inherit', text: 'inherit (共用目录)' }),
+      h('option', { value: 'worktree', text: 'worktree (独立 Git Worktree 分支)' })
+    );
+    const branchIn = h('input', {
+      class: 'field',
+      type: 'text',
+      placeholder: '分支名（可选，留空自动生成）',
+      disabled: true,
+    });
+    wsModeSel.addEventListener('change', () => {
+      branchIn.disabled = wsModeSel.value !== 'worktree';
+      if (branchIn.disabled) branchIn.value = '';
+    });
     const aliasIn = h('input', { class: 'field', type: 'text', placeholder: '如：电脑B-FEKO求解Worker' });
     const goalIn = h('input', { class: 'field', type: 'text', placeholder: '如：从 GitHub 拉取最新代码并跑完球体双站 RCS 误差对比' });
     const stopIn = h('input', { class: 'field', type: 'text', value: '产出结果图表与误差数据后立即停下汇报，等待主控会话 Review' });
@@ -545,6 +2158,8 @@ function mount(initialProjectId) {
         wsQuick,
         h('label', { class: 'xnote-lbl', text: '目标电脑与工作目录：' }),
         h('div', { style: 'display:flex;gap:6px' }, machSel, cwdIn),
+        h('label', { class: 'xnote-lbl', text: '工作区模式与分支名：' }),
+        h('div', { style: 'display:flex;gap:6px' }, wsModeSel, branchIn),
         h('label', { class: 'xnote-lbl', text: 'Coding Agent 类型与节点别名：' }),
         h('div', { style: 'display:flex;gap:6px' }, toolSel, aliasIn),
         h('label', { class: 'xnote-lbl', text: '明确目标 (Goal)：' }),
@@ -571,6 +2186,8 @@ function mount(initialProjectId) {
         machine: machSel.value,
         cwd: cwdIn.value.trim(),
         tool: toolSel.value,
+        workspaceMode: wsModeSel.value,
+        branch: wsModeSel.value === 'worktree' ? branchIn.value.trim() : '',
         alias: aliasIn.value.trim(),
         goal: goalIn.value.trim(),
         stopCondition: stopIn.value.trim(),
@@ -595,6 +2212,7 @@ function mount(initialProjectId) {
     const roleSel = h('select', { class: 'field' },
       h('option', { value: 'master', text: 'Master 主控会话（负责统筹与检视）' }),
       h('option', { value: 'worker', text: 'Worker 执行会话（负责子任务计算与汇报）' }),
+      h('option', { value: 'verifier', text: 'Verifier 验收会话（只读核查与打回返工）' }),
       h('option', { value: 'peer', text: 'Cowork 平级会话（对等联调协作）' })
     );
     const aliasIn = h('input', { class: 'field', type: 'text', placeholder: '节点别名（可留空使用原会话标题）' });
@@ -848,12 +2466,25 @@ function mount(initialProjectId) {
   function renderMain() {
     const proj = currentProject();
     if(researchView&&(!proj||activeTab!=='research'||researchView.projectId!==proj.id)){researchView.destroy();researchView=null;}
+    if(boardView&&(!proj||activeTab!=='board'||boardView.projectId!==proj.id)){boardView.destroy();boardView=null;}
+    if(topoView&&(!proj||activeTab!=='topo'||topoView.projectId!==proj.id)){topoView.destroy();topoView=null;}
+    if(rolesView&&(!proj||activeTab!=='roles')){rolesView.destroy();rolesView=null;}
     if (!proj) {
       mainHead.replaceChildren(h('b', { text: '尚未选择项目' }));
       tabBar.replaceChildren();
       mainBody.replaceChildren(h('div', { class: 'pm-empty', text: '请先在左侧点击「＋ 新建项目」，或者在任意会话中使用 ame-mesh 工具自动创建。' }));
       return;
     }
+    const activeXfers = (proj.transfers || []).filter((t) => t.status === 'pending' || t.status === 'transferring').length;
+    const xferBtn = h('button', {
+      class: 'btn pm-xfer-btn' + (activeTab === 'xfer' ? ' active' : ''),
+      type: 'button',
+      title: '查看跨机文件协同与硬盘摆渡任务',
+      onclick: () => { activeTab = 'xfer'; renderMain(); },
+    },
+      '传输/摆渡',
+      activeXfers ? h('span', { class: 'pm-xfer-badge', text: String(activeXfers) }) : null
+    );
     mainHead.replaceChildren(
       h('div', { class: 'pm-title-row' },
         h('img', { src: icon('projects', true), alt: '' }),
@@ -866,6 +2497,7 @@ function mount(initialProjectId) {
           }),
           'Worker 汇报时若主会话已关闭则自动后台唤醒'
         ),
+        xferBtn,
         h('button', { class: 'btn', type: 'button', text: '重命名', onclick: async () => {
           const n = await askText({ title: '重命名项目', value: proj.name, max: 50 });
           if (n && n !== proj.name) await mesh.saveProject({ id: proj.id, name: n });
@@ -881,7 +2513,28 @@ function mount(initialProjectId) {
     );
     renderTabs(proj);
     if (activeTab === 'research') { if(!researchView){researchView=researchTab(proj);mainBody.replaceChildren(researchView.root);} }
-    else if (activeTab === 'topo') renderTopologyTab(proj);
+    else if (activeTab === 'board') {
+      if (!boardView) {
+        boardView = renderBoardTab(proj);
+        mainBody.replaceChildren(boardView.root);
+      } else {
+        boardView.update(proj);
+      }
+    }
+    else if (activeTab === 'topo') {
+      if (!topoView) {
+        topoView = createTopologyView(proj);
+        mainBody.replaceChildren(topoView.root);
+      } else {
+        topoView.update(proj);
+      }
+    }
+    else if (activeTab === 'roles') {
+      if (!rolesView) {
+        rolesView = createRolesTab();
+        mainBody.replaceChildren(rolesView.root);
+      }
+    }
     else if (activeTab === 'vfs') renderVfsTab(proj);
     else if (activeTab === 'events') renderEventsTab(proj);
     else renderTransfersTab(proj);
@@ -899,6 +2552,6 @@ function mount(initialProjectId) {
   return {
     root,
     select(id) { selId = id; render(); },
-    destroy() { if(researchView)researchView.destroy();offMesh(); offCat(); offSess(); },
+    destroy() { if(researchView)researchView.destroy();if(boardView)boardView.destroy();if(topoView)topoView.destroy();if(rolesView)rolesView.destroy();offMesh(); offCat(); offSess(); },
   };
 }

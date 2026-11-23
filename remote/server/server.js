@@ -257,11 +257,11 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 // 糖糖看板's hidden / pinned / starred sessions and groups (every open page reloads them on a change)
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
-const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
+let magpie;
+const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, getMagpie: () => magpie, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const researchEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
-let magpie;
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
   listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),getMagpie:()=>magpie,egress:researchEgress,
   onMemoryChange:()=>broadcast({t:'knowledge'}),

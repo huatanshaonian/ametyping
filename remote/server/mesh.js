@@ -7,6 +7,9 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { createWatchdog, loadMeshConfig } = require('./mesh-watchdog');
+const { createBoard, formatWakePrompt, checkBoundaries } = require('./mesh-board');
+const { createRoleStore } = require('./mesh-roles');
+const { createModelRouter } = require('./mesh-model-router');
 
 const MAX_PROJECTS = 50;
 const MAX_NODES = 60;
@@ -17,6 +20,8 @@ const AUTO_FILE_LIMIT = 50 * 1024 * 1024; // 50 MB threshold before suggesting m
 const TOOLS = ['claude', 'codex', 'opencode', 'agy', 'kiro']; // coding agents a node / spawn may be
 
 const cleanStr = (v, n) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n').trim().slice(0, n) : '');
+const normalizeStrArray = (arr, maxLen, itemMax) =>
+  (Array.isArray(arr) ? arr.map((x) => cleanStr(x, itemMax)).filter(Boolean).slice(0, maxLen) : []);
 const idGen = (prefix = 'p') => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
 
 let CRC_TABLE = null;
@@ -87,12 +92,16 @@ function createMesh({
   store,
   marks,
   fsCatalog,
+  getMagpie = () => null,
   dispatchControl = null, // async (machineName, payload) => { ok, msg }
   onChange = () => {},
   audit = () => {},
   notify = null,
 }) {
   const file = path.join(dataDir, 'mesh-projects.json');
+  const board = createBoard({ dataDir });
+  const roleStore = createRoleStore({ dataDir });
+  const modelRouter = createModelRouter({ dataDir, getMagpie });
   let data = { projects: [] };
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -165,7 +174,14 @@ function createMesh({
     if (!p || p.machine !== machineName) return true;
     clearTimeout(p.timer);
     pendingActions.delete(d.rid);
-    p.resolve({ ok: !!d.ok, msg: cleanStr(d.msg, 200) });
+    const res = { ok: !!d.ok, msg: cleanStr(d.msg, 200) };
+    if (d.worktreePath !== undefined) res.worktreePath = cleanStr(String(d.worktreePath || ''), 500);
+    if (d.worktreeBranch !== undefined) res.worktreeBranch = cleanStr(String(d.worktreeBranch || ''), 120);
+    if (d.worktreeParentRepo !== undefined) res.worktreeParentRepo = cleanStr(String(d.worktreeParentRepo || ''), 500);
+    if (d.dirty !== undefined) res.dirty = !!d.dirty;
+    if (d.unmergedCommits !== undefined) res.unmergedCommits = +d.unmergedCommits || 0;
+    if (d.summary !== undefined) res.summary = cleanStr(String(d.summary || ''), 1000);
+    p.resolve(res);
     return true;
   }
 
@@ -251,7 +267,16 @@ function createMesh({
         last: (live && live.last) || n.updatedAt || proj.createdAt,
       };
     });
-    return { ...proj, workspaces, nodes, triggers: proj.triggers || [], events: (proj.events || []).slice(-50) };
+    return {
+      ...proj,
+      workspaces,
+      nodes,
+      tasks: proj.tasks || [],
+      channels: board.getChannels(proj.id),
+      boardSeq: board.latestSeq(proj.id),
+      triggers: proj.triggers || [],
+      events: (proj.events || []).slice(-50),
+    };
   }
 
   function listProjects() {
@@ -336,12 +361,16 @@ function createMesh({
   // Scoped topology view for an agent session: ONLY returns the project & connected nodes it belongs to
   function scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd }) {
     const { project: proj, node: selfNode } = resolveCaller({ projectId, nodeId, machine, sessionId, callerCwd });
+    const roleCatalog = roleStore.catalog();
+    const pools = modelRouter.getPoolsSummary();
     if (!proj) {
       // Return only annotated catalog folders so a fresh master session can bootstrap a project
       return {
         ok: true,
         project: null,
         self: null,
+        roleCatalog,
+        pools,
         availableFolders: fsCatalog ? fsCatalog.list() : [],
         machines: machines ? [...machines.values()].map((m) => ({ machine: m.name, online: !!m.online, control: !!m.control, files: !!m.files })) : [],
       };
@@ -351,6 +380,8 @@ function createMesh({
       ok: true,
       project: enriched,
       self: selfNode ? enriched.nodes.find((n) => n.id === selfNode.id) : null,
+      roleCatalog,
+      pools,
       machines: machines ? [...machines.values()].map((m) => ({ machine: m.name, online: !!m.online, control: !!m.control, files: !!m.files })) : [],
     };
   }
@@ -371,6 +402,7 @@ function createMesh({
         workspaces: [],
         nodes: [],
         edges: [],
+        tasks: [],
         transfers: [],
         triggers: [],
         events: [],
@@ -379,6 +411,7 @@ function createMesh({
       };
       data.projects.unshift(proj);
     } else {
+      if (!Array.isArray(proj.tasks)) proj.tasks = [];
       if (name) proj.name = name;
       if (typeof d.desc === 'string') proj.desc = cleanStr(d.desc, 500);
       if (typeof d.autoResumeMaster === 'boolean') proj.autoResumeMaster = d.autoResumeMaster;
@@ -404,6 +437,7 @@ function createMesh({
     const idx = data.projects.findIndex((x) => x.id === id);
     if (idx < 0) return { ok: false, msg: '找不到该项目' };
     data.projects.splice(idx, 1);
+    board.removeProject(id);
     save();
     return { ok: true };
   }
@@ -446,8 +480,10 @@ function createMesh({
         machine,
         sessionId,
         alias: cleanStr(d.alias, 60) || cleanStr(d.role === 'master' ? '主控会话' : '协作节点', 60),
-        role: ['master', 'worker', 'peer'].includes(d.role) ? d.role : 'worker',
+        role: cleanStr(d.role, 32) || 'worker',
         tool: TOOLS.includes(d.tool) ? d.tool : 'claude',
+        pool: cleanStr(d.pool, 60),
+        model: cleanStr(d.model, 120),
         cwd: cleanStr(d.cwd, 500),
         goal: cleanStr(d.goal, 1000),
         stopCondition: cleanStr(d.stopCondition, 1000),
@@ -456,6 +492,19 @@ function createMesh({
         inbox: [],
         lastReport: '',
         artifacts: [],
+        lastReadSeq: 0,
+        lastPostSeq: 0,
+        lastMentionedSeq: 0,
+        lastMentionedAt: 0,
+        lastNudgedSeq: 0,
+        wakeMode: d.wakeMode === 'all' ? 'all' : 'mentions',
+        workspaceMode: d.workspaceMode === 'worktree' ? 'worktree' : 'inherit',
+        worktreeBranch: cleanStr(d.worktreeBranch, 120),
+        worktreeParentRepo: cleanStr(d.worktreeParentRepo, 500),
+        worktreePath: cleanStr(d.worktreePath, 500),
+        boundaries: normalizeStrArray(d.boundaries, 40, 300),
+        doneWhen: normalizeStrArray(d.doneWhen, 30, 400),
+        checks: normalizeStrArray(d.checks, 20, 300),
         updatedAt: Date.now(),
       };
       proj.nodes.push(node);
@@ -463,13 +512,23 @@ function createMesh({
       if (machine) node.machine = machine;
       if (sessionId) node.sessionId = sessionId;
       if (typeof d.alias === 'string' && d.alias.trim()) node.alias = cleanStr(d.alias, 60);
-      if (['master', 'worker', 'peer'].includes(d.role)) node.role = d.role;
+      if (typeof d.role === 'string' && d.role.trim()) node.role = cleanStr(d.role, 32);
       if (TOOLS.includes(d.tool)) node.tool = d.tool;
+      if (typeof d.pool === 'string') node.pool = cleanStr(d.pool, 60);
+      if (typeof d.model === 'string') node.model = cleanStr(d.model, 120);
       if (typeof d.cwd === 'string' && d.cwd.trim()) node.cwd = cleanStr(d.cwd, 500);
       if (typeof d.goal === 'string') node.goal = cleanStr(d.goal, 1000);
       if (typeof d.stopCondition === 'string') node.stopCondition = cleanStr(d.stopCondition, 1000);
       if (typeof d.reviewStatus === 'string') node.reviewStatus = cleanStr(d.reviewStatus, 40);
       if (typeof d.autoResumeClosed === 'boolean') node.autoResumeClosed = d.autoResumeClosed;
+      if (d.wakeMode === 'all' || d.wakeMode === 'mentions') node.wakeMode = d.wakeMode;
+      if (d.workspaceMode === 'worktree' || d.workspaceMode === 'inherit') node.workspaceMode = d.workspaceMode;
+      if (typeof d.worktreeBranch === 'string') node.worktreeBranch = cleanStr(d.worktreeBranch, 120);
+      if (typeof d.worktreeParentRepo === 'string') node.worktreeParentRepo = cleanStr(d.worktreeParentRepo, 500);
+      if (typeof d.worktreePath === 'string') node.worktreePath = cleanStr(d.worktreePath, 500);
+      if (Array.isArray(d.boundaries)) node.boundaries = normalizeStrArray(d.boundaries, 40, 300);
+      if (Array.isArray(d.doneWhen)) node.doneWhen = normalizeStrArray(d.doneWhen, 30, 400);
+      if (Array.isArray(d.checks)) node.checks = normalizeStrArray(d.checks, 20, 300);
       node.updatedAt = Date.now();
     }
 
@@ -520,11 +579,18 @@ function createMesh({
   }
 
   // Deliver a message to a target node immediately if idle/closed(with autoResume), or queue in inbox if working
-  async function deliverToNode(proj, targetNode, envelopeText, { forceWake = false } = {}) {
+  async function deliverToNode(proj, targetNode, envelopeText, { forceWake = false, seq = 0 } = {}) {
+    const inboxItem = (extra = {}) => ({
+      id: idGen('msg'),
+      text: envelopeText,
+      at: Date.now(),
+      ...(seq ? { seq } : {}),
+      ...extra,
+    });
     if (!targetNode.sessionId) {
       targetNode.inbox = targetNode.inbox || [];
       if (targetNode.inbox.length < MAX_INBOX) {
-        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now() });
+        targetNode.inbox.push(inboxItem());
       }
       save();
       return { ok: true, queued: true, msg: '节点正在启动中，消息已放入收件箱，启动完成后自动投递' };
@@ -539,7 +605,7 @@ function createMesh({
     if ((isWorking || isAsking) && !forceWake) {
       targetNode.inbox = targetNode.inbox || [];
       if (targetNode.inbox.length < MAX_INBOX) {
-        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now() });
+        targetNode.inbox.push(inboxItem());
       }
       save();
       return {
@@ -555,7 +621,7 @@ function createMesh({
     if (isClosed && !allowAuto && !forceWake) {
       targetNode.inbox = targetNode.inbox || [];
       if (targetNode.inbox.length < MAX_INBOX) {
-        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now(), needsManualWake: true });
+        targetNode.inbox.push(inboxItem({ needsManualWake: true }));
       }
       save();
       return { ok: true, queued: true, manualWakeRequired: true, msg: '目标会话已关闭（设为手动唤醒），已在项目管理与看板挂起待唤醒提醒' };
@@ -567,15 +633,156 @@ function createMesh({
       // Queue on failure with needsManualWake so onMachineState does not drop it on the next tick
       targetNode.inbox = targetNode.inbox || [];
       if (targetNode.inbox.length < MAX_INBOX) {
-        targetNode.inbox.push({ id: idGen('msg'), text: envelopeText, at: Date.now(), needsManualWake: true });
+        targetNode.inbox.push(inboxItem({ needsManualWake: true }));
       }
       save();
       return { ok: false, queued: true, msg: r.msg || '投递失败，已暂存至节点收件箱' };
     }
     if (watchdog) watchdog.onNodeCommand(proj.id, targetNode.id);
+    if (seq) targetNode.lastNudgedSeq = Math.max(targetNode.lastNudgedSeq || 0, seq);
     targetNode.updatedAt = Date.now();
     save();
     return { ok: true, delivered: true, msg: isClosed ? '目标会话已关闭，已在后台自动唤醒并注入消息' : '已直接注入目标会话终端' };
+  }
+
+  async function handleQuotaExhausted(proj, node, reason = 'quota') {
+    if (!proj || !node) return;
+    const prevKey = `${node.tool || 'claude'}|${node.model || ''}`;
+    modelRouter.markCooldown(node.tool || 'claude', node.model || '', reason);
+    const masterNode = (proj.nodes || []).find((n) => n.role === 'master' && n.id !== node.id);
+    const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+
+    if (node.pool) {
+      const exclude = [prevKey];
+      const relayCwd = node.cwd || ((proj.workspaces || []).find((w) => w.machine === node.machine) || {}).path || '';
+      const roleDef = roleStore.get(node.role);
+
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const pick = modelRouter.selectCandidate(node.pool, { exclude });
+        if (!pick.ok || !pick.candidate) break;
+        const fb = pick.candidate;
+        const fbTool = TOOLS.includes(fb.harness) ? fb.harness : 'claude';
+        const fbModel = fb.model || '';
+        const fbKey = `${fb.harness}|${fbModel}`;
+
+        await postBoard({
+          projectId: proj.id,
+          agent: '模型路由',
+          kind: 'watchdog',
+          text: `节点 ${node.alias || node.id} (${node.tool}${node.model ? ':' + node.model : ''}) 命中额度/限流熔断（${cleanStr(reason, 80)}），自动回落至 ${fbTool}${fbModel ? ':' + fbModel : ''}（模型池 ${node.pool}）接力执行。`,
+          skipWake: true,
+        });
+
+        if (!relayCwd) {
+          node.tool = fbTool;
+          node.model = fbModel;
+          node.updatedAt = Date.now();
+          save();
+          return;
+        }
+
+        const sinceSeq = Math.max(0, node.lastReadSeq || 0);
+        const relayLines = [
+          `[AmeMesh 跨模型自动接力 | 项目：${proj.name}]`,
+          `- 接管节点：${node.alias || node.id} (projectId="${proj.id}", nodeId="${node.id}")`,
+          `- 接力原因：原模型 ${prevKey} 额度耗尽/限流，由模型池「${node.pool}」自动切换至 ${fbTool}${fbModel ? ':' + fbModel : ''}`,
+          roleDef && roleDef.body ? `- 角色规范（${roleDef.name}）：\n${roleDef.body}` : null,
+          roleDef && roleDef.readOnly ? '- [只读角色硬约束] 你是只读验收角色，严禁修改任何业务代码或产出文件。' : null,
+          fb.quirks ? `- 模型微调提示：${fb.quirks}` : null,
+          node.goal ? `- 当前目标：${node.goal}` : null,
+          `- 请立即调用 mesh_board_read(since=${sinceSeq}) 读取未读黑板楼层与任务状态，无缝接力完成工作。`,
+        ].filter(Boolean);
+
+        const prevTool = node.tool;
+        const prevModel = node.model;
+        const prevSid = node.sessionId;
+        node.tool = fbTool;
+        node.model = fbModel;
+        node.sessionId = '';
+        node.reviewStatus = 'running';
+        node.lastAct = '';
+        node.updatedAt = Date.now();
+
+        const spKey = `${node.machine}|${normFolderPath(relayCwd)}`;
+        const spList = pendingSpawns.get(spKey) || [];
+        spList.push({ projectId: proj.id, nodeId: node.id, t0: Date.now() });
+        pendingSpawns.set(spKey, spList);
+
+        const launchRes = await sendToAgent(node.machine, {
+          t: 'launch',
+          cwd: relayCwd,
+          prompt: relayLines.join('\n').slice(0, 7800),
+          tool: fbTool,
+          ...(fbModel ? { model: fbModel } : {}),
+          meshEnv: { AME_PROJECT_ID: proj.id, AME_NODE_ID: node.id },
+        });
+        if (launchRes && launchRes.ok) {
+          save();
+          return;
+        }
+        // Rollback pending spawn & cooldown failed fallback candidate before trying next
+        const rem = (pendingSpawns.get(spKey) || []).filter((x) => x.nodeId !== node.id);
+        if (rem.length) pendingSpawns.set(spKey, rem);
+        else pendingSpawns.delete(spKey);
+        node.tool = prevTool;
+        node.model = prevModel;
+        node.sessionId = prevSid;
+        modelRouter.markCooldown(fb.harness, fbModel, (launchRes && launchRes.msg) || 'relay_launch_failed');
+        exclude.push(fbKey);
+      }
+
+      // Entire pool exhausted
+      node.watchdogAlert = { code: 'POOL_EXHAUSTED', label: '模型池全部耗尽', at: Date.now() };
+      recordEvent(proj, {
+        source: 'watchdog',
+        kind: 'POOL_EXHAUSTED',
+        machine: node.machine,
+        nodeId: node.id,
+        summary: `模型池「${node.pool}」内所有候选均已冷却或耗尽`,
+        payload: { pool: node.pool, reason: cleanStr(reason, 120) },
+      });
+      await postBoard({
+        projectId: proj.id,
+        agent: '模型路由',
+        kind: 'watchdog',
+        text: `${masterMention}[模型池耗尽] 节点 ${node.alias || node.id} 所属模型池「${node.pool}」内所有候选模型均已冷却或耗尽（原因：${cleanStr(reason, 120)}），请介入降级模型组或等待额度重置。`,
+      });
+      if (typeof notify === 'function') {
+        notify({
+          title: '看门狗 · 模型池全部耗尽',
+          body: `${proj.name} / 模型池「${node.pool}」内所有候选均不可用`,
+          tag: `pool-exhausted-${proj.id}-${node.pool}`,
+          url: `/#proj=${proj.id}`,
+        });
+      }
+      save();
+      return;
+    }
+
+    // Node has no pool configured: alert master
+    recordEvent(proj, {
+      source: 'watchdog',
+      kind: 'QUOTA_EXHAUSTED',
+      machine: node.machine,
+      nodeId: node.id,
+      summary: `节点 ${node.alias || node.id} (${prevKey}) 额度耗尽，已熔断冷却`,
+      payload: { reason: cleanStr(reason, 120) },
+    });
+    await postBoard({
+      projectId: proj.id,
+      agent: '模型路由',
+      kind: 'watchdog',
+      text: `${masterMention}[额度耗尽] 节点 ${node.alias || node.id} (${prevKey}) 触发额度/限流熔断，未绑定模型池无法自动回落，请手动处理。`,
+    });
+    if (typeof notify === 'function') {
+      notify({
+        title: '看门狗 · 节点额度耗尽',
+        body: `${proj.name} / ${node.alias || node.id} (${prevKey}) 额度耗尽`,
+        tag: `quota-${node.id}`,
+        url: `/#proj=${proj.id}`,
+      });
+    }
+    save();
   }
 
   const watchdog = createWatchdog({
@@ -588,8 +795,374 @@ function createMesh({
     recordEvent: (p, e) => recordEvent(p, e),
     notify: typeof notify === 'function' ? notify : async () => ({ sent: 0 }),
     save,
+    postBoard: (d) => postBoard(d),
+    onQuotaExhausted: (proj, node, reason) => handleQuotaExhausted(proj, node, reason),
   });
   watchdog.start(15000);
+
+  function evaluateGitAudit(node, gitAudit, explicitBoundaries) {
+    if (!gitAudit || !gitAudit.checked || !gitAudit.isGit) return null;
+    const boundaries = (Array.isArray(explicitBoundaries) && explicitBoundaries.length)
+      ? explicitBoundaries
+      : (node && Array.isArray(node.boundaries) ? node.boundaries : []);
+    const changedFiles = Array.isArray(gitAudit.changedFiles) ? gitAudit.changedFiles : [];
+    const res = checkBoundaries(boundaries, changedFiles);
+    const emptyChange = changedFiles.length === 0 && boundaries.length > 0;
+    return {
+      checked: true,
+      isGit: true,
+      changedFiles: changedFiles.slice(0, 100),
+      outOfBounds: res.outOfBounds,
+      emptyChange,
+      ok: res.outOfBounds.length === 0 && !emptyChange,
+    };
+  }
+
+  function formatAuditWarnings(auditRes) {
+    if (!auditRes || auditRes.ok) return [];
+    const warnings = [];
+    if (auditRes.outOfBounds.length) {
+      warnings.push(`[边界对账告警] 改动了允许边界之外的文件：${auditRes.outOfBounds.join(', ')}`);
+    }
+    if (auditRes.emptyChange) {
+      warnings.push('[边界对账告警] 声明完成但工作区 git status 未检测到任何文件改动');
+    }
+    return warnings;
+  }
+
+  // Unified Blackboard: append post, update cursors, evaluate git audit, and route @mentions via hybrid wakeup
+  async function postBoard(d = {}) {
+    const resolved = resolveCaller({
+      projectId: d.projectId,
+      nodeId: d.fromNodeId || d.nodeId,
+      machine: d.fromMachine || d.machine,
+      sessionId: d.fromSessionId || d.sessionId,
+      callerCwd: d.callerCwd || d.cwd,
+    });
+    const proj = resolved.project;
+    if (!proj) return { ok: false, msg: '找不到对应的协同项目' };
+    const fromNode = resolved.node || null;
+
+    let text = cleanStr(d.text, 12000);
+    if (!text) return { ok: false, msg: '发帖内容不能为空' };
+
+    const kind = cleanStr(d.kind, 20) || 'post';
+    const shouldAudit = Boolean(d.done || kind === 'report' || d.gitAudit);
+    const auditRes = shouldAudit ? evaluateGitAudit(fromNode, d.gitAudit, d.boundaries) : null;
+    const warnings = formatAuditWarnings(auditRes);
+    if (warnings.length) {
+      text = `${text}\n${warnings.join('\n')}`;
+    }
+
+    const agentName = cleanStr(d.agent, 60) || (fromNode ? (fromNode.alias || fromNode.id) : '管理员');
+    const artifacts = normalizeStrArray(d.artifacts, 20, 400);
+    const entry = board.append(proj.id, {
+      channel: cleanStr(d.channel, 40) || 'main',
+      kind,
+      agent: agentName,
+      nodeId: fromNode ? fromNode.id : null,
+      text,
+      ...(Array.isArray(d.mentions) ? { mentions: d.mentions } : {}),
+      ...(typeof d.mentionAll === 'boolean' ? { mentionAll: d.mentionAll } : {}),
+      artifacts,
+      done: Boolean(d.done),
+      audit: auditRes,
+    });
+
+    if (fromNode) {
+      fromNode.lastPostSeq = entry.seq;
+      fromNode.lastReadSeq = Math.max(fromNode.lastReadSeq || 0, entry.seq);
+      fromNode.updatedAt = Date.now();
+    }
+
+    const mentionSet = new Set((entry.mentions || []).map((m) => String(m).toLowerCase()));
+    const wakeChannelSet = new Set((entry.mentionChannels || []).map((c) => String(c).toLowerCase()));
+    const entryChannel = String(entry.channel || 'main').toLowerCase();
+    if (entryChannel && entryChannel !== 'main') {
+      wakeChannelSet.add(entryChannel);
+    }
+    const channelSubscribedIds = new Set();
+    if (wakeChannelSet.size > 0) {
+      for (const chObj of board.getChannels(proj.id)) {
+        if (chObj.archived) continue;
+        if (wakeChannelSet.has(String(chObj.name || '').toLowerCase())) {
+          for (const subId of chObj.subscribers || []) {
+            channelSubscribedIds.add(subId);
+          }
+        }
+      }
+    }
+
+    const targets = (proj.nodes || []).filter((n) => {
+      if (fromNode && n.id === fromNode.id) return false;
+      if (entry.mentionAll || n.wakeMode === 'all') return true;
+      if (channelSubscribedIds.has(n.id)) return true;
+      const aliasL = String(n.alias || '').toLowerCase();
+      const idL = String(n.id || '').toLowerCase();
+      return (aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL));
+    });
+
+    const deliveries = [];
+    for (const targetNode of targets) {
+      targetNode.lastMentionedSeq = entry.seq;
+      targetNode.lastMentionedAt = entry.ts;
+      if (d.skipWake !== true) {
+        const wakePrompt = formatWakePrompt({ project: proj, entry, targetNode });
+        const deliv = await deliverToNode(proj, targetNode, wakePrompt, { seq: entry.seq });
+        deliveries.push({ nodeId: targetNode.id, alias: targetNode.alias, ...deliv });
+      }
+    }
+
+    save();
+    return { ok: true, entry, deliveries, project: enrichProject(proj) };
+  }
+
+  function readBoard(d = {}) {
+    const resolved = resolveCaller({
+      projectId: d.projectId,
+      nodeId: d.nodeId || d.fromNodeId,
+      machine: d.machine || d.fromMachine,
+      sessionId: d.sessionId || d.fromSessionId,
+      callerCwd: d.callerCwd || d.cwd,
+    });
+    const proj = resolved.project;
+    if (!proj) return { ok: false, msg: '找不到对应的协同项目' };
+    const node = resolved.node || null;
+
+    let seqList = null;
+    if (Array.isArray(d.seqList)) {
+      seqList = d.seqList.map((x) => parseInt(x, 10)).filter((n) => Number.isSafeInteger(n) && n > 0);
+    } else if (typeof d.seqList === 'string' && d.seqList.trim()) {
+      seqList = d.seqList.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isSafeInteger(n) && n > 0);
+    }
+
+    const { entries, latestSeq } = board.read(proj.id, {
+      since: Number(d.since) || 0,
+      limit: Number(d.limit) || 50,
+      channel: cleanStr(d.channel, 40),
+      seqList,
+    });
+
+    if (node && entries.length) {
+      const maxSeq = entries.reduce((mx, e) => (e.seq > mx ? e.seq : mx), 0);
+      node.lastReadSeq = Math.max(node.lastReadSeq || 0, maxSeq);
+      save();
+    }
+
+    return {
+      ok: true,
+      projectId: proj.id,
+      entries,
+      latestSeq,
+      lastReadSeq: node ? node.lastReadSeq || 0 : 0,
+    };
+  }
+
+  // Event-sourced Multi-Channel management (create / subscribe / unsubscribe / archive / list)
+  function manageChannel(d = {}) {
+    const resolved = resolveCaller({
+      projectId: d.projectId,
+      nodeId: d.fromNodeId,
+      machine: d.fromMachine || d.machine,
+      sessionId: d.fromSessionId || d.sessionId,
+      callerCwd: d.callerCwd || d.cwd,
+    });
+    let proj = resolved.project;
+    if (!proj && d.nodeId) {
+      const byNode = resolveCaller({ projectId: d.projectId, nodeId: d.nodeId });
+      proj = byNode.project;
+    }
+    if (!proj) return { ok: false, msg: '找不到所属项目' };
+    const fromNode = resolved.node || null;
+
+    const action = cleanStr(d.action, 20) || 'list';
+    if (action === 'list') {
+      return { ok: true, channels: board.getChannels(proj.id), project: enrichProject(proj) };
+    }
+
+    const rawCh = cleanStr(d.channel, 40);
+    if (!rawCh || !/^[A-Za-z0-9_\u4e00-\u9fa5-]{1,32}$/.test(rawCh)) {
+      return { ok: false, msg: '频道名不合法，仅支持 1~32 位字母、数字、中文、下划线或连字符' };
+    }
+    const ch = rawCh.toLowerCase();
+
+    const resolveTargetNodeId = (raw) => {
+      const val = cleanStr(raw, 60);
+      if (!val) return '';
+      const matched = (proj.nodes || []).find((n) => n.id === val || n.alias === val);
+      return matched ? matched.id : val;
+    };
+    const targetNodeId = resolveTargetNodeId(d.nodeId) || (fromNode ? fromNode.id : '');
+    const cleanDesc = cleanStr(d.desc, 200);
+    const agentName = cleanStr(d.agent, 60) || (fromNode ? (fromNode.alias || fromNode.id) : '管理员');
+
+    if (action === 'create') {
+      const entry = board.append(proj.id, {
+        channel: ch,
+        kind: 'control',
+        agent: agentName,
+        nodeId: fromNode ? fromNode.id : null,
+        text: `[频道控制] 创建频道 #${ch}${cleanDesc ? '：' + cleanDesc : ''}`,
+        control: { op: 'channel_create', channel: ch, desc: cleanDesc },
+      });
+      save();
+      return { ok: true, entry, channels: board.getChannels(proj.id), project: enrichProject(proj) };
+    }
+
+    if (action === 'subscribe' || action === 'unsubscribe') {
+      if (!targetNodeId) return { ok: false, msg: '请指定要操作的节点 nodeId' };
+      const label = action === 'subscribe' ? '订阅' : '退订';
+      const entry = board.append(proj.id, {
+        channel: ch,
+        kind: 'control',
+        agent: agentName,
+        nodeId: fromNode ? fromNode.id : null,
+        text: `[频道控制] 节点 ${targetNodeId} ${label}频道 #${ch}`,
+        control: { op: `channel_${action}`, channel: ch, nodeId: targetNodeId },
+      });
+      save();
+      return { ok: true, entry, channels: board.getChannels(proj.id), project: enrichProject(proj) };
+    }
+
+    if (action === 'archive') {
+      if (ch === 'main') return { ok: false, msg: '默认频道 main 不可归档' };
+      const entry = board.append(proj.id, {
+        channel: ch,
+        kind: 'control',
+        agent: agentName,
+        nodeId: fromNode ? fromNode.id : null,
+        text: `[频道控制] 归档频道 #${ch}`,
+        control: { op: 'channel_archive', channel: ch },
+      });
+      save();
+      return { ok: true, entry, channels: board.getChannels(proj.id), project: enrichProject(proj) };
+    }
+
+    return { ok: false, msg: '未知的 channel 操作：' + action };
+  }
+
+  // Shared Task List with deterministic `blockedBy` auto-unlock
+  async function manageTask(d = {}) {
+    const resolved = resolveCaller({
+      projectId: d.projectId,
+      nodeId: d.fromNodeId || d.nodeId,
+      machine: d.fromMachine || d.machine,
+      sessionId: d.fromSessionId || d.sessionId,
+      callerCwd: d.callerCwd || d.cwd,
+    });
+    const proj = resolved.project;
+    if (!proj) return { ok: false, msg: '找不到所属项目' };
+    proj.tasks = proj.tasks || [];
+    const action = cleanStr(d.action, 20) || 'list';
+
+    const resolveOwnerId = (rawOwner) => {
+      const val = cleanStr(rawOwner, 60);
+      if (!val) return '';
+      const matched = (proj.nodes || []).find((n) => n.id === val || n.alias === val);
+      return matched ? matched.id : val;
+    };
+
+    if (action === 'list') {
+      return { ok: true, tasks: proj.tasks, project: enrichProject(proj) };
+    }
+
+    if (action === 'add') {
+      const title = cleanStr(d.title, 200);
+      if (!title) return { ok: false, msg: '任务标题不能为空' };
+      if (proj.tasks.length >= 200) return { ok: false, msg: '项目任务数量已达上限 (200)' };
+      const now = Date.now();
+      const task = {
+        id: cleanStr(d.taskId || d.id, 40) || idGen('task'),
+        title,
+        desc: cleanStr(d.desc, 2000),
+        ownerNodeId: resolveOwnerId(d.ownerNodeId),
+        status: ['pending', 'in_progress', 'review', 'done', 'blocked'].includes(d.status) ? d.status : 'pending',
+        blockedBy: normalizeStrArray(d.blockedBy, 20, 40),
+        boundaries: normalizeStrArray(d.boundaries, 40, 300),
+        doneWhen: normalizeStrArray(d.doneWhen, 30, 400),
+        checks: normalizeStrArray(d.checks, 20, 300),
+        boardRefs: Array.isArray(d.boardRefs)
+          ? d.boardRefs.map((x) => parseInt(x, 10)).filter((n) => Number.isSafeInteger(n) && n > 0)
+          : [],
+        artifacts: normalizeStrArray(d.artifacts, 20, 400),
+        createdAt: now,
+        updatedAt: now,
+      };
+      proj.tasks.push(task);
+      save();
+      return { ok: true, task, tasks: proj.tasks, project: enrichProject(proj) };
+    }
+
+    const targetId = cleanStr(d.taskId || d.id, 40);
+    const task = proj.tasks.find((t) => t.id === targetId);
+    if (!task) return { ok: false, msg: '找不到指定任务' };
+
+    if (action === 'claim') {
+      const hasPendingDep = (task.blockedBy || []).some((depId) => {
+        const dep = proj.tasks.find((x) => x.id === depId);
+        return dep && dep.status !== 'done';
+      });
+      if (hasPendingDep) {
+        return { ok: false, msg: '前置依赖任务尚未完成，无法认领' };
+      }
+      const ownerId = (resolved.node && resolved.node.id) || resolveOwnerId(d.ownerNodeId || d.nodeId);
+      if (ownerId) task.ownerNodeId = ownerId;
+      if (task.status === 'pending') task.status = 'in_progress';
+      task.updatedAt = Date.now();
+      save();
+      return { ok: true, task, tasks: proj.tasks, project: enrichProject(proj) };
+    }
+
+    if (action === 'update') {
+      const prevStatus = task.status;
+      if (typeof d.title === 'string' && d.title.trim()) task.title = cleanStr(d.title, 200);
+      if (typeof d.desc === 'string') task.desc = cleanStr(d.desc, 2000);
+      if (typeof d.ownerNodeId === 'string') task.ownerNodeId = resolveOwnerId(d.ownerNodeId);
+      if (['pending', 'in_progress', 'review', 'done', 'blocked'].includes(d.status)) task.status = d.status;
+      if (Array.isArray(d.blockedBy)) task.blockedBy = normalizeStrArray(d.blockedBy, 20, 40);
+      if (Array.isArray(d.boundaries)) task.boundaries = normalizeStrArray(d.boundaries, 40, 300);
+      if (Array.isArray(d.doneWhen)) task.doneWhen = normalizeStrArray(d.doneWhen, 30, 400);
+      if (Array.isArray(d.checks)) task.checks = normalizeStrArray(d.checks, 20, 300);
+      if (Array.isArray(d.boardRefs)) {
+        task.boardRefs = d.boardRefs.map((x) => parseInt(x, 10)).filter((n) => Number.isSafeInteger(n) && n > 0);
+      }
+      if (Array.isArray(d.artifacts)) task.artifacts = normalizeStrArray(d.artifacts, 20, 400);
+      task.updatedAt = Date.now();
+      save();
+
+      const unlockedTasks = [];
+      if (prevStatus !== 'done' && task.status === 'done') {
+        for (const t of proj.tasks) {
+          if (t.status !== 'pending' || !Array.isArray(t.blockedBy) || !t.blockedBy.includes(task.id)) continue;
+          const allDepsDone = t.blockedBy.every((depId) => {
+            const dep = proj.tasks.find((x) => x.id === depId);
+            return dep && dep.status === 'done';
+          });
+          if (allDepsDone) {
+            const ownerNode = (t.ownerNodeId && proj.nodes.find((n) => n.id === t.ownerNodeId || n.alias === t.ownerNodeId)) ||
+              proj.nodes.find((n) => n.role === 'master') || null;
+            const prefix = ownerNode ? `@${ownerNode.alias || ownerNode.id} ` : '';
+            await postBoard({
+              projectId: proj.id,
+              agent: '任务调度',
+              kind: 'task',
+              text: `${prefix}前置任务 [${task.id}] 已完成，任务 [${t.id}]「${t.title}」已自动解锁，可开始执行。`,
+            });
+            unlockedTasks.push(t);
+          }
+        }
+      }
+      return { ok: true, task, unlockedTasks, tasks: proj.tasks, project: enrichProject(proj) };
+    }
+
+    if (action === 'remove') {
+      proj.tasks = proj.tasks.filter((t) => t.id !== targetId);
+      save();
+      return { ok: true, tasks: proj.tasks, project: enrichProject(proj) };
+    }
+
+    return { ok: false, msg: '未知的 task 操作：' + action };
+  }
 
   // Spawn a new Worker session on a remote machine in an allowed folder and bind it to the project topology
   async function spawnWorker({
@@ -601,12 +1174,20 @@ function createMesh({
     callerCwd,
     machine,
     cwd,
-    tool = 'claude',
+    role = 'worker',
+    pool = '',
+    tool = '',
+    model = '',
     api = '',
     alias = '',
     goal = '',
     stopCondition = '',
     prompt = '',
+    boundaries = [],
+    doneWhen = [],
+    checks = [],
+    workspaceMode = '',
+    branch = '',
   }) {
     const resolved = resolveCaller({
       projectId,
@@ -674,42 +1255,225 @@ function createMesh({
       proj.workspaces.push({ machine: cleanStr(machine, 60), path: cleanStr(cwd, 500), mode: 'rw', tag: 'worker' });
     }
 
+    const cleanRole = cleanStr(role, 32) || 'worker';
+    const roleDef = roleStore.get(cleanRole);
+    const effectiveWorkspaceMode = (workspaceMode === 'worktree' || workspaceMode === 'inherit')
+      ? workspaceMode
+      : (roleDef && roleDef.workspaceMode === 'worktree' ? 'worktree' : 'inherit');
+    const cleanBranch = cleanStr(branch, 120);
+    const cleanTool = cleanStr(tool, 40);
+    const hasExplicitTool = Boolean(cleanTool && TOOLS.includes(cleanTool));
+    const cleanPool = cleanStr(pool, 60);
+    const cleanModel = cleanStr(model, 120);
+    const effectivePool = cleanPool || (!hasExplicitTool && roleDef && roleDef.defaultPool ? roleDef.defaultPool : '');
+
     const workerNodeId = idGen('node');
 
-    // Include folder notes from fsCatalog in the initial contract prompt so the worker knows folder roles
+    const normBoundaries = normalizeStrArray(boundaries, 40, 300);
+    const normDoneWhen = normalizeStrArray(doneWhen, 30, 400);
+    const normChecks = normalizeStrArray(checks, 20, 300);
+
+    // Include folder notes from fsCatalog and external role definition in initial contract prompt
     const cat = fsCatalog ? fsCatalog.get(machine, cwd) : null;
-    const contextLines = [
+    const baseContextLines = [
       `[AmeMesh 协同任务契约 | 项目：${proj.name}]`,
       masterNode ? `- 主控节点：${masterNode.alias || masterNode.id} (${masterNode.machine})` : null,
-      `- 节点身份标识（调用 mesh_report / mesh_send / mesh_run 时可传）：projectId="${proj.id}", nodeId="${workerNodeId}"`,
+      `- 节点身份标识（调用 mesh_report / mesh_send / mesh_run 时可传）：projectId="${proj.id}", nodeId="${workerNodeId}", role="${cleanRole}"`,
       `- 工作目录：${cwd}`,
+      roleDef && roleDef.body ? `- 角色规范（${roleDef.name}）：\n${roleDef.body}` : null,
+      roleDef && roleDef.readOnly ? '- [只读验收硬约束] 当前角色 readOnly=true：严禁修改、新建或删除任何业务代码与配置文件，仅可读取源码、审阅黑板并运行验证命令。' : null,
       cat && cat.tag ? `- 目录角色标签：${fsCatalog.TAG_LABELS[cat.tag] || cat.tag}` : null,
       cat && cat.userNote ? `- 用户目录备注（请严格遵守）：${cat.userNote}` : null,
       cat && cat.aiNote ? `- AI 历史备注：${cat.aiNote}` : null,
       goal ? `- 本阶段目标（Goal）：${goal}` : null,
       stopCondition ? `- 停机与检视边界（Stop & Review Gate）：${stopCondition}` : `- 停机与检视边界：完成指定目标或遇到阻塞时停下，汇报结果并等待主控会话 Review`,
+      normBoundaries.length ? `- 允许修改边界（Boundaries，严禁越界修改其他文件）：${normBoundaries.join(', ')}` : null,
+      normDoneWhen.length ? `- 验收条件（Done When，交卷时逐条核对）：\n${normDoneWhen.map((item, idx) => `  ${idx + 1}. ${item}`).join('\n')}` : null,
+      normChecks.length ? `- 必跑验证命令（Checks）：${normChecks.join(' ; ')}` : null,
+      '- 协作黑板约定：可通过 mesh_board_post(@节点别名 ...) 与成员公开协同，用 #楼层号 引用历史帖子；严禁擅自 git commit/push。',
       '- 长时间计算约定：预计耗时超过 10 分钟的求解或跑批任务，请使用 mesh_run 工具或 `node tools/ame-mesh.js run --label "任务名" -- <命令>` 在后台脱离运行，随后可调用 mesh_report(reviewStatus="blocked") 等待计算结束自动唤醒。',
-      prompt ? `\n具体执行指令：\n${prompt}` : null,
     ].filter(Boolean);
-    const fullPrompt = contextLines.join('\n').slice(0, 7800);
+
+    const buildFullPrompt = (quirksText) => {
+      const lines = [...baseContextLines];
+      if (quirksText) lines.push(`- 模型微调提示：${quirksText}`);
+      if (prompt) lines.push(`\n具体执行指令：\n${prompt}`);
+      return lines.join('\n').slice(0, 7800);
+    };
+
+    const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+    const spKey = `${machine}|${normFolderPath(cwd)}`;
+    const worktreeLaunchFields = effectiveWorkspaceMode === 'worktree'
+      ? {
+          workspaceMode: 'worktree',
+          worktreeBranch: cleanBranch,
+          worktreeAlias: cleanStr(alias, 60) || workerNodeId,
+        }
+      : {};
+
+    const finalizeLaunchedWorker = (nr, launchRes, launchPromptText) => {
+      if (effectiveWorkspaceMode === 'worktree' && launchRes.worktreePath) {
+        nr.node.cwd = cleanStr(launchRes.worktreePath, 500);
+        nr.node.worktreePath = cleanStr(launchRes.worktreePath, 500);
+        nr.node.worktreeBranch = cleanStr(launchRes.worktreeBranch || cleanBranch, 120);
+        nr.node.worktreeParentRepo = cleanStr(launchRes.worktreeParentRepo || cwd, 500);
+        nr.node.updatedAt = Date.now();
+
+        const wtKey = `${machine}|${normFolderPath(nr.node.worktreePath)}`;
+        if (wtKey !== spKey) {
+          const origRem = (pendingSpawns.get(spKey) || []).filter((x) => x.nodeId !== nr.node.id);
+          if (origRem.length) pendingSpawns.set(spKey, origRem);
+          else pendingSpawns.delete(spKey);
+
+          const wtList = pendingSpawns.get(wtKey) || [];
+          if (!wtList.some((x) => x.nodeId === nr.node.id)) {
+            wtList.push({ projectId: proj.id, nodeId: nr.node.id, t0: Date.now() });
+            pendingSpawns.set(wtKey, wtList);
+          }
+        }
+      }
+
+      const briefEntry = board.append(proj.id, {
+        channel: 'main',
+        kind: 'brief',
+        agent: masterNode ? (masterNode.alias || masterNode.id) : '主控会话',
+        nodeId: masterNode ? masterNode.id : null,
+        text: `@${nr.node.alias || nr.node.id} 派活契约已下发\n${launchPromptText}`,
+        mentions: [nr.node.alias || nr.node.id],
+      });
+      nr.node.lastReadSeq = briefEntry.seq;
+      if (masterNode) {
+        masterNode.lastPostSeq = briefEntry.seq;
+        masterNode.lastReadSeq = Math.max(masterNode.lastReadSeq || 0, briefEntry.seq);
+      }
+      save();
+      return { ok: true, node: nr.node, project: enrichProject(proj), msg: launchRes.msg || '已在目标电脑启动协同会话' };
+    };
+
+    if (effectivePool) {
+      const exclude = [];
+      let nr = null;
+      let lastErr = '';
+      let launchPrompt = '';
+      let launched = false;
+
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const pick = modelRouter.selectCandidate(effectivePool, { exclude });
+        if (!pick.ok || !pick.candidate) {
+          lastErr = pick.msg || lastErr || `模型池「${effectivePool}」无可用候选`;
+          break;
+        }
+        const cand = pick.candidate;
+        const attemptTool = TOOLS.includes(cand.harness) ? cand.harness : 'claude';
+        const attemptModel = cand.model || cleanModel || '';
+        launchPrompt = buildFullPrompt(cand.quirks || '');
+
+        if (!nr) {
+          nr = upsertNode(proj.id, {
+            id: workerNodeId,
+            machine,
+            sessionId: '',
+            alias: alias || `${machine}:${path.basename(cwd)}`,
+            role: cleanRole,
+            tool: attemptTool,
+            pool: effectivePool,
+            model: attemptModel,
+            cwd,
+            goal,
+            stopCondition,
+            workspaceMode: effectiveWorkspaceMode,
+            worktreeBranch: cleanBranch,
+            boundaries: normBoundaries,
+            doneWhen: normDoneWhen,
+            checks: normChecks,
+            fromNodeId: masterNode ? masterNode.id : undefined,
+            edgeType: cleanRole === 'peer' ? 'cowork' : 'master-worker',
+          });
+          if (!nr.ok) return nr;
+        } else {
+          nr.node.tool = attemptTool;
+          nr.node.model = attemptModel;
+          nr.node.pool = effectivePool;
+          nr.node.updatedAt = Date.now();
+        }
+
+        const list = pendingSpawns.get(spKey) || [];
+        if (!list.some((x) => x.nodeId === nr.node.id)) {
+          list.push({ projectId: proj.id, nodeId: nr.node.id, t0: Date.now() });
+          pendingSpawns.set(spKey, list);
+        }
+
+        const launchRes = await sendToAgent(machine, {
+          t: 'launch',
+          cwd,
+          prompt: launchPrompt,
+          tool: attemptTool,
+          ...(attemptModel ? { model: attemptModel } : {}),
+          api: api ? { id: api, local: true } : undefined,
+          meshEnv: { AME_PROJECT_ID: proj.id, AME_NODE_ID: workerNodeId },
+          ...worktreeLaunchFields,
+        });
+        if (launchRes && launchRes.ok) {
+          launched = true;
+          return finalizeLaunchedWorker(nr, launchRes, launchPrompt);
+        }
+
+        lastErr = (launchRes && launchRes.msg) || '启动失败';
+        modelRouter.markCooldown(cand.harness, cand.model || '', lastErr);
+        exclude.push(`${cand.harness}|${cand.model || ''}`);
+      }
+
+      if (!launched) {
+        const rem = (pendingSpawns.get(spKey) || []).filter((x) => x.nodeId !== workerNodeId);
+        if (rem.length) pendingSpawns.set(spKey, rem);
+        else pendingSpawns.delete(spKey);
+        if (nr && nr.node) {
+          nr.node.reviewStatus = 'blocked';
+          nr.node.lastAct = '启动失败：' + lastErr;
+        }
+        await postBoard({
+          projectId: proj.id,
+          agent: '模型路由',
+          kind: 'watchdog',
+          text: `${masterMention}[模型池耗尽] 为节点 ${alias || workerNodeId} 选型失败，模型池「${effectivePool}」所有候选均不可用（${cleanStr(lastErr, 120)}）。`,
+        });
+        save();
+        return {
+          ok: false,
+          exhausted: true,
+          msg: lastErr || `模型池「${effectivePool}」内所有候选均不可用`,
+          ...(nr && nr.node ? { node: nr.node } : {}),
+          project: enrichProject(proj),
+        };
+      }
+    }
+
+    const explicitTool = hasExplicitTool ? cleanTool : 'claude';
+    const fullPrompt = buildFullPrompt('');
 
     const nr = upsertNode(proj.id, {
       id: workerNodeId,
       machine,
       sessionId: '',
       alias: alias || `${machine}:${path.basename(cwd)}`,
-      role: 'worker',
-      tool,
+      role: cleanRole,
+      tool: explicitTool,
+      pool: '',
+      model: cleanModel,
       cwd,
       goal,
       stopCondition,
+      workspaceMode: effectiveWorkspaceMode,
+      worktreeBranch: cleanBranch,
+      boundaries: normBoundaries,
+      doneWhen: normDoneWhen,
+      checks: normChecks,
       fromNodeId: masterNode ? masterNode.id : undefined,
-      edgeType: 'master-worker',
+      edgeType: cleanRole === 'peer' ? 'cowork' : 'master-worker',
     });
     if (!nr.ok) return nr;
 
     // Register pending spawn so when the agent reports the new session in `state` or `meta`, we bind its sessionId automatically
-    const spKey = `${machine}|${normFolderPath(cwd)}`;
     const list = pendingSpawns.get(spKey) || [];
     list.push({ projectId: proj.id, nodeId: nr.node.id, t0: Date.now() });
     pendingSpawns.set(spKey, list);
@@ -718,9 +1482,11 @@ function createMesh({
       t: 'launch',
       cwd,
       prompt: fullPrompt,
-      tool: TOOLS.includes(tool) ? tool : 'claude',
+      tool: explicitTool,
+      ...(cleanModel ? { model: cleanModel } : {}),
       api: api ? { id: api, local: true } : undefined,
       meshEnv: { AME_PROJECT_ID: proj.id, AME_NODE_ID: workerNodeId },
+      ...worktreeLaunchFields,
     });
     if (!launchRes.ok) {
       nr.node.reviewStatus = 'blocked';
@@ -728,7 +1494,63 @@ function createMesh({
       save();
       return { ok: false, msg: launchRes.msg || '在目标机器启动会话失败', node: nr.node, project: enrichProject(proj) };
     }
-    return { ok: true, node: nr.node, project: enrichProject(proj), msg: launchRes.msg || '已在目标电脑启动协同会话' };
+    return finalizeLaunchedWorker(nr, launchRes, fullPrompt);
+  }
+
+  function findProjectNode(projectId, nodeId) {
+    if (projectId) {
+      const proj = data.projects.find((x) => x.id === projectId);
+      if (!proj) return { proj: null, node: null };
+      const node = (proj.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId) || null;
+      return { proj, node };
+    }
+    if (nodeId) {
+      for (const p of data.projects) {
+        const node = (p.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId);
+        if (node) return { proj: p, node };
+      }
+    }
+    return { proj: null, node: null };
+  }
+
+  async function checkNodeWorktree(projectId, nodeId) {
+    const { proj, node } = findProjectNode(projectId, nodeId);
+    if (!proj) return { ok: false, msg: '找不到该项目' };
+    if (!node) return { ok: false, msg: '找不到该节点' };
+    if (node.workspaceMode !== 'worktree' || !node.worktreePath) {
+      return { ok: true, isWorktree: false };
+    }
+    const r = await sendToAgent(node.machine, {
+      t: 'worktree-check',
+      worktreePath: node.worktreePath,
+      parentRepo: node.worktreeParentRepo || '',
+      branch: node.worktreeBranch || '',
+    });
+    return {
+      ok: !!r.ok,
+      isWorktree: true,
+      dirty: !!r.dirty,
+      unmergedCommits: +r.unmergedCommits || 0,
+      branch: node.worktreeBranch || r.worktreeBranch || '',
+      worktreePath: node.worktreePath,
+      msg: r.msg || '',
+    };
+  }
+
+  async function removeNodeWorktree(projectId, nodeId, { force = false } = {}) {
+    const { proj, node } = findProjectNode(projectId, nodeId);
+    if (!proj) return { ok: false, msg: '找不到该项目' };
+    if (!node) return { ok: false, msg: '找不到该节点' };
+    if (node.workspaceMode !== 'worktree' || !node.worktreePath) {
+      return { ok: true, isWorktree: false, msg: '该节点未使用独立 worktree' };
+    }
+    return sendToAgent(node.machine, {
+      t: 'worktree-remove',
+      worktreePath: node.worktreePath,
+      parentRepo: node.worktreeParentRepo || '',
+      branch: node.worktreeBranch || '',
+      force: !!force,
+    });
   }
 
   // Send a structured instruction (Master -> Worker) or peer message (Cowork)
@@ -786,7 +1608,23 @@ function createMesh({
     const msgType = type || (edge && edge.type === 'cowork' ? 'cowork' : toNode.role === 'peer' ? 'cowork' : 'command');
     const envelope = formatEnvelope({ project: proj, fromNode, toNode, type: msgType, text: cleanText, goal, stopCondition });
 
-    return deliverToNode(proj, toNode, envelope, { forceWake });
+    const toTag = toNode.alias || toNode.id;
+    const entry = board.append(proj.id, {
+      channel: 'main',
+      kind: 'post',
+      agent: fromNode ? (fromNode.alias || fromNode.id) : '项目管理中心',
+      nodeId: fromNode ? fromNode.id : null,
+      text: `@${toTag} ${cleanText}`,
+      mentions: [toTag],
+    });
+    if (fromNode) {
+      fromNode.lastPostSeq = entry.seq;
+      fromNode.lastReadSeq = Math.max(fromNode.lastReadSeq || 0, entry.seq);
+    }
+    toNode.lastMentionedSeq = entry.seq;
+    toNode.lastMentionedAt = entry.ts;
+
+    return deliverToNode(proj, toNode, envelope, { forceWake, seq: entry.seq });
   }
 
   // Worker reports completion / review gate hit back to its Master node
@@ -799,6 +1637,10 @@ function createMesh({
     summary,
     reviewStatus = 'waiting_review',
     artifacts = [],
+    doneWhenStatus = null,
+    checksOutput = '',
+    gitAudit = null,
+    boundaries = null,
   }) {
     const { project: proj, node: workerNode } = resolveCaller({
       projectId,
@@ -810,7 +1652,23 @@ function createMesh({
     if (!proj || !workerNode) return { ok: false, msg: '找不到汇报节点所属的项目拓扑' };
 
     workerNode.reviewStatus = ['waiting_review', 'done', 'blocked', 'approved'].includes(reviewStatus) ? reviewStatus : 'waiting_review';
-    workerNode.lastReport = cleanStr(summary, 4000);
+    let reportText = cleanStr(summary, 4000);
+    if (Array.isArray(doneWhenStatus) && doneWhenStatus.length) {
+      const statusText = doneWhenStatus
+        .map((x) => (typeof x === 'string' ? cleanStr(x, 200) : `${cleanStr(x.item || x.title || '', 200)}:${x.ok ? '通过' : '未通过'}`))
+        .filter(Boolean)
+        .join('；');
+      if (statusText) reportText += `\n验收自检：${statusText}`;
+    }
+    if (typeof checksOutput === 'string' && checksOutput.trim()) {
+      reportText += `\n验证输出：${cleanStr(checksOutput, 1000)}`;
+    }
+    const auditRes = evaluateGitAudit(workerNode, gitAudit, boundaries);
+    const warnings = formatAuditWarnings(auditRes);
+    if (warnings.length) {
+      reportText += `\n${warnings.join('\n')}`;
+    }
+    workerNode.lastReport = reportText;
     if (Array.isArray(artifacts)) {
       workerNode.artifacts = artifacts.map((a) => cleanStr(a, 400)).filter(Boolean).slice(0, 20);
     }
@@ -824,9 +1682,29 @@ function createMesh({
     const masterNode = (inEdge && proj.nodes.find((n) => n.id === inEdge.from)) ||
       proj.nodes.find((n) => n.role === 'master' && n.id !== workerNode.id);
 
+    const masterTag = masterNode ? (masterNode.alias || masterNode.id) : '';
+    const statusTag = workerNode.reviewStatus === 'blocked' ? '[blocked]' : '[done]';
+    const entry = board.append(proj.id, {
+      channel: 'main',
+      kind: 'report',
+      agent: workerNode.alias || workerNode.id,
+      nodeId: workerNode.id,
+      text: `${masterTag ? '@' + masterTag + ' ' : ''}${statusTag} ${workerNode.lastReport}`,
+      mentions: masterTag ? [masterTag] : [],
+      artifacts: workerNode.artifacts || [],
+      done: workerNode.reviewStatus === 'done' || workerNode.reviewStatus === 'waiting_review',
+      audit: auditRes,
+    });
+    workerNode.lastPostSeq = entry.seq;
+    workerNode.lastReadSeq = Math.max(workerNode.lastReadSeq || 0, entry.seq);
+    if (masterNode) {
+      masterNode.lastMentionedSeq = entry.seq;
+      masterNode.lastMentionedAt = entry.ts;
+    }
+
     save();
     if (!masterNode) {
-      return { ok: true, msg: '已记录节点汇报（当前拓扑未配置主控节点）', project: enrichProject(proj) };
+      return { ok: true, msg: '已记录节点汇报（当前拓扑未配置主控节点）', entry, audit: auditRes, project: enrichProject(proj) };
     }
 
     const envelope = formatEnvelope({
@@ -837,8 +1715,8 @@ function createMesh({
       text: workerNode.lastReport,
       artifacts: workerNode.artifacts,
     });
-    const deliv = await deliverToNode(proj, masterNode, envelope);
-    return { ok: true, masterDelivery: deliv, project: enrichProject(proj) };
+    const deliv = await deliverToNode(proj, masterNode, envelope, { seq: entry.seq });
+    return { ok: true, masterDelivery: deliv, entry, audit: auditRes, project: enrichProject(proj) };
   }
 
   const activeTransfers = new Map(); // readRid | upRid -> transfer state
@@ -1245,21 +2123,68 @@ function createMesh({
         }
       }
 
-      // 2. If session is now idle or done (and has no open permission prompts), flush its inbox
+      // 2. If session is now idle or done (and has no open permission prompts), flush its inbox and any unread @mentions
       const isIdle = s.state === 'idle' || s.state === 'done';
       const hasPerms = Array.isArray(s.perms) && s.perms.length > 0;
       const canInject = !s.via || s.via !== 'off';
       if (isIdle && !hasPerms && canInject) {
         const found = findBySession(machineName, s.id);
-        if (found && Array.isArray(found.node.inbox) && found.node.inbox.length > 0) {
-          const autoMsgs = found.node.inbox.filter((m) => !m.needsManualWake);
-          if (autoMsgs.length > 0) {
-            found.node.inbox = found.node.inbox.filter((m) => m.needsManualWake);
-            const combined = autoMsgs.map((m) => m.text).join('\n\n---\n\n');
+        if (found) {
+          const node = found.node;
+          const parts = [];
+          let autoMsgs = [];
+          if (Array.isArray(node.inbox) && node.inbox.length > 0) {
+            autoMsgs = node.inbox.filter((m) => !m.needsManualWake);
+            if (autoMsgs.length > 0) {
+              node.inbox = node.inbox.filter((m) => m.needsManualWake);
+              parts.push(...autoMsgs.map((m) => m.text));
+              const maxFlushedSeq = autoMsgs.reduce((mx, m) => Math.max(mx, m.seq || 0), 0);
+              if (maxFlushedSeq) node.lastNudgedSeq = Math.max(node.lastNudgedSeq || 0, maxFlushedSeq);
+              dirty = true;
+            }
+          }
+
+          const cursor = Math.max(node.lastReadSeq || 0, node.lastNudgedSeq || 0);
+          let unreadWakeText = '';
+          if ((node.lastMentionedSeq || 0) > cursor) {
+            const { entries } = board.read(found.project.id, { since: cursor, limit: 20 });
+            const aliasL = String(node.alias || '').toLowerCase();
+            const idL = String(node.id || '').toLowerCase();
+            const subscribedChannels = new Set(
+              board.getChannels(found.project.id)
+                .filter((c) => !c.archived && Array.isArray(c.subscribers) && c.subscribers.includes(node.id))
+                .map((c) => String(c.name || '').toLowerCase())
+            );
+            const unread = entries.filter((e) => {
+              if (e.nodeId && e.nodeId === node.id) return false;
+              if (e.mentionAll || node.wakeMode === 'all') return true;
+              const mc = Array.isArray(e.mentionChannels) ? e.mentionChannels.map((x) => String(x).toLowerCase()) : [];
+              const ech = String(e.channel || 'main').toLowerCase();
+              if (subscribedChannels.size && ((ech !== 'main' && subscribedChannels.has(ech)) || mc.some((c) => subscribedChannels.has(c)))) {
+                return true;
+              }
+              const ms = Array.isArray(e.mentions) ? e.mentions.map((x) => String(x).toLowerCase()) : [];
+              return (aliasL && ms.includes(aliasL)) || (idL && ms.includes(idL));
+            });
+            if (unread.length > 0) {
+              unreadWakeText = unread
+                .map((entry) => formatWakePrompt({ project: found.project, entry, targetNode: node }))
+                .join('\n\n---\n\n');
+              parts.push(unreadWakeText);
+            }
+            node.lastNudgedSeq = Math.max(node.lastNudgedSeq || 0, node.lastMentionedSeq || 0);
             dirty = true;
+          }
+
+          if (parts.length > 0) {
+            const combined = parts.join('\n\n---\n\n');
             sendToAgent(machineName, { t: 'send', id: s.id, text: combined }).then((r) => {
               if (!r || !r.ok) {
-                found.node.inbox = [...autoMsgs.map((m) => ({ ...m, needsManualWake: true })), ...(found.node.inbox || [])].slice(0, MAX_INBOX);
+                const fallbackMsgs = [...autoMsgs.map((m) => ({ ...m, needsManualWake: true }))];
+                if (unreadWakeText) {
+                  fallbackMsgs.push({ id: idGen('msg'), text: unreadWakeText, at: Date.now(), needsManualWake: true });
+                }
+                node.inbox = [...fallbackMsgs, ...(node.inbox || [])].slice(0, MAX_INBOX);
                 save();
               }
             }).catch(() => {});
@@ -1523,12 +2448,36 @@ function createMesh({
       json(res, 200, { ok: true, config: watchdog.getConfig() });
       return true;
     }
+    if (req.method === 'GET' && p === '/api/mesh/roles') {
+      json(res, 200, { ok: true, roles: roleStore.list() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/pools') {
+      json(res, 200, { ok: true, pools: modelRouter.getPoolsStatus() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/board') {
+      const projectId = url.searchParams.get('projectId') || '';
+      const nodeId = url.searchParams.get('nodeId') || '';
+      const machine = url.searchParams.get('machine') || '';
+      const sessionId = url.searchParams.get('sessionId') || '';
+      const callerCwd = url.searchParams.get('callerCwd') || '';
+      const since = Number(url.searchParams.get('since') || 0) || 0;
+      const limit = Number(url.searchParams.get('limit') || 50) || 50;
+      const channel = url.searchParams.get('channel') || '';
+      const seqListRaw = url.searchParams.get('seqList') || '';
+      const seqList = seqListRaw
+        ? seqListRaw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isSafeInteger(n) && n > 0)
+        : null;
+      json(res, 200, readBoard({ projectId, nodeId, machine, sessionId, callerCwd, since, limit, channel, seqList }));
+      return true;
+    }
     if (req.method !== 'POST' || !p.startsWith('/api/mesh/')) return false;
 
     let d = {};
     try { d = JSON.parse(await readBody(req, 32768)); } catch {}
     // Operations that act on remote machines require a fresh TOTP session
-    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm'].includes(p);
+    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm', '/api/mesh/board/post', '/api/mesh/worktree-remove'].includes(p);
     if (needsStepUp && typeof isFresh === 'function' && !isFresh()) {
       json(res, 200, { ok: false, need: 'totp', msg: '远程操作前请再输一次验证码' });
       return true;
@@ -1604,6 +2553,84 @@ function createMesh({
       json(res, 200, await emitEvent(d));
       return true;
     }
+    if (p === '/api/mesh/board/post') {
+      const r = await postBoard(d);
+      if (r.ok) audit('mesh-board-post', ip, String(d.projectId || ''), String(d.agent || '管理员').slice(0, 40));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/task') {
+      const r = await manageTask(d);
+      if (r.ok) audit('mesh-task', ip, String(d.action || ''), String(d.taskId || d.title || '').slice(0, 40));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/channel') {
+      const r = manageChannel(d);
+      if (r.ok) audit('mesh-channel', ip, String(d.action || ''), String(d.channel || '').slice(0, 40));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/worktree-check') {
+      const r = await checkNodeWorktree(d.projectId, d.nodeId);
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/worktree-remove') {
+      const r = await removeNodeWorktree(d.projectId, d.nodeId, { force: !!d.force });
+      if (r.ok) audit('mesh-worktree-remove', ip, String(d.projectId || ''), String(d.nodeId || '').slice(0, 40));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/roles') {
+      const r = d.op === 'reset' ? roleStore.reset(d.name) : roleStore.save(d.name, d.raw);
+      if (r.ok) audit('mesh-roles', ip, d.op || 'save', String(d.name || '').slice(0, 32));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/pools') {
+      if (d.op === 'reset-cooldown') {
+        const r = modelRouter.resetCooldown(d.harness, d.model);
+        audit('mesh-pools', ip, 'reset-cooldown', String(d.harness || 'all'));
+        json(res, 200, { ...r, pools: modelRouter.getPoolsStatus() });
+        return true;
+      }
+      if (d.op === 'probe') {
+        const targetHarness = cleanStr(d.harness, 40);
+        let probedNode = null;
+        for (const proj of data.projects) {
+          for (const node of proj.nodes || []) {
+            if (!node.sessionId) continue;
+            if (targetHarness && node.tool !== targetHarness) continue;
+            const live = liveSessionOf(node.machine, node.sessionId);
+            if (live && live.online && ['idle', 'done'].includes(live.state) && !live.asking) {
+              probedNode = node;
+              break;
+            }
+          }
+          if (probedNode) break;
+        }
+        let probeMsg = '';
+        if (probedNode) {
+          const sendRes = await sendToAgent(probedNode.machine, { t: 'send', id: probedNode.sessionId, text: '/usage' });
+          probeMsg = sendRes && sendRes.ok
+            ? `已向空闲节点 ${probedNode.alias || probedNode.id} 发送 /usage 探活`
+            : `发送 /usage 探活失败：${(sendRes && sendRes.msg) || ''}`;
+        } else {
+          probeMsg = targetHarness ? `暂无空闲的 ${targetHarness} 节点可执行 /usage 探活` : '暂无空闲节点可执行 /usage 探活';
+        }
+        const mp = typeof getMagpie === 'function' ? getMagpie() : null;
+        if (mp && typeof mp.poll === 'function') {
+          try { await mp.poll(); } catch {}
+        }
+        json(res, 200, { ok: true, probed: !!probedNode, msg: probeMsg, pools: modelRouter.getPoolsStatus() });
+        return true;
+      }
+      const r = modelRouter.savePools(d.pools);
+      if (r.ok) audit('mesh-pools', ip, 'save', String(Object.keys(d.pools || {}).length));
+      json(res, 200, { ...r, pools: modelRouter.getPoolsStatus() });
+      return true;
+    }
     return false;
   }
 
@@ -1655,6 +2682,22 @@ function createMesh({
         const r = await reportResult({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
+      if (op === 'board_post') {
+        const r = await postBoard({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        return reply(r);
+      }
+      if (op === 'board_read') {
+        const r = readBoard({ ...d, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd });
+        return reply(r);
+      }
+      if (op === 'task') {
+        const r = await manageTask({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        return reply(r);
+      }
+      if (op === 'channel') {
+        const r = manageChannel({ ...d, fromNodeId: d.fromNodeId || callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        return reply(r);
+      }
       if (op === 'transfer') {
         const r = requestTransfer({ ...d, fromMachine: d.fromMachine || machineName });
         return reply(r);
@@ -1704,6 +2747,13 @@ function createMesh({
     spawnWorker,
     sendMessage,
     reportResult,
+    postBoard,
+    readBoard,
+    manageTask,
+    manageChannel,
+    checkNodeWorktree,
+    removeNodeWorktree,
+    board,
     requestTransfer,
     confirmTransfer,
     flushInbox,
@@ -1720,6 +2770,8 @@ function createMesh({
     emitEvent,
     recordEvent,
     watchdog,
+    roleStore,
+    modelRouter,
   };
 }
 

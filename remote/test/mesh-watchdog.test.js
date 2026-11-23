@@ -369,6 +369,181 @@ describe('mesh-watchdog', () => {
     });
   });
 
+  describe('Watchdog Swarm Rules (W7 & W8)', () => {
+    it('W7: nudges unanswered @mention up to 2 times, alerts @master + notifies, and clears when replied', async () => {
+      let curTime = 2000000;
+      const sentMsgs = [];
+      const notifs = [];
+      const boardPosts = [];
+
+      const masterNode = {
+        id: 'node-master',
+        alias: 'master',
+        role: 'master',
+        machine: 'pc-a',
+        sessionId: 'sess-master',
+        reviewStatus: 'running',
+        inbox: [],
+      };
+      const workerNode = {
+        id: 'node-worker',
+        alias: 'worker-1',
+        role: 'worker',
+        machine: 'pc-a',
+        sessionId: 'sess-worker',
+        reviewStatus: 'running',
+        lastMentionedSeq: 5,
+        lastMentionedAt: curTime,
+        lastPostSeq: 2,
+        inbox: [],
+        watchdogAlert: null,
+      };
+      const proj = { id: 'proj-w7', name: 'W7 测试', nodes: [masterNode, workerNode], events: [], tasks: [] };
+
+      const wd = createWatchdog({
+        dataDir: tmpDir,
+        getProjects: () => [proj],
+        getMachines: () => new Map([['pc-a', { name: 'pc-a', online: true }]]),
+        liveSessionOf: () => ({ online: true, state: 'idle', asking: false, lastAct: '等待中', last: curTime }),
+        sendToAgent: async (machine, payload) => { sentMsgs.push({ machine, payload }); return { ok: true }; },
+        postBoard: async (d) => { boardPosts.push(d); },
+        notify: async (m) => { notifs.push(m); return { sent: 1 }; },
+        now: () => curTime,
+      });
+
+      // t=0: no nudge yet
+      wd.tick();
+      assert.equal(sentMsgs.filter((m) => m.payload.text.includes('W7') || m.payload.text.includes('催醒')).length, 0);
+
+      // t=+10 min: nudge 1/2
+      curTime += 10 * 60e3;
+      wd.tick();
+      assert.equal(sentMsgs.filter((m) => m.payload.text.includes('催醒 (1/2)')).length, 1);
+      assert.notEqual(workerNode.watchdogAlert && workerNode.watchdogAlert.code, 'W7_UNANSWERED_MENTION');
+
+      // t=+20 min: nudge 2/2
+      curTime += 10 * 60e3;
+      wd.tick();
+      assert.equal(sentMsgs.filter((m) => m.payload.text.includes('催醒 (2/2)')).length, 1);
+      assert.notEqual(workerNode.watchdogAlert && workerNode.watchdogAlert.code, 'W7_UNANSWERED_MENTION');
+
+      // t=+30 min: W7_UNANSWERED_MENTION alert + board post @master + phone push
+      curTime += 10 * 60e3;
+      wd.tick();
+      assert.ok(workerNode.watchdogAlert);
+      assert.equal(workerNode.watchdogAlert.code, 'W7_UNANSWERED_MENTION');
+      assert.equal(notifs.filter((n) => n.title.includes('点名未回帖')).length, 1);
+      assert.equal(boardPosts.length, 1);
+      assert.equal(boardPosts[0].kind, 'watchdog');
+      assert.match(boardPosts[0].text, /@master/);
+
+      // Worker replies on board (lastPostSeq >= lastMentionedSeq) -> alert cleared
+      workerNode.lastPostSeq = 6;
+      curTime += 15e3;
+      wd.tick();
+      assert.equal(workerNode.watchdogAlert, null);
+    });
+
+    it('W7: triggers onQuotaExhausted immediately when unanswered idle node shows quota/429 error', () => {
+      let curTime = 3000000;
+      const quotaCalls = [];
+
+      const workerNode = {
+        id: 'node-w',
+        alias: 'worker-q',
+        role: 'worker',
+        machine: 'pc-a',
+        sessionId: 'sess-w',
+        reviewStatus: 'running',
+        lastMentionedSeq: 3,
+        lastMentionedAt: curTime,
+        lastPostSeq: 0,
+        inbox: [],
+      };
+      const proj = { id: 'proj-q', name: 'Quota 测试', nodes: [workerNode], events: [], tasks: [] };
+
+      const wd = createWatchdog({
+        dataDir: tmpDir,
+        getProjects: () => [proj],
+        getMachines: () => new Map([['pc-a', { name: 'pc-a', online: true }]]),
+        liveSessionOf: () => ({ online: true, state: 'idle', asking: false, lastAct: 'API Error: 429 RESOURCE_EXHAUSTED', last: curTime }),
+        onQuotaExhausted: (p, n, reason) => quotaCalls.push({ p, n, reason }),
+        now: () => curTime,
+      });
+
+      wd.tick();
+      assert.equal(quotaCalls.length, 1);
+      assert.match(quotaCalls[0].reason, /429 RESOURCE_EXHAUSTED/);
+
+      // Next tick for same seq should not spam onQuotaExhausted
+      curTime += 15e3;
+      wd.tick();
+      assert.equal(quotaCalls.length, 1);
+    });
+
+    it('W8: fires W8_SWARM_STALL when tasks are unfinished and all non-master nodes stay idle >= 5 min, clears when working', () => {
+      let curTime = 4000000;
+      const boardPosts = [];
+      const notifs = [];
+      let workerState = 'idle';
+
+      const masterNode = { id: 'm1', alias: 'master', role: 'master', machine: 'pc-a', sessionId: 's-m', reviewStatus: 'running' };
+      const worker1 = { id: 'w1', alias: 'worker-1', role: 'worker', machine: 'pc-a', sessionId: 's-w1', reviewStatus: 'running' };
+      const proj = {
+        id: 'proj-w8',
+        name: 'W8 停滞测试',
+        nodes: [masterNode, worker1],
+        tasks: [{ id: 't1', title: '未完成任务', status: 'in_progress' }],
+        events: [],
+      };
+
+      const wd = createWatchdog({
+        dataDir: tmpDir,
+        getProjects: () => [proj],
+        getMachines: () => new Map([['pc-a', { name: 'pc-a', online: true }]]),
+        liveSessionOf: (m, s) => ({ online: true, state: s === 's-m' ? 'idle' : workerState, asking: false, lastAct: '', last: curTime }),
+        recordEvent: (p, evt) => { p.events = p.events || []; p.events.push(evt); },
+        postBoard: async (d) => { boardPosts.push(d); },
+        notify: async (m) => { notifs.push(m); return { sent: 1 }; },
+        now: () => curTime,
+      });
+
+      wd.tick();
+      assert.equal(boardPosts.length, 0);
+
+      // Advance 4 min -> not yet
+      curTime += 4 * 60e3;
+      wd.tick();
+      assert.equal(boardPosts.length, 0);
+
+      // Advance 1 more min (total 5 min) -> fires once
+      curTime += 60e3;
+      wd.tick();
+      assert.equal(boardPosts.length, 1);
+      assert.equal(boardPosts[0].kind, 'watchdog');
+      assert.match(boardPosts[0].text, /@master.*\[W8\]/);
+      assert.equal(notifs.length, 1);
+      assert.ok(proj.events.some((e) => e.kind === 'W8_SWARM_STALL'));
+
+      // Subsequent tick in same stall episode does not duplicate
+      curTime += 60e3;
+      wd.tick();
+      assert.equal(boardPosts.length, 1);
+
+      // Worker resumes working -> stall episode resets; if it stalls again for 5 min, fires again
+      workerState = 'working';
+      curTime += 30e3;
+      wd.tick();
+
+      workerState = 'idle';
+      curTime += 10e3;
+      wd.tick();
+      curTime += 5 * 60e3;
+      wd.tick();
+      assert.equal(boardPosts.length, 2);
+    });
+  });
+
   describe('Trigger Rate-Limiting & Deduplication', () => {
     it('deduplicates identical events within 5 seconds', async () => {
       const mesh = createMesh({

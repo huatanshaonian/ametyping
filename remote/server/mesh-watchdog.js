@@ -16,7 +16,11 @@ const DEFAULT_CONFIG = {
   offlineAlertMin: 2,
   folderPollSec: 30,
   triggerMaxPerHour: 6,
+  mentionTimeoutMin: 10,
+  swarmStallMin: 5,
 };
+
+const QUOTA_ERR_RE = /429|RESOURCE_EXHAUSTED|out of credits|quota|usage limit|rate limit/i;
 
 function normalizeErrorSig(str) {
   if (!str || typeof str !== 'string') return '';
@@ -86,9 +90,12 @@ function createWatchdog({
   notify = async () => ({ sent: 0 }),
   save = () => {},
   now = () => Date.now(),
+  onQuotaExhausted = null,
+  postBoard = null,
 }) {
   const { getConfig, updateConfig } = loadMeshConfig(dataDir);
   const nodeTrack = new Map(); // key: "projectId|nodeId" -> tracking object
+  const projTrack = new Map(); // key: projectId -> { stallSince, stallAlerted }
   const machOfflineSince = new Map(); // machineName -> timestamp when first noticed offline
   let timer = null;
 
@@ -187,6 +194,9 @@ function createWatchdog({
             exitTimestamps: [],
             handlingExit: false,
             lastErrorTs: 0,
+            mentionNudgeCount: 0,
+            lastMentionNudgedAt: 0,
+            quotaTriggeredSeq: 0,
           };
           nodeTrack.set(key, track);
         }
@@ -401,8 +411,85 @@ function createWatchdog({
           }
         }
 
-        // W1: 干完忘了汇报 (仅适用于非主控执行节点)
+        // W7: 点名未回帖 / 静默额度耗尽检测
         const isIdle = ['idle', 'done'].includes(liveState) && !liveAsking;
+        const lastMentionedSeq = node.lastMentionedSeq || 0;
+        const lastPostSeq = node.lastPostSeq || 0;
+        if (lastPostSeq >= lastMentionedSeq) {
+          track.mentionNudgeCount = 0;
+          track.lastMentionNudgedAt = 0;
+          track.quotaTriggeredSeq = 0;
+          if (track.activeAlerts.has('W7_UNANSWERED_MENTION')) {
+            track.activeAlerts.delete('W7_UNANSWERED_MENTION');
+            if (node.watchdogAlert && node.watchdogAlert.code === 'W7_UNANSWERED_MENTION') {
+              node.watchdogAlert = null;
+            }
+          }
+        } else if (node.lastMentionedAt > 0 && isIdle) {
+          if (QUOTA_ERR_RE.test(live.lastAct || '')) {
+            if (typeof onQuotaExhausted === 'function' && track.quotaTriggeredSeq !== lastMentionedSeq) {
+              track.quotaTriggeredSeq = lastMentionedSeq;
+              Promise.resolve(onQuotaExhausted(proj, node, live.lastAct)).catch(() => {});
+            }
+          } else if (curTime - node.lastMentionedAt >= cfg.mentionTimeoutMin * 60e3) {
+            if ((track.mentionNudgeCount || 0) < 2) {
+              const refTime = track.mentionNudgeCount === 0
+                ? node.lastMentionedAt
+                : (track.lastMentionNudgedAt || node.lastMentionedAt);
+              if (curTime - refTime >= cfg.mentionTimeoutMin * 60e3) {
+                track.mentionNudgeCount = (track.mentionNudgeCount || 0) + 1;
+                track.lastMentionNudgedAt = curTime;
+                recordEvent(proj, {
+                  source: 'watchdog',
+                  kind: 'W7_NUDGE',
+                  machine: node.machine,
+                  nodeId: node.id,
+                  summary: `点名 #${lastMentionedSeq} 未回帖，已发送第 ${track.mentionNudgeCount}/2 次催醒`,
+                  payload: { mentionedSeq: lastMentionedSeq, nudgeCount: track.mentionNudgeCount },
+                });
+                sendToAgent(node.machine, {
+                  t: 'send',
+                  id: node.sessionId,
+                  text: `[AmeMesh Watchdog 催醒 (${track.mentionNudgeCount}/2)] 你在黑板 #${lastMentionedSeq} 被 @ 提及但尚未回帖响应，请调用 mesh_board_read 查看并在黑板回复。`,
+                });
+                save();
+              }
+            } else if (!track.activeAlerts.has('W7_UNANSWERED_MENTION')) {
+              const refTime = track.lastMentionNudgedAt || node.lastMentionedAt;
+              if (curTime - refTime >= cfg.mentionTimeoutMin * 60e3) {
+                track.activeAlerts.add('W7_UNANSWERED_MENTION');
+                node.watchdogAlert = { code: 'W7_UNANSWERED_MENTION', label: '点名未回帖', at: curTime };
+                recordEvent(proj, {
+                  source: 'watchdog',
+                  kind: 'W7_UNANSWERED_MENTION',
+                  machine: node.machine,
+                  nodeId: node.id,
+                  summary: `节点在 #${lastMentionedSeq} 被 @ 后连续 2 次催醒仍未回帖`,
+                  payload: { mentionedSeq: lastMentionedSeq, nudgeCount: track.mentionNudgeCount },
+                });
+                if (typeof postBoard === 'function') {
+                  const masterNode = (proj.nodes || []).find((n) => n.role === 'master' && n.id !== node.id);
+                  const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+                  Promise.resolve(postBoard({
+                    projectId: proj.id,
+                    agent: '看门狗',
+                    kind: 'watchdog',
+                    text: `${masterMention}[W7] 节点 ${node.alias || node.id} 在 #${lastMentionedSeq} 被 @ 后连续 2 次催醒仍未回帖响应，请介入检查。`,
+                  })).catch(() => {});
+                }
+                notify({
+                  title: '看门狗 · 节点点名未回帖',
+                  body: `${proj.name} / ${node.alias || node.id} 在 #${lastMentionedSeq} 被 @ 后连续 2 次催醒仍未回帖`,
+                  tag: `wd-w7-${node.id}`,
+                  url: `/#proj=${proj.id}`,
+                });
+                save();
+              }
+            }
+          }
+        }
+
+        // W1: 干完忘了汇报 (仅适用于非主控执行节点)
         const hasInboxWork = node.inbox && node.inbox.some((m) => !m.needsManualWake);
         if (node.role !== 'master' && isIdle && !hasInboxWork) {
           const idleDuration = curTime - (track.stateSince || curTime);
@@ -474,6 +561,55 @@ function createWatchdog({
             save();
           }
         }
+      }
+
+      // W8: 全组停滞 (存在未完成任务，但全部非主控节点均处于 idle/waiting/ended)
+      const hasPendingTasks = Array.isArray(proj.tasks) && proj.tasks.some((t) => t && t.status !== 'done');
+      const nonMasterNodes = (proj.nodes || []).filter((n) => n.role !== 'master');
+      let pt = projTrack.get(proj.id);
+      if (!pt) {
+        pt = { stallSince: 0, stallAlerted: false };
+        projTrack.set(proj.id, pt);
+      }
+      const anyWorking = nonMasterNodes.some((n) => {
+        if (!n.sessionId) return false;
+        const live = liveSessionOf(n.machine, n.sessionId);
+        return !!(live && live.online && ['working', 'thinking', 'reading', 'message'].includes(live.state));
+      });
+      if (hasPendingTasks && nonMasterNodes.length > 0 && !anyWorking) {
+        if (!pt.stallSince) pt.stallSince = curTime;
+        if (curTime - pt.stallSince >= cfg.swarmStallMin * 60e3 && !pt.stallAlerted) {
+          pt.stallAlerted = true;
+          recordEvent(proj, {
+            source: 'watchdog',
+            kind: 'W8_SWARM_STALL',
+            summary: `项目仍有未完成任务，但全部 ${nonMasterNodes.length} 个非主控节点已停滞超过 ${cfg.swarmStallMin} 分钟`,
+            payload: {
+              unfinishedTasks: proj.tasks.filter((t) => t && t.status !== 'done').length,
+              stallDurationMin: Math.round((curTime - pt.stallSince) / 60e3),
+            },
+          });
+          if (typeof postBoard === 'function') {
+            const masterNode = (proj.nodes || []).find((n) => n.role === 'master');
+            const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+            Promise.resolve(postBoard({
+              projectId: proj.id,
+              agent: '看门狗',
+              kind: 'watchdog',
+              text: `${masterMention}[W8] 蜂群全组停滞告警：项目仍有未完成任务，但全部非主控节点已空闲/等待超过 ${cfg.swarmStallMin} 分钟，请介入协调或收官。`,
+            })).catch(() => {});
+          }
+          notify({
+            title: '看门狗 · 蜂群全组停滞',
+            body: `${proj.name} 仍有未完成任务，但所有非主控节点已停滞超过 ${cfg.swarmStallMin} 分钟`,
+            tag: `wd-w8-${proj.id}`,
+            url: `/#proj=${proj.id}`,
+          });
+          save();
+        }
+      } else {
+        pt.stallSince = 0;
+        pt.stallAlerted = false;
       }
     }
   }
