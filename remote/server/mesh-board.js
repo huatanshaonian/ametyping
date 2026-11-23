@@ -14,7 +14,7 @@ function parseMentions(text) {
   const src = String(text || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`[^`\n]+`/g, ' ');
-  const re = /(?:^|[\s([{"'（【「，。；：、！？])@([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
+  const re = /(?:^|[\s([{"'（【「，。；：、！？])[@＠]([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
   const mentions = [];
   const seen = new Set();
   let mentionAll = false;

@@ -45,6 +45,7 @@ description: >
 3. **只为三类硬价值开新节点**：① 真正可并行的无交集文件边界；② 跨机 / 跨硬件（GPU、Linux）；③ 需要独立视角的只读 **`verifier`**。
 
 > **选机参考**：`mesh_status` 会返回每台机器的在线状态、已安装 `harnesses`（以及 `meshReadyHarnesses`）和用户在 Windose「Skill 与协同」中维护的机器角色/硬件备忘，派单前先核对再选机。
+> **当前 Harness 避坑**：暂不指派 `kiro`（响应极慢且静默不报错），也不在 `opencode` 下选用 Claude Opus 模型（优先由模型池自动调度 `claude` / `agy` 原生 Claude / Gemini 与 `opencode` 的 GPT 系列）。
 
 ---
 
@@ -98,3 +99,10 @@ mesh_spawn(machine="dell97", cwd="/work/repo", role="worker", pool="fast-coder",
    - 涉及界面或绘图时，亲自打开真实图像/截图核对布局与标注；
    - 涉及科研计算时，核对落盘的 **`npz`** 全量产物与解析/参考解残差；
    - 全部通过后再由主控统一清理工作区、汇总交付并安排 Git 提交或部署。
+
+
+### Worker 复用与生命周期管理
+- **热上下文复用（优先于重拉新节点）**：当某个已完工的 Worker 所在子领域有后续串联/修补任务时，**不要重新 `mesh_spawn`**，直接调用 **`mesh_send(toNodeId=..., text=..., goal=..., stopCondition=...)`** 复用这个上下文还热乎的节点接着干。
+- **静默批准结单**：节点处于 `waiting_review` 且验收通过时，直接调用 **`mesh_review(nodeId=..., action="approve")`** 静默结单（不用借道 `mesh_report`）。
+- **打回返工**：发现问题时调用 **`mesh_review(nodeId=..., action="reject", note="具体问题与修改要求")`**，自动切回 `running` 并在黑板发帖唤醒该节点。
+- **退役归档（保留拓扑痕迹）**：确认某个 Worker 或 `verifier` 彻底干完活、不再需要参与后续阶段时，调用 **`mesh_review(nodeId=..., action="archive")`** 将其归档退役——此后不再被看门狗巡检、不再参与 `@all` 唤醒、不再占用活跃并发配额，但**永久保留在拓扑图与黑板历史痕迹中**。

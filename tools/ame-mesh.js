@@ -234,9 +234,10 @@ async function runBgMcp(args = {}, opts = {}) {
 
 function rpc(op, params = {}, opts = {}) {
   const sessionId = params.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
-  const projectId = params.projectId || process.env.AME_PROJECT_ID || '';
-  const fromNodeId = params.fromNodeId || process.env.AME_NODE_ID || '';
-  const nodeId = params.nodeId || process.env.AME_NODE_ID || '';
+  const projectId = params.projectId || process.env.AME_PROJECT_ID || process.env.AME_MESH_PROJECT_ID || '';
+  const envNodeId = process.env.AME_NODE_ID || process.env.AME_MESH_NODE_ID || '';
+  const fromNodeId = params.fromNodeId || envNodeId;
+  const nodeId = params.nodeId || envNodeId;
   const callerCwd = params.callerCwd || opts.cwd || process.cwd();
   const payload = {
     op,
@@ -353,6 +354,20 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'mesh_review',
+    description: 'Master 专用结单与节点生命周期管理：approve（静默批准结单）、reject（打回返工并可附反馈唤醒）、archive（归档退役：停止唤醒与看门狗监控，但永久保留拓扑与黑板痕迹）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: '可选，项目 ID' },
+        nodeId: { type: 'string', description: '目标节点 ID 或别名' },
+        action: { type: 'string', enum: ['approve', 'reject', 'archive'], description: 'approve=静默批准结单, reject=打回返工, archive=退役归档保留痕迹' },
+        note: { type: 'string', description: '可选，结单备注或打回返工意见' },
+      },
+      required: ['nodeId', 'action'],
+    },
+  },
+  {
     name: 'mesh_transfer',
     description: '请求跨机器传输文件：小于 50MB 的文件在目标机器在线且开启文件浏览与上传（files & upload）时会自动流式直传并做 CRC-32 校验；大于等于 50MB 或目标离线/不可写时，自动降级向用户发起「移动硬盘人工拷贝（Sneakernet）」请求卡片，用户拷贝完成后自动唤醒目标会话。',
     inputSchema: {
@@ -413,6 +428,7 @@ const MCP_TOOLS = [
       type: 'object',
       properties: {
         projectId: { type: 'string', description: '可选，项目 ID' },
+        nodeId: { type: 'string', description: '强烈建议传入，当前发言节点 ID（防止同目录多节点并行时身份串台）' },
         text: { type: 'string', description: '帖子内容（支持 @节点别名 / @all / @#频道名 点名，以及 #楼层号 引用）' },
         channel: { type: 'string', default: 'main', description: "频道名称（默认 'main'）" },
         artifacts: { type: 'array', items: { type: 'string' }, description: '可选，关联产物文件路径列表' },
@@ -446,6 +462,7 @@ const MCP_TOOLS = [
       properties: {
         action: { type: 'string', enum: ['list', 'add', 'claim', 'update', 'remove'], description: '任务板操作' },
         projectId: { type: 'string', description: '可选，项目 ID' },
+        nodeId: { type: 'string', description: '可选，当前调用节点 ID' },
         taskId: { type: 'string', description: '任务 ID（claim/update/remove 时使用）' },
         title: { type: 'string', description: '任务标题' },
         desc: { type: 'string', description: '任务详细描述' },
@@ -515,6 +532,7 @@ async function handleMcpCall(name, args = {}, opts = {}) {
     case 'mesh_spawn': return rpc('spawn', args, opts);
     case 'mesh_send': return rpc('send', args, opts);
     case 'mesh_report': return rpc('report', args, opts);
+    case 'mesh_review': return rpc('review', args, opts);
     case 'mesh_transfer': return rpc('transfer', args, opts);
     case 'mesh_run': return runBgMcp(args, opts);
     case 'mesh_trigger': return rpc('trigger', args, opts);
