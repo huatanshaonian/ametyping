@@ -119,18 +119,19 @@ describe('mesh-model-router', () => {
       now: () => curTime,
     });
 
-    // In fast-coder: claude:sonnet (anthropic) is exhausted -> should pick agy:claude-sonnet-5-5-medium
+    // In fast-coder: codex:gpt-6.2-terra (openai, 82%) is #1 and healthy; claude:sonnet (anthropic) is exhausted
     const pick1 = router.selectCandidate('fast-coder');
     assert.equal(pick1.ok, true);
-    assert.equal(pick1.candidate.harness, 'agy');
-    assert.equal(pick1.candidate.model, 'claude-sonnet-5-5-medium');
+    assert.equal(pick1.candidate.harness, 'codex');
+    assert.equal(pick1.candidate.model, 'gpt-6.2-terra');
 
     const status1 = router.getPoolsStatus();
-    assert.equal(status1['fast-coder'][0].status, 'exhausted');
-    assert.equal(status1['fast-coder'][1].status, 'healthy');
-    assert.equal(status1['fast-coder'][3].magpieInfo, '82%');
+    assert.equal(status1['fast-coder'][0].magpieInfo, '82%');
+    assert.equal(status1['fast-coder'][1].status, 'exhausted');
+    assert.equal(status1['fast-coder'][2].status, 'healthy');
 
-    // Cooldown both agy models -> falls back to opencode:gpt-6.2-sol
+    // Cooldown codex and both agy models -> falls back to opencode:gpt-6.2-sol
+    router.markCooldown('codex', 'gpt-6.2-terra', '429 rate limit', curTime + 60e3);
     router.markCooldown('agy', 'claude-sonnet-5-5-medium', '429 rate limit', curTime + 60e3);
     router.markCooldown('agy', 'gemini-4-hydrogen-medium', '429 rate limit', curTime + 60e3);
     const pick2 = router.selectCandidate('fast-coder');
@@ -138,19 +139,19 @@ describe('mesh-model-router', () => {
     assert.equal(pick2.candidate.harness, 'opencode');
     assert.equal(pick2.candidate.model, 'gpt-6.2-sol');
 
-    // Advance past cooldown -> agy native Claude becomes healthy again
+    // Advance past cooldown -> codex becomes healthy again
     curTime += 61e3;
     const pick3 = router.selectCandidate('fast-coder');
     assert.equal(pick3.ok, true);
-    assert.equal(pick3.candidate.harness, 'agy');
-    assert.equal(pick3.candidate.model, 'claude-sonnet-5-5-medium');
+    assert.equal(pick3.candidate.harness, 'codex');
+    assert.equal(pick3.candidate.model, 'gpt-6.2-terra');
 
     // Error status on all matching Magpie accounts also marks exhausted
     magpieAccounts = [
       { provider: 'anthropic', name: 'Claude 1', status: 'error', windows: [] },
     ];
     const statusErr = router.getPoolsStatus();
-    assert.equal(statusErr['fast-coder'][0].status, 'exhausted');
+    assert.equal(statusErr['fast-coder'][1].status, 'exhausted');
   });
 });
 
@@ -219,7 +220,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.ok(Array.isArray(scope.roleCatalog) && scope.roleCatalog.some((l) => l.startsWith('verifier')));
       assert.ok(Array.isArray(scope.pools) && scope.pools.some((p) => p.name === 'flagship'));
 
-      // 2. Spawn verifier (defaults to flagship pool; claude fails -> spreads away from busy master's agy to idle opencode)
+      // 2. Spawn verifier (defaults to flagship pool; claude fails -> spreads away from busy agy/codex to idle opencode)
       const spRes = await mesh.spawnWorker({
         projectId: projId,
         fromNodeId: masterNode.id,
@@ -246,7 +247,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(poolsBefore.flagship[0].status, 'cooldown');
 
       // 3. Exhaust entire pool -> returns { ok: false, exhausted: true } and posts watchdog alert on board
-      failHarnesses = new Set(['claude', 'agy', 'opencode']);
+      failHarnesses = new Set(['claude', 'codex', 'agy', 'opencode']);
       const exRes = await mesh.spawnWorker({
         projectId: projId,
         fromNodeId: masterNode.id,
@@ -332,13 +333,13 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
 
       const pick1 = router.selectCandidate('fast-coder');
       assert.equal(pick1.ok, true);
-      assert.equal(pick1.candidate.harness, 'agy');
+      assert.equal(pick1.candidate.harness, 'codex');
 
       const pick2 = router.selectCandidate('fast-coder', {
-        activeCounts: { byHarness: { agy: 1 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 1 } },
+        activeCounts: { byHarness: { codex: 1 }, byCandidate: { 'codex|gpt-6.2-sol': 1 } },
       });
       assert.equal(pick2.ok, true);
-      assert.equal(pick2.candidate.harness, 'opencode');
+      assert.equal(pick2.candidate.harness, 'agy');
 
       const pick3 = router.selectCandidate('fast-coder', { availableHarnesses: ['claude'] });
       assert.equal(pick3.ok, true);

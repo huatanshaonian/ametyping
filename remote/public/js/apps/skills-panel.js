@@ -335,6 +335,8 @@ function createPoolsView() {
   const statusEl = h('span', { class: 'skp-inline-note', 'aria-live': 'polite' });
 
   const refreshBtn = h('button', { class: 'btn', type: 'button', text: '刷新状态' });
+  const claudeCapInput = h('input', { class: 'field', type: 'number', min: '0', max: '20', step: '1', value: '2', style: 'width:54px;margin:0 4px;' });
+  const saveCapBtn = h('button', { class: 'btn', type: 'button', text: '保存上限' });
   const formatBtn = h('button', { class: 'btn', type: 'button', text: '格式化 JSON' });
   const saveBtn = h('button', { class: 'btn go', type: 'button', text: '保存模型池配置' });
 
@@ -344,9 +346,23 @@ function createPoolsView() {
     msg.classList.toggle('bad', !!isBad);
   };
 
+  saveCapBtn.addEventListener('click', async () => {
+    const val = Math.max(0, Math.min(20, Math.trunc(Number(claudeCapInput.value) || 0)));
+    claudeCapInput.value = String(val);
+    const r = await net.post('/api/mesh/config', { maxClaudePerProject: val });
+    if (r && r.ok) say(val === 0 ? '已关闭单项目 Claude Code 数量上限' : `已保存：单项目最多 ${val} 个活跃 Claude Code 成员`);
+    else say((r && r.msg) || '保存上限失败', true);
+  });
+
   root.append(
     h('p', { class: 'ghint', text: '全局模型池决定 AmeMesh 调度各角色时的候选顺位、Magpie 实时额度降权与被动冷却熔断恢复。' }),
-    h('div', { class: 'skp-toolbar' }, refreshBtn, statusEl),
+    h('div', { class: 'skp-toolbar' },
+      refreshBtn,
+      h('span', { style: 'margin-left:8px;font-size:11.5px;', text: '单项目 Claude Code 上限(0=不限):' }),
+      claudeCapInput,
+      saveCapBtn,
+      statusEl
+    ),
     msg,
     cardsBox,
     h('h4', { class: 'aim-h', text: '模型池 JSON 配置编辑器' }),
@@ -503,7 +519,13 @@ function createPoolsView() {
 
   async function load() {
     say('加载中…');
-    const r = await fetchJson('/api/mesh/pools');
+    const [r, cfgRes] = await Promise.all([
+      fetchJson('/api/mesh/pools'),
+      fetchJson('/api/mesh/config'),
+    ]);
+    if (cfgRes && cfgRes.ok && cfgRes.config && cfgRes.config.maxClaudePerProject !== undefined) {
+      claudeCapInput.value = String(cfgRes.config.maxClaudePerProject);
+    }
     if (!r || !r.ok || !r.pools) {
       say((r && r.msg) || '读取全局模型池失败', true);
       return;

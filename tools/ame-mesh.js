@@ -363,6 +363,7 @@ const MCP_TOOLS = [
         nodeId: { type: 'string', description: '目标节点 ID 或别名' },
         action: { type: 'string', enum: ['approve', 'reject', 'archive'], description: 'approve=静默批准结单, reject=打回返工, archive=退役归档保留痕迹' },
         note: { type: 'string', description: '可选，结单备注或打回返工意见' },
+        closeTerminal: { type: 'boolean', default: false, description: '仅 action=archive 时生效；显式传 true 才向该 Worker/Verifier 发送优雅退出指令（默认 false；严禁关闭 master）' },
       },
       required: ['nodeId', 'action'],
     },

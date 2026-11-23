@@ -69,7 +69,7 @@ export const removeEdge = (projectId, from, to) => post('edge', { op: 'delete', 
 export const spawnWorker = (d) => post('spawn', d);
 export const sendMessage = (d) => post('send', d);
 export const reportResult = (d) => post('report', d);
-export const reviewNode = (projectId, nodeId, action = 'approve', note = '') => post('review', { projectId, nodeId, action, note });
+export const reviewNode = (projectId, nodeId, action = 'approve', note = '', closeTerminal = false) => post('review', { projectId, nodeId, action, note, ...(closeTerminal ? { closeTerminal: true } : {}) });
 export const flushInbox = (projectId, nodeId) => post('flush', { projectId, nodeId });
 export const requestTransfer = (d) => post('transfer', d);
 export const confirmTransfer = (projectId, transferId, opts = {}) => post('transfer-confirm', { projectId, transferId, ...opts });

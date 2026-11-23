@@ -908,6 +908,34 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
         assert.ok(revReplies[2].task);
         assert.equal(revReplies[2].project, undefined);
         assert.equal(revReplies[2].tasks, undefined);
+
+        // Per-project Claude Code cap (default 2): 2 active claude nodes -> pool skips claude to agy, explicit claude blocked
+        fxOc.mesh.upsertNode(fxOc.projId, { machine: 'pc-a', sessionId: 'c-1', role: 'worker', tool: 'claude', alias: 'cc-1' });
+        fxOc.mesh.upsertNode(fxOc.projId, { machine: 'pc-a', sessionId: 'c-2', role: 'worker', tool: 'claude', alias: 'cc-2' });
+        const explicitBlocked = await fxOc.mesh.spawnWorker({
+          projectId: fxOc.projId,
+          fromNodeId: fxOc.master.id,
+          machine: 'pc-a',
+          cwd: 'D:\\repo',
+          role: 'worker',
+          tool: 'claude',
+          alias: 'cc-3',
+          prompt: 'should be blocked',
+        });
+        assert.equal(explicitBlocked.ok, false);
+        assert.match(explicitBlocked.msg, /上限/);
+        const poolDiverted = await fxOc.mesh.spawnWorker({
+          projectId: fxOc.projId,
+          fromNodeId: fxOc.master.id,
+          machine: 'pc-a',
+          cwd: 'D:\\repo',
+          role: 'worker',
+          pool: 'fast-coder',
+          alias: 'diverted-w',
+          prompt: 'should pick agy instead of claude',
+        });
+        assert.equal(poolDiverted.ok, true);
+        assert.notEqual(poolDiverted.node.tool, 'claude');
       } finally {
         fxOc.cleanup();
       }

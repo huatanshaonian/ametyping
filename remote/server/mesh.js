@@ -1160,6 +1160,27 @@ function createMesh({
     return { ok: true, delivered: true, msg: isClosed ? '目标会话已关闭，已在后台自动唤醒并注入消息' : '已直接注入目标会话终端' };
   }
 
+  function projectHarnessCounts(proj) {
+    const counts = {};
+    if (!proj || !Array.isArray(proj.nodes)) return counts;
+    for (const n of proj.nodes) {
+      if (!n || n.archived || n.reviewStatus === 'done') continue;
+      const h = String(n.tool || '').trim();
+      if (!h) continue;
+      counts[h] = (counts[h] || 0) + 1;
+    }
+    return counts;
+  }
+
+  function getMaxPerHarness() {
+    const cfg = watchdog ? watchdog.getConfig() : {};
+    const claudeCap = Number(cfg.maxClaudePerProject);
+    const out = {};
+    if (Number.isFinite(claudeCap) && claudeCap > 0) out.claude = claudeCap;
+    else if (cfg.maxClaudePerProject === undefined) out.claude = 2;
+    return out;
+  }
+
   function activeModelCounts() {
     const byHarness = {};
     const byCandidate = {};
@@ -1210,6 +1231,8 @@ function createMesh({
           exclude,
           activeCounts: activeModelCounts(),
           availableHarnesses: availHarnesses.length ? availHarnesses : null,
+          projectHarnessCounts: projectHarnessCounts(proj),
+          maxPerHarness: getMaxPerHarness(),
         });
         if (!pick.ok || !pick.candidate) break;
         const fb = pick.candidate;
@@ -1950,6 +1973,8 @@ function createMesh({
           exclude,
           activeCounts: activeModelCounts(),
           availableHarnesses: availHarnesses.length ? availHarnesses : null,
+          projectHarnessCounts: projectHarnessCounts(proj),
+          maxPerHarness: getMaxPerHarness(),
         });
         if (!pick.ok || !pick.candidate) {
           lastErr = pick.msg || lastErr || `模型池「${effectivePool}」无可用候选`;
@@ -2041,6 +2066,17 @@ function createMesh({
     }
 
     const explicitTool = hasExplicitTool ? cleanTool : 'claude';
+    const maxCaps = getMaxPerHarness();
+    const toolCap = Number(maxCaps[explicitTool]);
+    if (Number.isFinite(toolCap) && toolCap > 0) {
+      const curProjCounts = projectHarnessCounts(proj);
+      if ((curProjCounts[explicitTool] || 0) >= toolCap) {
+        return {
+          ok: false,
+          msg: `当前项目活跃 ${explicitTool} 成员已达上限（${toolCap} 个），请改用 pool 自动分流到其他 Harness（如 agy），或在「Skill 与协同 › 全局模型池」中调高上限`,
+        };
+      }
+    }
     const fullPrompt = buildFullPrompt('');
 
     const nr = upsertNode(proj.id, {
@@ -2146,7 +2182,7 @@ function createMesh({
   }
 
   // Master-only silent review / lifecycle management: approve, reject, or archive (retire while keeping topology trace)
-  async function reviewNode({ projectId, nodeId, action = 'approve', note = '', fromNodeId, fromMachine, fromSessionId, callerCwd } = {}) {
+  async function reviewNode({ projectId, nodeId, action = 'approve', note = '', closeTerminal = false, fromNodeId, fromMachine, fromSessionId, callerCwd } = {}) {
     const resolved = resolveCaller({ projectId, nodeId: fromNodeId, machine: fromMachine, sessionId: fromSessionId, callerCwd });
     let proj = resolved.project;
     if (!proj && nodeId) {
@@ -2174,10 +2210,33 @@ function createMesh({
       target.archived = true;
       target.autoResumeClosed = false;
       target.watchdogAlert = null;
-      target.lastAct = cleanNote ? `已归档退役：${cleanNote.slice(0, 120)}` : '已归档退役（保留拓扑痕迹）';
+      let terminalClosed = false;
+      let closeMsg = '';
+      if (closeTerminal === true) {
+        if (target.role === 'master') {
+          closeMsg = '（安全保护：禁止关闭主控会话终端）';
+        } else if (target.sessionId && target.machine) {
+          const live = liveSessionOf(target.machine, target.sessionId);
+          if (live && live.online && live.state !== 'history' && live.state !== 'ended') {
+            const exitRes = await sendToAgent(target.machine, { t: 'send', id: target.sessionId, text: '/exit' });
+            terminalClosed = Boolean(exitRes && exitRes.ok);
+            closeMsg = terminalClosed ? '，已发送 /exit 优雅退出会话' : `（发送退出指令失败：${(exitRes && exitRes.msg) || '未知'}）`;
+          } else {
+            closeMsg = '（会话已处于关闭状态）';
+          }
+        }
+      }
+      target.lastAct = cleanNote ? `已归档退役：${cleanNote.slice(0, 120)}` : `已归档退役（保留拓扑痕迹${terminalClosed ? '，已退出会话' : ''}）`;
       target.updatedAt = Date.now();
       save();
-      return { ok: true, projectId: proj.id, action: 'archive', node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: true }, msg: `节点「${target.alias || target.id}」已归档退役（停止唤醒与巡检，保留拓扑痕迹）` };
+      return {
+        ok: true,
+        projectId: proj.id,
+        action: 'archive',
+        terminalClosed,
+        node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: true },
+        msg: `节点「${target.alias || target.id}」已归档退役${closeMsg}`,
+      };
     }
 
     if (act === 'reject') {

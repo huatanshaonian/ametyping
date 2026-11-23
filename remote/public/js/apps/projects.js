@@ -1857,7 +1857,13 @@ function mount(initialProjectId) {
         } }) : null,
         n.reviewStatus === 'waiting_review' ? h('button', { class: 'btn', type: 'button', text: '✓ 批准检视继续', onclick: () => openSendDialog(proj, n, '检视通过，请继续下一阶段任务。') }) : null,
         !n.archived && n.role !== 'master' ? h('button', { class: 'btn', type: 'button', title: '停止唤醒与看门狗巡检，但永久保留在拓扑图和黑板历史痕迹中', text: '归档退役', onclick: async () => {
-          const r = await mesh.reviewNode(proj.id, n.id, 'archive');
+          const closeTerm = await confirmBox({
+            title: '归档退役节点',
+            text: `是否同时向「${n.alias || n.id}」发送 /exit 优雅退出该会话？`,
+            okText: '归档并退出会话',
+            cancelText: '仅归档（保留窗口）',
+          });
+          const r = await mesh.reviewNode(proj.id, n.id, 'archive', '', closeTerm);
           say(r.msg || (r.ok ? '节点已归档退役' : '归档失败'));
         } }) : null,
         n.sessionId ? h('button', { class: 'btn', type: 'button', text: '在糖糖看板打开对话', onclick: () => dashboard.openSession(n.machine, n.sessionId) }) : null,

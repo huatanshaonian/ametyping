@@ -294,7 +294,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       let pid;
       if (mEnv) {
         const cmd = `${meshPsPrefix(mEnv)}& ${ps(spec.exe)}${spec.args.length ? ' ' + spec.args.map(ps).join(' ') : ''}`;
-        pid = await bridge.launch('powershell.exe', ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
+        pid = await bridge.launch('powershell.exe', ['-NoLogo', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
       } else pid = await bridge.launch(spec.exe, spec.args, cwd);
       if (!pid) return { ok: false, msg: '启动失败' };
       if (ocThread) adoptOpenCode(resume, cwd).catch(() => {});
@@ -325,7 +325,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       const preCmd = fs.existsSync(pre) && !api ? `. ${ps(pre)}; ` : '';
       const baseCmd = api ? createProfiles().windowCommand(api.id, cwd, args) : `${preCmd}& ${ps(exe)} ${args.map(ps).join(' ')}`;
       const cmd = `${meshPsPrefix(mEnv)}${baseCmd}`;
-      pid = await bridge.launch('powershell.exe', ['-NoLogo', ...(api ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : []), '-NoExit', '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
+      pid = await bridge.launch('powershell.exe', ['-NoLogo', ...(api ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : []), ...(mEnv ? [] : ['-NoExit']), '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
     } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
     if (resume && api) { const s = sessions.get(resume); if (s) s.api = api.id; }

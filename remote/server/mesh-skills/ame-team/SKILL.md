@@ -105,4 +105,4 @@ mesh_spawn(machine="dell97", cwd="/work/repo", role="worker", pool="fast-coder",
 - **热上下文复用（优先于重拉新节点）**：当某个已完工的 Worker 所在子领域有后续串联/修补任务时，**不要重新 `mesh_spawn`**，直接调用 **`mesh_send(toNodeId=..., text=..., goal=..., stopCondition=...)`** 复用这个上下文还热乎的节点接着干。
 - **静默批准结单**：节点处于 `waiting_review` 且验收通过时，直接调用 **`mesh_review(nodeId=..., action="approve")`** 静默结单（不用借道 `mesh_report`）。
 - **打回返工**：发现问题时调用 **`mesh_review(nodeId=..., action="reject", note="具体问题与修改要求")`**，自动切回 `running` 并在黑板发帖唤醒该节点。
-- **退役归档（保留拓扑痕迹）**：确认某个 Worker 或 `verifier` 彻底干完活、不再需要参与后续阶段时，调用 **`mesh_review(nodeId=..., action="archive")`** 将其归档退役——此后不再被看门狗巡检、不再参与 `@all` 唤醒、不再占用活跃并发配额，但**永久保留在拓扑图与黑板历史痕迹中**。
+- **退役归档（保留拓扑痕迹）**：确认某个 Worker 或 `verifier` 彻底干完活、不再需要参与后续阶段时，调用 **`mesh_review(nodeId=..., action="archive")`** 将其归档退役（默认保留窗口；若确定要结束该会话，**显式传 `closeTerminal=true`** 向其发送 `/exit` 优雅退出，服务端硬限制绝不关闭 `master`）——归档后不再被看门狗巡检、不再参与 `@all` 唤醒、不再占用活跃并发配额，但**永久保留在拓扑图与黑板历史痕迹中**。
