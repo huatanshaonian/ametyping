@@ -241,3 +241,9 @@
 .mcp-t td { padding: 4px 6px 4px 0; border-bottom: 1px dotted var(--edge); vertical-align: top; } .mcp-t td small { color: var(--muted); } .mcp-t small.bad { color: var(--bad); }
 .mcp-cl { display: flex; flex-direction: column; gap: 1px; } .mcp-c b { font-weight: normal; color: var(--ink); }
 .mcp pre { max-width: 100%; overflow: auto; margin: 0; padding: 6px 8px; white-space: pre; font: 11.5px/1.5 Consolas, monospace; }
+/* 设备更新 (apps/fleet-panel.js) */
+.fleet .bad, .fleet small.bad { color: var(--bad); }
+.fleet-act { display: flex; flex-wrap: wrap; gap: 4px; }
+.fleet-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0; }
+.fleet-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; } .fleet-row > span { width: 110px; color: var(--muted); }
+.fleet-row input { flex: 1; min-width: 0; max-width: 360px; }

@@ -102,4 +102,16 @@ function compare(machine, tree) {
   return { changed, local, extra };
 }
 
-module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, depsOf, remoteFiles, compare };
+// every blob id these paths ever had (any commit, any branch): a machine's file with another one was edited there
+function historyBlobs(paths) {
+  const out = new Set();
+  const log = String(run('git', ['log', '--all', '--format=', '--raw', '--no-abbrev', '--no-renames', '--', ...paths]));
+  for (const l of log.split('\n')) {
+    const m = /^:\d+ \d+ ([0-9a-f]{40}) ([0-9a-f]{40}) /.exec(l);
+    if (!m) continue;
+    for (const id of [m[1], m[2]]) if (!/^0+$/.test(id)) out.add(id);
+  }
+  return out;
+}
+
+module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, depsOf, remoteFiles, compare, historyBlobs };
