@@ -691,57 +691,81 @@ function mount(initialProjectId) {
   function createTopologyView(proj) {
     let curProj = proj;
     let entries = [];
-    let maxSeq = 0;
-    let replaySeq = 0;
-    let pinnedToLatest = true;
+    let selectedSeq = 0; // 0 = show all flows; >0 = highlight that post's flow
+    let selectedNodeId = ''; // optional node filter/highlight
+    let channelFilter = 'all';
     let loadedBoardSeq = -1;
     let loading = false;
     let destroyed = false;
 
     const actBar = h('div', { class: 'pm-act-bar' });
-    const svgHead = h('div', { class: 'pm-svg-topo-head' },
-      h('b', { class: 'pm-sec-title', text: '动态 @mention 交互拓扑图（按楼层时间轴回放）' }),
-      h('div', { class: 'pm-svg-legend' },
-        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot ok' }), '执行中'),
-        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot warn' }), '待确认/检视'),
-        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot cool' }), '已完成'),
-        h('span', { class: 'pm-svg-legend-item' }, h('span', { class: 'pm-health-dot' }), '空闲/离线')
+    const topoHead = h('div', { class: 'pm-stage-head' },
+      h('b', { text: '协同组织拓扑图（上主控 · 中验收/协理 · 下执行 · 点击左栏帖子或卡片高亮信息流向）' }),
+      h('div', { class: 'pm-stage-legend' },
+        h('span', { class: 'pm-leg-item' }, h('i', { class: 'pm-leg-line' }), '黑板 @ 交互'),
+        h('span', { class: 'pm-leg-item' }, h('i', { class: 'pm-leg-line hot' }), '当前选中流向'),
+        h('span', { class: 'pm-leg-item' }, h('i', { class: 'pm-leg-line static' }), '层级委派')
       )
     );
-    const svgCanvasWrap = h('div');
-    const seqBadgeEl = h('span', { class: 'pm-timeline-seq', text: '#0 / #0' });
-    const rangeInput = h('input', {
-      class: 'pm-timeline-range',
-      type: 'range',
-      min: '0',
-      max: '0',
-      value: '0',
-      oninput: (e) => {
-        replaySeq = Number(e.target.value) || 0;
-        pinnedToLatest = replaySeq >= maxSeq;
-        renderSvgTopo();
+    const svgLayer = svgEl('svg', { class: 'pm-stage-svg' });
+    const tiersEl = h('div', { class: 'pm-stage-rows' });
+    const stageEl = h('div', { class: 'pm-stage' }, svgLayer, tiersEl);
+    const stageWrap = h('div', { class: 'pm-stage-wrap' }, stageEl);
+    const topoPane = h('div', { class: 'pm-stage-pane' }, topoHead, stageWrap);
+
+    const feedStatusEl = h('span', { class: 'pm-feed-status', text: '全部流向' });
+    const chanSel = h('select', {
+      class: 'field pm-feed-chan',
+      onchange: () => {
+        channelFilter = chanSel.value || 'all';
+        renderFeed();
+      },
+    }, h('option', { value: 'all', text: '全部频道' }));
+    const btnClearFocus = h('button', {
+      class: 'btn',
+      type: 'button',
+      text: '显示全部',
+      hidden: true,
+      onclick: () => {
+        selectedSeq = 0;
+        selectedNodeId = '';
+        renderStage();
+        renderFeed();
       },
     });
-    const stepTo = (next) => {
-      replaySeq = Math.max(0, Math.min(maxSeq, next));
-      pinnedToLatest = replaySeq >= maxSeq;
-      renderSvgTopo();
-    };
-    const btnStart = h('button', { class: 'btn', type: 'button', title: '起点 #0', text: '|<', onclick: () => stepTo(0) });
-    const btnPrev = h('button', { class: 'btn', type: 'button', title: '上一楼', text: '<', onclick: () => stepTo(replaySeq - 1) });
-    const btnNext = h('button', { class: 'btn', type: 'button', title: '下一楼', text: '>', onclick: () => stepTo(replaySeq + 1) });
-    const btnEnd = h('button', { class: 'btn', type: 'button', title: '跳到最新', text: '最新', onclick: () => stepTo(maxSeq) });
     const btnRefresh = h('button', { class: 'btn', type: 'button', text: '刷新', onclick: () => loadBoardHistory() });
-    const summaryEl = h('div', { class: 'pm-timeline-summary' });
-    const timelineBar = h('div', { class: 'pm-timeline-bar' },
-      seqBadgeEl,
-      rangeInput,
-      h('div', { class: 'pm-timeline-btns' }, btnStart, btnPrev, btnNext, btnEnd, btnRefresh),
-      summaryEl
+    const feedHead = h('div', { class: 'pm-feed-head' },
+      h('b', { text: '黑板看板流' }),
+      feedStatusEl,
+      h('div', { class: 'pm-feed-tools' }, chanSel, btnClearFocus, btnRefresh)
     );
-    const svgBox = h('div', { class: 'pm-svg-topo-box' }, svgHead, svgCanvasWrap, timelineBar);
-    const staticBox = h('div', { class: 'pm-graph-box' });
-    const rootEl = h('div', { class: 'pm-graph-box' }, actBar, svgBox, staticBox);
+    const feedListEl = h('div', { class: 'pm-feed-list' });
+    const feedPane = h('div', { class: 'pm-feed-pane' }, feedHead, feedListEl);
+
+    const staticBox = h('div', { class: 'pm-detail-lanes' });
+    const rightCol = h('div', { class: 'pm-right-col' }, topoPane, staticBox);
+    const splitBox = h('div', { class: 'pm-topo-split' }, feedPane, rightCol);
+    const rootEl = h('div', { class: 'pm-graph-box' }, actBar, splitBox);
+
+    let lastRenderNodes = [];
+    let lastEdgeMap = new Map();
+    let lastActiveNodes = new Set();
+    let lastActiveEdges = new Set();
+    let rafDraw = 0;
+
+    const ro = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => scheduleDrawLinks())
+      : null;
+    if (ro) ro.observe(stageWrap);
+
+    function scheduleDrawLinks() {
+      if (destroyed) return;
+      if (rafDraw) cancelAnimationFrame(rafDraw);
+      rafDraw = requestAnimationFrame(() => {
+        rafDraw = 0;
+        drawStageLinks();
+      });
+    }
 
     function renderActBar() {
       const nodes = curProj.nodes || [];
@@ -753,54 +777,27 @@ function mount(initialProjectId) {
       );
     }
 
-    function renderSvgTopo() {
-      const nodes = curProj.nodes || [];
-      const staticEdges = curProj.edges || [];
+    function dotClassOf(n) {
+      if (n.watchdogAlert || n.reviewStatus === 'blocked' || n.liveState === 'error') return 'err';
+      if (n.asking || n.reviewStatus === 'waiting_review' || n.liveState === 'waiting') return 'warn';
+      if (['working', 'thinking', 'reading', 'message'].includes(n.liveState)) return 'on';
+      if (n.reviewStatus === 'done' || n.reviewStatus === 'approved' || n.liveState === 'done') return 'done';
+      return '';
+    }
 
-      if (!nodes.length) {
-        svgCanvasWrap.replaceChildren(h('div', { class: 'pm-empty', text: '暂无拓扑节点，请先派生或挂载会话节点。' }));
-        timelineBar.hidden = true;
-        return;
-      }
-      timelineBar.hidden = false;
-
-      // Compute node layout in 760 x 220 SVG viewBox (always include a virtual Master hub if none bound yet)
-      const hasMaster = nodes.some((n) => n.role === 'master');
-      const renderNodes = hasMaster
-        ? nodes
-        : [{ id: '__virtual_master__', alias: 'Master (主控)', role: 'master', machine: '', liveState: 'idle', reviewStatus: 'running' }, ...nodes];
+    function computeFlows(renderNodes) {
       const masters = renderNodes.filter((n) => n.role === 'master');
-      const mids = renderNodes.filter((n) => n.role === 'peer' || n.role === 'verifier');
-      const workers = renderNodes.filter((n) => n.role !== 'master' && n.role !== 'peer' && n.role !== 'verifier');
-      const tiers = [masters, mids, workers].filter((arr) => arr.length > 0);
-      const yRows = tiers.length === 1 ? [110] : tiers.length === 2 ? [46, 174] : [34, 110, 186];
-
-      const pos = new Map();
-      tiers.forEach((tierNodes, tIdx) => {
-        const y = yRows[tIdx];
-        const count = tierNodes.length;
-        const slotW = 720 / count;
-        const boxW = Math.min(136, Math.max(84, Math.floor(slotW - 14)));
-        const boxH = 38;
-        tierNodes.forEach((n, idx) => {
-          const x = 20 + slotW * (idx + 0.5);
-          pos.set(n.id, { x, y, w: boxW, h: boxH, node: n });
-        });
-      });
-
-      // Aggregate directed @mention edges for seq <= replaySeq
       const edgeMap = new Map();
       const activeNodes = new Set();
       const activeEdges = new Set();
-      let currentEntry = null;
+      const hasPostFocus = selectedSeq > 0;
+      const hasNodeFocus = !hasPostFocus && Boolean(selectedNodeId);
 
       for (const e of entries) {
         const seq = Number(e.seq) || 0;
-        if (seq > replaySeq) continue;
-        currentEntry = e;
         const fromNode = (e.nodeId && renderNodes.find((n) => n.id === e.nodeId))
           || matchNodeByToken(renderNodes, e.agent)
-          || ((e.agent === 'Master' || e.agent === '管理员') ? masters[0] : null);
+          || ((e.agent === 'Master' || e.agent === '管理员' || e.agent === '主控会话') ? masters[0] : null);
         if (!fromNode) continue;
         const { tokens, mentionAll } = extractMentionTokens(e);
         const targets = new Set();
@@ -811,202 +808,352 @@ function mount(initialProjectId) {
           const toNode = matchNodeByToken(renderNodes, tok);
           if (toNode && toNode.id !== fromNode.id) targets.add(toNode.id);
         }
-        if (seq === replaySeq) activeNodes.add(fromNode.id);
+        if (hasPostFocus && seq === selectedSeq) activeNodes.add(fromNode.id);
         for (const toId of targets) {
           const key = `${fromNode.id}->${toId}`;
           const prev = edgeMap.get(key) || { from: fromNode.id, to: toId, count: 0, lastSeq: 0 };
           prev.count += 1;
           prev.lastSeq = seq;
           edgeMap.set(key, prev);
-          if (seq === replaySeq) {
+          if (hasPostFocus && seq === selectedSeq) {
             activeEdges.add(key);
+            activeNodes.add(toId);
+          } else if (hasNodeFocus && (fromNode.id === selectedNodeId || toId === selectedNodeId)) {
+            activeEdges.add(key);
+            activeNodes.add(fromNode.id);
             activeNodes.add(toId);
           }
         }
       }
+      if (hasNodeFocus) activeNodes.add(selectedNodeId);
+      return { edgeMap, activeNodes, activeEdges };
+    }
 
-      const svg = svgEl('svg', {
-        class: 'pm-svg-topo',
-        viewBox: '0 0 760 220',
-        role: 'img',
-        'aria-label': '协同节点动态交互拓扑图',
-      });
+    function renderStage() {
+      const nodes = curProj.nodes || [];
+      if (!nodes.length) {
+        tiersEl.replaceChildren(h('div', { class: 'pm-empty', text: '暂无拓扑节点，请先派生或挂载会话节点。' }));
+        svgLayer.replaceChildren();
+        return;
+      }
+
+      const hasMaster = nodes.some((n) => n.role === 'master');
+      const renderNodes = hasMaster
+        ? nodes
+        : [{ id: '__virtual_master__', alias: 'Master (主控)', role: 'master', machine: '', tool: '', liveState: 'idle', reviewStatus: 'running' }, ...nodes];
+
+      const { edgeMap, activeNodes, activeEdges } = computeFlows(renderNodes);
+      lastRenderNodes = renderNodes;
+      lastEdgeMap = edgeMap;
+      lastActiveNodes = activeNodes;
+      lastActiveEdges = activeEdges;
+
+      const hasFocus = selectedSeq > 0 || Boolean(selectedNodeId);
+      const masters = renderNodes.filter((n) => n.role === 'master');
+      const mids = renderNodes.filter((n) => n.role === 'verifier' || n.role === 'peer');
+      const workers = renderNodes.filter((n) => n.role !== 'master' && n.role !== 'verifier' && n.role !== 'peer');
+
+      // 3-row top-down org chart (三省六部层级：1 行主控中枢 -> 2 行督察验收/平级协理 -> 3 行并行执行部)
+      const rows = [
+        ['中枢主控层 · Master', 'tier-master', masters],
+        ['督察验收 / 协理层 · Verifier & Peers', 'tier-mid', mids],
+        ['并行执行层 · Workers', 'tier-worker', workers],
+      ].filter(([, , list]) => list.length > 0);
+
+      tiersEl.dataset.rows = String(rows.length);
+      tiersEl.replaceChildren(...rows.map(([title, tierCls, list], rowIdx) =>
+        h('div', { class: `pm-tier-row ${tierCls}`, dataset: { tierRow: String(rowIdx) } },
+          h('div', { class: 'pm-tier-row-lbl', text: title }),
+          h('div', { class: 'pm-tier-row-cards' },
+            ...list.map((n) => {
+              const st = nodeStatusInfo(n);
+              const isHot = activeNodes.has(n.id);
+              const isSel = selectedNodeId === n.id;
+              const dimmed = hasFocus && !isHot;
+              const isAlert = Boolean(n.watchdogAlert || n.reviewStatus === 'blocked' || n.liveState === 'error');
+              const isOff = !n.liveState || n.liveState === 'offline' || n.liveState === 'history';
+              const modelTag = [n.tool, n.model].filter(Boolean).join(':');
+              const roleBadge = n.role === 'master' ? 'MASTER' : n.role === 'verifier' ? 'VERIFIER' : n.role === 'peer' ? 'PEER' : 'WORKER';
+              const cardCls = [
+                'pm-tcard',
+                `role-${n.role || 'worker'}`,
+                isHot ? 'hot' : '',
+                isSel ? 'sel' : '',
+                dimmed ? 'dim' : '',
+                isAlert ? 'alert' : '',
+                isOff && n.id !== '__virtual_master__' ? 'off' : '',
+              ].filter(Boolean).join(' ');
+
+              return h('div', {
+                class: cardCls,
+                dataset: { nodeId: n.id, tierRow: String(rowIdx) },
+                title: `${n.alias || n.id} · ${st.label}${n.goal ? '\n目标: ' + n.goal : ''}`,
+                onclick: () => {
+                  selectedSeq = 0;
+                  selectedNodeId = selectedNodeId === n.id ? '' : n.id;
+                  renderStage();
+                  renderFeed();
+                },
+              },
+                h('div', { class: 'pm-tcard-hd' },
+                  h('span', { class: `pm-tdot ${dotClassOf(n)}` }),
+                  h('span', { class: 'pm-tcard-name', text: n.alias || n.label || n.id }),
+                  h('span', { class: 'pm-tcard-role', text: roleBadge })
+                ),
+                h('div', { class: 'pm-tcard-sub', text: [n.machine || '主控会话', modelTag].filter(Boolean).join(' · ') }),
+                h('div', { class: 'pm-tcard-pills' },
+                  n.archived ? h('span', { class: 'pm-tpill', text: '已归档' }) : h('span', { class: `pm-tpill st-${dotClassOf(n) || 'idle'}`, text: st.label }),
+                  n.pool ? h('span', { class: 'pm-tpill', text: n.pool }) : null,
+                  n.workspaceMode === 'worktree' ? h('span', { class: 'pm-tpill wt', text: 'worktree' }) : null
+                )
+              );
+            })
+          )
+        )
+      ));
+
+      scheduleDrawLinks();
+    }
+
+    function drawStageLinks() {
+      if (destroyed) return;
+      const W = Math.max(stageEl.scrollWidth, stageEl.clientWidth, 1);
+      const H = Math.max(stageEl.scrollHeight, stageEl.clientHeight, 1);
+      svgLayer.setAttribute('width', String(W));
+      svgLayer.setAttribute('height', String(H));
+      svgLayer.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+      const stageRect = stageEl.getBoundingClientRect();
+      if (!stageRect.width || !stageRect.height) return;
+
+      const cardBoxes = new Map();
+      for (const el of tiersEl.querySelectorAll('.pm-tcard')) {
+        const nid = el.dataset.nodeId;
+        const r = el.getBoundingClientRect();
+        cardBoxes.set(nid, {
+          left: r.left - stageRect.left,
+          right: r.right - stageRect.left,
+          top: r.top - stageRect.top,
+          bottom: r.bottom - stageRect.top,
+          cx: r.left - stageRect.left + r.width / 2,
+          cy: r.top - stageRect.top + r.height / 2,
+          w: r.width,
+          h: r.height,
+        });
+      }
 
       const defs = svgEl('defs', {},
-        svgEl('marker', { id: 'pm-arrow-base', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
-          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#999999' })
+        svgEl('marker', { id: 'pm-arr-base', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#8a94a6' })
         ),
-        svgEl('marker', { id: 'pm-arrow-dyn', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
-          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#000080' })
+        svgEl('marker', { id: 'pm-arr-dyn', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#1d6fd8' })
         ),
-        svgEl('marker', { id: 'pm-arrow-hot', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' },
-          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#b04a10' })
+        svgEl('marker', { id: 'pm-arr-hot', viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' },
+          svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: '#c43e00' })
         )
       );
-      svg.append(defs);
+      const baseG = svgEl('g');
+      const linesG = svgEl('g');
+      const badgesG = svgEl('g');
+      svgLayer.replaceChildren(defs, baseG, linesG, badgesG);
 
-      // Faint baseline static edges
-      const baseLayer = svgEl('g', { opacity: '0.3' });
-      for (const se of staticEdges) {
-        const p1 = pos.get(se.from);
-        const p2 = pos.get(se.to);
-        if (!p1 || !p2) continue;
-        const [sx, sy] = clipRayToBox(p1.x, p1.y, p2.x, p2.y, p1.w / 2 + 2, p1.h / 2 + 2);
-        const [ex, ey] = clipRayToBox(p2.x, p2.y, p1.x, p1.y, p2.w / 2 + 5, p2.h / 2 + 5);
-        baseLayer.append(svgEl('line', {
-          x1: sx.toFixed(1), y1: sy.toFixed(1), x2: ex.toFixed(1), y2: ey.toFixed(1),
-          stroke: '#808080',
-          'stroke-width': '1',
-          'stroke-dasharray': se.type === 'cowork' ? '4,3' : '2,3',
-          'marker-end': 'url(#pm-arrow-base)',
+      const hasFocus = selectedSeq > 0 || Boolean(selectedNodeId);
+
+      function curveBetween(a, b, offset = 0) {
+        const dx = b.cx - a.cx;
+        const dy = b.cy - a.cy;
+        const sameRow = Math.abs(dy) < 28;
+        let x1, y1, x2, y2, c1x, c1y, c2x, c2y, mx, my;
+        if (sameRow) {
+          // Same-row peer/worker horizontal arc hovering gently above or below cards
+          const ltr = dx >= 0;
+          x1 = a.cx + (ltr ? a.w * 0.22 : -a.w * 0.22);
+          x2 = b.cx + (ltr ? -b.w * 0.22 : b.w * 0.22);
+          const archDir = offset < 0 ? 1 : -1; // -1 = above row, +1 = below row
+          y1 = archDir < 0 ? a.top : a.bottom;
+          y2 = archDir < 0 ? b.top : b.bottom;
+          const lift = Math.min(40, Math.max(22, Math.abs(dx) * 0.14)) * archDir;
+          c1x = x1 + (x2 - x1) * 0.28;
+          c1y = y1 + lift;
+          c2x = x1 + (x2 - x1) * 0.72;
+          c2y = y2 + lift;
+          mx = 0.125 * x1 + 0.375 * c1x + 0.375 * c2x + 0.125 * x2;
+          my = 0.125 * y1 + 0.375 * c1y + 0.375 * c2y + 0.125 * y2;
+        } else {
+          // Top-down hierarchical S-curve between rows (row 1 Master -> row 2 Verifier -> row 3 Workers)
+          const ttb = dy >= 0;
+          x1 = a.cx + offset * 0.55;
+          y1 = ttb ? a.bottom : a.top;
+          x2 = b.cx + offset * 0.55;
+          y2 = ttb ? b.top : b.bottom;
+          const span = Math.max(26, Math.abs(y2 - y1) * 0.48);
+          c1x = x1 + offset * 0.8;
+          c1y = y1 + (ttb ? span : -span);
+          c2x = x2 + offset * 0.8;
+          c2y = y2 + (ttb ? -span : span);
+          mx = 0.125 * x1 + 0.375 * c1x + 0.375 * c2x + 0.125 * x2;
+          my = 0.125 * y1 + 0.375 * c1y + 0.375 * c2y + 0.125 * y2;
+        }
+        return {
+          d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`,
+          x1, y1, x2, y2, mx, my,
+        };
+      }
+
+      // Faint static delegation edges (Master -> Worker / Cowork)
+      for (const se of curProj.edges || []) {
+        const a = cardBoxes.get(se.from);
+        const b = cardBoxes.get(se.to);
+        if (!a || !b) continue;
+        if (lastEdgeMap.has(`${se.from}->${se.to}`)) continue;
+        const g = curveBetween(a, b, 0);
+        baseG.append(svgEl('path', {
+          d: g.d,
+          fill: 'none',
+          stroke: '#8a94a6',
+          'stroke-width': '1.2',
+          'stroke-opacity': hasFocus ? '0.18' : '0.45',
+          'stroke-dasharray': '4 3',
+          'marker-end': 'url(#pm-arr-base)',
         }));
       }
-      svg.append(baseLayer);
 
-      // Dynamic directed @mention curved edges
-      const edgeLayer = svgEl('g');
-      for (const [edgeKey, ed] of edgeMap.entries()) {
-        const p1 = pos.get(ed.from);
-        const p2 = pos.get(ed.to);
-        if (!p1 || !p2) continue;
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const nx = -dy / dist;
-        const ny = dx / dist;
-        const hasRev = edgeMap.has(`${ed.to}->${ed.from}`);
-        const curveOffset = hasRev
-          ? Math.min(38, Math.max(24, dist * 0.17))
-          : Math.min(24, Math.max(14, dist * 0.1));
-        const cx = (p1.x + p2.x) / 2 + nx * curveOffset;
-        const cy = (p1.y + p2.y) / 2 + ny * curveOffset;
+      // Dynamic @mention links
+      const edgeEntries = [...lastEdgeMap.entries()].sort((a, b) => Number(lastActiveEdges.has(a[0])) - Number(lastActiveEdges.has(b[0])));
+      for (const [edgeKey, ed] of edgeEntries) {
+        const a = cardBoxes.get(ed.from);
+        const b = cardBoxes.get(ed.to);
+        if (!a || !b) continue;
+        const hasRev = lastEdgeMap.has(`${ed.to}->${ed.from}`);
+        const offset = hasRev ? (ed.from < ed.to ? -16 : 16) : 0;
+        const geom = curveBetween(a, b, offset);
+        const isHot = lastActiveEdges.has(edgeKey);
+        const dimmed = hasFocus && !isHot;
+        const color = isHot ? '#c43e00' : '#1d6fd8';
+        const sw = isHot ? 2.6 : Math.min(3.2, 1.4 + Math.log2(ed.count + 1) * 0.65);
 
-        const [sx, sy] = clipRayToBox(p1.x, p1.y, cx, cy, p1.w / 2 + 2, p1.h / 2 + 2);
-        const [ex, ey] = clipRayToBox(p2.x, p2.y, cx, cy, p2.w / 2 + 6, p2.h / 2 + 6);
-        const isHot = activeEdges.has(edgeKey);
-        const strokeWidth = Math.min(6, 1.4 + Math.log2(ed.count + 1) * 1.35);
-        const strokeColor = isHot ? '#b04a10' : '#000080';
-
-        const path = svgEl('path', {
-          d: `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`,
+        linesG.append(svgEl('path', {
+          d: geom.d,
+          class: isHot ? 'pm-link-hot' : '',
           fill: 'none',
-          stroke: strokeColor,
-          'stroke-width': strokeWidth.toFixed(2),
-          'stroke-opacity': isHot ? '0.95' : '0.72',
-          'marker-end': isHot ? 'url(#pm-arrow-hot)' : 'url(#pm-arrow-dyn)',
-        }, svgEl('title', { text: `${p1.node.alias || ed.from} -> ${p2.node.alias || ed.to} (${ed.count} 次 @)` }));
+          stroke: color,
+          'stroke-width': sw.toFixed(2),
+          'stroke-linecap': 'round',
+          'stroke-opacity': isHot ? '0.98' : dimmed ? '0.16' : '0.78',
+          'marker-end': isHot ? 'url(#pm-arr-hot)' : 'url(#pm-arr-dyn)',
+        }));
+        linesG.append(svgEl('circle', {
+          cx: geom.x1.toFixed(1),
+          cy: geom.y1.toFixed(1),
+          r: isHot ? '3' : '2.4',
+          fill: color,
+          'fill-opacity': isHot ? '1' : dimmed ? '0.2' : '0.8',
+        }));
 
-        const lx = 0.25 * sx + 0.5 * cx + 0.25 * ex;
-        const ly = 0.25 * sy + 0.5 * cy + 0.25 * ey;
-        const lblText = String(ed.count);
-        const pillW = Math.max(16, lblText.length * 7 + 8);
-        const lblBg = svgEl('rect', {
-          x: (lx - pillW / 2).toFixed(1),
-          y: (ly - 8).toFixed(1),
-          width: pillW,
-          height: 15,
-          rx: '2',
-          fill: isHot ? '#fff3cd' : '#ffffff',
-          stroke: strokeColor,
-          'stroke-width': '1',
-        });
-        const lbl = svgEl('text', {
-          x: lx.toFixed(1),
-          y: (ly + 3).toFixed(1),
-          'text-anchor': 'middle',
-          'font-size': '10',
-          'font-family': 'Consolas, monospace',
-          'font-weight': 'bold',
-          fill: strokeColor,
-          text: lblText,
-        });
-        edgeLayer.append(path, lblBg, lbl);
-      }
-      svg.append(edgeLayer);
-
-      // Node boxes
-      const nodeLayer = svgEl('g');
-      for (const [id, box] of pos.entries()) {
-        const n = box.node;
-        const st = nodeStatusInfo(n);
-        const isHot = activeNodes.has(id);
-        const rx = box.x - box.w / 2;
-        const ry = box.y - box.h / 2;
-        const rawName = n.alias || n.label || n.id;
-        const maxChars = Math.max(7, Math.floor((box.w - 22) / 7));
-        const shortName = rawName.length > maxChars ? rawName.slice(0, maxChars - 1) + '…' : rawName;
-        const roleShort = (n.role || 'worker').toUpperCase();
-        const subText = `${roleShort} · ${n.machine || ''}`;
-        const shortSub = subText.length > maxChars + 2 ? subText.slice(0, maxChars + 1) + '…' : subText;
-
-        const g = svgEl('g', {},
-          svgEl('title', { text: `${rawName} [${ROLE_NAMES[n.role] || n.role}] | ${n.machine} · ${n.tool || 'claude'} | ${st.label}` }),
+        const lblText = isHot && selectedSeq ? `#${selectedSeq}` : `${ed.count}次`;
+        const pillW = Math.max(24, lblText.length * 7 + 10);
+        const pillH = 16;
+        const bg = svgEl('g', { opacity: dimmed ? '0.22' : '1' },
           svgEl('rect', {
-            x: rx.toFixed(1),
-            y: ry.toFixed(1),
-            width: box.w,
-            height: box.h,
-            fill: isHot ? '#ffffe1' : '#f4f4f4',
-            stroke: isHot ? '#b04a10' : '#000080',
-            'stroke-width': isHot ? '2' : '1.2',
-          }),
-          svgEl('circle', {
-            cx: (rx + 10).toFixed(1),
-            cy: (ry + 12).toFixed(1),
-            r: '4',
-            fill: st.color,
-            stroke: '#222222',
-            'stroke-width': '0.8',
+            x: (geom.mx - pillW / 2).toFixed(1),
+            y: (geom.my - pillH / 2).toFixed(1),
+            width: pillW,
+            height: pillH,
+            rx: '3',
+            fill: isHot ? '#fff3cd' : '#ffffff',
+            stroke: color,
+            'stroke-width': isHot ? '1.3' : '1',
           }),
           svgEl('text', {
-            x: (rx + 18).toFixed(1),
-            y: (ry + 15).toFixed(1),
-            'font-size': '11',
-            'font-weight': 'bold',
-            'font-family': 'Tahoma, "Microsoft YaHei UI", sans-serif',
-            fill: '#000000',
-            text: shortName,
-          }),
-          svgEl('text', {
-            x: (rx + 8).toFixed(1),
-            y: (ry + 30).toFixed(1),
+            x: geom.mx.toFixed(1),
+            y: (geom.my + 0.5).toFixed(1),
+            'text-anchor': 'middle',
+            'dominant-baseline': 'central',
             'font-size': '9.5',
-            'font-family': 'Consolas, monospace',
-            fill: '#404040',
-            text: shortSub,
+            'font-family': 'Consolas, "Microsoft YaHei", monospace',
+            'font-weight': isHot ? 'bold' : 'normal',
+            fill: isHot ? '#8a2c00' : '#1f2937',
+            text: lblText,
           })
         );
-        nodeLayer.append(g);
+        badgesG.append(bg);
       }
-      svg.append(nodeLayer);
+    }
 
-      // Update timeline bar controls in place (keeps slider drag active)
-      seqBadgeEl.textContent = `#${replaySeq} / #${maxSeq}`;
-      rangeInput.max = String(maxSeq);
-      rangeInput.value = String(replaySeq);
-      rangeInput.disabled = maxSeq === 0;
-      btnStart.disabled = replaySeq <= 0;
-      btnPrev.disabled = replaySeq <= 0;
-      btnNext.disabled = replaySeq >= maxSeq;
-      btnEnd.disabled = replaySeq >= maxSeq;
+    function renderFeed() {
+      const channels = [...new Set(entries.map((e) => e.channel || 'main'))];
+      const curChan = channels.includes(channelFilter) ? channelFilter : 'all';
+      channelFilter = curChan;
+      chanSel.replaceChildren(
+        h('option', { value: 'all', text: `全部频道 (${entries.length})`, selected: curChan === 'all' }),
+        ...channels.map((ch) => h('option', {
+          value: ch,
+          text: `#${ch}`,
+          selected: curChan === ch,
+        }))
+      );
 
-      const entryAtK = entries.find((e) => Number(e.seq) === replaySeq) || currentEntry;
-      let summaryText = '';
+      btnClearFocus.hidden = !selectedSeq && !selectedNodeId;
       if (loading && !entries.length) {
-        summaryText = '正在加载黑板交互历史…';
-      } else if (maxSeq === 0) {
-        summaryText = '黑板尚无消息，拖动时间轴可按楼层 #1..#N 回放 @mention 交互与返工路径。';
-      } else if (replaySeq === 0) {
-        summaryText = '#0 初始状态：尚未发生黑板 @mention 交互。';
-      } else if (entryAtK) {
-        const kLabel = BOARD_KIND_LABELS[entryAtK.kind] || entryAtK.kind || '帖子';
-        const bodyOneLine = String(entryAtK.text || '').replace(/\s+/g, ' ').trim();
-        summaryText = `#${entryAtK.seq} [${kLabel}] ${entryAtK.agent || '系统'}: ${bodyOneLine.slice(0, 120)}${bodyOneLine.length > 120 ? '…' : ''}`;
-      } else {
-        summaryText = `已重放至楼层 #${replaySeq}`;
+        feedStatusEl.textContent = '正在加载…';
+        feedListEl.replaceChildren(h('div', { class: 'pm-empty', text: '正在加载黑板消息流…' }));
+        return;
       }
-      summaryEl.textContent = summaryText;
-      svgCanvasWrap.replaceChildren(svg);
+      let visible = curChan === 'all' ? entries : entries.filter((e) => (e.channel || 'main') === curChan);
+      if (selectedNodeId) {
+        const selNode = lastRenderNodes.find((n) => n.id === selectedNodeId);
+        const selAlias = selNode ? (selNode.alias || selNode.id) : selectedNodeId;
+        feedStatusEl.textContent = `已聚焦节点「${selAlias}」`;
+      } else if (selectedSeq) {
+        feedStatusEl.textContent = `已高亮 #${selectedSeq} 流向`;
+      } else {
+        feedStatusEl.textContent = `共 ${visible.length} 条 · 点击看流向`;
+      }
+
+      if (!visible.length) {
+        feedListEl.replaceChildren(h('div', { class: 'pm-empty', text: '黑板尚无消息，节点派单或汇报后会实时出现在这里。' }));
+        return;
+      }
+
+      const rows = visible.map((e) => {
+        const seq = Number(e.seq) || 0;
+        const isSel = selectedSeq === seq;
+        const kLabel = BOARD_KIND_LABELS[e.kind] || e.kind || '帖子';
+        const { tokens, mentionAll } = extractMentionTokens(e);
+        const body = String(e.text || '').trim();
+        const shortBody = body.length > 240 ? body.slice(0, 240) + '…' : body;
+        const timeStr = e.ts ? ago(e.ts) : '';
+        const auditBadge = e.audit && e.audit.checked
+          ? h('span', { class: `pm-feed-audit ${e.audit.ok ? 'ok' : 'bad'}`, text: e.audit.ok ? 'gitAudit OK' : 'gitAudit 告警' })
+          : null;
+
+        return h('div', {
+          class: `pm-feed-item${isSel ? ' sel' : ''}`,
+          role: 'button',
+          tabindex: '0',
+          onclick: () => {
+            selectedNodeId = '';
+            selectedSeq = selectedSeq === seq ? 0 : seq;
+            renderStage();
+            renderFeed();
+          },
+        },
+          h('div', { class: 'pm-feed-meta' },
+            h('span', { class: 'pm-feed-seq', text: `#${seq}` }),
+            h('b', { class: 'pm-feed-author', text: e.agent || '系统' }),
+            h('span', { class: `pm-feed-kind k-${e.kind || 'post'}`, text: kLabel }),
+            e.channel && e.channel !== 'main' ? h('span', { class: 'pm-feed-ch', text: `#${e.channel}` }) : null,
+            mentionAll ? h('span', { class: 'pm-feed-mention', text: '-> @all' }) : null,
+            ...tokens.slice(0, 3).map((t) => h('span', { class: 'pm-feed-mention', text: `-> @${t}` })),
+            auditBadge,
+            h('span', { class: 'pm-feed-time', text: timeStr })
+          ),
+          h('div', { class: 'pm-feed-body', text: shortBody })
+        );
+      });
+      feedListEl.replaceChildren(...rows);
+      if (!selectedSeq) feedListEl.scrollTop = feedListEl.scrollHeight;
     }
 
     function renderStatic() {
@@ -1051,7 +1198,7 @@ function mount(initialProjectId) {
     async function loadBoardHistory() {
       if (destroyed) return;
       loading = true;
-      renderSvgTopo();
+      renderFeed();
       const r = await mesh.getBoard(curProj.id, { limit: 200 });
       if (destroyed) return;
       loading = false;
@@ -1059,15 +1206,15 @@ function mount(initialProjectId) {
         entries = (Array.isArray(r.entries) ? r.entries : []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
         const nextMax = entries.length ? Math.max(...entries.map((e) => Number(e.seq) || 0)) : 0;
         loadedBoardSeq = typeof r.latestSeq === 'number' ? r.latestSeq : (curProj.boardSeq || nextMax);
-        maxSeq = Math.max(nextMax, Number(curProj.boardSeq) || 0);
-        if (pinnedToLatest) replaySeq = maxSeq;
-        else replaySeq = Math.min(replaySeq, maxSeq);
+        if (selectedSeq && !entries.some((e) => Number(e.seq) === selectedSeq)) selectedSeq = 0;
       }
-      renderSvgTopo();
+      renderStage();
+      renderFeed();
     }
 
     renderActBar();
-    renderSvgTopo();
+    renderStage();
+    renderFeed();
     renderStatic();
     loadBoardHistory();
 
@@ -1082,10 +1229,14 @@ function mount(initialProjectId) {
         if (loadedBoardSeq !== -1 && nextSeq !== loadedBoardSeq) {
           loadBoardHistory();
         } else {
-          renderSvgTopo();
+          renderStage();
         }
       },
-      destroy() { destroyed = true; },
+      destroy() {
+        destroyed = true;
+        if (rafDraw) cancelAnimationFrame(rafDraw);
+        if (ro) ro.disconnect();
+      },
     };
   }
 
@@ -1662,9 +1813,9 @@ function mount(initialProjectId) {
       h('div', { class: 'pm-node-top' },
         h('span', { class: `pm-role-tag ${n.role}`, text: ROLE_NAMES[n.role] || n.role }),
         h('b', { class: 'pm-node-name', text: n.alias || n.label || n.id }),
-        h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}` }),
+        h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}${n.model ? ':' + n.model : ''}` }),
         hasWorktree ? h('span', { class: 'pm-wt-badge', title: n.worktreePath || '', text: `worktree: ${wtBranch}` }) : null,
-        h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
+        n.archived ? h('span', { class: 'pm-rev-badge done', text: '已归档 (保留痕迹)' }) : h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
         n.asking ? h('button', {
           type: 'button',
           class: 'pm-badge err',
@@ -1700,7 +1851,21 @@ function mount(initialProjectId) {
       ) : null,
       h('div', { class: 'pm-node-btns' },
         h('button', { class: 'btn go', type: 'button', text: '下发指令 / 改契约', onclick: () => openSendDialog(proj, n) }),
+        n.reviewStatus === 'waiting_review' ? h('button', { class: 'btn', type: 'button', text: '静默批准结单', onclick: async () => {
+          const r = await mesh.reviewNode(proj.id, n.id, 'approve');
+          say(r.msg || (r.ok ? '已批准结单' : '操作失败'));
+        } }) : null,
         n.reviewStatus === 'waiting_review' ? h('button', { class: 'btn', type: 'button', text: '✓ 批准检视继续', onclick: () => openSendDialog(proj, n, '检视通过，请继续下一阶段任务。') }) : null,
+        !n.archived && n.role !== 'master' ? h('button', { class: 'btn', type: 'button', title: '停止唤醒与看门狗巡检，但永久保留在拓扑图和黑板历史痕迹中', text: '归档退役', onclick: async () => {
+          const closeTerm = await confirmBox({
+            title: '归档退役节点',
+            text: `是否同时向「${n.alias || n.id}」发送 /exit 优雅退出该会话？`,
+            okText: '归档并退出会话',
+            cancelText: '仅归档（保留窗口）',
+          });
+          const r = await mesh.reviewNode(proj.id, n.id, 'archive', '', closeTerm);
+          say(r.msg || (r.ok ? '节点已归档退役' : '归档失败'));
+        } }) : null,
         n.sessionId ? h('button', { class: 'btn', type: 'button', text: '在糖糖看板打开对话', onclick: () => dashboard.openSession(n.machine, n.sessionId) }) : null,
         h('label', { class: 'pm-chk', title: '当该会话已关闭时，收到消息是否自动在后台或终端唤醒续聊' },
           h('input', {
@@ -2217,15 +2382,58 @@ function mount(initialProjectId) {
   }
 
   function openBindSessionDialog(proj) {
-    const allSessions = [];
-    for (const m of net.state.sessions) {
-      for (const s of m.sessions || []) {
-        allSessions.push({ machine: m.machine, id: s.id, label: s.label, cwd: s.cwd || '', state: s.state });
-      }
+    const machines = (net.state.sessions || []).slice().sort((a, b) => {
+      if (!!b.online !== !!a.online) return b.online ? 1 : -1;
+      return String(a.machine || '').localeCompare(String(b.machine || ''));
+    });
+    const sessionsByMachine = new Map();
+    for (const m of machines) {
+      const list = (m.sessions || []).map((s) => ({
+        machine: m.machine,
+        id: s.id,
+        label: s.label || s.id,
+        cwd: s.cwd || '',
+        state: s.state || 'idle',
+        last: Number(s.last || s.t0 || 0),
+      }));
+      list.sort((a, b) => {
+        const score = (st) => (['working', 'thinking', 'reading', 'message', 'waiting'].includes(st) ? 2 : st === 'idle' ? 1 : 0);
+        const ds = score(b.state) - score(a.state);
+        if (ds !== 0) return ds;
+        return b.last - a.last;
+      });
+      sessionsByMachine.set(m.machine, list);
     }
-    const sessSel = h('select', { class: 'field' },
-      ...allSessions.map((s) => h('option', { value: `${s.machine}|${s.id}`, text: `[${s.machine}] ${s.label} (${s.state})` }))
+
+    const machSel = h('select', { class: 'field' },
+      ...machines.map((m) => {
+        const cnt = (sessionsByMachine.get(m.machine) || []).length;
+        return h('option', {
+          value: m.machine,
+          text: `${m.machine} (${m.online ? '在线' : '离线'} · ${cnt} 个对话)`,
+        });
+      })
     );
+    const sessSel = h('select', { class: 'field' });
+    const renderSessionOptions = () => {
+      const mName = machSel.value;
+      const list = sessionsByMachine.get(mName) || [];
+      if (!list.length) {
+        sessSel.replaceChildren(h('option', { value: '', text: '（该电脑当前没有可挂载的对话）' }));
+        return;
+      }
+      sessSel.replaceChildren(...list.map((s) => {
+        const dirShort = s.cwd ? ` · ${s.cwd.split(/[\\/]/).filter(Boolean).slice(-1)[0] || s.cwd}` : '';
+        return h('option', {
+          value: `${s.machine}|${s.id}`,
+          text: `${s.label} (${s.state}${dirShort})`,
+        });
+      }));
+    };
+    machSel.addEventListener('change', renderSessionOptions);
+    renderSessionOptions();
+
+    const allSessions = [...sessionsByMachine.values()].flat();
     const roleSel = h('select', { class: 'field' },
       h('option', { value: 'master', text: 'Master 主控会话（负责统筹与检视）' }),
       h('option', { value: 'worker', text: 'Worker 执行会话（负责子任务计算与汇报）' }),
@@ -2240,7 +2448,9 @@ function mount(initialProjectId) {
     const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
       h('div', { class: 'dlgt' }, h('span', { text: '挂载现有会话到项目拓扑' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
       h('div', { class: 'dlgb' },
-        h('label', { class: 'xnote-lbl', text: '选择正在运行或历史的会话：' }),
+        h('label', { class: 'xnote-lbl', text: '1. 选择电脑：' }),
+        machSel,
+        h('label', { class: 'xnote-lbl', text: '2. 选择该电脑上的对话：' }),
         sessSel,
         h('label', { class: 'xnote-lbl', text: '在拓扑中的角色：' }),
         roleSel,

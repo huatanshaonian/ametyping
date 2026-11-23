@@ -820,6 +820,125 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
       const mPcA = viewWithProf.machines.find((m) => m.machine === 'pc-a');
       assert.equal(mPcA.role, '主控/轻开发');
       assert.equal(mPcA.hardware, 'RTX 4060');
+
+      // OpenCode prompt sanitization: standalone @tokens converted to fullwidth ＠ so OpenCode TUI doesn't throw
+      // "No matching files, agents, or references", while parseMentions still recognizes fullwidth ＠master
+      const capturedOc = [];
+      const fxOc = makePhase3Fixture({
+        dispatchControl: async (_m, payload) => {
+          capturedOc.push(payload);
+          return { ok: true, msg: 'launched' };
+        },
+      });
+      try {
+        const spOc = await fxOc.mesh.spawnWorker({
+          projectId: fxOc.projId,
+          fromNodeId: fxOc.master.id,
+          machine: 'pc-a',
+          cwd: 'D:\\repo',
+          role: 'worker',
+          tool: 'opencode',
+          alias: 'worker-oc',
+          prompt: '完成后请通知 @master 和 @verifier',
+        });
+        assert.equal(spOc.ok, true);
+        assert.equal(capturedOc.length, 1);
+        assert.doesNotMatch(capturedOc[0].prompt, /(?:^|\s)@(?:master|verifier|节点别名)/);
+        assert.ok(capturedOc[0].prompt.includes('＠master'));
+        // Fullwidth ＠master in board post is also recognized
+        const fwPost = await fxOc.mesh.postBoard({
+          projectId: fxOc.projId,
+          fromNodeId: spOc.node.id,
+          text: '＠master OpenCode 完工汇报',
+        });
+        assert.equal(fwPost.ok, true);
+        assert.deepEqual(fwPost.entry.mentions, ['master']);
+
+        // Spaced master alias ("Ametyping Embedding Integration Plan") is matched both via @master (task unlock) and full alias
+        fxOc.mesh.upsertNode(fxOc.projId, { id: fxOc.master.id, alias: 'Ametyping Embedding Integration Plan' });
+        const spacedPost = await fxOc.mesh.postBoard({
+          projectId: fxOc.projId,
+          fromNodeId: spOc.node.id,
+          text: '@Ametyping Embedding Integration Plan 请检视',
+        });
+        assert.equal(spacedPost.ok, true);
+        assert.ok(spacedPost.deliveries.some((d) => d.nodeId === fxOc.master.id));
+
+        // Infer tool from sessionId prefix (agy:* -> 'agy', not 'claude')
+        const agyAuto = fxOc.mesh.upsertNode(fxOc.projId, { machine: 'pc-a', sessionId: 'agy:sess-999', role: 'master' });
+        assert.equal(agyAuto.ok, true);
+        assert.equal(agyAuto.node.tool, 'agy');
+        assert.equal(agyAuto.node.alias, 'master');
+
+        // mesh_review lifecycle: approve -> archive (excluded from @all wakeups while keeping topology trace)
+        const revReplies = [];
+        const mockWsRev = { send: (raw) => revReplies.push(JSON.parse(raw)) };
+        await fxOc.mesh.fromAgentRpc('pc-a', {
+          t: 'mesh-req',
+          rid: 'r-rev-1',
+          op: 'review',
+          projectId: fxOc.projId,
+          nodeId: spOc.node.id,
+          action: 'approve',
+        }, mockWsRev);
+        assert.equal(revReplies[0].ok, true);
+        assert.equal(revReplies[0].node.reviewStatus, 'done');
+
+        await fxOc.mesh.fromAgentRpc('pc-a', {
+          t: 'mesh-req',
+          rid: 'r-rev-2',
+          op: 'review',
+          projectId: fxOc.projId,
+          nodeId: spOc.node.id,
+          action: 'archive',
+        }, mockWsRev);
+        assert.equal(revReplies[1].ok, true);
+        assert.equal(revReplies[1].node.archived, true);
+
+        // Task write RPC returns ultra-compact { ok, projectId, task } without full project/tasks
+        await fxOc.mesh.fromAgentRpc('pc-a', {
+          t: 'mesh-req',
+          rid: 'r-task-1',
+          op: 'task',
+          action: 'add',
+          projectId: fxOc.projId,
+          title: '精简载荷测试任务',
+        }, mockWsRev);
+        assert.equal(revReplies[2].ok, true);
+        assert.ok(revReplies[2].task);
+        assert.equal(revReplies[2].project, undefined);
+        assert.equal(revReplies[2].tasks, undefined);
+
+        // Per-project Claude Code cap (default 2): 2 active claude nodes -> pool skips claude to agy, explicit claude blocked
+        fxOc.mesh.upsertNode(fxOc.projId, { machine: 'pc-a', sessionId: 'c-1', role: 'worker', tool: 'claude', alias: 'cc-1' });
+        fxOc.mesh.upsertNode(fxOc.projId, { machine: 'pc-a', sessionId: 'c-2', role: 'worker', tool: 'claude', alias: 'cc-2' });
+        const explicitBlocked = await fxOc.mesh.spawnWorker({
+          projectId: fxOc.projId,
+          fromNodeId: fxOc.master.id,
+          machine: 'pc-a',
+          cwd: 'D:\\repo',
+          role: 'worker',
+          tool: 'claude',
+          alias: 'cc-3',
+          prompt: 'should be blocked',
+        });
+        assert.equal(explicitBlocked.ok, false);
+        assert.match(explicitBlocked.msg, /上限/);
+        const poolDiverted = await fxOc.mesh.spawnWorker({
+          projectId: fxOc.projId,
+          fromNodeId: fxOc.master.id,
+          machine: 'pc-a',
+          cwd: 'D:\\repo',
+          role: 'worker',
+          pool: 'fast-coder',
+          alias: 'diverted-w',
+          prompt: 'should pick agy instead of claude',
+        });
+        assert.equal(poolDiverted.ok, true);
+        assert.notEqual(poolDiverted.node.tool, 'claude');
+      } finally {
+        fxOc.cleanup();
+      }
     } finally {
       fx.cleanup();
     }

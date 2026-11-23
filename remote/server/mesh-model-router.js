@@ -6,6 +6,7 @@ const path = require('path');
 
 const DEFAULT_POOLS = {
   'fast-coder': [
+    { harness: 'codex', model: 'gpt-6.2-terra', magpieProvider: 'openai', quirks: '' },
     { harness: 'claude', model: 'sonnet', magpieProvider: 'anthropic', quirks: '' },
     { harness: 'agy', model: 'claude-sonnet-5-5-medium', quirks: '' },
     { harness: 'agy', model: 'gemini-4-hydrogen-medium', quirks: '' },
@@ -13,12 +14,15 @@ const DEFAULT_POOLS = {
   ],
   flagship: [
     { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'codex', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
     { harness: 'agy', model: 'claude-opus-5-5-medium', quirks: '' },
     { harness: 'agy', model: 'gemini-4-neon-medium', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
   ],
   'heavy-reasoner': [
-    { harness: 'agy', model: 'gemini-4-carbon-medium', quirks: '' },
+    { harness: 'agy', model: 'gemini-4-carbon-high', quirks: '' },
+    { harness: 'opencode', model: 'magpie/devin/claude-fable-5-2', quirks: '' },
+    { harness: 'codex', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
     { harness: 'agy', model: 'claude-opus-5-5-high', quirks: '' },
     { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
   ],
@@ -278,7 +282,7 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     return { ok: true, cleared: harness };
   }
 
-  function selectCandidate(poolName, { exclude = [], activeCounts = null, availableHarnesses = null } = {}) {
+  function selectCandidate(poolName, { exclude = [], activeCounts = null, availableHarnesses = null, projectHarnessCounts = null, maxPerHarness = null } = {}) {
     const pools = loadPools();
     const list = pools[poolName];
     if (!Array.isArray(list) || !list.length) {
@@ -291,12 +295,16 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     const mpStatus = typeof getMagpie === 'function' ? getMagpie()?.status?.() : null;
     const byHarness = (activeCounts && activeCounts.byHarness) || {};
     const byCandidate = (activeCounts && activeCounts.byCandidate) || {};
+    const projHarness = (projectHarnessCounts && typeof projectHarnessCounts === 'object') ? projectHarnessCounts : {};
+    const caps = (maxPerHarness && typeof maxPerHarness === 'object') ? maxPerHarness : {};
 
     const viable = [];
     list.forEach((cand, idx) => {
       const key = candidateKey(cand.harness, cand.model);
       if (excludeSet.has(key) || excludeSet.has(cand.harness)) return;
       if (availSet && !availSet.has(String(cand.harness || '').toLowerCase())) return;
+      const cap = Number(caps[cand.harness]);
+      if (Number.isFinite(cap) && cap > 0 && (projHarness[cand.harness] || 0) >= cap) return;
       const evalRes = evaluateCandidate(cand, mpStatus);
       if (!evalRes.healthy) return;
       viable.push({

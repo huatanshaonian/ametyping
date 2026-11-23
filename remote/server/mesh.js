@@ -235,6 +235,7 @@ function createMesh({
         state: live.state || 'idle',
         asking,
         label: live.label || '',
+        model: live.model || '',
         lastAct: lastLine ? lastLine.text : '',
         last: live.last || 0,
         via: live.via || 'off',
@@ -276,6 +277,7 @@ function createMesh({
         liveState: live ? live.state : (n.sessionId ? 'offline' : 'spawning'),
         asking: live ? live.asking : false,
         label: (live && live.label) || n.alias || n.id,
+        model: n.model || (live && live.model) || '',
         lastAct: (live && live.lastAct) || n.lastAct || '',
         last: (live && live.last) || n.updatedAt || proj.createdAt,
       };
@@ -937,6 +939,15 @@ function createMesh({
     return { ok: true, workspace: matched[0] };
   }
 
+  function inferToolFromSessionId(sid = '') {
+    const s = String(sid || '');
+    if (s.startsWith('agy:')) return 'agy';
+    if (s.startsWith('codex:')) return 'codex';
+    if (s.startsWith('opencode:')) return 'opencode';
+    if (s.startsWith('kiro:')) return 'kiro';
+    return 'claude';
+  }
+
   // Bind an existing session or register a new node into a project's topology
   function upsertNode(projectId, d) {
     let proj = projectId ? data.projects.find((x) => x.id === projectId) : null;
@@ -954,19 +965,23 @@ function createMesh({
       (machine && sessionId && proj.nodes.find((n) => n.machine === machine && n.sessionId === sessionId));
 
     if (!node) {
+      const roleVal = cleanStr(d.role, 32) || 'worker';
+      const rawAlias = cleanStr(d.alias, 60);
+      const inferredTool = TOOLS.includes(d.tool) ? d.tool : inferToolFromSessionId(sessionId);
       node = {
         id: cleanStr(d.id, 40) || idGen('node'),
         machine,
         sessionId,
-        alias: cleanStr(d.alias, 60) || cleanStr(d.role === 'master' ? '主控会话' : '协作节点', 60),
-        role: cleanStr(d.role, 32) || 'worker',
-        tool: TOOLS.includes(d.tool) ? d.tool : 'claude',
+        alias: rawAlias || (roleVal === 'master' ? 'master' : '协作节点'),
+        role: roleVal,
+        tool: inferredTool,
         pool: cleanStr(d.pool, 60),
         model: cleanStr(d.model, 120),
         cwd: cleanStr(d.cwd, 500),
         goal: cleanStr(d.goal, 1000),
         stopCondition: cleanStr(d.stopCondition, 1000),
         reviewStatus: 'running',
+        archived: Boolean(d.archived),
         autoResumeClosed: d.autoResumeClosed !== false,
         inbox: [],
         lastReport: '',
@@ -1057,6 +1072,26 @@ function createMesh({
     return { ok: true, project: enrichProject(proj) };
   }
 
+  // OpenCode TUI parses bare ASCII `@token` in prompts as local file/agent references and errors with
+  // "No matching files, agents, or references" when no file matches. Convert standalone `@token` to fullwidth `＠token`
+  // when dispatching prompts to OpenCode (mesh-board parseMentions accepts both `@` and `＠`).
+  // Pick a whitespace-free @mention token for system-generated posts so regex parsing never truncates aliases with spaces
+  function mentionTokenOf(node) {
+    if (!node) return '@master';
+    const alias = String(node.alias || '').trim();
+    if (alias && !/\s/.test(alias)) return `@${alias}`;
+    if (node.role === 'master') return '@master';
+    return `@${node.id}`;
+  }
+
+  function sanitizeForOpenCode(text) {
+    return String(text || '').replace(/(^|[\s([{"'（【「，。；：、！？])@([#A-Za-z0-9_\u4e00-\u9fa5-]+)/g, '$1＠$2');
+  }
+
+  function deliverPromptFor(tool, text) {
+    return tool === 'opencode' ? sanitizeForOpenCode(text) : text;
+  }
+
   // Deliver a message to a target node immediately if idle/closed(with autoResume), or queue in inbox if working
   async function deliverToNode(proj, targetNode, envelopeText, { forceWake = false, seq = 0 } = {}) {
     const inboxItem = (extra = {}) => ({
@@ -1107,7 +1142,8 @@ function createMesh({
     }
 
     // Session is idle/done (or closed with auto-resume enabled): `send` injects into terminal or triggers resumeHeadless!
-    const r = await sendToAgent(targetNode.machine, { t: 'send', id: targetNode.sessionId, text: envelopeText });
+    const safeEnvelope = deliverPromptFor(targetNode.tool, envelopeText);
+    const r = await sendToAgent(targetNode.machine, { t: 'send', id: targetNode.sessionId, text: safeEnvelope });
     if (!r.ok) {
       // Queue on failure with needsManualWake so onMachineState does not drop it on the next tick
       targetNode.inbox = targetNode.inbox || [];
@@ -1124,12 +1160,33 @@ function createMesh({
     return { ok: true, delivered: true, msg: isClosed ? '目标会话已关闭，已在后台自动唤醒并注入消息' : '已直接注入目标会话终端' };
   }
 
+  function projectHarnessCounts(proj) {
+    const counts = {};
+    if (!proj || !Array.isArray(proj.nodes)) return counts;
+    for (const n of proj.nodes) {
+      if (!n || n.archived || n.reviewStatus === 'done') continue;
+      const h = String(n.tool || '').trim();
+      if (!h) continue;
+      counts[h] = (counts[h] || 0) + 1;
+    }
+    return counts;
+  }
+
+  function getMaxPerHarness() {
+    const cfg = watchdog ? watchdog.getConfig() : {};
+    const claudeCap = Number(cfg.maxClaudePerProject);
+    const out = {};
+    if (Number.isFinite(claudeCap) && claudeCap > 0) out.claude = claudeCap;
+    else if (cfg.maxClaudePerProject === undefined) out.claude = 2;
+    return out;
+  }
+
   function activeModelCounts() {
     const byHarness = {};
     const byCandidate = {};
     for (const p of data.projects) {
       for (const n of p.nodes || []) {
-        if (!n || n.reviewStatus !== 'running') continue;
+        if (!n || n.archived || n.reviewStatus !== 'running') continue;
         const h = String(n.tool || '').trim();
         if (!h) continue;
         byHarness[h] = (byHarness[h] || 0) + 1;
@@ -1151,7 +1208,7 @@ function createMesh({
     const prevKey = `${node.tool || 'claude'}|${node.model || ''}`;
     modelRouter.markCooldown(node.tool || 'claude', node.model || '', reason);
     const masterNode = (proj.nodes || []).find((n) => n.role === 'master' && n.id !== node.id);
-    const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+    const masterMention = `${mentionTokenOf(masterNode)} `;
 
     if (node.pool) {
       const exclude = [prevKey];
@@ -1174,6 +1231,8 @@ function createMesh({
           exclude,
           activeCounts: activeModelCounts(),
           availableHarnesses: availHarnesses.length ? availHarnesses : null,
+          projectHarnessCounts: projectHarnessCounts(proj),
+          maxPerHarness: getMaxPerHarness(),
         });
         if (!pick.ok || !pick.candidate) break;
         const fb = pick.candidate;
@@ -1235,7 +1294,7 @@ function createMesh({
         const launchRes = await sendToAgent(node.machine, {
           t: 'launch',
           cwd: relayCwd,
-          prompt: relayLines.join('\n').slice(0, 7800),
+          prompt: deliverPromptFor(fbTool, relayLines.join('\n').slice(0, 7800)),
           tool: fbTool,
           ...(fbModel ? { model: fbModel } : {}),
           meshEnv: { AME_PROJECT_ID: proj.id, AME_NODE_ID: node.id },
@@ -1436,14 +1495,19 @@ function createMesh({
       }
     }
 
+    const lowerText = String(entry.text || '').toLowerCase();
     const targets = (proj.nodes || []).filter((n) => {
+      if (n.archived) return false;
       if (fromNode && n.id === fromNode.id) return false;
       if (entry.mentionAll || n.wakeMode === 'all') return true;
       if (channelSubscribedIds.has(n.id)) return true;
       const aliasL = String(n.alias || '').toLowerCase();
       const idL = String(n.id || '').toLowerCase();
       const roleL = String(n.role || '').toLowerCase();
-      return (aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL)) || (roleL && mentionSet.has(roleL));
+      if ((aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL)) || (roleL && mentionSet.has(roleL))) return true;
+      // Fallback full-alias match for legacy nodes whose alias contains spaces (e.g. "@Ametyping Embedding Plan")
+      if (aliasL && /\s/.test(aliasL) && (lowerText.includes('@' + aliasL) || lowerText.includes('＠' + aliasL))) return true;
+      return false;
     });
 
     const deliveries = [];
@@ -1490,6 +1554,9 @@ function createMesh({
     if (node && entries.length) {
       const maxSeq = entries.reduce((mx, e) => (e.seq > mx ? e.seq : mx), 0);
       node.lastReadSeq = Math.max(node.lastReadSeq || 0, maxSeq);
+      if (Array.isArray(node.inbox) && node.inbox.length) {
+        node.inbox = node.inbox.filter((m) => m && m.seq && m.seq > node.lastReadSeq);
+      }
       save();
     }
 
@@ -1685,7 +1752,7 @@ function createMesh({
           if (allDepsDone) {
             const ownerNode = (t.ownerNodeId && proj.nodes.find((n) => n.id === t.ownerNodeId || n.alias === t.ownerNodeId)) ||
               proj.nodes.find((n) => n.role === 'master') || null;
-            const prefix = ownerNode ? `@${ownerNode.alias || ownerNode.id} ` : '';
+            const prefix = ownerNode ? `${mentionTokenOf(ownerNode)} ` : '';
             await postBoard({
               projectId: proj.id,
               agent: '任务调度',
@@ -1810,7 +1877,7 @@ function createMesh({
     const baseContextLines = [
       `[AmeMesh 协同任务契约 | 项目：${proj.name}]`,
       masterNode ? `- 主控节点：${masterNode.alias || masterNode.id} (${masterNode.machine})` : null,
-      `- 节点身份标识（调用 mesh_report / mesh_send / mesh_run 时可传）：projectId="${proj.id}", nodeId="${workerNodeId}", role="${cleanRole}"`,
+      `- 节点身份标识（调用 mesh_board_post / mesh_report / mesh_send / mesh_task / mesh_run 时务必携带，避免同目录多节点并行时身份串台）：projectId="${proj.id}", nodeId="${workerNodeId}", role="${cleanRole}"`,
       `- 工作目录：${cwd}`,
       roleDef && roleDef.body ? `- 角色规范（${roleDef.name}）：\n${roleDef.body}` : null,
       roleDef && roleDef.readOnly ? '- [只读验收硬约束] 当前角色 readOnly=true：严禁修改、新建或删除任何业务代码与配置文件，仅可读取源码、审阅黑板并运行验证命令。' : null,
@@ -1822,7 +1889,7 @@ function createMesh({
       normBoundaries.length ? `- 允许修改边界（Boundaries，严禁越界修改其他文件）：${normBoundaries.join(', ')}` : null,
       normDoneWhen.length ? `- 验收条件（Done When，交卷时逐条核对）：\n${normDoneWhen.map((item, idx) => `  ${idx + 1}. ${String(item).replace(/^\s*\d+[\.\)、]\s*/, '')}`).join('\n')}` : null,
       normChecks.length ? `- 必跑验证命令（Checks）：${normChecks.join(' ; ')}` : null,
-      '- 协作黑板约定：可通过 mesh_board_post(@节点别名 ...) 与成员公开协同，用 #楼层号 引用历史帖子；严禁擅自 git commit/push。',
+      '- 协作黑板约定：可通过 mesh_board_post 与成员公开协同（正文里用 at+节点别名 点名、用 #楼层号 引用历史帖子）；严禁擅自 git commit/push。',
       '- 长时间计算约定：预计耗时超过 10 分钟的求解或跑批任务，请使用 mesh_run 工具或 `node tools/ame-mesh.js run --label "任务名" -- <命令>` 在后台脱离运行，随后可调用 mesh_report(reviewStatus="blocked") 等待计算结束自动唤醒。',
     ].filter(Boolean);
 
@@ -1833,7 +1900,7 @@ function createMesh({
       return lines.join('\n').slice(0, 7800);
     };
 
-    const masterMention = masterNode ? `@${masterNode.alias || masterNode.id} ` : '@master ';
+    const masterMention = `${mentionTokenOf(masterNode)} `;
     const spKey = `${machine}|${normFolderPath(cwd)}`;
     const worktreeLaunchFields = effectiveWorkspaceMode === 'worktree'
       ? {
@@ -1906,6 +1973,8 @@ function createMesh({
           exclude,
           activeCounts: activeModelCounts(),
           availableHarnesses: availHarnesses.length ? availHarnesses : null,
+          projectHarnessCounts: projectHarnessCounts(proj),
+          maxPerHarness: getMaxPerHarness(),
         });
         if (!pick.ok || !pick.candidate) {
           lastErr = pick.msg || lastErr || `模型池「${effectivePool}」无可用候选`;
@@ -1954,7 +2023,7 @@ function createMesh({
         const launchRes = await sendToAgent(machine, {
           t: 'launch',
           cwd,
-          prompt: launchPrompt,
+          prompt: deliverPromptFor(attemptTool, launchPrompt),
           tool: attemptTool,
           ...(attemptModel ? { model: attemptModel } : {}),
           api: api ? { id: api, local: true } : undefined,
@@ -1997,6 +2066,17 @@ function createMesh({
     }
 
     const explicitTool = hasExplicitTool ? cleanTool : 'claude';
+    const maxCaps = getMaxPerHarness();
+    const toolCap = Number(maxCaps[explicitTool]);
+    if (Number.isFinite(toolCap) && toolCap > 0) {
+      const curProjCounts = projectHarnessCounts(proj);
+      if ((curProjCounts[explicitTool] || 0) >= toolCap) {
+        return {
+          ok: false,
+          msg: `当前项目活跃 ${explicitTool} 成员已达上限（${toolCap} 个），请改用 pool 自动分流到其他 Harness（如 agy），或在「Skill 与协同 › 全局模型池」中调高上限`,
+        };
+      }
+    }
     const fullPrompt = buildFullPrompt('');
 
     const nr = upsertNode(proj.id, {
@@ -2029,7 +2109,7 @@ function createMesh({
     const launchRes = await sendToAgent(machine, {
       t: 'launch',
       cwd,
-      prompt: fullPrompt,
+      prompt: deliverPromptFor(explicitTool, fullPrompt),
       tool: explicitTool,
       ...(cleanModel ? { model: cleanModel } : {}),
       api: api ? { id: api, local: true } : undefined,
@@ -2099,6 +2179,87 @@ function createMesh({
       branch: node.worktreeBranch || '',
       force: !!force,
     });
+  }
+
+  // Master-only silent review / lifecycle management: approve, reject, or archive (retire while keeping topology trace)
+  async function reviewNode({ projectId, nodeId, action = 'approve', note = '', closeTerminal = false, fromNodeId, fromMachine, fromSessionId, callerCwd } = {}) {
+    const resolved = resolveCaller({ projectId, nodeId: fromNodeId, machine: fromMachine, sessionId: fromSessionId, callerCwd });
+    let proj = resolved.project;
+    if (!proj && nodeId) {
+      for (const p of data.projects) {
+        if ((p.nodes || []).some((n) => n.id === nodeId || n.alias === nodeId)) { proj = p; break; }
+      }
+    }
+    if (!proj) return { ok: false, msg: '找不到对应的协同项目' };
+    const target = (proj.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId);
+    if (!target) return { ok: false, msg: '找不到目标节点：' + String(nodeId || '') };
+    const cleanNote = cleanStr(note, 2000);
+    const act = String(action || 'approve').trim().toLowerCase();
+
+    if (act === 'approve') {
+      target.reviewStatus = 'done';
+      target.watchdogAlert = null;
+      if (cleanNote) target.lastAct = '已批准结单：' + cleanNote.slice(0, 120);
+      target.updatedAt = Date.now();
+      save();
+      return { ok: true, projectId: proj.id, action: 'approve', node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: !!target.archived }, msg: `已静默批准节点「${target.alias || target.id}」结单` };
+    }
+
+    if (act === 'archive') {
+      target.reviewStatus = 'done';
+      target.archived = true;
+      target.autoResumeClosed = false;
+      target.watchdogAlert = null;
+      let terminalClosed = false;
+      let closeMsg = '';
+      if (closeTerminal === true) {
+        if (target.role === 'master') {
+          closeMsg = '（安全保护：禁止关闭主控会话终端）';
+        } else if (target.sessionId && target.machine) {
+          const live = liveSessionOf(target.machine, target.sessionId);
+          if (live && live.online && live.state !== 'history' && live.state !== 'ended') {
+            const exitRes = await sendToAgent(target.machine, { t: 'send', id: target.sessionId, text: '/exit' });
+            terminalClosed = Boolean(exitRes && exitRes.ok);
+            closeMsg = terminalClosed ? '，已发送 /exit 优雅退出会话' : `（发送退出指令失败：${(exitRes && exitRes.msg) || '未知'}）`;
+          } else {
+            closeMsg = '（会话已处于关闭状态）';
+          }
+        }
+      }
+      target.lastAct = cleanNote ? `已归档退役：${cleanNote.slice(0, 120)}` : `已归档退役（保留拓扑痕迹${terminalClosed ? '，已退出会话' : ''}）`;
+      target.updatedAt = Date.now();
+      save();
+      return {
+        ok: true,
+        projectId: proj.id,
+        action: 'archive',
+        terminalClosed,
+        node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: true },
+        msg: `节点「${target.alias || target.id}」已归档退役${closeMsg}`,
+      };
+    }
+
+    if (act === 'reject') {
+      target.reviewStatus = 'running';
+      target.archived = false;
+      target.watchdogAlert = null;
+      target.updatedAt = Date.now();
+      let postRes = null;
+      if (cleanNote) {
+        postRes = await postBoard({
+          projectId: proj.id,
+          fromNodeId: resolved.node ? resolved.node.id : fromNodeId,
+          fromMachine,
+          fromSessionId,
+          callerCwd,
+          text: `${mentionTokenOf(target)} [打回返工] ${cleanNote}`,
+        });
+      }
+      save();
+      return { ok: true, projectId: proj.id, action: 'reject', node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: false }, ...(postRes && postRes.entry ? { boardSeq: postRes.entry.seq } : {}), msg: `已打回节点「${target.alias || target.id}」返工` };
+    }
+
+    return { ok: false, msg: '无效的 review action（仅支持 approve / reject / archive）' };
   }
 
   // Send a structured instruction (Master -> Worker) or peer message (Cowork)
@@ -2657,7 +2818,14 @@ function createMesh({
         if (waiting && waiting.length) {
           const alreadyBound = data.projects.some((p) => p.nodes.some((n) => n.machine === machineName && n.sessionId === s.id));
           if (!alreadyBound) {
-            const match = waiting.shift();
+            const sTool = inferToolFromSessionId(s.id);
+            let pickIdx = waiting.findIndex((w) => {
+              const p = data.projects.find((x) => x.id === w.projectId);
+              const nd = p && p.nodes.find((n) => n.id === w.nodeId);
+              return nd && !nd.sessionId && (!nd.tool || nd.tool === sTool);
+            });
+            if (pickIdx < 0) pickIdx = 0;
+            const [match] = waiting.splice(pickIdx, 1);
             if (!waiting.length) pendingSpawns.delete(spKey);
             const proj = data.projects.find((p) => p.id === match.projectId);
             const node = proj && proj.nodes.find((n) => n.id === match.nodeId);
@@ -3070,6 +3238,12 @@ function createMesh({
       json(res, 200, r);
       return true;
     }
+    if (p === '/api/mesh/review') {
+      const r = await reviewNode(d);
+      if (r.ok) audit('mesh-review', ip, String(d.action || ''), String(d.nodeId || '').slice(0, 40));
+      json(res, 200, r);
+      return true;
+    }
     if (p === '/api/mesh/report') {
       const r = await reportResult(d);
       json(res, 200, r);
@@ -3209,12 +3383,24 @@ function createMesh({
     if (!d || d.t !== 'mesh-req' || typeof d.rid !== 'string') return false;
     const reply = (resObj) => {
       let out = resObj;
-      if (out && typeof out === 'object' && out.project && d.op !== 'status' && d.op !== 'scope' && d.includeTree !== true) {
-        out = {
-          ...out,
-          projectId: out.projectId || out.project.id,
-          project: compactProjectForRpc(out.project),
-        };
+      if (out && typeof out === 'object' && d.op !== 'status' && d.op !== 'scope' && d.includeTree !== true) {
+        const pid = out.projectId || (out.project && out.project.id) || '';
+        if (d.op === 'task' && d.action && d.action !== 'list') {
+          // Ultra-compact task write reply (~1 KB) to never hit 16 KB truncation
+          out = {
+            ok: !!out.ok,
+            ...(out.msg ? { msg: out.msg } : {}),
+            ...(pid ? { projectId: pid } : {}),
+            ...(out.task ? { task: out.task } : {}),
+            ...(Array.isArray(out.unlockedTasks) && out.unlockedTasks.length ? { unlockedTasks: out.unlockedTasks } : {}),
+          };
+        } else if (out.project) {
+          out = {
+            ...out,
+            projectId: pid,
+            project: compactProjectForRpc(out.project),
+          };
+        }
       }
       try { ws.send(JSON.stringify({ t: 'mesh-res', rid: d.rid, ...out })); } catch {}
     };
@@ -3258,6 +3444,10 @@ function createMesh({
       }
       if (op === 'report') {
         const r = await reportResult({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        return reply(r);
+      }
+      if (op === 'review') {
+        const r = await reviewNode({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
       if (op === 'board_post') {

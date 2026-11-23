@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
   triggerMaxPerHour: 6,
   mentionTimeoutMin: 10,
   swarmStallMin: 5,
+  maxClaudePerProject: 2,
 };
 
 const QUOTA_ERR_RE = /429|RESOURCE_EXHAUSTED|out of credits|quota|usage limit|rate limit/i;
