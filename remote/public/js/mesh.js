@@ -82,3 +82,38 @@ export async function getConfig() {
   return { ok: false };
 }
 export const saveConfig = (d) => post('config', d);
+
+export async function getBoard(projectId, opts = {}) {
+  const qs = new URLSearchParams({ projectId: String(projectId || '') });
+  if (opts.since != null) qs.set('since', String(opts.since));
+  if (opts.limit != null) qs.set('limit', String(opts.limit));
+  if (opts.channel) qs.set('channel', String(opts.channel));
+  try {
+    const r = await fetch('/api/mesh/board?' + qs.toString());
+    if (r.ok) return await r.json();
+  } catch {}
+  return { ok: false, entries: [], latestSeq: 0 };
+}
+export const postBoard = (d) => post('board/post', d);
+export const task = (d) => post('task', d);
+
+export async function getRoles() {
+  try {
+    const r = await fetch('/api/mesh/roles');
+    if (r.ok) return await r.json();
+  } catch {}
+  return { ok: false, roles: [] };
+}
+export const saveRole = (name, raw) => post('roles', { name, raw });
+export const resetRole = (name) => post('roles', { op: 'reset', name });
+
+export async function getPools() {
+  try {
+    const r = await fetch('/api/mesh/pools');
+    if (r.ok) return await r.json();
+  } catch {}
+  return { ok: false, pools: {} };
+}
+export const savePools = (pools) => post('pools', { pools });
+export const resetPoolCooldown = (harness, model) => post('pools', { op: 'reset-cooldown', harness, model });
+export const probePool = (harness) => post('pools', { op: 'probe', harness });

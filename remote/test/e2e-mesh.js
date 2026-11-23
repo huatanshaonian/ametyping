@@ -281,6 +281,45 @@ function api(cookie, method, p, body) {
     });
     ok('POST /api/mesh/node registers Kiro tool node', nKiro.json && nKiro.json.ok && nKiro.json.node.tool === 'kiro', nKiro.json);
 
+    // 10. Test Swarm Phase 1+2 end-to-end: board-post, board-read, task blockedBy auto-unlock, roles & pools API
+    const bpRes = JSON.parse(cp.execFileSync(process.execPath, [
+      path.resolve(R, '..', 'tools', 'ame-mesh.js'),
+      'board-post', '--projectId', projId, '--text', '@dell97求解会话 请复核 #1 并继续',
+    ], { env: cliEnv, encoding: 'utf8' }));
+    ok('tools/ame-mesh.js board-post appends to board.jsonl and parses @mention/#ref',
+      bpRes.ok && bpRes.entry && bpRes.entry.seq >= 1 && bpRes.entry.refs.includes(1), bpRes);
+
+    const brRes = JSON.parse(cp.execFileSync(process.execPath, [
+      path.resolve(R, '..', 'tools', 'ame-mesh.js'),
+      'board-read', '--projectId', projId, '--since', '0',
+    ], { env: cliEnv, encoding: 'utf8' }));
+    ok('tools/ame-mesh.js board-read returns persisted board entries',
+      brRes.ok && Array.isArray(brRes.entries) && brRes.entries.some((e) => e.seq === bpRes.entry.seq), brRes);
+
+    const t0 = await api(cookie, 'POST', '/api/mesh/task', {
+      action: 'add', projectId: projId, title: '前置网格检查', ownerNodeId: n2.json.node.id, boundaries: ['src/po.py'],
+    });
+    const t1 = await api(cookie, 'POST', '/api/mesh/task', {
+      action: 'add', projectId: projId, title: '下游RCS后处理', ownerNodeId: n2.json.node.id, blockedBy: [t0.json.task.id],
+    });
+    const t0Done = await api(cookie, 'POST', '/api/mesh/task', {
+      action: 'update', projectId: projId, taskId: t0.json.task.id, status: 'done',
+    });
+    const boardAfterUnlock = await api(cookie, 'GET', `/api/mesh/board?projectId=${encodeURIComponent(projId)}&since=0`);
+    ok('POST /api/mesh/task blockedBy auto-unlocks downstream task on board',
+      t0Done.json && t0Done.json.ok && boardAfterUnlock.json && boardAfterUnlock.json.entries.some((e) => e.kind === 'task' && e.text.includes(t1.json.task.id)),
+      boardAfterUnlock.json);
+
+    const rolesRes = await api(cookie, 'GET', '/api/mesh/roles');
+    ok('GET /api/mesh/roles serves hot-reloaded built-in role templates',
+      rolesRes.json && rolesRes.json.ok && ['master', 'worker', 'verifier', 'peer'].every((r) => rolesRes.json.roles.some((x) => x.name === r)),
+      rolesRes.json);
+
+    const poolsRes = await api(cookie, 'GET', '/api/mesh/pools');
+    ok('GET /api/mesh/pools returns model pools with health status',
+      poolsRes.json && poolsRes.json.ok && poolsRes.json.pools && Array.isArray(poolsRes.json.pools['fast-coder']),
+      poolsRes.json);
+
     ws.close();
   } catch (e) {
     fail++;

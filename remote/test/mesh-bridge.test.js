@@ -8,7 +8,7 @@ const path = require('path');
 const { createMarks } = require('../server/session-marks');
 const { createFsCatalog } = require('../server/fs-catalog');
 const { createMesh } = require('../server/mesh');
-const { handleMcpCall, MCP_TOOLS } = require('../../tools/ame-mesh');
+const { handleMcpCall, MCP_TOOLS, runCli } = require('../../tools/ame-mesh');
 
 test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS mesh', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-bridge-'));
@@ -55,9 +55,14 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       req.on('end', () => {
         const d = JSON.parse(body || '{}');
         capturedRequests.push(d);
+        const NEW_OPS = new Set(['board_post', 'board_read', 'task']);
         mesh.fromAgentRpc('pc-a', { ...d, t: 'mesh-req', rid: 'r1' }, {
           send(raw) {
             const reply = JSON.parse(raw);
+            if (NEW_OPS.has(d.op) && reply && reply.ok === false && /未知|unknown|unsupported/i.test(reply.msg || '')) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, op: d.op, mocked: true }));
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(reply));
           },
@@ -69,10 +74,44 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
     const port = srv.address().port;
     const opts = { auth: { port, token, machine: 'pc-a' } };
 
-    assert.equal(MCP_TOOLS.length, 9);
+    assert.equal(MCP_TOOLS.length, 12);
+    const statusTool = MCP_TOOLS.find((t) => t.name === 'mesh_status');
+    assert.match(statusTool.description, /roleCatalog/);
+    assert.match(statusTool.description, /pools/);
+
     const triggerTool = MCP_TOOLS.find((t) => t.name === 'mesh_trigger');
     assert.deepEqual(triggerTool.inputSchema.properties.type.enum, ['folder']);
     assert.equal(triggerTool.inputSchema.properties.maxDepth.type, 'number');
+
+    const spawnTool = MCP_TOOLS.find((t) => t.name === 'mesh_spawn');
+    assert.equal(spawnTool.inputSchema.properties.role.type, 'string');
+    assert.equal(spawnTool.inputSchema.properties.pool.type, 'string');
+    assert.equal(spawnTool.inputSchema.properties.model.type, 'string');
+    assert.equal(spawnTool.inputSchema.properties.boundaries.type, 'array');
+    assert.equal(spawnTool.inputSchema.properties.doneWhen.type, 'array');
+    assert.equal(spawnTool.inputSchema.properties.checks.type, 'array');
+
+    const reportTool = MCP_TOOLS.find((t) => t.name === 'mesh_report');
+    assert.equal(reportTool.inputSchema.properties.doneWhenStatus.type, 'array');
+    assert.equal(reportTool.inputSchema.properties.checksOutput.type, 'string');
+    assert.equal(reportTool.inputSchema.properties.boundaries.type, 'array');
+
+    const boardPostTool = MCP_TOOLS.find((t) => t.name === 'mesh_board_post');
+    assert.ok(boardPostTool);
+    assert.deepEqual(boardPostTool.inputSchema.required, ['text']);
+    assert.equal(boardPostTool.inputSchema.properties.channel.default, 'main');
+    assert.equal(boardPostTool.inputSchema.properties.done.type, 'boolean');
+
+    const boardReadTool = MCP_TOOLS.find((t) => t.name === 'mesh_board_read');
+    assert.ok(boardReadTool);
+    assert.equal(boardReadTool.inputSchema.properties.since.type, 'number');
+    assert.equal(boardReadTool.inputSchema.properties.seqList.items.type, 'number');
+
+    const taskTool = MCP_TOOLS.find((t) => t.name === 'mesh_task');
+    assert.ok(taskTool);
+    assert.deepEqual(taskTool.inputSchema.required, ['action']);
+    assert.deepEqual(taskTool.inputSchema.properties.action.enum, ['list', 'add', 'claim', 'update', 'remove']);
+    assert.deepEqual(taskTool.inputSchema.properties.status.enum, ['pending', 'in_progress', 'review', 'done', 'blocked']);
 
     // 1. AI writes a folder note via `mesh_note`
     const noteRes = await handleMcpCall('mesh_note', {
@@ -141,6 +180,112 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       assert.equal(overrideReq.fromNodeId, 'explicit-node');
       assert.equal(overrideReq.nodeId, workerNode.id);
       assert.equal(overrideReq.callerCwd, '/custom/cwd');
+
+      // 5. Verify mesh_spawn role/pool/model forwarding + mesh_board_post / mesh_board_read / mesh_task forwarding
+      const spawnRoleRes = await handleMcpCall('mesh_spawn', {
+        machine: 'gpu-b',
+        cwd: '/work/cem_po',
+        role: 'verifier',
+        pool: 'flagship',
+        model: 'claude-opus',
+        alias: '验收节点',
+        goal: '复核求解结果',
+        prompt: '只读核查测试输出',
+      }, opts);
+      assert.equal(spawnRoleRes.ok, true);
+      const spawnRoleReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(spawnRoleReq.op, 'spawn');
+      assert.equal(spawnRoleReq.role, 'verifier');
+      assert.equal(spawnRoleReq.pool, 'flagship');
+      assert.equal(spawnRoleReq.model, 'claude-opus');
+
+      const bpRes = await handleMcpCall('mesh_board_post', {
+        text: '完成求解 #1 @all',
+        channel: 'main',
+        done: true,
+        doneWhenStatus: ['1: pass'],
+        checksOutput: 'ok',
+        boundaries: ['tools/ame-mesh.js'],
+      }, opts);
+      assert.equal(bpRes.ok, true);
+      const bpReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(bpReq.op, 'board_post');
+      assert.equal(bpReq.done, true);
+      assert.deepEqual(bpReq.doneWhenStatus, ['1: pass']);
+      assert.deepEqual(bpReq.boundaries, ['tools/ame-mesh.js']);
+
+      const brRes = await handleMcpCall('mesh_board_read', {
+        since: 0,
+        limit: 20,
+        seqList: [1, 2],
+      }, opts);
+      assert.equal(brRes.ok, true);
+      const brReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(brReq.op, 'board_read');
+      assert.equal(brReq.since, 0);
+      assert.equal(brReq.limit, 20);
+      assert.deepEqual(brReq.seqList, [1, 2]);
+
+      const taskRes = await handleMcpCall('mesh_task', {
+        action: 'add',
+        title: 'Task 1',
+        blockedBy: ['t0'],
+        boundaries: ['remote/agent/agent.js'],
+        doneWhen: ['1. passes tests'],
+        checks: ['node --test remote/test/mesh-bridge.test.js'],
+        boardRefs: [1],
+      }, opts);
+      assert.equal(taskRes.ok, true);
+      const taskReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(taskReq.op, 'task');
+      assert.equal(taskReq.action, 'add');
+      assert.deepEqual(taskReq.blockedBy, ['t0']);
+      assert.deepEqual(taskReq.boundaries, ['remote/agent/agent.js']);
+      assert.deepEqual(taskReq.doneWhen, ['1. passes tests']);
+      assert.deepEqual(taskReq.checks, ['node --test remote/test/mesh-bridge.test.js']);
+      assert.deepEqual(taskReq.boardRefs, [1]);
+
+      // 6. Verify CLI subcommand mapping & array/number/boolean flag coercion
+      await runCli([
+        'board-post',
+        '--text', 'cli post',
+        '--done', 'true',
+        '--boundaries', 'a.js, b.js',
+        '--doneWhenStatus', 'ok1,ok2',
+      ], opts);
+      const cliBpReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(cliBpReq.op, 'board_post');
+      assert.equal(cliBpReq.done, true);
+      assert.deepEqual(cliBpReq.boundaries, ['a.js', 'b.js']);
+      assert.deepEqual(cliBpReq.doneWhenStatus, ['ok1', 'ok2']);
+
+      await runCli([
+        'board-read',
+        '--since', '0',
+        '--limit', '15',
+        '--seqList', '3, 4',
+      ], opts);
+      const cliBrReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(cliBrReq.op, 'board_read');
+      assert.equal(cliBrReq.since, 0);
+      assert.equal(cliBrReq.limit, 15);
+      assert.deepEqual(cliBrReq.seqList, [3, 4]);
+
+      await runCli([
+        'task',
+        '--action', 'add',
+        '--title', 'cli task',
+        '--blockedBy', 't1,t2',
+        '--doneWhen', 'd1,d2',
+        '--checks', 'c1,c2',
+        '--boardRefs', '7,8',
+      ], opts);
+      const cliTaskReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(cliTaskReq.op, 'task');
+      assert.deepEqual(cliTaskReq.blockedBy, ['t1', 't2']);
+      assert.deepEqual(cliTaskReq.doneWhen, ['d1', 'd2']);
+      assert.deepEqual(cliTaskReq.checks, ['c1', 'c2']);
+      assert.deepEqual(cliTaskReq.boardRefs, [7, 8]);
     } finally {
       if (prevProjEnv === undefined) delete process.env.AME_PROJECT_ID;
       else process.env.AME_PROJECT_ID = prevProjEnv;

@@ -254,7 +254,7 @@ function rpc(op, params = {}, opts = {}) {
 const MCP_TOOLS = [
   {
     name: 'mesh_status',
-    description: '查看当前会话所属协同项目的局部拓扑状态表（上下游 Master/Worker/Peer 节点、目标 Goal、停机条件 Stop Gate）以及该项目授权访问的跨机器文件夹列表（含用户备注、AI 备注与浅层目录结构树）。不会返回无关会话。',
+    description: '查看当前会话所属协同项目的局部拓扑状态表（上下游 Master/Worker/Peer 节点、目标 Goal、停机条件 Stop Gate）、该项目授权访问的跨机器文件夹列表（含用户备注、AI 备注与浅层目录结构树），以及 roleCatalog（外置角色名片目录）和 pools（可用模型分组池健康概览）。不会返回无关会话。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -302,10 +302,16 @@ const MCP_TOOLS = [
         machine: { type: 'string', description: '目标电脑名称' },
         cwd: { type: 'string', description: '目标电脑上的工作目录绝对路径（需在项目允许访问范围内）' },
         tool: { type: 'string', enum: ['claude', 'codex', 'opencode', 'agy', 'kiro'], description: '启动的 Coding Agent 类型' },
+        role: { type: 'string', description: '可选，节点角色名（内置 master/worker/verifier/peer 或自定义角色，自动加载对应规范）' },
+        pool: { type: 'string', description: '可选，模型能力组名（如 fast-coder/flagship/heavy-reasoner，由确定性路由按额度健康度自动选模型并故障回落；可与 tool 配合或替代 tool）' },
+        model: { type: 'string', description: '可选，显式指定具体模型名' },
         alias: { type: 'string', description: '给该节点起一个易读别名（如：FEKO求解节点）' },
         goal: { type: 'string', description: '本阶段明确的执行目标（Goal）' },
         stopCondition: { type: 'string', description: '停机与检视边界（Stop & Review Gate）：达成何种状态必须停下等待 Review' },
         prompt: { type: 'string', description: '首轮详细执行指令' },
+        boundaries: { type: 'array', items: { type: 'string' }, description: '允许该节点修改的文件或目录白名单（由主控拆分配置，交卷时自动核对防越界）' },
+        doneWhen: { type: 'array', items: { type: 'string' }, description: '编号的可核对验收条件列表' },
+        checks: { type: 'array', items: { type: 'string' }, description: '交卷前必跑的验证命令列表' },
       },
       required: ['machine', 'cwd', 'goal', 'prompt'],
     },
@@ -336,6 +342,9 @@ const MCP_TOOLS = [
         summary: { type: 'string', description: '执行结果摘要、关键数值指标或阻塞原因' },
         reviewStatus: { type: 'string', enum: ['waiting_review', 'done', 'blocked'], description: '节点状态（默认 waiting_review）' },
         artifacts: { type: 'array', items: { type: 'string' }, description: '产出的图表或数据文件路径列表' },
+        doneWhenStatus: { type: 'array', items: { type: 'string' }, description: '逐条回填 doneWhen 核对结果' },
+        checksOutput: { type: 'string', description: '验证命令实际输出摘要' },
+        boundaries: { type: 'array', items: { type: 'string' }, description: '可选，显式覆盖本次核对的文件边界白名单' },
       },
       required: ['summary'],
     },
@@ -394,6 +403,61 @@ const MCP_TOOLS = [
       required: ['action'],
     },
   },
+  {
+    name: 'mesh_board_post',
+    description: '向当前项目的统一共享黑板发帖，支持 @节点别名 或 @all 点名唤醒（<500字全文直注，>=500字极简门铃），支持用 #楼层号 引用历史帖子；done=true 时自动触发本机 git 改动边界对账。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: '可选，项目 ID' },
+        text: { type: 'string', description: '帖子内容（支持 @节点别名 / @all 点名，以及 #楼层号 引用）' },
+        channel: { type: 'string', default: 'main', description: "频道名称（默认 'main'）" },
+        artifacts: { type: 'array', items: { type: 'string' }, description: '可选，关联产物文件路径列表' },
+        done: { type: 'boolean', description: '可选，是否为交卷帖；done=true 时自动触发本机 git 改动边界对账' },
+        doneWhenStatus: { type: 'array', items: { type: 'string' }, description: '可选，逐条回填 doneWhen 核对结果' },
+        checksOutput: { type: 'string', description: '可选，验证命令实际输出摘要' },
+        boundaries: { type: 'array', items: { type: 'string' }, description: '可选，显式覆盖本次核对的文件边界白名单' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'mesh_board_read',
+    description: '按楼层拉取当前项目黑板的增量帖子（或按 seqList 精准读取指定 #楼层）并推进本节点的已读游标 lastReadSeq。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: '可选，项目 ID' },
+        since: { type: 'number', description: '可选，从该楼层号之后开始增量拉取' },
+        limit: { type: 'number', description: '可选，最多拉取条数' },
+        channel: { type: 'string', description: '可选，按频道过滤' },
+        seqList: { type: 'array', items: { type: 'number' }, description: '可选，精准读取指定的 #楼层号列表' },
+      },
+    },
+  },
+  {
+    name: 'mesh_task',
+    description: '管理当前项目的共享任务板（Shared Task List），支持任务依赖 blockedBy 自动解锁与文件边界 boundaries 声明。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'claim', 'update', 'remove'], description: '任务板操作' },
+        projectId: { type: 'string', description: '可选，项目 ID' },
+        taskId: { type: 'string', description: '任务 ID（claim/update/remove 时使用）' },
+        title: { type: 'string', description: '任务标题' },
+        desc: { type: 'string', description: '任务详细描述' },
+        ownerNodeId: { type: 'string', description: '负责节点 ID 或别名' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'review', 'done', 'blocked'], description: '任务状态' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: '前置依赖任务 ID 列表' },
+        boundaries: { type: 'array', items: { type: 'string' }, description: '允许修改的文件或目录白名单' },
+        doneWhen: { type: 'array', items: { type: 'string' }, description: '编号的可核对验收条件列表' },
+        checks: { type: 'array', items: { type: 'string' }, description: '交卷前必跑的验证命令列表' },
+        boardRefs: { type: 'array', items: { type: 'number' }, description: '关联的黑板 #楼层号列表' },
+        artifacts: { type: 'array', items: { type: 'string' }, description: '关联产出文件路径列表' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 async function handleMcpCall(name, args = {}, opts = {}) {
@@ -407,6 +471,9 @@ async function handleMcpCall(name, args = {}, opts = {}) {
     case 'mesh_transfer': return rpc('transfer', args, opts);
     case 'mesh_run': return runBgMcp(args, opts);
     case 'mesh_trigger': return rpc('trigger', args, opts);
+    case 'mesh_board_post': return rpc('board_post', args, opts);
+    case 'mesh_board_read': return rpc('board_read', args, opts);
+    case 'mesh_task': return rpc('task', args, opts);
     default: return { ok: false, msg: '未知的工具：' + name };
   }
 }
@@ -474,7 +541,7 @@ function parseCliFlags(argv) {
   return out;
 }
 
-async function runCli(argv = process.argv.slice(2)) {
+async function runCli(argv = process.argv.slice(2), opts = {}) {
   const flags = parseCliFlags(argv);
   const cmd = flags._[0] || 'status';
   if (cmd === '__run_worker') {
@@ -555,24 +622,48 @@ async function runCli(argv = process.argv.slice(2)) {
       '  node tools/ame-mesh.js status [--projectId <id>] [--sessionId <id>]',
       '  node tools/ame-mesh.js tree --path <dir> [--machine <pc>] [--refresh]',
       '  node tools/ame-mesh.js note --path <dir> --aiNote <text> [--machine <pc>] [--tag <tag>]',
-      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy|kiro] [--alias <name>]',
+      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy|kiro] [--role <role>] [--pool <pool>] [--model <model>] [--alias <name>]',
       '  node tools/ame-mesh.js send --toNodeId <node> --text <msg> [--goal <goal>] [--stopCondition <gate>]',
       '  node tools/ame-mesh.js report --summary <text> [--reviewStatus waiting_review|done|blocked] [--artifacts a.png,b.csv]',
       '  node tools/ame-mesh.js transfer --fromMachine <pc1> --fromPath <p1> --toMachine <pc2> --toPath <p2> [--size <bytes>] [--mode auto|manual_disk] [--note <text>]',
       '  node tools/ame-mesh.js run [--cwd <dir>] [--label <name>] [--log <file>] [--projectId <id>] [--nodeId <id>] [--fg] -- <cmd> [args...]',
       '  node tools/ame-mesh.js watch-pid --pid <pid> [--label <name>] [--cwd <dir>] [--projectId <id>] [--nodeId <id>] [--intervalMs <ms>] [--fg]',
       '  node tools/ame-mesh.js trigger --action add|list|remove|pause|resume [--projectId <id>] [--triggerId <id>] [--machine <pc>] [--path <dir>] [--glob <pattern>] [--maxDepth <1-6>] [--targetNodeId <id>] [--label <text>]',
+      '  node tools/ame-mesh.js board-post --text <msg> [--projectId <id>] [--channel main] [--artifacts a,b] [--done] [--doneWhenStatus s1,s2] [--checksOutput <text>] [--boundaries p1,p2]',
+      '  node tools/ame-mesh.js board-read [--projectId <id>] [--since <seq>] [--limit <n>] [--channel main] [--seqList 1,2,3]',
+      '  node tools/ame-mesh.js task --action list|add|claim|update|remove [--projectId <id>] [--taskId <id>] [--title <text>] [--desc <text>] [--ownerNodeId <node>] [--status pending|in_progress|review|done|blocked] [--blockedBy t1,t2] [--boundaries p1,p2] [--doneWhen w1,w2] [--checks c1,c2] [--boardRefs 1,2] [--artifacts a,b]',
       '  node tools/ame-mesh.js mcp   (启动标准 stdio MCP Server)',
     ].join('\n'));
     return;
   }
-  if (typeof flags.artifacts === 'string') {
-    flags.artifacts = flags.artifacts.split(',').map((s) => s.trim()).filter(Boolean);
+  for (const key of ['artifacts', 'boundaries', 'doneWhen', 'checks', 'blockedBy', 'doneWhenStatus']) {
+    if (typeof flags[key] === 'string') {
+      flags[key] = flags[key].split(',').map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  for (const key of ['seqList', 'boardRefs']) {
+    if (typeof flags[key] === 'string') {
+      flags[key] = flags[key].split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => Number.isInteger(n));
+    }
   }
   if (flags.size != null) flags.size = +flags.size || 0;
   if (flags.depth != null) flags.depth = +flags.depth || 3;
+  for (const key of ['since', 'limit', 'maxDepth']) {
+    if (flags[key] != null) {
+      const n = Number(flags[key]);
+      if (Number.isFinite(n)) flags[key] = n;
+    }
+  }
+  if (flags.done === true || flags.done === 'true') flags.done = true;
+  else if (flags.done === false || flags.done === 'false') flags.done = false;
   delete flags._;
-  const res = await rpc(cmd, flags);
+  const CLI_OP_MAP = {
+    'board-post': 'board_post',
+    'board-read': 'board_read',
+    task: 'task',
+  };
+  const op = CLI_OP_MAP[cmd] || cmd;
+  const res = await rpc(op, flags, opts);
   console.log(JSON.stringify(res, null, 2));
   if (res.ok === false) process.exitCode = 1;
 }
@@ -581,4 +672,4 @@ if (require.main === module) {
   runCli();
 }
 
-module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal, savePendingMeshEvent, executeCommandWorker, watchPidWorker, runBgMcp };
+module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal, savePendingMeshEvent, executeCommandWorker, watchPidWorker, runBgMcp, runCli, parseCliFlags };

@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const child_process = require('child_process');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
 const { lineage } = require('../../app/running-sessions');
@@ -635,6 +636,41 @@ async function tick(force) {
 setInterval(tick, SCAN_MS);
 setInterval(()=>{nativeArchive.tick();if(cfg.fullArchive!==false)openCodeExport.tick();memorySync.tick().catch(e=>console.error('记忆采集失败：'+e.message));},500).unref();
 const crypto = require('crypto');
+// Collect local git working-tree changes (zero-token boundary audit for report / done board_post)
+function collectGitAudit(cwd) {
+  if (typeof cwd !== 'string' || !cwd.trim()) return null;
+  const targetDir = cwd.trim();
+  try {
+    if (!fs.statSync(targetDir).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  let out = '';
+  try {
+    out = child_process.execFileSync('git', ['-C', targetDir, 'status', '--porcelain'], {
+      timeout: 2500,
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
+    return { checked: true, isGit: false, changedFiles: [] };
+  }
+  const files = [];
+  for (const line of String(out || '').split(/\r?\n/)) {
+    if (!line || line.length < 4) continue;
+    let p = line.slice(3).trim();
+    if (!p) continue;
+    const arrowIdx = p.indexOf(' -> ');
+    if (arrowIdx >= 0) p = p.slice(arrowIdx + 4).trim();
+    if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) {
+      p = p.slice(1, -1);
+    }
+    p = p.replace(/\\/g, '/');
+    if (p) files.push(p);
+  }
+  return { checked: true, isGit: true, changedFiles: files.slice(0, 200) };
+}
 // Local loopback bridge (127.0.0.1:3941) for AmeMesh CLI / MCP tools running inside local coding agent sessions
 const meshPending = new Map();
 const MESH_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -658,6 +694,10 @@ function startMeshBridge() {
           return out(200, { ok: true, queued: true, msg: 'agent 离线，事件已加入暂存队列，将在重新连接时自动上报' });
         }
         return out(200, { ok: false, msg: '本机 agent 尚未连接上群晖服务器' });
+      }
+      if ((d.op === 'report' || (d.op === 'board_post' && d.done === true))
+        && !d.gitAudit && typeof d.callerCwd === 'string' && d.callerCwd.trim()) {
+        d.gitAudit = collectGitAudit(d.callerCwd.trim());
       }
       const rid = 'mrpc-' + crypto.randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
