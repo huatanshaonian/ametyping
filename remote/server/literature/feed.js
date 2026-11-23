@@ -56,7 +56,7 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
-function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false }) {
+function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false, embed = null }) {
   const file = path.join(dir, 'feed.json');
   let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {}, asked: {}, toc: {}, tocAt: {}, s2: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -202,6 +202,24 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     const score = (c) => { const t = texts.get(c); return phrases.reduce((s, p) => s + (t.includes(p) ? 3 : 0), 0) + terms.reduce((s, w) => s + (weight.get(w) && has(t, w) ? weight.get(w) : 0), 0) + (c.abstract ? 0.5 : 0) + ((c.sources || []).length - 1); };
     return list.map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.c);
   }
+  // The same, fused (RRF, k=60) with the vector similarity of each candidate to the profile's line and open questions
+  // (embed/search.rankCandidates): a paper sharing no word with the profile -- another language, other terms -- can
+  // still come first. The vector service offline or failing: the keyword order alone, as before.
+  async function prefilterSemantic(list, n = list.length) {
+    const kwList = prefilter(list);
+    if (!embed || !embed.search || typeof embed.search.rankCandidates !== 'function' || !list.length) return kwList.slice(0, n);
+    let r = null;
+    try {
+      const prof = profile.get() || {};
+      const anchors = [prof.line, ...profile.openQuestions().map((q) => q.text)].filter(Boolean);
+      r = await embed.search.rankCandidates(anchors, list.map((c) => (c.title || '') + '\n' + (c.abstract || '')));
+    } catch (e) { log('文献：语义预筛失败，退回关键词：' + e.message); }
+    if (!r || !r.ok || !Array.isArray(r.scores) || r.scores.length !== list.length) return kwList.slice(0, n);
+    const kwRank = new Map(kwList.map((c, i) => [c, i + 1]));
+    const semRank = new Map(list.map((c, i) => ({ c, s: +r.scores[i] || 0 })).sort((a, b) => b.s - a.s).map((x, i) => [x.c, i + 1]));
+    const rrf = (c) => 1 / (60 + kwRank.get(c)) + 1 / (60 + semRank.get(c));
+    return list.map((c) => ({ c, s: rrf(c) })).sort((a, b) => b.s - a.s || kwRank.get(a.c) - kwRank.get(b.c)).slice(0, n).map((x) => x.c);
+  }
   function feedback() {
     const done = entries().filter((e) => e.kind === 'new' && e.decidedAt).sort((a, b) => b.decidedAt - a.decidedAt);
     return { kept: done.filter((e) => e.status === 'kept').slice(0, 10).map((e) => e.paper.title), skipped: done.filter((e) => e.status === 'skipped').slice(0, 10).map((e) => e.paper.title) };
@@ -297,7 +315,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         const tocNow = toc.filter(ready).slice(0, TOC_PER_DAY), tocWait = toc.filter((c) => !tocNow.includes(c));
         const rest = all.filter((c) => !c.toc);
         await enrich(rest);
-        const list = prefilter(rest), wait = [...tocWait, ...list.slice(rankN(), rankN() + INBOX_MAX)];
+        const list = await prefilterSemantic(rest), wait = [...tocWait, ...list.slice(rankN(), rankN() + INBOX_MAX)];
         const keep = (cs) => { inbox = Object.fromEntries(cs.map((c) => [fingerprint(c), c])); saveInbox(); };
         // (all of them wait first: when the scoring fails, what was found -- a table of contents is not taken twice --
         // is still there the next time)
@@ -405,7 +423,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   function start(everyMs = 60e3) { prune(); timer = setInterval(() => { tick(); }, everyMs); timer.unref && timer.unref(); }
   const status = () => ({ running: !!running, lastError, runs: st.runs.slice(-7), next: due() ? 'now' : '', archive: archive.status(), dtic: st.dtic || null, unscored: Object.keys(inbox).length, pool: entries().filter((e) => e.status === 'spare').length });
 
-  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, promote, get, decide, wantAbstract, gotAbstract, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
+  return { run, tick, start, stop: () => timer && clearInterval(timer), list, pool, prefilter, prefilterSemantic, promote, get, decide, wantAbstract, gotAbstract, status, entries, markReviewed: (key) => { st.reviewed[key] = now(); save(); } };
 }
 
 module.exports = { createFeed, ymd, rotate, unquote };

@@ -152,7 +152,7 @@ const ASSISTANT_SCHEMA={
   required:['mood','headline','answer','key_results','locations','evidence_refs','follow_ups'],
 };
 
-function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=null,listProjects=()=>[],saveProject=null}){
+function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=null,getEmbed=()=>null,listProjects=()=>[],saveProject=null}){
   const db=vault.db;
   const dataDir=path.dirname(vault.file);
   db.exec(`CREATE TABLE IF NOT EXISTS research_directory_summaries(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,
@@ -670,9 +670,52 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
     }
 
     let memories=[];
-    try{
-      memories=db.prepare("SELECT scope,owner,name,body FROM memory WHERE enabled=1 ORDER BY updated DESC LIMIT 30").all();
-    }catch{}
+    let semanticPassages=[];
+    let semanticStatus='off';
+    const embed=typeof getEmbed==='function'?getEmbed():null;
+    const allMems=(()=>{try{return db.prepare("SELECT id,scope,owner,name,body,updated FROM memory WHERE enabled=1 ORDER BY updated DESC").all();}catch{return [];}})();
+    if(embed&&embed.search){
+      const [memRes,sessRes]=await Promise.all([
+        typeof embed.search.queryMemories==='function'?embed.search.queryMemories(q,{topK:15,kinds:['memory']}).catch(()=>({ok:false,items:[]})):Promise.resolve({ok:false,items:[]}),
+        typeof embed.search.querySessions==='function'?embed.search.querySessions(q,{topChunks:30,maxSessions:8,hitsPerSession:2}).catch(()=>({ok:false,sessions:[]})):Promise.resolve({ok:false,sessions:[]}),
+      ]);
+      if(memRes.ok||sessRes.ok){
+        semanticStatus='ok';
+        const byId=new Map(allMems.map(m=>[m.id,m]));
+        const pickedIds=new Set();
+        if(memRes.ok){
+          for(const hit of memRes.items||[]){
+            const m=byId.get(hit.key);
+            if(m&&!pickedIds.has(m.id)){pickedIds.add(m.id);memories.push({...m,score:Number(hit.score.toFixed(3))});}
+          }
+        }
+        for(const m of allMems){
+          if(memories.length>=30)break;
+          if(!pickedIds.has(m.id)){pickedIds.add(m.id);memories.push(m);}
+        }
+        if(sessRes.ok){
+          for(const s of sessRes.sessions||[]){
+            for(const h of s.hits||[]){
+              if(semanticPassages.length>=10)break;
+              semanticPassages.push({
+                machine:s.machine,
+                session:s.session,
+                t:h.t||s.last||0,
+                role:h.role||'',
+                score:Number((h.score||s.vecScore||0).toFixed(3)),
+                snippet:String(h.text||h.snippet||'').slice(0,360),
+              });
+            }
+            if(semanticPassages.length>=10)break;
+          }
+        }
+      }else{
+        semanticStatus='unavailable';
+        memories=allMems.slice(0,30);
+      }
+    }else{
+      memories=allMems.slice(0,30);
+    }
 
     const recentTurns=Array.isArray(history)?history.slice(-4).map(h=>({
       q:String(h.q||'').slice(0,300),
@@ -695,11 +738,12 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       '输入 1：结构化项目总览与各目录工作总结：',
       JSON.stringify(projData),
       '',
-      '输入 2：相关全局与项目记忆：',
+      '输入 2：相关全局与项目记忆（按语义相关度优先排序）：',
       JSON.stringify(memories.map(m=>({scope:m.scope,owner:m.owner,name:m.name,body:String(m.body||'').slice(0,320)}))),
       '',
       '输入 3：原文证据池（编号 E1..En）：',
       JSON.stringify(evidencePool.map(({event_id,...rest})=>rest)),
+      semanticPassages.length?'\n输入 4：跨设备语义检索到的相关原始对话片段（补充参考，可能包含尚未汇总的新对话）：\n'+JSON.stringify(semanticPassages):'',
       '',
       '用户当前问题：',
       q,
@@ -723,6 +767,7 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       evidence:matchedEv.length?matchedEv:evidencePool.slice(0,2),
       follow_ups:Array.isArray(res.follow_ups)?res.follow_ups.map(x=>String(x).trim()).filter(Boolean).slice(0,3):[],
       model:model||resolveDefaultModel()||DEFAULT_MODEL,
+      semantic:semanticStatus,
     };
   }
 

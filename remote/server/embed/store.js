@@ -1,5 +1,7 @@
 // Derived vector store: <dataDir>/vectors.sqlite (Node built-in node:sqlite, zero external deps).
-// Keeps conversation chunk vectors (deduplicated by SHA-256) + refs, and memory entry vectors.
+// Keeps conversation chunk vectors (deduplicated by SHA-256) + refs, memory entry vectors,
+// and literature vectors (lit_vec: Zotero item title/abstract + notes/annotations).
+// lit_vec is added via CREATE TABLE IF NOT EXISTS, so SCHEMA_VERSION stays '1' and existing stores are kept.
 // Vectors are kept in memory as Float32Arrays for fast brute-force dot-product search.
 // Deleting the file or changing model/dims/task/ruleVersion cleanly rebuilds from scratch.
 'use strict';
@@ -64,6 +66,16 @@ const SCHEMA = `
     updated INTEGER NOT NULL,
     PRIMARY KEY (kind, key)
   );
+  CREATE TABLE IF NOT EXISTS lit_vec (
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    parent_key TEXT NOT NULL DEFAULT '',
+    sha256 TEXT NOT NULL,
+    dims INTEGER NOT NULL,
+    vec BLOB NOT NULL,
+    updated INTEGER NOT NULL,
+    PRIMARY KEY (kind, key)
+  );
 `;
 
 const DROP_ALL = `
@@ -71,6 +83,7 @@ const DROP_ALL = `
   DROP TABLE IF EXISTS vec;
   DROP TABLE IF EXISTS cursor;
   DROP TABLE IF EXISTS mem_vec;
+  DROP TABLE IF EXISTS lit_vec;
 `;
 
 function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = '', ruleVersion = '1', log = () => {} }) {
@@ -137,6 +150,8 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
     setCursor: db.prepare('INSERT OR REPLACE INTO cursor (k, v) VALUES (?, ?)'),
     putMem: db.prepare('INSERT OR REPLACE INTO mem_vec (kind, key, sha256, dims, vec, updated) VALUES (?, ?, ?, ?, ?, ?)'),
     delMem: db.prepare('DELETE FROM mem_vec WHERE kind = ? AND key = ?'),
+    putLit: db.prepare('INSERT OR REPLACE INTO lit_vec (kind, key, parent_key, sha256, dims, vec, updated) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+    delLit: db.prepare('DELETE FROM lit_vec WHERE kind = ? AND key = ?'),
     allRefsFiles: db.prepare('SELECT DISTINCT file FROM refs'),
     delRefsByFile: db.prepare('DELETE FROM refs WHERE file = ?'),
     delOrphanVecs: db.prepare('DELETE FROM vec WHERE hash NOT IN (SELECT DISTINCT hash FROM refs)'),
@@ -145,6 +160,7 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
   // In-memory vector indexes
   const chunkIndex = new Map();          // hash -> Float32Array
   const memIndex = new Map();            // "kind\0key" -> { kind, key, sha256, vec: Float32Array }
+  const litIndex = new Map();            // "kind\0key" -> { kind, key, parentKey, sha256, vec: Float32Array }
 
   function loadMemory() {
     chunkIndex.clear();
@@ -154,6 +170,10 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
     memIndex.clear();
     for (const r of db.prepare('SELECT kind, key, sha256, vec FROM mem_vec').iterate()) {
       memIndex.set(r.kind + '\0' + r.key, { kind: r.kind, key: r.key, sha256: r.sha256, vec: fromBlob(r.vec, dims) });
+    }
+    litIndex.clear();
+    for (const r of db.prepare('SELECT kind, key, parent_key, sha256, vec FROM lit_vec').iterate()) {
+      litIndex.set(r.kind + '\0' + r.key, { kind: r.kind, key: r.key, parentKey: r.parent_key || '', sha256: r.sha256, vec: fromBlob(r.vec, dims) });
     }
   }
   loadMemory();
@@ -343,10 +363,81 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
     return pairs;
   }
 
+  // ---- Literature vectors (Zotero items: title/abstract; notes/annotations) ----
+  function getLitVec(kind, key) {
+    return litIndex.get(kind + '\0' + key) || null;
+  }
+
+  function listLitKeys(kind) {
+    const out = [];
+    for (const v of litIndex.values()) if (v.kind === kind) out.push(v.key);
+    return out;
+  }
+
+  function putLitVecs(entries) {
+    if (!entries || !entries.length) return;
+    const now = Date.now();
+    const staged = [];
+    db.exec('BEGIN');
+    try {
+      for (const e of entries) {
+        const f32 = e.vec instanceof Float32Array ? e.vec : new Float32Array(e.vec);
+        const parentKey = String(e.parentKey || '');
+        q.putLit.run(e.kind, e.key, parentKey, e.sha256, f32.length, toBlob(f32), now);
+        staged.push({ kind: e.kind, key: e.key, parentKey, sha256: e.sha256, vec: f32 });
+      }
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    for (const e of staged) litIndex.set(e.kind + '\0' + e.key, e);
+  }
+
+  function deleteLitVecs(keys) {
+    if (!keys || !keys.length) return;
+    db.exec('BEGIN');
+    try {
+      for (const { kind, key } of keys) q.delLit.run(kind, key);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    for (const { kind, key } of keys) litIndex.delete(kind + '\0' + key);
+  }
+
+  function searchLit(queryVec, { topK = 30, kinds = ['item', 'note'] } = {}) {
+    if (!litIndex.size || !queryVec || !queryVec.length) return [];
+    const allow = new Set(kinds);
+    const scored = [];
+    for (const e of litIndex.values()) {
+      if (!allow.has(e.kind)) continue;
+      scored.push({ kind: e.kind, key: e.key, parentKey: e.parentKey, score: dot(queryVec, e.vec) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, Math.max(1, topK));
+  }
+
+  // Papers most similar to a given Zotero item (item vectors only, excluding itself).
+  function similarLitItems(itemKey, { topK = 10 } = {}) {
+    const self = litIndex.get('item\0' + itemKey);
+    if (!self) return [];
+    const scored = [];
+    for (const e of litIndex.values()) {
+      if (e.kind !== 'item' || e.key === itemKey) continue;
+      scored.push({ key: e.key, score: dot(self.vec, e.vec) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, Math.max(1, topK));
+  }
+
   function stats() {
     const refsCount = db.prepare('SELECT count(*) AS n FROM refs').get().n;
     const memCount = [...memIndex.values()].filter((x) => x.kind === 'memory').length;
     const obsCount = [...memIndex.values()].filter((x) => x.kind === 'observed').length;
+    const litCount = { item: 0, note: 0 };
+    for (const x of litIndex.values()) if (x.kind in litCount) litCount[x.kind]++;
     return {
       file,
       rebuilt,
@@ -361,6 +452,9 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
       lastSyncAt: Number(getCursor('last_sync_at', '0')) || 0,
       lastAuditAt: Number(getCursor('last_audit_at', '0')) || 0,
       lastMemSyncAt: Number(getCursor('last_mem_sync_at', '0')) || 0,
+      litItems: litCount.item,
+      litNotes: litCount.note,
+      lastLitSyncAt: Number(getCursor('last_lit_sync_at', '0')) || 0,
     };
   }
 
@@ -384,6 +478,12 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
     deleteMemories,
     searchMemories,
     similarMemoryPairs,
+    getLitVec,
+    listLitKeys,
+    putLitVecs,
+    deleteLitVecs,
+    searchLit,
+    similarLitItems,
     stats,
     close,
   };

@@ -1,4 +1,5 @@
-// Incremental background indexing job for conversations (Stage 1) and memories (Stage 2).
+// Incremental background indexing job for conversations (Stage 1), memories (Stage 2)
+// and Zotero literature (items: title/abstract/tags/venue/year; notes/annotations).
 // - Concurrency 1, batch size 16 (leaves 3 slots on remote3090 for live queries).
 // - Checks /health before each run; skips cleanly when remote3090 is offline.
 // - Daily consistency audit catches search.db rebuilds and prunes deleted files.
@@ -29,6 +30,7 @@ function createJob({
   store,
   searchIndex = null,
   memoryProvider = null,                 // () => { memories: [{id, name, body, scope, owner, enabled}], observed: [{machine, path, sha256, body}] }
+  litProvider = null,                    // () => { items: [{key, title, abstract, tags, venue, year}], notes: [{key, parentKey, text}] }
   dataDir = '',
   batchSize = DEFAULT_BATCH_SIZE,
   everyMs = DEFAULT_EVERY_MS,
@@ -40,6 +42,11 @@ function createJob({
   let auditTimer = null;
   let lastError = '';
   let lastRunStats = null;
+  let litFn = typeof litProvider === 'function' ? litProvider : null;
+
+  function setLitProvider(fn) {
+    litFn = typeof fn === 'function' ? fn : null;
+  }
 
   async function syncLinesOnce({ maxRows = Infinity } = {}) {
     if (!searchIndex || typeof searchIndex.scanLines !== 'function') {
@@ -212,6 +219,100 @@ function createJob({
     return res;
   }
 
+  function litItemText(it) {
+    const tags = Array.isArray(it.tags) ? it.tags.map((t) => String((t && t.tag) || t || '').trim()).filter(Boolean).join(' ') : '';
+    return [it.title, it.abstract, tags, it.venue, it.year]
+      .map((x) => (x === null || x === undefined ? '' : String(x).trim()))
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  async function syncLitOnce() {
+    if (!litFn) {
+      return { ok: true, skipped: 'no-lit-provider', embedded: 0 };
+    }
+    const h = await client.health();
+    if (!h.ok) {
+      return { ok: false, skipped: 'offline', error: h.error || 'unhealthy', embedded: 0 };
+    }
+
+    const t0 = Date.now();
+    const data = await litFn();
+    if (!data || typeof data !== 'object') {
+      return { ok: true, skipped: 'no-lit-data', embedded: 0 };
+    }
+    const items = Array.isArray(data.items) ? data.items : [];
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    const wanted = [];
+    const seen = { item: new Set(), note: new Set() };
+
+    for (const it of items) {
+      if (!it || !it.key) continue;
+      const key = String(it.key);
+      if (seen.item.has(key)) continue;
+      const text = litItemText(it);
+      if (!text) continue;
+      seen.item.add(key);
+      const sha = hashText(text);
+      const cur = store.getLitVec('item', key);
+      if (!cur || cur.sha256 !== sha) wanted.push({ kind: 'item', key, parentKey: '', sha256: sha, text });
+    }
+    for (const n of notes) {
+      if (!n || !n.key) continue;
+      const key = String(n.key);
+      if (seen.note.has(key)) continue;
+      const text = String(n.text || '').trim();
+      if (!text) continue;
+      seen.note.add(key);
+      const parentKey = String(n.parentKey || '');
+      const sha = hashText(text);
+      const cur = store.getLitVec('note', key);
+      if (!cur || cur.sha256 !== sha || cur.parentKey !== parentKey) {
+        wanted.push({ kind: 'note', key, parentKey, sha256: sha, text });
+      }
+    }
+
+    const toDelete = [];
+    for (const kind of ['item', 'note']) {
+      for (const k of store.listLitKeys(kind)) {
+        if (!seen[kind].has(k)) toDelete.push({ kind, key: k });
+      }
+    }
+
+    // Concurrency 1, batches of batchSize; each batch is persisted immediately so an
+    // interrupted run (offline mid-way, stop()) keeps its progress for the next pass.
+    let embedded = 0;
+    for (let i = 0; i < wanted.length; i += batchSize) {
+      if (stopped) break;
+      const slice = wanted.slice(i, i + batchSize);
+      const { vectors } = await client.embed(slice.map((x) => x.text));
+      store.putLitVecs(slice.map((x, j) => ({ kind: x.kind, key: x.key, parentKey: x.parentKey, sha256: x.sha256, vec: vectors[j] })));
+      embedded += slice.length;
+    }
+
+    if (!stopped) {
+      if (toDelete.length) store.deleteLitVecs(toDelete);
+      store.setCursor('last_lit_sync_at', String(Date.now()));
+    }
+
+    const res = { ok: true, embedded, deleted: stopped ? 0 : toDelete.length, ms: Date.now() - t0 };
+    if (embedded > 0 || res.deleted > 0) {
+      log(`文献向量同步：更新 ${embedded} 条，清理 ${res.deleted} 条（${res.ms} ms）`);
+    }
+    return res;
+  }
+
+  // Literature sync must never break the conversation/memory pipeline (Zotero DB may be locked/missing).
+  async function syncLitSafe() {
+    try {
+      return await syncLitOnce();
+    } catch (e) {
+      const error = e.message || String(e);
+      log('文献向量同步出错：' + error);
+      return { ok: false, error, embedded: 0 };
+    }
+  }
+
   async function auditConsistency() {
     const t0 = Date.now();
     let pruned = { removedFiles: 0, removedVecs: 0 };
@@ -225,9 +326,10 @@ function createJob({
     store.setCursor('lines_rowid', '0');
     const linesRes = await syncLinesOnce();
     const memRes = await syncMemoriesOnce();
+    const litRes = await syncLitSafe();
     store.setCursor('last_audit_at', String(Date.now()));
-    log(`向量一致性核对完成：清理失效文件 ${pruned.removedFiles}，补算对话 ${linesRes.embedded || 0} 块，记忆 ${memRes.embedded || 0} 条（${Date.now() - t0} ms）`);
-    return { ok: true, pruned, lines: linesRes, memories: memRes, ms: Date.now() - t0 };
+    log(`向量一致性核对完成：清理失效文件 ${pruned.removedFiles}，补算对话 ${linesRes.embedded || 0} 块，记忆 ${memRes.embedded || 0} 条，文献 ${litRes.embedded || 0} 条（${Date.now() - t0} ms）`);
+    return { ok: true, pruned, lines: linesRes, memories: memRes, lit: litRes, ms: Date.now() - t0 };
   }
 
   async function runOnce() {
@@ -236,9 +338,10 @@ function createJob({
     try {
       const lines = await syncLinesOnce();
       const memories = await syncMemoriesOnce();
+      const lit = await syncLitSafe();
       lastError = '';
-      lastRunStats = { at: Date.now(), lines, memories };
-      return { ok: lines.ok !== false && memories.ok !== false, lines, memories };
+      lastRunStats = { at: Date.now(), lines, memories, lit };
+      return { ok: lines.ok !== false && memories.ok !== false && lit.ok !== false, lines, memories, lit };
     } catch (e) {
       lastError = e.message || String(e);
       log('向量增量任务出错：' + lastError);
@@ -289,6 +392,8 @@ function createJob({
   return {
     syncLinesOnce,
     syncMemoriesOnce,
+    syncLitOnce,
+    setLitProvider,
     auditConsistency,
     runOnce,
     start,

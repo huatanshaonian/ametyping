@@ -264,6 +264,7 @@ const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const researchEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
   listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),getMagpie:()=>magpie,egress:researchEgress,
+  getEmbed:()=>embed,
   onMemoryChange:()=>broadcast({t:'knowledge'}),
   control:CONTROL,fresh:auth.isFresh,audit,log:console.error});
 // phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
@@ -350,7 +351,26 @@ if (searchIndex && summary) {
 // (config "literature"; the model is the daily report's); open pages are told what changed
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
   ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null, todos, reports: () => summary && summary.reports, mail: () => mail,
-  audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }) }) : null;
+  audit: (...a) => audit(...a), onChange: (what) => broadcast({ t: 'lit', what }), embed }) : null;
+// the library's vectors (embed/, lit_vec): every paper's title/abstract, and its own notes and annotations as notes of
+// the paper (the cards' AI notes, tagged Windose卡片, left out: they would echo the abstract)
+if (lit && embed && typeof embed.setLitProvider === 'function') embed.setLitProvider(() => {
+  // (Zotero never mirrored yet -- no zotero.json, or a broken one: null = skip, not an empty library wiping the vectors)
+  if (!lit.mirror.status().at) return null;
+  const items = lit.mirror.items(), notes = [];
+  for (const it of items) {
+    for (const n of lit.mirror.childrenOf(it.key).notes || []) {
+      if ((n.tags || []).some((t) => String(t).includes('Windose卡片'))) continue;
+      const text = String(n.text || '').trim();
+      if (text) notes.push({ key: 'n:' + n.key, parentKey: it.key, text });
+    }
+    for (const a of lit.mirror.annotationsOf(it.key)) {
+      const text = [a.text, a.comment].map((s) => String(s || '').trim()).filter(Boolean).join('\n');
+      if (text) notes.push({ key: 'a:' + a.key, parentKey: it.key, text });
+    }
+  }
+  return { items, notes };
+});
 // MCP 中转 (mcp-hub.js): 文献下载 / 研究档案 MCP calls from the agents' computers, over their agent's connection
 const mcpHub = createMcpHub({ machines, lit, researchDb: () => knowledge.vault && knowledge.vault.db, cfg: cfg.mcp || {}, audit: (...a) => audit(...a), log: console.error });
 // 画板 (board/index.js): boards drawn by hand, read by a model into a clean page; open pages hear of every change

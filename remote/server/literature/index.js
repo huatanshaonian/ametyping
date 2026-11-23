@@ -52,7 +52,7 @@ const { createAgentSocket, defaultSocket } = require('./agent-socket');
 
 const KEY = /^[A-Z0-9]{8}$/;
 
-function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, reports = () => null, mail = () => null, log = console.log, audit = () => {}, onChange = () => {} }) {
+function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, reports = () => null, mail = () => null, log = console.log, audit = () => {}, onChange = () => {}, embed = null }) {
   if (!cfg || cfg.enabled === false || !ask) return null;
   const dir = path.join(dataDir, 'literature');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -67,7 +67,9 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const api = createLocalApi({ base: cfg.zotero || 'http://127.0.0.1:23119', http, dir, log });
   const kb = createKb({ dir: path.resolve(cfg.kbDir || path.join(dir, 'kb')), log, onChange: () => changed('kb') });
   let intake = null;
-  const mirror = createMirror({ api, dir, log, everyMs: cfg.refreshMs != null ? +cfg.refreshMs : 60e3, onChange: () => { changed('library'); if (intake) intake.onLibrary().catch(() => {}); } });
+  const mirror = createMirror({ api, dir, log, everyMs: cfg.refreshMs != null ? +cfg.refreshMs : 60e3, onChange: () => { changed('library'); if (intake) intake.onLibrary().catch(() => {});
+    // (the library's vectors follow it: only the new and changed abstracts / notes are embedded)
+    if (embed && embed.job && typeof embed.job.syncLitOnce === 'function') setImmediate(() => { Promise.resolve().then(() => embed.job.syncLitOnce()).catch(() => {}); }); } });
   const webdav = createWebdav({ dir: cfg.webdavDir || '' });
   const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, iaBase: E.dtic || undefined, log });
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
@@ -111,7 +113,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const translate = createTranslate({ dir, ask: askFeed, field: () => (profile.get() || {}).line || '', log, onChange: () => changed('feed') });
   const wantFeed = () => { translate.want([...feed.list().filter((e) => e.kind === 'new' && e.status === 'new'), ...feed.pool()].map((e) => e.paper.abstract)); };
   let libAccess = null;
-  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, holdAbstracts: () => !!(libAccess && libAccess.enabled()), ...(cfg.feedOpts || {}), onChange: () => { changed('feed'); wantFeed(); } });
+  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, holdAbstracts: () => !!(libAccess && libAccess.enabled()), embed, ...(cfg.feedOpts || {}), onChange: () => { changed('feed'); wantFeed(); } });
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
   libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
   const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
@@ -153,6 +155,28 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (starred) out = out.filter((x) => x.card && x.card.starred);
     return out.slice(0, n);
   }
+  // With a query: the words' matches above fused (RRF, k=60) with the vector search over abstracts, notes and
+  // annotations (embed/search.queryLit) -- a Chinese query finds the English papers, a paper is found by what was
+  // noted on it. mode=keyword, no vector index, or the service offline: the words alone (semantic: off / unavailable).
+  async function libraryHybrid({ col = '', q = '', n = 300, starred = false, mode = '' } = {}) {
+    const kw = library({ col, q, n: Infinity, starred });
+    if (!String(q || '').trim() || mode === 'keyword' || !embed || !embed.search || typeof embed.search.queryLit !== 'function') return { items: kw.slice(0, n), semantic: 'off' };
+    let sem = null;
+    try { sem = await embed.search.queryLit(q, { topK: 50 }); } catch (e) { sem = { ok: false, reason: e.message }; }
+    if (!sem || !sem.ok) return { items: kw.slice(0, n), semantic: 'unavailable' };
+    const allowed = new Map((col ? mirror.inCollection(col) : mirror.items()).map((it) => [it.key, it]));
+    const semList = [];
+    for (const x of sem.items || []) {
+      const it = allowed.get(x.key); if (!it) continue;
+      const o = itemOut(it);
+      if (starred && !(o.card && o.card.starred)) continue;
+      semList.push(o);
+    }
+    const fused = new Map();
+    const add = (list) => list.forEach((o, i) => { const f = fused.get(o.key) || { o, s: 0 }; f.s += 1 / (60 + i + 1); fused.set(o.key, f); });
+    add(kw); add(semList);
+    return { items: [...fused.values()].sort((a, b) => b.s - a.s).slice(0, n).map((f) => f.o), semantic: 'ok' };
+  }
   function itemDetail(key) {
     const it = mirror.item(key); if (!it) return null;
     const card = cards.find(key);
@@ -192,7 +216,19 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     }
     if (G && p === '/api/lit/settings') { json(res, 200, { ...settings.view(), collections: mirror.collections().map((c) => c.name) }); return true; }
     if (G && p === '/api/lit/collections') { json(res, 200, { items: mirror.collections() }); return true; }
-    if (G && p === '/api/lit/library') { json(res, 200, { items: library({ col: qs('col'), q: qs('q').slice(0, 200), starred: qs('starred') === '1' }) }); return true; }
+    if (G && p === '/api/lit/library') { json(res, 200, await libraryHybrid({ col: qs('col'), q: qs('q').slice(0, 200), starred: qs('starred') === '1', mode: qs('mode') })); return true; }
+    // papers near this one by their abstracts' vectors (itself left out); no vector index: an empty list
+    if (G && p === '/api/lit/similar') {
+      const key = qs('key');
+      if (!KEY.test(key) || !mirror.item(key)) { json(res, 404, { error: 'not found' }); return true; }
+      if (!embed || typeof embed.similarLitItems !== 'function') { json(res, 200, { ok: true, semantic: 'off', items: [] }); return true; }
+      const k = Math.max(1, Math.min(30, parseInt(qs('k'), 10) || 8));
+      let near = [];
+      try { near = await embed.similarLitItems(key, { topK: k }) || []; } catch (e) { log('文献：相似论文失败：' + e.message); }
+      const items = near.filter((x) => x.key !== key).map((x) => { const it = mirror.item(x.key); return it ? { ...itemOut(it), score: Number((+x.score || 0).toFixed(4)) } : null; }).filter(Boolean);
+      json(res, 200, { ok: true, semantic: 'ok', items });
+      return true;
+    }
     if (G && p === '/api/lit/item') { const d = itemDetail(qs('key')); json(res, d ? 200 : 404, d || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/pdf') {
       const f = KEY.test(qs('key')) ? fulltext.pdfBytes(qs('key')) : null;

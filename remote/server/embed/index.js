@@ -1,4 +1,4 @@
-// Entry point for the NAS-side embedding subsystem (Stage 1: conversations, Stage 2: memories).
+// Entry point for the NAS-side embedding subsystem (Stage 1: conversations, Stage 2: memories, literature).
 // Returns null when cfg is absent or disabled so existing dashboard behavior is completely unchanged.
 'use strict';
 const { createClient, DEFAULT_DIMS, DEFAULT_TASK } = require('./client');
@@ -7,7 +7,7 @@ const { openStore } = require('./store');
 const { createJob, parseDurationMs } = require('./job');
 const { createEmbedSearch, fuseSessions } = require('./search');
 
-function open({ cfg = null, dataDir, searchIndex = null, memoryProvider = null, log = () => {}, fetchImpl = global.fetch } = {}) {
+function open({ cfg = null, dataDir, searchIndex = null, memoryProvider = null, litProvider = null, log = () => {}, fetchImpl = global.fetch } = {}) {
   if (!cfg || cfg.enabled === false || !cfg.url) return null;
 
   const dims = Number(cfg.dims) || DEFAULT_DIMS;
@@ -40,6 +40,7 @@ function open({ cfg = null, dataDir, searchIndex = null, memoryProvider = null, 
     store,
     searchIndex,
     memoryProvider,
+    litProvider,
     dataDir,
     batchSize: Number(cfg.batchSize) || 16,
     everyMs: parseDurationMs(cfg.every, 10 * 60 * 1000),
@@ -72,6 +73,8 @@ function open({ cfg = null, dataDir, searchIndex = null, memoryProvider = null, 
     search,
     fuseSessions,
     similarMemoryPairs: store.similarMemoryPairs,
+    similarLitItems: store.similarLitItems,
+    setLitProvider: job.setLitProvider,
     status,
     close,
   };
