@@ -3,6 +3,8 @@
   "token": "node server/setup.js add-agent <name> 打印出来的令牌",
   "name": "本机名",
   "control": false,
+  "autoUpdate": true,
+  "//autoUpdate": "部署后看板自动把新版本推给这台电脑（控制面板 › 设备更新，需要 control: true）；开发用的 git 目录（多个工作树、不在 main、有没提交的改动）无论这里写什么都不会被更新",
   "fullArchive": true,
   "memory": { "autoApply": true },
   "files": {

@@ -16,6 +16,7 @@ import { open as openKnowledge } from './knowledge.js';
 import { panel as notifyPanel } from './notify.js';
 import { panel as litPanel } from './lit-settings.js';
 import { panel as mcpPanel } from './mcp-panel.js';
+import { panel as fleetPanel } from './fleet-panel.js';
 import * as backnav from '../backnav.js';
 
 const ITEMS = [
@@ -28,6 +29,7 @@ const ITEMS = [
   { id: 'ai', label: 'AI 模型', icon: 'chip_ramdrive', note: '每项工作用哪个模型、后备模型、Claude Code / Codex 更新', panel: aiPanel },
   { id: 'opencode', label: 'OpenCode 配置指南', icon: 'help_book_big', note: 'Windows / Linux 安装、NAS 接入与代理', panel: opencodePanel },
   { id: 'literature', label: '文献', icon: 'help_book_big', note: '文献来源的 key、联系邮箱、每日推送', panel: litPanel },
+  { id: 'fleet', label: '设备更新', icon: 'network_normal_two_pcs', note: '各电脑 agent 的版本、部署后自动更新、一键配置编程 agent', panel: fleetPanel },
   { id: 'mcp', label: 'MCP', icon: 'network_normal_two_pcs', note: '给 agent 用的工具：协同、文献下载、研究档案', panel: mcpPanel },
 ];
 export const items = () => ITEMS.map(({ id, label, icon: ic, note }) => ({ id, label, icon: ic, note }));

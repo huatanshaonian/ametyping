@@ -108,10 +108,10 @@ function login() {
       n2.panel === n0.panel && n2.desk === n0.desk && n2.kept === 'false', [n0, n1, n2]);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('控制面板')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
     const items = await evalJs("[...document.querySelectorAll('.cp-item .cp-l')].map(b => b.textContent).join('|')");
-    chk('控制面板: the ten items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|OpenCode 配置指南|文献|MCP' &&
-      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 10 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
+    chk('控制面板: the eleven items with their icons; the first one open beside them', items === '显示属性|声音|通知|电脑|Google 账户|邮箱|AI 模型|OpenCode 配置指南|文献|设备更新|MCP' &&
+      (await evalJs("document.querySelectorAll('.cp-item img').length")) === 11 && (await evalJs("!!document.querySelector('.cp-pane .walls')")), items);
     await shot('80-control-display.png');
-    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['OpenCode 配置指南', '.ocg', 'OpenCode 连接 NAS Magpie'], ['MCP', '.mcp', '各电脑的安装情况'], ['AI 模型', '.aim', '默认']]) {
+    for (const [label, sel, txt] of [['声音', '.sounds', '全部静音'], ['通知', '.nt', '收通知的设备'], ['电脑', '.computers', '已登记的电脑'], ['Google 账户', '.gacc', '授权客户端'], ['邮箱', '.mla', '添加邮箱'], ['OpenCode 配置指南', '.ocg', 'OpenCode 连接 NAS Magpie'], ['MCP', '.mcp', '各电脑的安装情况'], ['设备更新', '.fleet', 'NAS 上的更新包'], ['AI 模型', '.aim', '默认']]) {
       await evalJs(`[...document.querySelectorAll('.cp-item')].find(b => b.textContent.includes('${label}')).click()`); await sleep(900);
       chk(`控制面板 → ${label}: the page inside, the title says so`, (await evalJs(`(document.querySelector('.cp-pane ${sel}') || {}).textContent || ''`)).includes(txt) && (await winTitle()).includes('控制面板 - ' + label),
         [await winTitle(), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 120)")]);
@@ -119,6 +119,11 @@ function login() {
         chk('控制面板 → MCP: the three servers with their limits, and how to install', await evalJs("document.querySelectorAll('.mcp-card').length === 3 && /一次最多 20 个 DOI/.test(document.querySelector('.mcp').textContent) && /install-mesh-mcp\\.js --status/.test(document.querySelector('.mcp').textContent)"),
           await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 400)"));
         await shot('81-control-mcp.png');
+      }
+      if (label === '设备更新') {
+        chk('控制面板 → 设备更新: no bundle yet said plainly, the settings and the Magpie key setup shown', /还没有（运行一次 node remote\/deploy\/deploy\.js/.test(await evalJs("document.querySelector('.fleet').textContent")) &&
+          (await evalJs("!!document.querySelector('.fleet input[type=url]') && /gateway-key admin/.test(document.querySelector('.fleet').textContent)")), await evalJs("document.querySelector('.cp-pane').textContent.slice(0, 400)"));
+        await shot('81-control-fleet.png');
       }
     }
     // AI 模型: the models of both accounts (Claude's, then OpenAI's), efforts per model, a change saved, the backup;

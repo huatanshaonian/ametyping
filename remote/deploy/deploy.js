@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 // One command to put a commit (main by default) on the NAS and the machines' agents:
-//   node remote/deploy/deploy.js [--ref main] [--dry-run] [--test] [--force] [--no-agents] [--no-headless]
+//   node remote/deploy/deploy.js [--ref main] [--dry-run] [--test] [--force] [--no-agents] [--ssh-agents] [--no-headless]
 // 1. the commit: main must be what GitHub has (fetched first); --test runs the e2e tests (remote/test/run.js) first
 // 2. the NAS: its code is compared with git -- a file edited on the NAS (a version git never had) stops the deploy
 //    (--force: overwrite it anyway); then a backup (code-backup-<time>.tar.gz, the newest 5 kept), the upload
 //    (git archive of remote/, never config.json / data / node_modules), npm install when package.json changed,
 //    the restart, and the log checked
-// 3. each agent machine: the same check, its files updated (remote/agent, headless, app/*.js), the agent restarted;
-//    the Linux headless service only when its code changed (a restart drops permission prompts waiting there), and
-//    only once its unit is sure to stop just its own process (KillMode=process -- never tmux and the sessions in it);
-//    this PC's agent (it runs from this working tree) when the tree is at that commit
+// 3. the agent bundle on the NAS (remote/server/data/fleet/bundle): what an agent machine runs at that commit, which
+//    the dashboard server then pushes to every computer's agent over its own connection (server/fleet: no SSH, a
+//    development checkout never) -- 控制面板 › 设备更新 shows how far each one is
+//    --ssh-agents: as before, each agent machine of deploy.local.json over SSH: the same check, its files updated
+//    (remote/agent, headless, app/*.js), the agent restarted; the Linux headless service only when its code changed (a
+//    restart drops permission prompts waiting there), and only once its unit is sure to stop just its own process
+//    (KillMode=process -- never tmux and the sessions in it). Needed once for an agent too old to update itself.
+//    This PC's agent (it runs from this working tree) is restarted when the tree is at that commit, never updated
 // 4. deployed.json on the NAS records what was deployed; a change to the pet (app/) since then is pointed out
 // Machines: remote/deploy/deploy.local.json (not in git; see deploy.example.json). --dry-run: checks only.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { git, ssh, run, upload, treeOf, depsOf, remoteFiles, compare } = require('./deploy-lib');
+const { git, ssh, run, upload, treeOf, depsOf, remoteFiles, compare, historyBlobs } = require('./deploy-lib');
 
 const argv = process.argv.slice(2);
 const flag = (f) => argv.includes(f);
@@ -29,13 +33,14 @@ const cfgFile = path.join(__dirname, 'deploy.local.json');
 if (!fs.existsSync(cfgFile)) fail(`缺少 ${cfgFile}：照 deploy.example.json 写一份（机器的 ssh 名称和目录）`);
 const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
 const NAS = cfg.nas;
+const BUNDLE = NAS.bundle || 'remote/server/data/fleet/bundle';     // (relative to NAS.dir: the server's dataDir/fleet/bundle)
 
 const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server/config.json*', 'remote/test/out', '*.log', '*.log.old'];
 // what an agent machine runs: remote/agent/ and headless/, plus the app/ modules they load (found by following their
 // require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there, and the OpenCode plugin
 const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
   'agy-hook.js', 'install-agy-hooks.js', 'install-mesh-mcp.js', 'tools/ame-mesh.js', 'remote/mcp/client.js',
-  'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
+  'remote/agent/update-guard.js', 'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
 
 // a Linux machine's installed headless unit (filled in from headless/deploy/ame-headless.service when it was set up)
 // made to stop only its own node process on a restart: the default, control-group, killed tmux and every Claude
@@ -105,11 +110,27 @@ function checkMachine(name, local, extraOk) {
 
   // ---- 3. the agents ----
   const appChanged = prev && prev.commit && prev.commit !== commit ? git(['diff', '--name-only', prev.commit, commit, '--', 'app']).split('\n').filter(Boolean) : [];
+  const want = depsOf(commit, ['remote/agent', 'headless']);
+  for (const h of HOOKS) want.add(h);
+  const agentTree = new Map([...treeOf(commit, ['remote/agent', 'headless', 'app', ...HOOKS])].filter(([p]) => want.has(p)));
+  const hdeps = depsOf(commit, ['headless']);                       // (the headless service's own code)
   if (!flag('--no-agents')) {
-    const want = depsOf(commit, ['remote/agent', 'headless']);
-    for (const h of HOOKS) want.add(h);
-    const agentTree = new Map([...treeOf(commit, ['remote/agent', 'headless', 'app', ...HOOKS])].filter(([p]) => want.has(p)));
-    const hdeps = depsOf(commit, ['headless']);                     // (the headless service's own code)
+    step(`agent 更新包（群晖 ${NAS.dir}/${BUNDLE}）`);
+    const manifest = { commit, ref: REF, at: new Date().toISOString(), files: Object.fromEntries(agentTree),
+      headless: [...agentTree.keys()].filter((p) => hdeps.has(p)), known: [...historyBlobs([...agentTree.keys()])] };
+    say(`  ${agentTree.size} 个文件（其中 ${manifest.headless.length} 个是无头服务的代码），历史版本 ${manifest.known.length} 个`);
+    let current = null; try { current = JSON.parse(String(ssh(NAS.ssh, `cat ${NAS.dir}/${BUNDLE}/manifest.json 2>/dev/null || true`))); } catch {}
+    if (current && current.commit === commit) say('  群晖上已经是这个版本的更新包');
+    else if (DRY) say('  （--dry-run：会上传更新包，看板随后自动更新各电脑上的 agent）');
+    else {
+      ssh(NAS.ssh, `rm -rf ${NAS.dir}/${BUNDLE}.new && mkdir -p ${NAS.dir}/${BUNDLE}.new/files`);
+      await upload(commit, [...agentTree.keys()], NAS.ssh, `${NAS.dir}/${BUNDLE}.new/files`);
+      ssh(NAS.ssh, `cat > ${NAS.dir}/${BUNDLE}.new/manifest.json`, { input: JSON.stringify(manifest) });
+      ssh(NAS.ssh, `cd ${NAS.dir}/${path.posix.dirname(BUNDLE)} && rm -rf bundle.old && { [ ! -d bundle ] || mv bundle bundle.old; } && mv bundle.new bundle && rm -rf bundle.old`);
+      say('  已上传：看板服务器一分钟内发现新版本，自动推给开了远程控制、不是开发目录的电脑（控制面板 › 设备更新）');
+    }
+  }
+  if (!flag('--no-agents')) {
     for (const a of cfg.agents || []) {
       if (a.local) {
         step(`本机 agent（${a.name}）`);
@@ -123,6 +144,7 @@ function checkMachine(name, local, extraOk) {
         say('  已确认新 agent 进程：' + String(result).trim());
         continue;
       }
+      if (!flag('--ssh-agents')) { say(`\n· ${a.name}：交给看板自动更新（要像以前一样用 SSH 更新它，加 --ssh-agents）`); continue; }
       step(`${a.name}（${a.ssh}:${a.dir}）`);
       const have = remoteFiles(a.ssh, a.dir, [...agentTree.keys()], []);
       const cmp = compare(have, agentTree);
@@ -132,6 +154,7 @@ function checkMachine(name, local, extraOk) {
       const km = DRY ? 'ok' : killModeProcess(a.ssh);
       if (DRY || !cmp.changed.length) { if (!cmp.changed.length) say('  已经是这个版本'); continue; }
       await upload(commit, cmp.changed, a.ssh, a.dir);
+      ssh(a.ssh, `cat > ${a.dir}/.ame-version.json`, { input: JSON.stringify({ commit, at: new Date().toISOString(), by: 'deploy' }) });
       if (cmp.changed.some((p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js')) {
         ssh(a.ssh, `cd ${a.dir} && node install-agy-hooks.js`, { allowFail: true });
       }

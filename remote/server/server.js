@@ -29,6 +29,7 @@ const { createResearch } = require('./research/service');
 const { createAgentsAdmin } = require('./agents-admin');
 const { createSummary } = require('./summary');
 const { createMagpie } = require('./magpie');
+const { createFleet } = require('./fleet');
 const { createArtifacts } = require('./artifacts');
 const { createTodos } = require('./todos');
 const { createNotes } = require('./notes');
@@ -296,6 +297,10 @@ const sendQuota = (sock, notice) => { try { sock.send(JSON.stringify({ t: 'quota
 magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
   onChange: () => broadcast({ t: 'magpie' }),
   onNotice: n => { for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) sendQuota(sock, n); } });
+// 设备更新 & 一键配置 (fleet/): agent versions, the update after a deploy over the agents' own connections, Magpie keys
+const fleet = createFleet({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, control: CONTROL,
+  audit: (...a) => audit(...a), onChange: () => broadcast({ t: 'fleet' }), log: console.error, magpieConfig: cfg.magpie || {},
+  models: () => magpie.status().models || [] });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
   resumeCmd, artifacts, todos, notes, searchIndex, embed, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
@@ -367,7 +372,7 @@ if (cfg.backup && cfg.backup.dir) {
   createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
     before: () => knowledge.vault.snapshot(snapFile), after: cleanSnap, log: console.log });
 }
-function flushAndExit() { try { magpie.stop(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();embed&&embed.close();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { magpie.stop(); fleet.close(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();embed&&embed.close();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -392,6 +397,7 @@ function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (infra.fromAgentMessage(m.name, d)) return;
   if(knowledge.message(m.name,d,ws))return;
+  if (fleet.fromAgent(m, d, ws)) return;
   if (d.t === 'hello') {
     for (const notice of magpie.activeNotices()) sendQuota(ws, notice);
     ws.remoteControlAllowed = d.control === true; ws.filesAllowed = d.files === true; ws.uploadAllowed = d.upload === true;
@@ -746,6 +752,7 @@ const server = http.createServer(async (req, res) => {
   if (p.startsWith('/api/marks') && await marks.handle(req, res, p, ip, json, readBody)) return;
   if (p.startsWith('/api/fs-catalog') && await fsCatalog.handle(req, res, url, ip, json, readBody)) return;
   if (p.startsWith('/api/mesh/') && await mesh.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
+  if (p.startsWith('/api/fleet') && await fleet.handle(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (p.startsWith('/api/infra/') && await infra.handleBrowser(req, res, url, ip, json, readBody, () => auth.isFresh(sess))) return;
   if (/^\/api\/push(\/|$)/.test(p) && await push.handle(req, res, p, ip, json, readBody)) return;
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
@@ -941,7 +948,7 @@ wssAgent.on('connection', (ws, req, a) => {
   ws.on('message', (raw) => onAgentMessage(m, raw, ws));             // size capped by maxPayload
   const ping = setInterval(() => { try { ws.ping(); } catch {} }, 30000);
   const down = () => {
-    profileRequests.drop(ws);
+    profileRequests.drop(ws); fleet.dropSocket(ws);
     clearInterval(ping); m.sockets.delete(ws);
     updateMachineCapabilities(m);
     if (m.sockets.size === 0) { m.online = false; fsRelay.dropMachine(a.name); audit('agent-offline', a.name); broadcast({ t: 'sessions', data: snapshot() }); }

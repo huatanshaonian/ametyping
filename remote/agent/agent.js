@@ -38,6 +38,8 @@ const { createNativeArchive } = require('./native-archive');
 const { createMemorySync } = require('./memory-sync');
 const { createOpenCodeExport } = require('./opencode-export');
 const { createArtifacts } = require('./artifacts');
+const { createFleet } = require('./fleet');
+const { createAgentConfig } = require('./agent-config');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
@@ -82,6 +84,33 @@ const memorySync=createMemorySync({name:NAME,send:sendJSON,folder:p=>browse.writ
   canWrite:()=>CONTROL&&cfg.memory!==false,confirmedDir:cfg.memory&&cfg.memory.confirmedDir||'',
   enabled:cfg.memory!==false,autoApply:!(cfg.memory&&cfg.memory.autoApply===false)});
 const fsServe = createFsServe(browse, (o) => sendJSON(o), { sessionFile: (id) => sessionFile(id) });
+// 设备更新 and 一键配置 (fleet.js, agent-config.js): this copy's version on every connection; updates and config
+// writes only with "control": true
+const fleet = createFleet({ cfg, log: console.error });
+const agentConfig = createAgentConfig();
+function sendFleetVersion() {
+  fleet.version().then((v) => sendJSON({ t: 'fleet-version', ...v, control: CONTROL, magpieKey: agentConfig.keyInfo() || undefined }))
+    .catch((e) => console.error('版本信息读取失败：' + e.message));
+}
+function onFleetMessage(d) {
+  const reply = (t, o) => sendJSON({ t, rid: d.rid, ...o });
+  if (!CONTROL) return reply(d.t === 'agent-config' ? 'agent-config-result' : 'fleet-result', { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' });
+  if (d.t === 'fleet-check') return reply('fleet-have', { have: fleet.have(d.files) });
+  if (d.t === 'fleet-files') {
+    try { reply('fleet-ack', { n: fleet.stage(d.run || d.rid, d.items) }); } catch (e) { reply('fleet-result', { ok: false, msg: e.message }); }
+    return;
+  }
+  if (d.t === 'fleet-apply') {
+    fleet.apply(d).then((r) => reply('fleet-result', r), (e) => reply('fleet-result', { ok: false, msg: '更新出错：' + e.message }))
+      .finally(sendFleetVersion);
+    return;
+  }
+  if (d.t === 'agent-config') {
+    let r; try { r = agentConfig.apply(d); } catch (e) { r = { ok: false, msg: e.message }; }
+    reply('agent-config-result', r);
+    sendFleetVersion();
+  }
+}
 const PET_PORT = +cfg.petPort || 3940;
 const PET_TOKEN_FILE = path.join(os.homedir(), '.ametyping', `control-token-${PET_PORT}`);
 const MESH_PORT = +process.env.AME_MESH_BRIDGE_PORT || +cfg.meshPort || 3941;
@@ -433,6 +462,7 @@ function connect() {
       vaultVersion:cfg.fullArchive===false?0:1,memoryVersion:1,memoryAllowed:CONTROL&&cfg.memory!==false,
       claudeProfilesAllowed: CONTROL, claudeProfiles: profileView(), files: browse.enabled, upload: browse.canUpload }));
     sendCommands(true);
+    sendFleetVersion();
     lastConv.clear(); btwSent.clear();
     serverOff = null; readers.clear(); metaSent.clear(); archive.reset();   // wait for the server's offsets before streaming
     nativeArchive.ready();memorySync.reset();
@@ -448,7 +478,9 @@ function connect() {
     if(nativeArchive.handle(d))return;
     if(d.t==='memory-bundle'){memorySync.handle(d).catch(e=>console.error('记忆同步失败：'+e.message));return;}
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
+    else if ((d.t === 'fleet-check' || d.t === 'fleet-files' || d.t === 'fleet-apply' || d.t === 'agent-config') && typeof d.rid === 'string') onFleetMessage(d);
     else if (d.t === 'sync' && d.offsets && typeof d.offsets === 'object') {
+      fleet.markHealthy();                             // (this agent reached the server: an update's guard stops waiting)
       // where the server stands per session: (re)start streaming there
       serverOff = serverOff || {};
       for (const [id, off] of Object.entries(d.offsets)) {
