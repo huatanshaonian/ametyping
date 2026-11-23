@@ -7,16 +7,19 @@ const path = require('path');
 const DEFAULT_POOLS = {
   'fast-coder': [
     { harness: 'claude', model: 'sonnet', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'claude-sonnet-5-5-medium', quirks: '' },
     { harness: 'agy', model: 'gemini-4-hydrogen-medium', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
   ],
   flagship: [
     { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'claude-opus-5-5-medium', quirks: '' },
     { harness: 'agy', model: 'gemini-4-neon-medium', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
   ],
   'heavy-reasoner': [
     { harness: 'agy', model: 'gemini-4-carbon-medium', quirks: '' },
+    { harness: 'agy', model: 'claude-opus-5-5-high', quirks: '' },
     { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
   ],
   'image-gen': [
@@ -106,26 +109,29 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     }
   }
 
-  function evaluateMagpie(candidate, magpieStatus) {
+  const LOW_QUOTA_THRESHOLD = 0.10; // Remaining < 10% -> deprioritize in favor of healthier candidates
+
+  function evaluateMagpie(candidate, magpieStatus, lowThreshold = LOW_QUOTA_THRESHOLD) {
     const mp = String((candidate && candidate.magpieProvider) || '').trim().toLowerCase();
     if (!mp || !magpieStatus || !Array.isArray(magpieStatus.accounts)) {
-      return { matched: false, exhausted: false, magpieInfo: '', resetAt: null };
+      return { matched: false, exhausted: false, lowQuota: false, minRatio: null, magpieInfo: '', resetAt: null };
     }
     const matched = magpieStatus.accounts.filter((a) => {
       if (!a || typeof a !== 'object') return false;
       return String(a.provider || '').toLowerCase() === mp || String(a.name || '').toLowerCase() === mp;
     });
     if (!matched.length) {
-      return { matched: false, exhausted: false, magpieInfo: '', resetAt: null };
+      return { matched: false, exhausted: false, lowQuota: false, minRatio: null, magpieInfo: '', resetAt: null };
     }
 
     let resetAt = null;
+    const finiteWindowsOf = (acct) => (Array.isArray(acct.windows) ? acct.windows : []).filter(
+      (w) => w && w.unlimited !== true && typeof w.remaining === 'number' && Number.isFinite(w.remaining)
+    );
     const isAcctExhausted = (acct) => {
       if (acct.status === 'error') return true;
-      const finiteWindows = (Array.isArray(acct.windows) ? acct.windows : []).filter(
-        (w) => w && w.unlimited !== true && typeof w.remaining === 'number' && Number.isFinite(w.remaining)
-      );
-      if (finiteWindows.length > 0 && finiteWindows.every((w) => w.remaining === 0)) {
+      const finiteWindows = finiteWindowsOf(acct);
+      if (finiteWindows.length > 0 && finiteWindows.every((w) => w.remaining <= 0)) {
         for (const w of finiteWindows) {
           if (w.resetsAt) {
             const parsed = typeof w.resetsAt === 'number' ? w.resetsAt : Date.parse(w.resetsAt);
@@ -143,10 +149,25 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       return {
         matched: true,
         exhausted: true,
+        lowQuota: false,
+        minRatio: 0,
         magpieInfo: matched.every((a) => a.status === 'error') ? 'Magpie 账号状态异常' : 'Magpie 额度已耗尽',
         resetAt,
       };
     }
+
+    // Compute remaining ratio across finite windows with positive limits
+    let bestAcctMinRatio = null;
+    for (const a of healthyAccounts) {
+      const ratios = finiteWindowsOf(a)
+        .filter((w) => typeof w.limit === 'number' && w.limit > 0)
+        .map((w) => Math.max(0, Math.min(1, w.remaining / w.limit)));
+      if (ratios.length) {
+        const acctMin = Math.min(...ratios);
+        if (bestAcctMinRatio === null || acctMin > bestAcctMinRatio) bestAcctMinRatio = acctMin;
+      }
+    }
+    const lowQuota = bestAcctMinRatio !== null && bestAcctMinRatio < lowThreshold;
 
     // Build concise remaining summary from the first healthy account
     let info = '';
@@ -162,7 +183,11 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
         break;
       }
     }
-    return { matched: true, exhausted: false, magpieInfo: info, resetAt: null };
+    if (lowQuota) {
+      const pct = Math.round(bestAcctMinRatio * 100);
+      info = info ? `${info}（低余额 ${pct}%）` : `低余额 ${pct}%`;
+    }
+    return { matched: true, exhausted: false, lowQuota, minRatio: bestAcctMinRatio, magpieInfo: info, resetAt: null };
   }
 
   function evaluateCandidate(candidate, magpieStatus = null) {
@@ -181,6 +206,8 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       return {
         status: 'cooldown',
         healthy: false,
+        lowQuota: false,
+        minRatio: mpEval.minRatio,
         reason: cd.reason,
         resetAt: cd.resetAt,
         remainingMs: Math.max(0, cd.resetAt - curTime),
@@ -191,14 +218,29 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       return {
         status: 'exhausted',
         healthy: false,
+        lowQuota: false,
+        minRatio: 0,
         reason: mpEval.magpieInfo,
         resetAt: mpEval.resetAt,
+        magpieInfo: mpEval.magpieInfo,
+      };
+    }
+    if (mpEval.lowQuota) {
+      return {
+        status: 'low_quota',
+        healthy: true,
+        lowQuota: true,
+        minRatio: mpEval.minRatio,
+        reason: '剩余额度不足 10%，优先避让',
+        resetAt: null,
         magpieInfo: mpEval.magpieInfo,
       };
     }
     return {
       status: 'healthy',
       healthy: true,
+      lowQuota: false,
+      minRatio: mpEval.minRatio,
       reason: '',
       resetAt: null,
       magpieInfo: mpEval.magpieInfo,
@@ -236,36 +278,62 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     return { ok: true, cleared: harness };
   }
 
-  function selectCandidate(poolName, { exclude = [] } = {}) {
+  function selectCandidate(poolName, { exclude = [], activeCounts = null, availableHarnesses = null } = {}) {
     const pools = loadPools();
     const list = pools[poolName];
     if (!Array.isArray(list) || !list.length) {
       return { ok: false, exhausted: true, pool: poolName, msg: `模型池「${poolName}」未配置或为空` };
     }
     const excludeSet = new Set((Array.isArray(exclude) ? exclude : []).map((x) => String(x)));
+    const availSet = Array.isArray(availableHarnesses) && availableHarnesses.length
+      ? new Set(availableHarnesses.map((x) => String(x).toLowerCase()))
+      : null;
     const mpStatus = typeof getMagpie === 'function' ? getMagpie()?.status?.() : null;
+    const byHarness = (activeCounts && activeCounts.byHarness) || {};
+    const byCandidate = (activeCounts && activeCounts.byCandidate) || {};
 
-    for (const cand of list) {
+    const viable = [];
+    list.forEach((cand, idx) => {
       const key = candidateKey(cand.harness, cand.model);
-      if (excludeSet.has(key) || excludeSet.has(cand.harness)) continue;
+      if (excludeSet.has(key) || excludeSet.has(cand.harness)) return;
+      if (availSet && !availSet.has(String(cand.harness || '').toLowerCase())) return;
       const evalRes = evaluateCandidate(cand, mpStatus);
-      if (evalRes.healthy) {
-        return {
-          ok: true,
-          pool: poolName,
-          candidate: {
-            ...cand,
-            ...evalRes,
-          },
-        };
-      }
+      if (!evalRes.healthy) return;
+      viable.push({
+        cand,
+        evalRes,
+        idx,
+        lowTier: evalRes.lowQuota ? 1 : 0,
+        harnessLoad: byHarness[cand.harness] || 0,
+        candLoad: byCandidate[key] || 0,
+      });
+    });
+
+    if (viable.length) {
+      // Tier 1: non-low-quota (>=10%) always before low-quota (<10%)
+      // Tier 2: spread load across harnesses first, then specific candidate, then configured priority
+      viable.sort((a, b) =>
+        (a.lowTier - b.lowTier) ||
+        (a.harnessLoad - b.harnessLoad) ||
+        (a.candLoad - b.candLoad) ||
+        (a.idx - b.idx)
+      );
+      const best = viable[0];
+      return {
+        ok: true,
+        pool: poolName,
+        candidate: {
+          ...best.cand,
+          ...best.evalRes,
+        },
+      };
     }
 
     return {
       ok: false,
       exhausted: true,
       pool: poolName,
-      msg: `模型池「${poolName}」内所有候选均处于冷却或额度耗尽状态`,
+      msg: `模型池「${poolName}」内所有可用候选均处于冷却、未安装或额度耗尽状态`,
     };
   }
 

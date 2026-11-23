@@ -10,7 +10,7 @@
 'use strict';
 
 const CHUNK = 1024 * 1024;
-const MESH_TOOLS = ['mesh_status', 'mesh_tree', 'mesh_note', 'mesh_spawn', 'mesh_send', 'mesh_report', 'mesh_transfer', 'mesh_run', 'mesh_trigger'];
+const MESH_TOOLS = ['mesh_status', 'mesh_tree', 'mesh_note', 'mesh_spawn', 'mesh_send', 'mesh_report', 'mesh_transfer', 'mesh_run', 'mesh_trigger', 'mesh_board_post', 'mesh_board_read', 'mesh_task', 'mesh_channel', 'mesh_workspace'];
 
 function createMcpHub({ machines, lit = null, researchDb = () => null, cfg = {}, audit = () => {}, log = () => {} }) {
   const on = (s) => cfg[s] !== false;

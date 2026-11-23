@@ -59,6 +59,7 @@ const APPS = [
   { id: 'mail', label: '邮件', icon: icon('outlook_express'), open: () => mail.open(), hint: '邮箱的信收在群晖上：列表、全文、附件名' },
   { id: 'literature', label: '文献', icon: icon('help_book_big'), open: () => literature.open(), hint: '每日文献推送、卡片、深读和知识库（连着群晖上的 Zotero）' },
   { id: 'knowledge', label: '记忆与存档', icon: icon('memory'), open: () => knowledge.open(), hint: '三层统一记忆、对齐与智能整理、完整会话归档与多电脑同步' },
+  { id: 'skills', label: 'Skill 管理', icon: icon('notepad'), open: () => control.open('skills'), hint: 'Skill 文档、AmeMesh 角色提示词、全局模型池与机器角色备忘' },
   { id: 'control', label: '控制面板', icon: icon('directory_control_panel'), open: () => control.open(), hint: '显示、声音、电脑、Google、邮箱、AI 模型等所有设置' },
 ];
 desktop.setIcons(APPS);
@@ -123,6 +124,8 @@ openDashboard();
   if (location.hash === '#knowledge') { knowledge.open(); history.replaceState(null, '', location.pathname); }
   if (location.hash === '#magpie') { magpie.open(); history.replaceState(null, '', location.pathname); }
   if (location.hash === '#infra') { infra.open(); history.replaceState(null, '', location.pathname); }
+  const sk = /^#skills(?:=(skills|roles|pools|machines))?$/.exec(location.hash);
+  if (sk) { control.open('skills', sk[1] || undefined); history.replaceState(null, '', location.pathname); }
   // back from Google's consent screen (google/index.js handleCallback)
   const g = /^#google=(ok|fail)$/.exec(location.hash);
   if (g) { google.open(g[1] === 'ok' ? '已连接 Google。' : '没能连接 Google，请再试一次。'); history.replaceState(null, '', location.pathname); }

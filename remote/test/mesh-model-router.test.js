@@ -119,29 +119,31 @@ describe('mesh-model-router', () => {
       now: () => curTime,
     });
 
-    // In fast-coder: claude:sonnet (anthropic) is exhausted -> should pick agy:gemini-4-hydrogen-medium
+    // In fast-coder: claude:sonnet (anthropic) is exhausted -> should pick agy:claude-sonnet-5-5-medium
     const pick1 = router.selectCandidate('fast-coder');
     assert.equal(pick1.ok, true);
     assert.equal(pick1.candidate.harness, 'agy');
-    assert.equal(pick1.candidate.model, 'gemini-4-hydrogen-medium');
+    assert.equal(pick1.candidate.model, 'claude-sonnet-5-5-medium');
 
     const status1 = router.getPoolsStatus();
     assert.equal(status1['fast-coder'][0].status, 'exhausted');
     assert.equal(status1['fast-coder'][1].status, 'healthy');
-    assert.equal(status1['fast-coder'][2].magpieInfo, '82%');
+    assert.equal(status1['fast-coder'][3].magpieInfo, '82%');
 
-    // Also test cooldown + expiry + resetCooldown
+    // Cooldown both agy models -> falls back to opencode:gpt-6.2-sol
+    router.markCooldown('agy', 'claude-sonnet-5-5-medium', '429 rate limit', curTime + 60e3);
     router.markCooldown('agy', 'gemini-4-hydrogen-medium', '429 rate limit', curTime + 60e3);
     const pick2 = router.selectCandidate('fast-coder');
     assert.equal(pick2.ok, true);
     assert.equal(pick2.candidate.harness, 'opencode');
     assert.equal(pick2.candidate.model, 'gpt-6.2-sol');
 
-    // Advance past cooldown -> agy becomes healthy again
+    // Advance past cooldown -> agy native Claude becomes healthy again
     curTime += 61e3;
     const pick3 = router.selectCandidate('fast-coder');
     assert.equal(pick3.ok, true);
     assert.equal(pick3.candidate.harness, 'agy');
+    assert.equal(pick3.candidate.model, 'claude-sonnet-5-5-medium');
 
     // Error status on all matching Magpie accounts also marks exhausted
     magpieAccounts = [
@@ -217,7 +219,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.ok(Array.isArray(scope.roleCatalog) && scope.roleCatalog.some((l) => l.startsWith('verifier')));
       assert.ok(Array.isArray(scope.pools) && scope.pools.some((p) => p.name === 'flagship'));
 
-      // 2. Spawn verifier (defaults to flagship pool; claude fails -> automatically falls back to agy:gemini-4-neon-medium)
+      // 2. Spawn verifier (defaults to flagship pool; claude fails -> spreads away from busy master's agy to idle opencode)
       const spRes = await mesh.spawnWorker({
         projectId: projId,
         fromNodeId: masterNode.id,
@@ -230,11 +232,11 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(spRes.ok, true);
       assert.equal(spRes.node.role, 'verifier');
       assert.equal(spRes.node.pool, 'flagship');
-      assert.equal(spRes.node.tool, 'agy');
-      assert.equal(spRes.node.model, 'gemini-4-neon-medium');
+      assert.equal(spRes.node.tool, 'opencode');
+      assert.equal(spRes.node.model, 'gpt-6.2-astra');
 
       const launchAttemptTools = launchCalls.filter((c) => c.payload.t === 'launch').map((c) => c.payload.tool);
-      assert.deepEqual(launchAttemptTools, ['claude', 'agy']);
+      assert.deepEqual(launchAttemptTools, ['claude', 'opencode']);
       const agyLaunch = launchCalls[1].payload;
       assert.match(agyLaunch.prompt, /只读硬约束|NEVER modify business code/);
       assert.match(agyLaunch.prompt, /readOnly=true/);
@@ -310,6 +312,38 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(responses[4].body.probed, true);
       assert.equal(magpiePolled, 1);
       assert.ok(launchCalls.some((c) => c.payload.t === 'send' && c.payload.id === 'codex:idle-1' && c.payload.text === '/usage'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('deprioritizes <10% low-quota candidates, spreads concurrency across harnesses, and filters by installed harnesses', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-router-spread-'));
+    try {
+      const mockMagpie = {
+        status: () => ({
+          accounts: [
+            { provider: 'anthropic', status: 'ok', windows: [{ remaining: 5, limit: 100, display: '5/100' }] },
+            { provider: 'openai', status: 'ok', windows: [{ remaining: 80, limit: 100, display: '80/100' }] },
+          ],
+        }),
+      };
+      const router = createModelRouter({ dataDir: tmp, getMagpie: () => mockMagpie });
+
+      const pick1 = router.selectCandidate('fast-coder');
+      assert.equal(pick1.ok, true);
+      assert.equal(pick1.candidate.harness, 'agy');
+
+      const pick2 = router.selectCandidate('fast-coder', {
+        activeCounts: { byHarness: { agy: 1 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 1 } },
+      });
+      assert.equal(pick2.ok, true);
+      assert.equal(pick2.candidate.harness, 'opencode');
+
+      const pick3 = router.selectCandidate('fast-coder', { availableHarnesses: ['claude'] });
+      assert.equal(pick3.ok, true);
+      assert.equal(pick3.candidate.harness, 'claude');
+      assert.equal(pick3.candidate.status, 'low_quota');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

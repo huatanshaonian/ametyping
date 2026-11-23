@@ -34,12 +34,19 @@ function cleanMeshEnv(v) {
   return Object.keys(out).length ? out : null;
 }
 
-function buildTail({ thread, agyThread, kiroThread, kiro, agy, resume, prompt }) {
+function cleanModel(v) {
+  return typeof v === 'string' && /^[A-Za-z0-9._:/-]{1,120}$/.test(v.trim()) ? v.trim() : '';
+}
+
+function buildTail({ thread, agyThread, kiroThread, kiro, agy, codex, resume, prompt, model = '' }) {
   const trimmed = prompt && prompt.trim();
+  const m = !resume && !thread && !agyThread && !kiroThread ? cleanModel(model) : '';
+  const mFlag = m ? ' --model ' + q(m) : '';
   return thread ? ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread)
     : kiroThread ? ' chat --resume-id ' + q(kiroThread) : kiro ? ' chat' + (trimmed ? ' ' + q(prompt) : '')
-    : agy ? (trimmed ? ' -i ' + q(trimmed) : '')
-    : resume ? ' --resume ' + q(resume) : trimmed ? ' ' + q(prompt) : '';
+    : agy ? mFlag + (trimmed ? ' -i ' + q(trimmed) : '')
+    : codex ? mFlag + (trimmed ? ' ' + q(prompt) : '')
+    : resume ? ' --resume ' + q(resume) : mFlag + (trimmed ? ' ' + q(prompt) : '');
 }
 
 function claudeBin(env) {
@@ -54,9 +61,10 @@ function claudeBin(env) {
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
 // resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's
 // ("codex:<id>") -- `codex resume <id>`
-function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null, meshEnv = null }) {
+function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null, meshEnv = null, model = '' }) {
   return new Promise((resolve) => {
     const mEnv = cleanMeshEnv(meshEnv);
+    const cleanMod = cleanModel(model);
     const thread = threadOf(resume);
     const agyThread = agyThreadOf(resume);
     const kiroThread = kiroThreadOf(resume);
@@ -72,7 +80,7 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
       const tag = crypto.randomBytes(3).toString('hex');
       const name = `opencode-${path.basename(cwd).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'dir'}-${tag}`;
       const first = String(prompt || '').trim();
-      const args = [...oc.args, ...(ocThread ? ['-s', ocThread] : first ? ['--prompt', first] : [])];
+      const args = [...oc.args, ...(ocThread ? ['-s', ocThread] : [...(cleanMod && cleanMod.includes('/') ? ['-m', cleanMod] : []), ...(first ? ['--prompt', first] : [])])];
       const meshPrefix = mEnv ? `export ${Object.entries(mEnv).map(([k, v]) => `${k}=${q(v)}`).join(' ')}; ` : '';
       const cmd = `${meshPrefix}exec ${q(oc.exe)}${args.map((a) => ' ' + q(a)).join('')}`;
       newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
@@ -110,7 +118,7 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
       ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
     const settings = sf ? ' ' + sf.args.map(q).join(' ') : '';
     // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
-    const tail = buildTail({ thread, agyThread, kiroThread, kiro, agy, resume, prompt });
+    const tail = buildTail({ thread, agyThread, kiroThread, kiro, agy, codex, resume, prompt, model: cleanMod });
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${tail}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} if (sf) sf.cleanup(); return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }

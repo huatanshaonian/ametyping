@@ -9,9 +9,12 @@ function safeProjectId(projectId) {
 }
 
 // Extract @alias / @nodeId tokens; `@all` (case-insensitive) sets mentionAll=true and is excluded from mentions[]
+// Ignores fenced code blocks (```...```) and inline code (`...`) so template/doc examples don't trigger false mentions.
 function parseMentions(text) {
-  const src = String(text || '');
-  const re = /@([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
+  const src = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`\n]+`/g, ' ');
+  const re = /(?:^|[\s([{"'（【「，。；：、！？])@([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
   const mentions = [];
   const seen = new Set();
   let mentionAll = false;
@@ -198,7 +201,8 @@ function createBoard({ dataDir }) {
   function append(projectId, entry = {}) {
     const nextSeq = latestSeq(projectId) + 1;
     const text = String(entry.text || '');
-    const parsedMentions = parseMentions(text);
+    const skipTextMentionParse = entry.skipTextMentionParse === true;
+    const parsedMentions = skipTextMentionParse ? { mentions: [], mentionAll: false } : parseMentions(text);
     const explicitMentions = Array.isArray(entry.mentions) ? entry.mentions.map((x) => String(x || '').trim()).filter(Boolean) : [];
     const seen = new Set();
     const mentions = [];
@@ -211,7 +215,7 @@ function createBoard({ dataDir }) {
       }
     }
     const mentionAll = Boolean(parsedMentions.mentionAll || entry.mentionAll);
-    const parsedChannelMentions = parseChannelMentions(text);
+    const parsedChannelMentions = skipTextMentionParse ? [] : parseChannelMentions(text);
     const explicitChannelMentions = Array.isArray(entry.mentionChannels)
       ? entry.mentionChannels.map((x) => String(x || '').trim().toLowerCase()).filter(Boolean)
       : [];

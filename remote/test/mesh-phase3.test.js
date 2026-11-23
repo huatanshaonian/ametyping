@@ -546,4 +546,282 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('scopedViewFor strips bulky snapshot.tree by default, lists existing projects, discovers recent session worktrees, and reports per-machine harnesses', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-status-compact-'));
+    try {
+      const machines = new Map([
+        ['huatanshaonian', {
+          name: 'huatanshaonian',
+          online: true,
+          control: true,
+          files: true,
+          sessions: new Map(),
+          mcpStatus: {
+            clients: [
+              { id: 'claude', present: true, servers: ['ame-mesh'] },
+              { id: 'agy', present: true, servers: ['ame-mesh'] },
+              { id: 'codex', present: true, servers: ['ame-mesh'] },
+              { id: 'kiro', present: false, servers: [] },
+            ],
+          },
+        }],
+        ['remote3090', {
+          name: 'remote3090',
+          online: true,
+          control: true,
+          files: true,
+          sessions: new Map(),
+          mcpStatus: {
+            clients: [
+              { id: 'claude', present: true, servers: ['ame-mesh'] },
+              { id: 'codex', present: true, servers: [] },
+            ],
+          },
+        }],
+      ]);
+      const fsCatalog = {
+        list: () => [{
+          key: 'huatanshaonian|d:\\ametyping',
+          machine: 'huatanshaonian',
+          path: 'D:\\ametyping',
+          tag: 'code',
+          userNote: '主仓库',
+          aiNote: '',
+          snapshot: { count: 400, gitBranch: 'main', freeBytes: 1000, tree: [{ name: 'huge.js', dir: false }] },
+        }],
+        get: () => null,
+        TAG_LABELS: { code: '核心代码' },
+      };
+      const store = {
+        sessions: () => ({
+          huatanshaonian: [{ id: 's1', cwd: 'D:\\ametyping-embed', last: 2000 }],
+          remote3090: [{ id: 's2', cwd: 'D:\\ame-embed', last: 3000 }],
+        }),
+        info: () => null,
+      };
+      const mesh = createMesh({
+        dataDir: tmp,
+        machines,
+        store,
+        marks: createMarks({ dataDir: tmp }),
+        fsCatalog,
+        dispatchControl: async () => ({ ok: true }),
+      });
+
+      const created = mesh.saveProject({
+        name: 'AmeTyping',
+        workspaces: [{ machine: 'huatanshaonian', path: 'D:\\ametyping', mode: 'rw' }],
+        workspacesLocked: true,
+      });
+      assert.equal(created.ok, true);
+
+      // Default call (includeTree=false)
+      const view = mesh.scopedViewFor({ machine: 'huatanshaonian', callerCwd: 'D:\\ametyping-embed' });
+      assert.equal(view.ok, true);
+      assert.equal(view.project, null);
+      assert.equal(view.callerCwd, 'D:\\ametyping-embed');
+      // 1. Existing projects returned so Master doesn't duplicate
+      assert.equal(view.projects.length, 1);
+      assert.equal(view.projects[0].name, 'AmeTyping');
+      assert.equal(view.projects[0].workspacesCount, 1);
+      assert.equal(view.projects[0].workspacesLocked, true);
+      // 2. snapshot.tree stripped by default, count/gitBranch preserved
+      const mainFolder = view.availableFolders.find((f) => f.path === 'D:\\ametyping');
+      assert.ok(mainFolder);
+      assert.equal(mainFolder.snapshot.count, 400);
+      assert.equal(mainFolder.snapshot.gitBranch, 'main');
+      assert.equal(mainFolder.snapshot.tree, undefined);
+      // 3. Recent session worktrees discovered
+      assert.ok(view.availableFolders.some((f) => f.machine === 'huatanshaonian' && f.path === 'D:\\ametyping-embed'));
+      assert.ok(view.availableFolders.some((f) => f.machine === 'remote3090' && f.path === 'D:\\ame-embed'));
+      // 4. Per-machine installed harnesses exposed
+      const mLocal = view.machines.find((m) => m.machine === 'huatanshaonian');
+      assert.deepEqual(mLocal.harnesses, ['claude', 'agy', 'codex']);
+      assert.deepEqual(mLocal.meshReadyHarnesses, ['claude', 'agy', 'codex']);
+      const m3090 = view.machines.find((m) => m.machine === 'remote3090');
+      assert.deepEqual(m3090.harnesses, ['claude', 'codex']);
+      assert.deepEqual(m3090.meshReadyHarnesses, ['claude']);
+
+      // Explicit includeTree=true retains snapshot.tree
+      const fullView = mesh.scopedViewFor({ machine: 'huatanshaonian', includeTree: true });
+      const fullMain = fullView.availableFolders.find((f) => f.path === 'D:\\ametyping');
+      assert.equal(fullMain.snapshot.tree.length, 1);
+
+      // 5. Write RPCs (workspace / task / board_post) strip bulky snapshot from project in reply
+      const replies = [];
+      const mockWs = { send: (raw) => replies.push(JSON.parse(raw)) };
+      await mesh.fromAgentRpc('huatanshaonian', {
+        t: 'mesh-req',
+        rid: 'r-ws',
+        op: 'workspace',
+        projectName: '轻量写操作测试',
+        callerCwd: 'D:\\ametyping-embed',
+        workspaces: [{ machine: 'huatanshaonian', path: 'D:\\ametyping', mode: 'rw' }],
+      }, mockWs);
+      const wsReply = replies[0];
+      assert.equal(wsReply.ok, true);
+      assert.ok(wsReply.projectId);
+      assert.equal(wsReply.project.workspaces[0].snapshot, undefined);
+      // Master auto-bound even without sessionId (by callerCwd), so mesh_status sees self!
+      const statusAfterWs = mesh.scopedViewFor({ projectId: wsReply.projectId, machine: 'huatanshaonian', callerCwd: 'D:\\ametyping-embed' });
+      assert.ok(statusAfterWs.self);
+      assert.equal(statusAfterWs.self.role, 'master');
+
+      // 6. @master wakes master node even when its alias is Chinese ('主控会话')
+      const delivered = [];
+      const wNode = mesh.upsertNode(wsReply.projectId, { machine: 'remote3090', sessionId: 's-w', role: 'worker', alias: 'worker-embed' });
+      const postRes = await mesh.postBoard({
+        projectId: wsReply.projectId,
+        fromNodeId: wNode.node.id,
+        text: '@master 已完成嵌入检索，请验收',
+      });
+      assert.equal(postRes.ok, true);
+      assert.ok(postRes.deliveries.some((x) => x.nodeId === statusAfterWs.self.id));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('brief skips template @mentions, deduplicates doneWhen numbering, and gitAudit subtracts pre-existing baseline files', async () => {
+    const fx = makePhase3Fixture({
+      dispatchControl: async (_machine, payload) => {
+        if (payload.t === 'launch') {
+          return {
+            ok: true,
+            msg: 'launched',
+            gitBaseline: {
+              checked: true,
+              isGit: true,
+              changedFiles: ['clippy/a.js', 'clippy/b.js', 'docs/arch.md'],
+              fingerprints: {
+                'clippy/a.js': '100:1000',
+                'clippy/b.js': '200:1000',
+                'docs/arch.md': '300:1000',
+              },
+            },
+          };
+        }
+        return { ok: true };
+      },
+    });
+    try {
+
+      const sp = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\repo',
+        role: 'worker',
+        alias: 'worker-embed',
+        goal: '实现嵌入检索',
+        boundaries: ['src/embed/**'],
+        doneWhen: ['1. 通过全部单测', '2) 无越界改动'],
+        prompt: '完成后在黑板发帖汇报',
+      });
+      assert.equal(sp.ok, true);
+
+      // 7a. Brief entry only mentions target worker-embed, NOT @verifier/@master/@节点别名 from template
+      const brd = fx.mesh.readBoard({ projectId: fx.projId, since: 0, limit: 20 });
+      const brief = brd.entries.find((e) => e.kind === 'brief');
+      assert.ok(brief);
+      assert.deepEqual(brief.mentions, ['worker-embed']);
+      assert.equal(brief.mentionAll, false);
+      // 7b. doneWhen does not double-prefix "1. 1."
+      assert.ok(brief.text.includes('  1. 通过全部单测'));
+      assert.ok(brief.text.includes('  2. 无越界改动'));
+      assert.ok(!brief.text.includes('1. 1.'));
+
+      // 7c. Inline code `@verifier`, stack traces TypeError@e2e-literature.js, and emails are ignored
+      const codePost = await fx.mesh.postBoard({
+        projectId: fx.projId,
+        fromNodeId: sp.node.id,
+        text: '测试行内代码 `@verifier`、堆栈 TypeError@e2e-literature.js 和邮箱 a@b.com 不误点名，只点 @master',
+      });
+      assert.equal(codePost.ok, true);
+      assert.deepEqual(codePost.entry.mentions, ['master']);
+
+      // P0-2. Same-cwd unidentified caller resolves to master (not newer running worker), preventing self-loop suppression
+      const masterPostByCwd = await fx.mesh.postBoard({
+        projectId: fx.projId,
+        fromMachine: 'pc-a',
+        callerCwd: 'D:\\repo',
+        text: '@worker-embed 请继续推进',
+      });
+      assert.equal(masterPostByCwd.ok, true);
+      assert.equal(masterPostByCwd.entry.nodeId, fx.master.id);
+      assert.ok(masterPostByCwd.deliveries.some((x) => x.nodeId === sp.node.id));
+
+      // 8a. Worker only edits allowed file src/embed/index.js; pre-existing clippy/* & docs/arch.md unchanged -> audit passes!
+      const repOk = await fx.mesh.reportResult({
+        projectId: fx.projId,
+        fromNodeId: sp.node.id,
+        summary: '嵌入检索完成',
+        reviewStatus: 'waiting_review',
+        gitAudit: {
+          checked: true,
+          isGit: true,
+          changedFiles: ['clippy/a.js', 'clippy/b.js', 'docs/arch.md', 'src/embed/index.js'],
+          fingerprints: {
+            'clippy/a.js': '100:1000',
+            'clippy/b.js': '200:1000',
+            'docs/arch.md': '300:1000',
+            'src/embed/index.js': '512:2000',
+          },
+        },
+      });
+      assert.equal(repOk.ok, true);
+      assert.equal(repOk.audit.ok, true);
+      assert.deepEqual(repOk.audit.changedFiles, ['src/embed/index.js']);
+      assert.deepEqual(repOk.audit.outOfBounds, []);
+      assert.equal(repOk.audit.baselineExcludedCount, 3);
+
+      // 8b. If worker actually modifies a pre-existing dirty file outside boundaries (fingerprint changes), audit still catches it!
+      const repBad = await fx.mesh.reportResult({
+        projectId: fx.projId,
+        fromNodeId: sp.node.id,
+        summary: '不小心改了 clippy/a.js',
+        reviewStatus: 'waiting_review',
+        gitAudit: {
+          checked: true,
+          isGit: true,
+          changedFiles: ['clippy/a.js', 'src/embed/index.js'],
+          fingerprints: {
+            'clippy/a.js': '999:3000',
+            'src/embed/index.js': '512:2000',
+          },
+        },
+      });
+      assert.equal(repBad.ok, true);
+      assert.equal(repBad.audit.ok, false);
+      assert.deepEqual(repBad.audit.outOfBounds, ['clippy/a.js']);
+
+      // Global Skills & Machine Profiles HTTP API
+      let httpCode = 0;
+      let httpBody = null;
+      const fakeJson = (_res, code, body) => { httpCode = code; httpBody = body; };
+      await fx.mesh.handle({ method: 'GET' }, {}, new URL('http://local/api/mesh/skills'), '127.0.0.1', fakeJson, async () => ({}));
+      assert.equal(httpCode, 200);
+      assert.equal(httpBody.ok, true);
+      assert.ok(httpBody.skills.some((s) => s.name === 'ame-team' && s.builtin === true));
+
+      await fx.mesh.handle({ method: 'POST' }, {}, new URL('http://local/api/mesh/skills'), '127.0.0.1', fakeJson, async () => JSON.stringify({ op: 'save', name: 'my-custom-skill', raw: '# Custom Skill\nhello' }));
+      assert.equal(httpBody.ok, true);
+      assert.ok(httpBody.skills.some((s) => s.name === 'my-custom-skill' && s.builtin === false));
+
+      await fx.mesh.handle({ method: 'POST' }, {}, new URL('http://local/api/mesh/skills'), '127.0.0.1', fakeJson, async () => JSON.stringify({ op: 'reset', name: 'my-custom-skill' }));
+      assert.equal(httpBody.ok, true);
+      assert.ok(!httpBody.skills.some((s) => s.name === 'my-custom-skill'));
+
+      await fx.mesh.handle({ method: 'POST' }, {}, new URL('http://local/api/mesh/machine-profiles'), '127.0.0.1', fakeJson, async () => JSON.stringify({ machine: 'pc-a', role: '主控/轻开发', hardware: 'RTX 4060', note: '本机主力' }));
+      assert.equal(httpBody.ok, true);
+      assert.equal(httpBody.profile.role, '主控/轻开发');
+      const viewWithProf = fx.mesh.scopedViewFor({ machine: 'pc-a' });
+      const mPcA = viewWithProf.machines.find((m) => m.machine === 'pc-a');
+      assert.equal(mPcA.role, '主控/轻开发');
+      assert.equal(mPcA.hardware, 'RTX 4060');
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

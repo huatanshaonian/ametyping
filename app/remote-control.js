@@ -273,8 +273,9 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
   // own transcript, is what the agent passes as cwd); a Codex thread's ("codex:<id>") -- `codex resume <id>`
   // tool: 'codex' | 'agy' -- a new Codex or Antigravity session instead of Claude Code's
-  async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null, meshEnv = null) {
+  async function launch(cwd, prompt, resume = '', tool = 'claude', apiArg = null, meshEnv = null, modelArg = null) {
     const mEnv = cleanMeshEnv(meshEnv);
+    const model = typeof modelArg === 'string' && /^[A-Za-z0-9._:/-]{1,120}$/.test(modelArg.trim()) ? modelArg.trim() : '';
     const thread = /^codex:/.test(resume) ? resume.slice(6) : '';
     const agyThread = /^agy:/.test(resume) ? resume.slice(4) : '';
     const kiroThread = /^kiro:/.test(resume) ? resume.slice(5) : '';
@@ -289,6 +290,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       // OpenCode's TUI in a new console window: -s <session> continues one, --prompt <text> starts with a message
       const spec = opencode.launchSpec({ resume: ocThread, prompt });
       if (!spec) return { ok: false, msg: '找不到 opencode' };
+      if (!ocThread && model && model.includes('/')) spec.args = [...spec.args, '-m', model];
       let pid;
       if (mEnv) {
         const cmd = `${meshPsPrefix(mEnv)}& ${ps(spec.exe)}${spec.args.length ? ' ' + spec.args.map(ps).join(' ') : ''}`;
@@ -307,12 +309,13 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     const api = (codex || agy || kiro) ? null : claudeApi.localApi(apiArg);
     if (!codex && !agy && !kiro && apiArg && !api) return { ok: false, msg: '这台电脑的本地启动入口不可用，请检查 cc-environments 配置' };
     const first = String(prompt || '').trim();
+    const modelArgs = (!resume && model) ? ['--model', model] : [];
     // (Codex/agy/kiro first message is typed into it once it is up, not passed along: it may be started through
     // cmd.exe, where a sentence with quotes or an & in it does not survive as an argument)
-    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args]
-      : agyThread ? [...cx.args, '--conversation', agyThread] : agy ? [...cx.args]
+    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args, ...modelArgs]
+      : agyThread ? [...cx.args, '--conversation', agyThread] : agy ? [...cx.args, ...modelArgs]
       : kiroThread ? [...cx.args, 'chat', '--resume-id', kiroThread] : kiro ? [...cx.args, 'chat']
-      : [...(resume ? ['--resume', resume] : first ? [first] : [])];
+      : [...(resume ? ['--resume', resume] : [...modelArgs, ...(first ? [first] : [])])];
     // ~/.ametyping/launch.ps1, when it is there, runs first in the new window (e.g. `proxy`, a function of your PowerShell
     // profile: the pet's own environment has no proxy set) -- Claude Code is then started from that PowerShell, as you
     // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.

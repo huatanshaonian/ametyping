@@ -4,7 +4,7 @@ const {hash}=require('./normalize');
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/$/,'');
 const canonical=p=>/^[A-Za-z]:/.test(p)?norm(p).toLowerCase():norm(p);
 const isInside=(child,parent)=>{const c=canonical(child),p=canonical(parent);return !!c&&!!p&&(c===p||c.startsWith(p+'/'));};
-const isTempOrNoiseCwd=p=>/^(?:\/tmp(?:\/|$)|\/var\/tmp|[a-z]:\/windows\/system32|[a-z]:\/users\/[^/]+(?:\/desktop|\/downloads|\/documents\/codex|\/appdata\/local\/temp|\/appdata\/roaming\/claude\/scratch-workspaces|\/\.claude\/projects)(?:\/|$)|.*\/\.claude\/worktrees\/|.*\/ame-(?:launch|mode|key|perm)test)/i.test(norm(p));
+const isTempOrNoiseCwd=p=>/^(?:\/tmp(?:\/|$)|\/var\/tmp|[a-z]:\/windows\/system32|[a-z]:\/users\/[^/]+(?:\/desktop|\/downloads|\/documents\/codex|\/appdata\/local\/temp|\/appdata\/roaming\/claude\/scratch-workspaces|\/\.claude\/projects)(?:\/|$)|.*\/\.claude\/worktrees\/|.*\/\.ame-worktrees\/|.*\/ame-(?:launch|mode|key|perm)test)/i.test(norm(p));
 const projectName=p=>norm(p).split('/').pop()||'待归类';
 const nameKey=s=>String(s).replace(/[-_\s]/g,'').toLowerCase();
 const unique=a=>[...new Map(a.map(x=>[JSON.stringify(x),x])).values()];
@@ -169,6 +169,7 @@ function createReview({vault,pilots,listProjects=()=>[],saveProject=null}){
     }
     for(const p of [...listProjects()]){
       if(!String(p.id||'').startsWith('proj_'))continue;
+      if(p.workspacesLocked===true)continue;
       const dirs=db.prepare('SELECT machine,path,source,branch FROM research_project_directories WHERE project=? ORDER BY machine,path').all(p.id);
       if(!dirs.length)continue;
       const curWs=Array.isArray(p.workspaces)?[...p.workspaces]:[];

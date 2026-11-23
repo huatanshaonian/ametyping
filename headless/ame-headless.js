@@ -199,7 +199,7 @@ async function onControl(req, res, body) {
     const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
     const resume = typeof d.resume === 'string' ? d.resume : '';
     if (resume) { const s = sessions.map.get(resume); if (s && s.claudePid && proc.alive(s.claudePid, s.claudeComm)) return out(200, { ok: false, msg: '这个会话还开着' }); }
-    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api, meshEnv: d.meshEnv }));
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api, meshEnv: d.meshEnv, model: d.model }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

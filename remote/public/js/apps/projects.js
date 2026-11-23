@@ -637,7 +637,8 @@ function mount(initialProjectId) {
       const a = String(n.alias || '').trim().toLowerCase();
       const l = String(n.label || '').trim().toLowerCase();
       const id = String(n.id || '').trim().toLowerCase();
-      return (a && a === t) || (l && l === t) || (id && id === t);
+      const r = String(n.role || '').trim().toLowerCase();
+      return (a && a === t) || (l && l === t) || (id && id === t) || (r && r === t);
     }) || null;
   }
 
@@ -763,10 +764,14 @@ function mount(initialProjectId) {
       }
       timelineBar.hidden = false;
 
-      // Compute node layout in 760 x 220 SVG viewBox
-      const masters = nodes.filter((n) => n.role === 'master');
-      const mids = nodes.filter((n) => n.role === 'peer' || n.role === 'verifier');
-      const workers = nodes.filter((n) => n.role !== 'master' && n.role !== 'peer' && n.role !== 'verifier');
+      // Compute node layout in 760 x 220 SVG viewBox (always include a virtual Master hub if none bound yet)
+      const hasMaster = nodes.some((n) => n.role === 'master');
+      const renderNodes = hasMaster
+        ? nodes
+        : [{ id: '__virtual_master__', alias: 'Master (主控)', role: 'master', machine: '', liveState: 'idle', reviewStatus: 'running' }, ...nodes];
+      const masters = renderNodes.filter((n) => n.role === 'master');
+      const mids = renderNodes.filter((n) => n.role === 'peer' || n.role === 'verifier');
+      const workers = renderNodes.filter((n) => n.role !== 'master' && n.role !== 'peer' && n.role !== 'verifier');
       const tiers = [masters, mids, workers].filter((arr) => arr.length > 0);
       const yRows = tiers.length === 1 ? [110] : tiers.length === 2 ? [46, 174] : [34, 110, 186];
 
@@ -793,15 +798,17 @@ function mount(initialProjectId) {
         const seq = Number(e.seq) || 0;
         if (seq > replaySeq) continue;
         currentEntry = e;
-        const fromNode = (e.nodeId && nodes.find((n) => n.id === e.nodeId)) || matchNodeByToken(nodes, e.agent);
+        const fromNode = (e.nodeId && renderNodes.find((n) => n.id === e.nodeId))
+          || matchNodeByToken(renderNodes, e.agent)
+          || ((e.agent === 'Master' || e.agent === '管理员') ? masters[0] : null);
         if (!fromNode) continue;
         const { tokens, mentionAll } = extractMentionTokens(e);
         const targets = new Set();
         if (mentionAll) {
-          for (const n of nodes) if (n.id !== fromNode.id) targets.add(n.id);
+          for (const n of renderNodes) if (n.id !== fromNode.id) targets.add(n.id);
         }
         for (const tok of tokens) {
-          const toNode = matchNodeByToken(nodes, tok);
+          const toNode = matchNodeByToken(renderNodes, tok);
           if (toNode && toNode.id !== fromNode.id) targets.add(toNode.id);
         }
         if (seq === replaySeq) activeNodes.add(fromNode.id);
@@ -1658,7 +1665,17 @@ function mount(initialProjectId) {
         h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}` }),
         hasWorktree ? h('span', { class: 'pm-wt-badge', title: n.worktreePath || '', text: `worktree: ${wtBranch}` }) : null,
         h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
-        n.asking ? h('span', { class: 'pm-badge err', text: '等你确认权限' }) : null
+        n.asking ? h('button', {
+          type: 'button',
+          class: 'pm-badge err',
+          style: 'cursor:pointer;border:1px solid currentColor;',
+          title: '点击前往糖糖看板查看并确认该会话的权限弹窗',
+          onclick: (e) => {
+            e.stopPropagation();
+            if (n.machine && n.sessionId) dashboard.openSession(n.machine, n.sessionId);
+          },
+          text: '等你确认权限 (点此前往)',
+        }) : null
       ),
       n.cwd ? h('div', { class: 'pm-node-cwd', text: `📁 目录：${n.cwd}` }) : null,
       n.watchdogAlert ? h('div', { class: 'pm-node-wd' },

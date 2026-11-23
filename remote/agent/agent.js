@@ -380,6 +380,25 @@ function createGitWorktree(repoDir, alias = 'worker', requestedBranch = '') {
     const detail = (e && (e.stderr || e.message) ? String(e.stderr || e.message) : '').trim().slice(0, 160);
     return { ok: false, msg: '创建 git worktree 失败' + (detail ? '：' + detail : '') };
   }
+  // Link top-level and first-level subpackage node_modules into the worktree so CJS/ESM tests run immediately
+  const linkNodeModules = (relDir = '') => {
+    try {
+      const src = relDir ? path.join(repoRoot, relDir, 'node_modules') : path.join(repoRoot, 'node_modules');
+      const dstParent = relDir ? path.join(wtPath, relDir) : wtPath;
+      const dst = path.join(dstParent, 'node_modules');
+      if (fs.existsSync(src) && fs.statSync(src).isDirectory() && fs.existsSync(dstParent) && !fs.existsSync(dst)) {
+        fs.symlinkSync(src, dst, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+    } catch {}
+  };
+  linkNodeModules('');
+  try {
+    for (const ent of fs.readdirSync(repoRoot, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === '.ame-worktrees') continue;
+      linkNodeModules(ent.name);
+    }
+  } catch {}
   return { ok: true, worktreePath: wtPath, worktreeBranch: branch, worktreeParentRepo: repoRoot };
 }
 
@@ -473,6 +492,7 @@ async function control(d) {
   if (d.api && !api && d.tool !== 'codex' && d.tool !== 'agy' && d.tool !== 'kiro' && !/^(codex|agy|kiro):/.test(String(d.id || ''))) return { ok: false, msg: '启动入口格式已更新，请刷新看板后再试' };
   let r;
   let wtMeta = null;
+  let gitBaseline = null;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
   } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
@@ -492,6 +512,7 @@ async function control(d) {
         worktreeParentRepo: wt.worktreeParentRepo,
       };
     }
+    gitBaseline = collectGitAudit(cwd);
     let meshEnv;
     if (d.meshEnv && typeof d.meshEnv === 'object' && !Array.isArray(d.meshEnv)) {
       const cleanEnv = {};
@@ -504,10 +525,12 @@ async function control(d) {
       if (Object.keys(cleanEnv).length > 0) meshEnv = cleanEnv;
     }
     const tool = ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude';
+    const model = typeof d.model === 'string' && /^[A-Za-z0-9._:/-]{1,120}$/.test(d.model.trim()) ? d.model.trim() : undefined;
     r = await petCall('POST', '/control/launch', {
       cwd,
       prompt: d.prompt,
       tool,
+      ...(model ? { model } : {}),
       api: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? undefined : api || undefined,
       ...(meshEnv ? { meshEnv } : {}),
     });
@@ -532,7 +555,8 @@ async function control(d) {
   // a Shift+Tab reports the permission mode it switched to
   return { ok: !!r.ok, msg: typeof r.msg === 'string' ? r.msg.slice(0, 200) : '', mode: typeof r.mode === 'string' ? r.mode : undefined,
     screen: typeof r.screen === 'string' ? r.screen.slice(0, 9000) : undefined,
-    ...(r.ok && wtMeta ? wtMeta : {}) };
+    ...(r.ok && wtMeta ? wtMeta : {}),
+    ...(r.ok && gitBaseline && gitBaseline.isGit ? { gitBaseline } : {}) };
 }
 
 // ---------- shape for the server ----------
@@ -815,17 +839,28 @@ function collectGitAudit(cwd) {
     return null;
   }
   let out = '';
+  let repoRoot = targetDir;
   try {
-    out = child_process.execFileSync('git', ['-C', targetDir, 'status', '--porcelain'], {
+    out = child_process.execFileSync('git', ['-C', targetDir, '-c', 'core.quotepath=false', 'status', '--porcelain'], {
       timeout: 2500,
       encoding: 'utf8',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    try {
+      const top = child_process.execFileSync('git', ['-C', targetDir, 'rev-parse', '--show-toplevel'], {
+        timeout: 1500,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      if (top) repoRoot = top;
+    } catch {}
   } catch {
-    return { checked: true, isGit: false, changedFiles: [] };
+    return { checked: true, isGit: false, changedFiles: [], fingerprints: {} };
   }
   const files = [];
+  const fingerprints = {};
   for (const line of String(out || '').split(/\r?\n/)) {
     if (!line || line.length < 4) continue;
     let p = line.slice(3).trim();
@@ -836,9 +871,19 @@ function collectGitAudit(cwd) {
       p = p.slice(1, -1);
     }
     p = p.replace(/\\/g, '/');
-    if (p) files.push(p);
+    if (p) {
+      files.push(p);
+      if (files.length <= 200) {
+        try {
+          const st = fs.statSync(path.join(repoRoot, p));
+          fingerprints[p] = `${st.size}:${Math.trunc(st.mtimeMs)}`;
+        } catch {
+          fingerprints[p] = 'deleted';
+        }
+      }
+    }
   }
-  return { checked: true, isGit: true, changedFiles: files.slice(0, 200) };
+  return { checked: true, isGit: true, changedFiles: files.slice(0, 200), fingerprints };
 }
 // Local loopback bridge (127.0.0.1:3941) for AmeMesh CLI / MCP tools running inside local coding agent sessions
 const meshPending = new Map();

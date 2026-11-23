@@ -181,6 +181,19 @@ function createMesh({
     if (d.dirty !== undefined) res.dirty = !!d.dirty;
     if (d.unmergedCommits !== undefined) res.unmergedCommits = +d.unmergedCommits || 0;
     if (d.summary !== undefined) res.summary = cleanStr(String(d.summary || ''), 1000);
+    if (d.gitBaseline && typeof d.gitBaseline === 'object' && d.gitBaseline.isGit) {
+      const files = Array.isArray(d.gitBaseline.changedFiles)
+        ? d.gitBaseline.changedFiles.map((x) => cleanStr(String(x || ''), 300)).filter(Boolean).slice(0, 200)
+        : [];
+      const fp = {};
+      if (d.gitBaseline.fingerprints && typeof d.gitBaseline.fingerprints === 'object') {
+        for (const f of files) {
+          const v = d.gitBaseline.fingerprints[f];
+          if (typeof v === 'string' && v.length <= 64) fp[f] = v;
+        }
+      }
+      res.gitBaseline = { checked: true, isGit: true, changedFiles: files, fingerprints: fp };
+    }
     p.resolve(res);
     return true;
   }
@@ -216,7 +229,7 @@ function createMesh({
     const live = m && m.sessions && m.sessions.get(sessionId);
     if (live) {
       const lastLine = [...(live.lines || [])].reverse().find((l) => l && l.text);
-      const asking = (live.perms && live.perms.length > 0) || (live.state === 'waiting' && lastLine && /确认/.test(lastLine.text));
+      const asking = (live.perms && live.perms.length > 0) || (live.state === 'waiting' && lastLine && /需要确认|等待权限/.test(lastLine.text));
       return {
         online: !!m.online,
         state: live.state || 'idle',
@@ -338,14 +351,25 @@ function createMesh({
       const candidates = [];
       for (const p of searchProjs) {
         for (const n of p.nodes || []) {
-          if (n.machine !== machine || !n.cwd) continue;
-          if (normFolderPath(n.cwd) === normCaller || isSubPath(n.cwd, callerCwd)) {
+          if (n.machine !== machine) continue;
+          const cwdMatch = n.cwd
+            ? (normFolderPath(n.cwd) === normCaller || isSubPath(n.cwd, callerCwd))
+            : Boolean(proj && n.role === 'master');
+          if (cwdMatch) {
             candidates.push({ project: p, node: n });
           }
         }
       }
       if (candidates.length) {
         candidates.sort((a, b) => {
+          // Spawned workers receive AME_NODE_ID and match in branch (a)/(b);
+          // an un-identified caller in a shared directory is usually the Master session.
+          const aMaster = a.node.role === 'master' ? 1 : 0;
+          const bMaster = b.node.role === 'master' ? 1 : 0;
+          if (bMaster !== aMaster) return bMaster - aMaster;
+          const aExact = normFolderPath(a.node.cwd) === normCaller ? 1 : 0;
+          const bExact = normFolderPath(b.node.cwd) === normCaller ? 1 : 0;
+          if (bExact !== aExact) return bExact - aExact;
           const aRun = a.node.reviewStatus === 'running' ? 1 : 0;
           const bRun = b.node.reviewStatus === 'running' ? 1 : 0;
           if (bRun !== aRun) return bRun - aRun;
@@ -358,31 +382,311 @@ function createMesh({
     return { project: proj, node: null };
   }
 
+  function summarizeSnapshot(snap, includeTree = false) {
+    if (!snap || typeof snap !== 'object') return null;
+    if (includeTree) return snap;
+    return {
+      sep: snap.sep,
+      freeBytes: snap.freeBytes,
+      totalBytes: snap.totalBytes,
+      gitBranch: snap.gitBranch ?? null,
+      count: snap.count || 0,
+      truncated: !!snap.truncated,
+      scannedAt: snap.scannedAt || 0,
+    };
+  }
+
+  function summarizeCatalogItem(item, includeTree = false) {
+    if (!item || typeof item !== 'object') return item;
+    return {
+      ...item,
+      snapshot: summarizeSnapshot(item.snapshot, includeTree),
+    };
+  }
+
+  const NOISE_CWD_RE = /^(?:\/tmp(?:\/|$)|\/var\/tmp|[a-z]:\/windows\/system32|[a-z]:\/users\/[^/]+(?:\/desktop|\/downloads|\/documents\/codex|\/appdata\/local\/temp|\/appdata\/roaming\/claude\/scratch-workspaces|\/\.claude\/projects)(?:\/|$)|.*\/\.claude\/worktrees\/|.*\/\.ame-worktrees\/|.*\/ame-(?:launch|mode|key|perm)test)/i;
+
+  function collectAvailableFolders(includeTree = false) {
+    const out = [];
+    const seen = new Set();
+    const addKey = (m, p) => `${m}|${normFolderPath(p)}`;
+
+    if (fsCatalog) {
+      for (const item of fsCatalog.list()) {
+        if (!item || !item.machine || !item.path) continue;
+        const k = addKey(item.machine, item.path);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(summarizeCatalogItem(item, includeTree));
+      }
+    }
+
+    for (const p of data.projects) {
+      for (const w of p.workspaces || []) {
+        if (!w || !w.machine || !w.path) continue;
+        const k = addKey(w.machine, w.path);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({
+          key: k,
+          machine: w.machine,
+          path: w.path,
+          tag: w.tag || '',
+          userNote: '',
+          aiNote: '',
+          source: 'project_workspace',
+          projectId: p.id,
+          projectName: p.name,
+          snapshot: null,
+        });
+      }
+    }
+
+    if (store && typeof store.sessions === 'function') {
+      const allByMachine = store.sessions() || {};
+      for (const [mName, list] of Object.entries(allByMachine)) {
+        if (!Array.isArray(list)) continue;
+        let added = 0;
+        const sorted = [...list].sort((a, b) => (b.last || 0) - (a.last || 0));
+        for (const s of sorted) {
+          if (added >= 15) break;
+          const rawCwd = s && (s.cwd || (store.info && store.info(mName, s.id)?.cwd));
+          if (!rawCwd || typeof rawCwd !== 'string') continue;
+          const normSlash = rawCwd.replace(/\\/g, '/').replace(/\/$/, '');
+          if (NOISE_CWD_RE.test(normSlash)) continue;
+          const k = addKey(mName, rawCwd);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          added++;
+          out.push({
+            key: k,
+            machine: mName,
+            path: rawCwd,
+            tag: '',
+            userNote: '',
+            aiNote: '',
+            source: 'recent_session',
+            lastUsedAt: s.last || 0,
+            snapshot: null,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------- Global Skills store (builtin mesh-skills & repo skills/*/SKILL.md + dataDir/mesh-skills/*/SKILL.md) ----------
+  const builtinSkillsDirs = [
+    path.join(__dirname, 'mesh-skills'),
+    path.resolve(__dirname, '../../skills'),
+  ];
+  const userSkillsDir = path.join(dataDir, 'mesh-skills');
+  const SKILL_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+
+  function findBuiltinSkillPath(name) {
+    for (const dir of builtinSkillsDirs) {
+      const p = path.join(dir, name, 'SKILL.md');
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  function parseSkillDescription(raw) {
+    const src = String(raw || '');
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(src);
+    if (fm) {
+      const m = /^description:\s*(?:>\s*\r?\n([\s\S]*?)(?:\r?\n[a-zA-Z0-9_-]+:|$)|(.+))$/m.exec(fm[1]);
+      if (m) {
+        return cleanStr((m[1] || m[2] || '').replace(/\s+/g, ' ').trim(), 240);
+      }
+    }
+    const h1 = /^#\s+(.+)$/m.exec(src);
+    return h1 ? cleanStr(h1[1], 240) : '';
+  }
+
+  function listSkills() {
+    const names = new Set();
+    const scanDir = (dir) => {
+      try {
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!ent.isDirectory() || !SKILL_NAME_RE.test(ent.name)) continue;
+          if (fs.existsSync(path.join(dir, ent.name, 'SKILL.md'))) names.add(ent.name);
+        }
+      } catch {}
+    };
+    for (const dir of builtinSkillsDirs) scanDir(dir);
+    scanDir(userSkillsDir);
+    return [...names].sort().map((name) => {
+      const builtinPath = findBuiltinSkillPath(name);
+      const userPath = path.join(userSkillsDir, name, 'SKILL.md');
+      const hasBuiltin = Boolean(builtinPath);
+      const hasUser = fs.existsSync(userPath);
+      const activePath = hasUser ? userPath : builtinPath;
+      let raw = '';
+      let updatedAt = 0;
+      try {
+        raw = fs.readFileSync(activePath, 'utf8');
+        updatedAt = Math.trunc(fs.statSync(activePath).mtimeMs);
+      } catch {}
+      return {
+        name,
+        description: parseSkillDescription(raw),
+        raw,
+        builtin: hasBuiltin,
+        overridden: hasBuiltin && hasUser,
+        updatedAt,
+      };
+    });
+  }
+
+  function saveSkill(name, raw) {
+    const cleanName = String(name || '').trim().toLowerCase();
+    if (!SKILL_NAME_RE.test(cleanName)) {
+      return { ok: false, msg: 'Skill 名称须为小写字母/数字/连字符/下划线（1~48 字符）' };
+    }
+    const content = String(raw || '');
+    if (!content.trim() || content.length > 100000) {
+      return { ok: false, msg: 'Skill 内容不能为空且不超过 100 KB' };
+    }
+    try {
+      const dir = path.join(userSkillsDir, cleanName);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const target = path.join(dir, 'SKILL.md');
+      fs.writeFileSync(target + '.tmp', content, { encoding: 'utf8', mode: 0o600 });
+      fs.renameSync(target + '.tmp', target);
+      const skills = listSkills();
+      return { ok: true, skill: skills.find((s) => s.name === cleanName) || null, skills };
+    } catch (e) {
+      return { ok: false, msg: '保存 Skill 失败：' + e.message };
+    }
+  }
+
+  function resetSkill(name) {
+    const cleanName = String(name || '').trim().toLowerCase();
+    if (!SKILL_NAME_RE.test(cleanName)) return { ok: false, msg: '无效的 Skill 名称' };
+    try {
+      const dir = path.join(userSkillsDir, cleanName);
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      return { ok: true, skills: listSkills() };
+    } catch (e) {
+      return { ok: false, msg: '还原/删除 Skill 失败：' + e.message };
+    }
+  }
+
+  // ---------- Machine role & hardware profiles (dataDir/mesh-machine-profiles.json) ----------
+  const machineProfilesFile = path.join(dataDir, 'mesh-machine-profiles.json');
+  function loadMachineProfiles() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(machineProfilesFile, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  let machineProfiles = loadMachineProfiles();
+  function persistMachineProfiles() {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(machineProfilesFile + '.tmp', JSON.stringify(machineProfiles, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+      fs.renameSync(machineProfilesFile + '.tmp', machineProfilesFile);
+    } catch {}
+  }
+
+  function saveMachineProfile({ machine, role = '', hardware = '', note = '' } = {}) {
+    const mName = cleanStr(machine, 60);
+    if (!mName) return { ok: false, msg: '缺少机器名' };
+    machineProfiles[mName] = {
+      role: cleanStr(role, 120),
+      hardware: cleanStr(hardware, 240),
+      note: cleanStr(note, 1000),
+      updatedAt: Date.now(),
+    };
+    persistMachineProfiles();
+    return { ok: true, profile: machineProfiles[mName], machines: machinesSummary() };
+  }
+
+  function machinesSummary() {
+    const seen = new Set();
+    const list = [];
+    if (machines) {
+      for (const m of machines.values()) {
+        seen.add(m.name);
+        const clients = Array.isArray(m.mcpStatus && m.mcpStatus.clients) ? m.mcpStatus.clients : [];
+        const harnesses = clients.filter((c) => c && c.present && c.id).map((c) => c.id);
+        const meshReadyHarnesses = clients
+          .filter((c) => c && c.present && c.id && Array.isArray(c.servers) && c.servers.includes('ame-mesh'))
+          .map((c) => c.id);
+        const prof = machineProfiles[m.name] || {};
+        list.push({
+          machine: m.name,
+          online: !!m.online,
+          control: !!m.control,
+          files: !!m.files,
+          harnesses,
+          meshReadyHarnesses,
+          role: prof.role || '',
+          hardware: prof.hardware || '',
+          note: prof.note || '',
+          updatedAt: prof.updatedAt || 0,
+        });
+      }
+    }
+    for (const [mName, prof] of Object.entries(machineProfiles)) {
+      if (seen.has(mName)) continue;
+      list.push({
+        machine: mName,
+        online: false,
+        control: false,
+        files: false,
+        harnesses: [],
+        meshReadyHarnesses: [],
+        role: (prof && prof.role) || '',
+        hardware: (prof && prof.hardware) || '',
+        note: (prof && prof.note) || '',
+        updatedAt: (prof && prof.updatedAt) || 0,
+      });
+    }
+    return list;
+  }
+
   // Scoped topology view for an agent session: ONLY returns the project & connected nodes it belongs to
-  function scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd }) {
+  function scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd, includeTree = false }) {
     const { project: proj, node: selfNode } = resolveCaller({ projectId, nodeId, machine, sessionId, callerCwd });
     const roleCatalog = roleStore.catalog();
     const pools = modelRouter.getPoolsSummary();
+    const machList = machinesSummary();
     if (!proj) {
-      // Return only annotated catalog folders so a fresh master session can bootstrap a project
+      // Return compact project list + summarized folders (without bulky snapshot.tree by default)
       return {
         ok: true,
         project: null,
         self: null,
+        callerCwd: callerCwd || '',
+        projects: data.projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          workspacesCount: (p.workspaces || []).length,
+          nodesCount: (p.nodes || []).length,
+          workspacesLocked: !!p.workspacesLocked,
+          workspaces: (p.workspaces || []).map((w) => ({ machine: w.machine, path: w.path, mode: w.mode })),
+        })),
         roleCatalog,
         pools,
-        availableFolders: fsCatalog ? fsCatalog.list() : [],
-        machines: machines ? [...machines.values()].map((m) => ({ machine: m.name, online: !!m.online, control: !!m.control, files: !!m.files })) : [],
+        availableFolders: collectAvailableFolders(!!includeTree),
+        machines: machList,
       };
     }
     const enriched = enrichProject(proj);
+    const projectView = includeTree
+      ? enriched
+      : { ...enriched, workspaces: (enriched.workspaces || []).map((w) => ({ ...w, snapshot: summarizeSnapshot(w.snapshot, false) })) };
     return {
       ok: true,
-      project: enriched,
-      self: selfNode ? enriched.nodes.find((n) => n.id === selfNode.id) : null,
+      project: projectView,
+      self: selfNode ? projectView.nodes.find((n) => n.id === selfNode.id) : null,
       roleCatalog,
       pools,
-      machines: machines ? [...machines.values()].map((m) => ({ machine: m.name, online: !!m.online, control: !!m.control, files: !!m.files })) : [],
+      machines: machList,
     };
   }
 
@@ -442,6 +746,82 @@ function createMesh({
     board.removeProject(id);
     save();
     return { ok: true };
+  }
+
+  function inferLiveSessionId(machineName, callerCwd = '') {
+    const liveSessions = machines && machines.get(machineName)?.sessions;
+    if (!liveSessions || !liveSessions.size) return '';
+    const entries = [...liveSessions.entries()].map(([sid, sess]) => ({
+      sid,
+      sess: sess || {},
+      cwd: (store && store.info && store.info(machineName, sid)?.cwd) || (sess && sess.cwd) || '',
+      last: (sess && sess.last) || 0,
+      active: sess && ['working', 'thinking', 'reading', 'message'].includes(sess.state),
+    }));
+    const byRecent = (a, b) => (b.active - a.active) || (b.last - a.last);
+
+    if (callerCwd) {
+      const normCaller = normFolderPath(callerCwd);
+      const exactOrSub = entries.filter((x) => x.cwd && (normFolderPath(x.cwd) === normCaller || isSubPath(x.cwd, callerCwd)));
+      if (exactOrSub.length) {
+        exactOrSub.sort(byRecent);
+        return exactOrSub[0].sid;
+      }
+      const base = path.basename(callerCwd.replace(/[\\/]+$/, '')).toLowerCase();
+      if (base) {
+        const byProj = entries.filter((x) => String(x.sess.project || '').toLowerCase() === base);
+        if (byProj.length) {
+          byProj.sort(byRecent);
+          return byProj[0].sid;
+        }
+      }
+    }
+    if (entries.length === 1) return entries[0].sid;
+    const working = entries.filter((x) => x.active);
+    if (working.length) {
+      working.sort((a, b) => b.last - a.last);
+      return working[0].sid;
+    }
+    return '';
+  }
+
+  function compactProjectForRpc(proj) {
+    if (!proj || typeof proj !== 'object') return proj;
+    return {
+      id: proj.id,
+      name: proj.name,
+      groupId: proj.groupId || '',
+      workspacesLocked: !!proj.workspacesLocked,
+      boardSeq: proj.boardSeq || 0,
+      workspaces: (proj.workspaces || []).map((w) => ({
+        machine: w.machine,
+        path: w.path,
+        mode: w.mode,
+        tag: w.tag || '',
+      })),
+      nodes: (proj.nodes || []).map((n) => ({
+        id: n.id,
+        machine: n.machine,
+        sessionId: n.sessionId || '',
+        alias: n.alias || '',
+        role: n.role || 'worker',
+        tool: n.tool || '',
+        pool: n.pool || '',
+        model: n.model || '',
+        cwd: n.cwd || '',
+        workspaceMode: n.workspaceMode || 'inherit',
+        worktreeBranch: n.worktreeBranch || '',
+        reviewStatus: n.reviewStatus || 'running',
+        liveState: n.liveState || '',
+        lastReport: n.lastReport || '',
+      })),
+      edges: proj.edges || [],
+      tasks: proj.tasks || [],
+      channels: proj.channels || [],
+      eventsCount: (proj.events || []).length,
+      transfersCount: (proj.transfers || []).length,
+      triggersCount: (proj.triggers || []).length,
+    };
   }
 
   // Master-only one-shot workspace fence setup with automatic locking (immutable unless explicitly userApproved)
@@ -504,9 +884,18 @@ function createMesh({
     proj.workspacesLocked = lock !== false;
     proj.updatedAt = Date.now();
 
-    // Auto-register calling session as Master if not yet bound
-    if (!resolved.node && fromMachine && fromSessionId) {
-      upsertNode(proj.id, { machine: fromMachine, sessionId: fromSessionId, role: 'master', alias: '主控会话', cwd: callerCwd || '' });
+    // Auto-register calling session as Master if not yet bound (infer live sessionId when env is absent)
+    if (!resolved.node && fromMachine) {
+      const inferredSid = fromSessionId || inferLiveSessionId(fromMachine, callerCwd);
+      if (inferredSid || callerCwd) {
+        upsertNode(proj.id, {
+          machine: fromMachine,
+          sessionId: inferredSid || '',
+          role: 'master',
+          alias: '主控会话',
+          cwd: callerCwd || '',
+        });
+      }
     }
 
     const fenceList = cleaned.map((w) => `${w.machine}:${w.path} (${w.mode})`).join('；');
@@ -735,6 +1124,28 @@ function createMesh({
     return { ok: true, delivered: true, msg: isClosed ? '目标会话已关闭，已在后台自动唤醒并注入消息' : '已直接注入目标会话终端' };
   }
 
+  function activeModelCounts() {
+    const byHarness = {};
+    const byCandidate = {};
+    for (const p of data.projects) {
+      for (const n of p.nodes || []) {
+        if (!n || n.reviewStatus !== 'running') continue;
+        const h = String(n.tool || '').trim();
+        if (!h) continue;
+        byHarness[h] = (byHarness[h] || 0) + 1;
+        const ck = `${h}|${String(n.model || '').trim()}`;
+        byCandidate[ck] = (byCandidate[ck] || 0) + 1;
+      }
+    }
+    return { byHarness, byCandidate };
+  }
+
+  function machineHarnesses(machineName) {
+    const m = machines && machines.get(machineName);
+    const clients = Array.isArray(m && m.mcpStatus && m.mcpStatus.clients) ? m.mcpStatus.clients : [];
+    return clients.filter((c) => c && c.present && c.id).map((c) => c.id);
+  }
+
   async function handleQuotaExhausted(proj, node, reason = 'quota') {
     if (!proj || !node) return;
     const prevKey = `${node.tool || 'claude'}|${node.model || ''}`;
@@ -746,9 +1157,24 @@ function createMesh({
       const exclude = [prevKey];
       const relayCwd = node.cwd || ((proj.workspaces || []).find((w) => w.machine === node.machine) || {}).path || '';
       const roleDef = roleStore.get(node.role);
+      const availHarnesses = machineHarnesses(node.machine);
+
+      // Build rich cross-harness handoff context from live session lines, board history, and pending tasks
+      const liveM = machines && machines.get(node.machine);
+      const liveSess = liveM && liveM.sessions && node.sessionId ? liveM.sessions.get(node.sessionId) : null;
+      const recentLines = liveSess && Array.isArray(liveSess.lines)
+        ? liveSess.lines.filter((l) => l && l.text).slice(-10).map((l) => `  - ${String(l.text).slice(0, 180)}`)
+        : [];
+      const recentBoard = board.read(proj.id, { since: 0, limit: 12 }).entries || [];
+      const boardSummary = recentBoard.slice(-6).map((e) => `  - #${e.seq} [${e.agent}]: ${String(e.text || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+      const myTasks = (proj.tasks || []).filter((t) => t.status !== 'done' && (!t.ownerNodeId || t.ownerNodeId === node.id));
 
       for (let attempt = 0; attempt < 10; attempt++) {
-        const pick = modelRouter.selectCandidate(node.pool, { exclude });
+        const pick = modelRouter.selectCandidate(node.pool, {
+          exclude,
+          activeCounts: activeModelCounts(),
+          availableHarnesses: availHarnesses.length ? availHarnesses : null,
+        });
         if (!pick.ok || !pick.candidate) break;
         const fb = pick.candidate;
         const fbTool = TOOLS.includes(fb.harness) ? fb.harness : 'claude';
@@ -773,14 +1199,22 @@ function createMesh({
 
         const sinceSeq = Math.max(0, node.lastReadSeq || 0);
         const relayLines = [
-          `[AmeMesh 跨模型自动接力 | 项目：${proj.name}]`,
+          `[AmeMesh 跨 Harness 上下文完整接力 | 项目：${proj.name}]`,
           `- 接管节点：${node.alias || node.id} (projectId="${proj.id}", nodeId="${node.id}")`,
           `- 接力原因：原模型 ${prevKey} 额度耗尽/限流，由模型池「${node.pool}」自动切换至 ${fbTool}${fbModel ? ':' + fbModel : ''}`,
           roleDef && roleDef.body ? `- 角色规范（${roleDef.name}）：\n${roleDef.body}` : null,
           roleDef && roleDef.readOnly ? '- [只读角色硬约束] 你是只读验收角色，严禁修改任何业务代码或产出文件。' : null,
           fb.quirks ? `- 模型微调提示：${fb.quirks}` : null,
           node.goal ? `- 当前目标：${node.goal}` : null,
-          `- 请立即调用 mesh_board_read(since=${sinceSeq}) 读取未读黑板楼层与任务状态，无缝接力完成工作。`,
+          node.stopCondition ? `- 停机条件：${node.stopCondition}` : null,
+          Array.isArray(node.boundaries) && node.boundaries.length ? `- 允许修改边界（Boundaries）：${node.boundaries.join(', ')}` : null,
+          Array.isArray(node.doneWhen) && node.doneWhen.length ? `- 验收条件（Done When）：\n${node.doneWhen.map((x, i) => `  ${i + 1}. ${String(x).replace(/^\s*\d+[\.\)、]\s*/, '')}`).join('\n')}` : null,
+          Array.isArray(node.checks) && node.checks.length ? `- 必跑验证命令：${node.checks.join(' ; ')}` : null,
+          node.lastReport ? `- 上次阶段汇报：${node.lastReport.slice(0, 400)}` : null,
+          myTasks.length ? `- 待完成任务：\n${myTasks.map((t) => `  - [${t.id}] (${t.status}) ${t.title}`).join('\n')}` : null,
+          recentLines.length ? `- 前任会话最后进展（上下文继承）：\n${recentLines.join('\n')}` : null,
+          boardSummary.length ? `- 最近黑板记录：\n${boardSummary.join('\n')}` : null,
+          `- 如需更多历史细节可调用 mesh_board_read(since=${sinceSeq})，请基于上述继承上下文无缝继续完成任务。`,
         ].filter(Boolean);
 
         const prevTool = node.tool;
@@ -895,7 +1329,25 @@ function createMesh({
     const boundaries = (Array.isArray(explicitBoundaries) && explicitBoundaries.length)
       ? explicitBoundaries
       : (node && Array.isArray(node.boundaries) ? node.boundaries : []);
-    const changedFiles = Array.isArray(gitAudit.changedFiles) ? gitAudit.changedFiles : [];
+    const rawChangedFiles = Array.isArray(gitAudit.changedFiles) ? gitAudit.changedFiles : [];
+    const curFingerprints = (gitAudit.fingerprints && typeof gitAudit.fingerprints === 'object') ? gitAudit.fingerprints : null;
+    const baseline = node && node.gitBaseline && Array.isArray(node.gitBaseline.files) ? node.gitBaseline : null;
+    let changedFiles = rawChangedFiles;
+    let baselineExcludedCount = 0;
+    if (baseline && baseline.files.length) {
+      const baseSet = new Set(baseline.files.map((f) => String(f || '').replace(/\\/g, '/')));
+      const baseFp = (baseline.fingerprints && typeof baseline.fingerprints === 'object') ? baseline.fingerprints : null;
+      changedFiles = rawChangedFiles.filter((f) => {
+        const nf = String(f || '').replace(/\\/g, '/');
+        if (!baseSet.has(nf)) return true;
+        // If both sides have file fingerprints and the file was modified since launch, keep it in audit
+        if (baseFp && curFingerprints && typeof baseFp[nf] === 'string' && typeof curFingerprints[nf] === 'string') {
+          if (baseFp[nf] !== curFingerprints[nf]) return true;
+        }
+        baselineExcludedCount += 1;
+        return false;
+      });
+    }
     const res = checkBoundaries(boundaries, changedFiles);
     const emptyChange = changedFiles.length === 0 && boundaries.length > 0;
     return {
@@ -904,6 +1356,7 @@ function createMesh({
       changedFiles: changedFiles.slice(0, 100),
       outOfBounds: res.outOfBounds,
       emptyChange,
+      ...(baselineExcludedCount > 0 ? { baselineExcludedCount } : {}),
       ok: res.outOfBounds.length === 0 && !emptyChange,
     };
   }
@@ -989,7 +1442,8 @@ function createMesh({
       if (channelSubscribedIds.has(n.id)) return true;
       const aliasL = String(n.alias || '').toLowerCase();
       const idL = String(n.id || '').toLowerCase();
-      return (aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL));
+      const roleL = String(n.role || '').toLowerCase();
+      return (aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL)) || (roleL && mentionSet.has(roleL));
     });
 
     const deliveries = [];
@@ -1298,6 +1752,10 @@ function createMesh({
     if (!masterNode && fromNodeId) {
       masterNode = proj.nodes.find((n) => n.id === fromNodeId || n.alias === fromNodeId) || null;
     }
+    // Never let an unidentified same-cwd fallback misattribute a worker node as the spawning master
+    if (masterNode && masterNode.role !== 'master' && !fromNodeId && !fromSessionId) {
+      masterNode = proj.nodes.find((n) => n.role === 'master') || null;
+    }
     if (!masterNode && fromMachine && fromSessionId) {
       const mr = upsertNode(proj.id, {
         machine: fromMachine,
@@ -1309,32 +1767,16 @@ function createMesh({
       if (mr.ok) masterNode = mr.node;
     }
     if (!masterNode && fromMachine && !fromSessionId) {
-      const liveSessions = machines && machines.get(fromMachine)?.sessions;
-      if (liveSessions && liveSessions.size > 0) {
-        let matchedSid = '';
-        if (callerCwd) {
-          const normCaller = normFolderPath(callerCwd);
-          for (const [sid, sess] of liveSessions.entries()) {
-            const scwd = (store && store.info && store.info(fromMachine, sid)?.cwd) || (sess && sess.cwd) || '';
-            if (scwd && (normFolderPath(scwd) === normCaller || isSubPath(scwd, callerCwd))) {
-              matchedSid = sid;
-              break;
-            }
-          }
-        }
-        if (!matchedSid && liveSessions.size === 1) {
-          matchedSid = [...liveSessions.keys()][0];
-        }
-        if (matchedSid) {
-          const mr = upsertNode(proj.id, {
-            machine: fromMachine,
-            sessionId: matchedSid,
-            role: 'master',
-            alias: '主控会话',
-            ...(callerCwd ? { cwd: callerCwd } : {}),
-          });
-          if (mr.ok) masterNode = mr.node;
-        }
+      const matchedSid = inferLiveSessionId(fromMachine, callerCwd);
+      if (matchedSid || callerCwd) {
+        const mr = upsertNode(proj.id, {
+          machine: fromMachine,
+          sessionId: matchedSid || '',
+          role: 'master',
+          alias: '主控会话',
+          ...(callerCwd ? { cwd: callerCwd } : {}),
+        });
+        if (mr.ok) masterNode = mr.node;
       }
     }
 
@@ -1378,7 +1820,7 @@ function createMesh({
       goal ? `- 本阶段目标（Goal）：${goal}` : null,
       stopCondition ? `- 停机与检视边界（Stop & Review Gate）：${stopCondition}` : `- 停机与检视边界：完成指定目标或遇到阻塞时停下，汇报结果并等待主控会话 Review`,
       normBoundaries.length ? `- 允许修改边界（Boundaries，严禁越界修改其他文件）：${normBoundaries.join(', ')}` : null,
-      normDoneWhen.length ? `- 验收条件（Done When，交卷时逐条核对）：\n${normDoneWhen.map((item, idx) => `  ${idx + 1}. ${item}`).join('\n')}` : null,
+      normDoneWhen.length ? `- 验收条件（Done When，交卷时逐条核对）：\n${normDoneWhen.map((item, idx) => `  ${idx + 1}. ${String(item).replace(/^\s*\d+[\.\)、]\s*/, '')}`).join('\n')}` : null,
       normChecks.length ? `- 必跑验证命令（Checks）：${normChecks.join(' ; ')}` : null,
       '- 协作黑板约定：可通过 mesh_board_post(@节点别名 ...) 与成员公开协同，用 #楼层号 引用历史帖子；严禁擅自 git commit/push。',
       '- 长时间计算约定：预计耗时超过 10 分钟的求解或跑批任务，请使用 mesh_run 工具或 `node tools/ame-mesh.js run --label "任务名" -- <命令>` 在后台脱离运行，随后可调用 mesh_report(reviewStatus="blocked") 等待计算结束自动唤醒。',
@@ -1423,6 +1865,16 @@ function createMesh({
         }
       }
 
+      if (launchRes && launchRes.gitBaseline && launchRes.gitBaseline.isGit && Array.isArray(launchRes.gitBaseline.changedFiles)) {
+        nr.node.gitBaseline = {
+          files: launchRes.gitBaseline.changedFiles.slice(0, 200),
+          fingerprints: (launchRes.gitBaseline.fingerprints && typeof launchRes.gitBaseline.fingerprints === 'object')
+            ? launchRes.gitBaseline.fingerprints
+            : {},
+          capturedAt: Date.now(),
+        };
+      }
+
       const briefEntry = board.append(proj.id, {
         channel: 'main',
         kind: 'brief',
@@ -1430,6 +1882,7 @@ function createMesh({
         nodeId: masterNode ? masterNode.id : null,
         text: `@${nr.node.alias || nr.node.id} 派活契约已下发\n${launchPromptText}`,
         mentions: [nr.node.alias || nr.node.id],
+        skipTextMentionParse: true,
       });
       nr.node.lastReadSeq = briefEntry.seq;
       if (masterNode) {
@@ -1448,7 +1901,12 @@ function createMesh({
       let launched = false;
 
       for (let attempt = 0; attempt < 15; attempt++) {
-        const pick = modelRouter.selectCandidate(effectivePool, { exclude });
+        const availHarnesses = machineHarnesses(machine);
+        const pick = modelRouter.selectCandidate(effectivePool, {
+          exclude,
+          activeCounts: activeModelCounts(),
+          availableHarnesses: availHarnesses.length ? availHarnesses : null,
+        });
         if (!pick.ok || !pick.candidate) {
           lastErr = pick.msg || lastErr || `模型池「${effectivePool}」无可用候选`;
           break;
@@ -2254,7 +2712,8 @@ function createMesh({
                 return true;
               }
               const ms = Array.isArray(e.mentions) ? e.mentions.map((x) => String(x).toLowerCase()) : [];
-              return (aliasL && ms.includes(aliasL)) || (idL && ms.includes(idL));
+              const roleL = String(node.role || '').toLowerCase();
+              return (aliasL && ms.includes(aliasL)) || (idL && ms.includes(idL)) || (roleL && ms.includes(roleL));
             });
             if (unread.length > 0) {
               unreadWakeText = unread
@@ -2531,7 +2990,8 @@ function createMesh({
       const machine = url.searchParams.get('machine') || '';
       const sessionId = url.searchParams.get('sessionId') || '';
       const callerCwd = url.searchParams.get('callerCwd') || '';
-      json(res, 200, scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd }));
+      const includeTree = url.searchParams.get('includeTree') === '1' || url.searchParams.get('includeTree') === 'true';
+      json(res, 200, scopedViewFor({ projectId, nodeId, machine, sessionId, callerCwd, includeTree }));
       return true;
     }
     if (req.method === 'GET' && p === '/api/mesh/config') {
@@ -2544,6 +3004,14 @@ function createMesh({
     }
     if (req.method === 'GET' && p === '/api/mesh/pools') {
       json(res, 200, { ok: true, pools: modelRouter.getPoolsStatus() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/skills') {
+      json(res, 200, { ok: true, skills: listSkills() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/machine-profiles') {
+      json(res, 200, { ok: true, machines: machinesSummary() });
       return true;
     }
     if (req.method === 'GET' && p === '/api/mesh/board') {
@@ -2678,6 +3146,18 @@ function createMesh({
       json(res, 200, r);
       return true;
     }
+    if (p === '/api/mesh/skills') {
+      const r = d.op === 'reset' ? resetSkill(d.name) : saveSkill(d.name, d.raw);
+      if (r.ok) audit('mesh-skills', ip, d.op || 'save', String(d.name || '').slice(0, 48));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/machine-profiles') {
+      const r = saveMachineProfile(d);
+      if (r.ok) audit('mesh-machine-profiles', ip, 'save', String(d.machine || '').slice(0, 60));
+      json(res, 200, r);
+      return true;
+    }
     if (p === '/api/mesh/pools') {
       if (d.op === 'reset-cooldown') {
         const r = modelRouter.resetCooldown(d.harness, d.model);
@@ -2728,14 +3208,22 @@ function createMesh({
   async function fromAgentRpc(machineName, d, ws) {
     if (!d || d.t !== 'mesh-req' || typeof d.rid !== 'string') return false;
     const reply = (resObj) => {
-      try { ws.send(JSON.stringify({ t: 'mesh-res', rid: d.rid, ...resObj })); } catch {}
+      let out = resObj;
+      if (out && typeof out === 'object' && out.project && d.op !== 'status' && d.op !== 'scope' && d.includeTree !== true) {
+        out = {
+          ...out,
+          projectId: out.projectId || out.project.id,
+          project: compactProjectForRpc(out.project),
+        };
+      }
+      try { ws.send(JSON.stringify({ t: 'mesh-res', rid: d.rid, ...out })); } catch {}
     };
     try {
       const op = d.op;
       const callerNodeId = d.fromNodeId || d.nodeId;
       const callerCwd = d.callerCwd || d.cwd;
       if (op === 'status' || op === 'scope') {
-        return reply(scopedViewFor({ projectId: d.projectId, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd }));
+        return reply(scopedViewFor({ projectId: d.projectId, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd, includeTree: d.includeTree === true }));
       }
       if (op === 'tree') {
         if (!fsCatalog) return reply({ ok: false, msg: '目录服务未启用' });

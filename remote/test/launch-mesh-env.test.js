@@ -128,6 +128,8 @@ test('headless/launch.js passes syntax check and formats agy/other tails properl
   cp.execFileSync(process.execPath, ['-c', launchPath], { stdio: 'pipe' });
 
   assert.equal(buildTail({ agy: true, prompt: '  hello agy  ' }), " -i 'hello agy'");
+  assert.equal(buildTail({ agy: true, model: 'claude-sonnet-5-5-medium', prompt: 'hi' }), " --model 'claude-sonnet-5-5-medium' -i 'hi'");
+  assert.equal(buildTail({ agy: true, model: 'bad;rm -rf /', prompt: 'hi' }), " -i 'hi'");
   assert.equal(buildTail({ agy: true, prompt: '   ' }), '');
   assert.equal(buildTail({ agy: true, prompt: '' }), '');
   assert.equal(buildTail({ agy: true, agyThread: '11111111-2222-3333-4444-555555555555', prompt: 'ignored' }),

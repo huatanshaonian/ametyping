@@ -254,12 +254,13 @@ function rpc(op, params = {}, opts = {}) {
 const MCP_TOOLS = [
   {
     name: 'mesh_status',
-    description: '查看当前会话所属协同项目的局部拓扑状态表（上下游 Master/Worker/Peer 节点、目标 Goal、停机条件 Stop Gate）、该项目授权访问的跨机器文件夹列表（含用户备注、AI 备注与浅层目录结构树），以及 roleCatalog（外置角色名片目录）和 pools（可用模型分组池健康概览）。不会返回无关会话。',
+    description: '查看当前会话所属协同项目的局部拓扑状态表（上下游 Master/Worker/Peer 节点、目标 Goal、停机条件 Stop Gate）、授权目录摘要、roleCatalog（外置角色名片目录）、pools（可用模型分组池健康概览）及各机器已安装的 Harness（harnesses）；未绑定项目时会返回已有项目精简列表（projects）与跨机目录摘要（含近期会话与 worktree 目录，默认不含完整文件树防截断）。',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string', description: '可选，项目 ID（不填则自动按当前会话匹配）' },
         sessionId: { type: 'string', description: '可选，当前会话 ID' },
+        includeTree: { type: 'boolean', description: '可选，是否附带目录完整文件树（默认 false，只返回轻量摘要防输出过大；需查文件树请按需调 mesh_tree）' },
       },
     },
   },
