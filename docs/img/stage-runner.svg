@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 450" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#4d23cf"/></marker>
+  </defs>
+  <rect width="860" height="450" fill="#fff8ff"/>
+  <g stroke="#4d23cf" stroke-width="2" fill="#f7e1fb">
+    <rect x="20" y="30" width="170" height="64" rx="6"/>
+    <rect x="250" y="30" width="170" height="64" rx="6"/>
+    <rect x="480" y="30" width="170" height="64" rx="6"/>
+    <rect x="480" y="160" width="170" height="64" rx="6" fill="#ffe7c2"/>
+    <rect x="480" y="290" width="170" height="64" rx="6"/>
+    <rect x="250" y="290" width="170" height="64" rx="6" fill="#d9f7e8"/>
+    <rect x="20" y="290" width="170" height="64" rx="6" fill="#e6f0ff"/>
+    <rect x="690" y="225" width="150" height="64" rx="6" fill="#ffd6dc"/>
+  </g>
+  <g fill="#2a1f5e" text-anchor="middle">
+    <text x="105" y="57">计划文档 plan.md</text><text x="105" y="78" font-size="12" fill="#6f6290">阶段 1 / 2 / 3 …</text>
+    <text x="335" y="57">阶段游标 = N</text><text x="335" y="78" font-size="12" fill="#6f6290">取第 N 段 → 发给指派节点</text>
+    <text x="565" y="57">worker 干活</text><text x="565" y="78" font-size="12" fill="#6f6290">做完调 mesh_report</text>
+    <text x="565" y="187">① 硬规则 gate</text><text x="565" y="208" font-size="12" fill="#6f6290">代码判断，模型推翻不了</text>
+    <text x="565" y="317">② 审查</text><text x="565" y="338" font-size="12" fill="#6f6290">放行 / 打回 / 交还</text>
+    <text x="335" y="317">③ 事后检查</text><text x="335" y="338" font-size="12" fill="#6f6290">格式、风险词、重复</text>
+    <text x="105" y="317">放行：N+1</text><text x="105" y="338" font-size="12" fill="#6f6290">预演期要你点一下</text>
+    <text x="765" y="252">交还给你</text><text x="765" y="273" font-size="12" fill="#6f6290">看板卡片 + 推送</text>
+  </g>
+  <g stroke="#4d23cf" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M190,62 L248,62"/>
+    <path d="M420,62 L478,62"/>
+    <path d="M565,94 L565,158"/>
+    <path d="M565,224 L565,288"/>
+    <path d="M478,322 L422,322"/>
+    <path d="M248,322 L192,322"/>
+    <path d="M105,290 C105,200 335,180 335,96"/>
+    <path d="M650,192 C680,192 700,205 718,223"/>
+    <path d="M650,322 C680,322 700,305 718,291"/>
+    <path d="M480,306 C420,280 420,120 500,96" stroke-dasharray="5,4"/>
+    <path d="M335,354 C335,430 855,430 855,257 L842,257" stroke-dasharray="5,4"/>
+  </g>
+  <g font-size="12" fill="#6f6290">
+    <text x="200" y="230">进入下一段</text>
+    <text x="575" y="132">停下</text>
+    <text x="575" y="262">通过</text>
+    <text x="668" y="186">命中</text>
+    <text x="668" y="340">交还</text>
+    <text x="436" y="314">放行</text>
+    <text x="318" y="190" fill="#4d23cf">打回：问题清单发回</text>
+    <text x="318" y="208" fill="#4d23cf">同一段重做</text>
+    <text x="520" y="425">检查不通过，也交还</text>
+  </g>
+</svg>

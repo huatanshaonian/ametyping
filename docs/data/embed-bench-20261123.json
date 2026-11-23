@@ -1,0 +1,105 @@
+{
+  "url": "http://192.168.114.3:8090",
+  "at": "2026-11-23T09:54:37",
+  "auth_without_key": 401,
+  "dims": 2560,
+  "card_expected": [
+    [
+      0.7534,
+      0.1147
+    ],
+    [
+      0.032,
+      0.6258
+    ]
+  ],
+  "card_full": [
+    [
+      0.7518,
+      0.1153
+    ],
+    [
+      0.0314,
+      0.6241
+    ]
+  ],
+  "card_1024": [
+    [
+      0.7491,
+      0.1465
+    ],
+    [
+      0.0464,
+      0.6413
+    ]
+  ],
+  "card_max_abs_err": 0.0017,
+  "card_without_instruction": [
+    [
+      0.86,
+      0.2146
+    ],
+    [
+      0.1534,
+      0.7497
+    ]
+  ],
+  "query_latency_ms": {
+    "p50": 21.6,
+    "p95": 22.7,
+    "min": 21.2
+  },
+  "corpus_chunks": 512,
+  "load": [
+    {
+      "batch": 1,
+      "workers": 1,
+      "chunks": 512,
+      "seconds": 22.164,
+      "chunks_per_s": 23.1,
+      "tokens": 111104,
+      "tokens_per_s": 5012.9,
+      "request_p50_s": 0.046
+    },
+    {
+      "batch": 8,
+      "workers": 1,
+      "chunks": 512,
+      "seconds": 21.498,
+      "chunks_per_s": 23.82,
+      "tokens": 111104,
+      "tokens_per_s": 5168.0,
+      "request_p50_s": 0.336
+    },
+    {
+      "batch": 32,
+      "workers": 1,
+      "chunks": 512,
+      "seconds": 21.945,
+      "chunks_per_s": 23.33,
+      "tokens": 111104,
+      "tokens_per_s": 5062.9,
+      "request_p50_s": 1.37
+    },
+    {
+      "batch": 8,
+      "workers": 4,
+      "chunks": 512,
+      "seconds": 20.444,
+      "chunks_per_s": 25.04,
+      "tokens": 111104,
+      "tokens_per_s": 5434.7,
+      "request_p50_s": 1.267
+    },
+    {
+      "batch": 32,
+      "workers": 4,
+      "chunks": 512,
+      "seconds": 20.413,
+      "chunks_per_s": 25.08,
+      "tokens": 111104,
+      "tokens_per_s": 5442.8,
+      "request_p50_s": 5.074
+    }
+  ]
+}
