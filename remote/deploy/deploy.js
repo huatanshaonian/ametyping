@@ -76,6 +76,15 @@ function checkMachine(name, local, extraOk) {
     if (commit !== remote) fail(`本地 main（${commit.slice(0, 7)}）和 GitHub 的 main（${remote.slice(0, 7)}）不一致：先 pull / push`);
   }
   say(`  ${commit.slice(0, 7)} ${git(['log', '-1', '--format=%s', commit])}`);
+  step('静态门禁（全量 CJS/ESM 语法与前端 import/export 校验）');
+  {
+    const r = require('child_process').spawnSync(
+      process.execPath,
+      [path.join(__dirname, '..', 'test', 'check-static.js'), '--ref', commit],
+      { stdio: 'inherit' }
+    );
+    if (r.status !== 0) fail('静态门禁未通过，已拦截部署');
+  }
   if (flag('--test')) {
     step('跑 e2e 测试（remote/test/run.js）');
     const r = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'test', 'run.js')], { stdio: 'inherit' });
