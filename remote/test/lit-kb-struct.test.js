@@ -416,4 +416,64 @@ describe('evidence-schemas.js (domain schemas & quote verifier)', () => {
     assert.equal(allEmpty.verifiedRatio, 1);
     assert.deepEqual(allEmpty.unverifiedFields, []);
   });
+
+  it('verifyQuote & verifyExtraction handle NFKC ligatures (ﬁ/ﬂ), legacy OCR spaced letters, and PDF dropped-decimal scientific notation without relaxing tamper checks', () => {
+    // 1. NFKC ligatures (ﬁnite-volume, ﬂow) & Unicode superscripts (¹¹)
+    const ligaturePages = [
+      'A ﬁnite-volume hypersonic ﬂow solver predicts peak ne = 1.8 × 10¹¹ cm⁻³ along the body.',
+    ];
+    assert.deepEqual(
+      verifyQuote(ligaturePages, 1, 'finite-volume hypersonic flow solver predicts peak ne = 1.8 × 10^11 cm^-3'),
+      { verified: true, matchedPage: 1 }
+    );
+    const ligRes = verifyExtraction('plasma_rcs_v1', {
+      fields: {
+        flow_chem_model: { value: 'finite-volume flow solver', unit: '', page: 1, quote: 'A finite-volume hypersonic flow solver' },
+        peak_ne: { value: '1.8e11', unit: 'cm^-3', page: 1, quote: 'predicts peak ne = 1.8 × 10¹¹ cm⁻³' },
+      },
+      claims: [],
+    }, ligaturePages);
+    assert.equal(ligRes.fields.flow_chem_model.verified, 1);
+    assert.equal(ligRes.fields.peak_ne.verified, 1);
+    assert.equal(ligRes.verifiedRatio, 1);
+
+    // 2. Legacy OCR spaced letters (r e f l e c t i o n / a l t i t u d e)
+    const ocrPages = [
+      'The r e f l e c t i o n coefficient at a l t i t u d e 71 km is measured at X-band.',
+    ];
+    assert.deepEqual(
+      verifyQuote(ocrPages, 1, 'The reflection coefficient at altitude 71 km is measured'),
+      { verified: true, matchedPage: 1 }
+    );
+    // Normal word boundaries must remain intact (swapped word still fails)
+    assert.deepEqual(
+      verifyQuote(ocrPages, 1, 'The transmission coefficient at altitude 71 km is measured'),
+      { verified: false, matchedPage: 0 }
+    );
+
+    // 3. PDF dropped decimal + superscript ("1 8 × 1011" matches "1.8e11", "2 0 × 1010" matches "2.0e10")
+    const droppedDecimalPages = [
+      'Table 1: At 71 km, peak electron density is 1 8 × 1011 cm-3 and at 81 km it is 2 0 × 1010 cm-3.',
+    ];
+    const decOk = verifyExtraction('plasma_rcs_v1', {
+      fields: {
+        peak_ne: { value: '1.8e11', unit: 'cm^-3', page: 1, quote: 'peak electron density is 1 8 × 1011 cm-3' },
+        key_result: { value: '81 km 峰值 2.0e10', unit: 'cm^-3', page: 1, quote: 'at 81 km it is 2 0 × 1010 cm-3' },
+      },
+      claims: [],
+    }, droppedDecimalPages);
+    assert.equal(decOk.fields.peak_ne.verified, 1);
+    assert.equal(decOk.fields.key_result.verified, 1);
+    assert.equal(decOk.verifiedRatio, 1);
+
+    // Tampered value against "1 8 × 1011" must still be rejected!
+    const decTampered = verifyExtraction('plasma_rcs_v1', {
+      fields: {
+        peak_ne: { value: '1.9e11', unit: 'cm^-3', page: 1, quote: 'peak electron density is 1 8 × 1011 cm-3' },
+      },
+      claims: [],
+    }, droppedDecimalPages);
+    assert.equal(decTampered.fields.peak_ne.verified, 0);
+    assert.deepEqual(decTampered.unverifiedFields, ['peak_ne']);
+  });
 });

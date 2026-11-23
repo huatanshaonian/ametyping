@@ -48,9 +48,10 @@ const { createNotes } = require('./notes');
 const { createAnnots } = require('./annots');
 const { createDigest } = require('./digest');
 const { createDownloads, doisIn, pdfName } = require('./downloads');
-const { createAgentSocket, defaultSocket } = require('./agent-socket');
-
-const KEY = /^[A-Z0-9]{8}$/;
+const { createAgentSocket, defaultSocket, evidencePaper, DEFAULT_SCHEMA, KEY } = require('./agent-socket');
+const { openKbStruct } = require('./kb-struct');
+const { listSchemas, getSchema } = require('./evidence-schemas');
+const { createEvidence } = require('./evidence');
 
 function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, reports = () => null, mail = () => null, log = console.log, audit = () => {}, onChange = () => {}, embed = null }) {
   if (!cfg || cfg.enabled === false || !ask) return null;
@@ -72,6 +73,15 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (embed && embed.job && typeof embed.job.syncLitOnce === 'function') setImmediate(() => { Promise.resolve().then(() => embed.job.syncLitOnce()).catch(() => {}); }); } });
   const webdav = createWebdav({ dir: cfg.webdavDir || '' });
   const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, iaBase: E.dtic || undefined, log });
+  const kbStruct = openKbStruct({ dir, log });
+  const evidence = kbStruct && createEvidence({ kbStruct, mirror, fulltext, ask: askRead, log });
+  let paradigm = null;
+  if (kbStruct) {
+    try {
+      const { createParadigm } = require('./paradigm');
+      paradigm = createParadigm({ kbStruct, embed, mirror, ask: askRead, log });
+    } catch (e) { log('文献：矛盾分析模块不可用：' + e.message); }
+  }
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
   const settings = createSettings({ dir, cfg });
   // 读图: pages read as images take the place of the text layer's wherever the paper's text is used
@@ -124,7 +134,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 下载: papers by DOI, from 文献库's box or an agent (the MCP, over a local socket only: agent-socket.js, mcp.js)
   const downloads = createDownloads({ dir, cfg: conf, api, mirror, fulltext, pdfq, fetchPdf: intake.fetchPdf, log, onChange: () => changed('downloads'),
     lookups: [sources.openalex && ((d) => sources.openalex.byDoi(d)), sources.crossref && ((d) => sources.crossref.byDoi(d))].filter(Boolean), ...(cfg.downloadsOpts || {}) });
-  const agentSock = cfg.agentSocket === false ? null : createAgentSocket({ socket: cfg.agentSocket || defaultSocket(dir), downloads, log, audit });
+  const agentSock = cfg.agentSocket === false ? null : createAgentSocket({ socket: cfg.agentSocket || defaultSocket(dir), downloads, log, audit,
+    kb: { mirror, fulltext, kbStruct, evidence, paradigm, embed, librarySearch: libraryHybrid } });
   const reader = createReader({ dir, kb, mirror, fulltext, cards, profile, ask: askRead, vision, log, onChange: (k) => changed('read:' + k) });
   const survey = createSurvey({ cfg: conf, api, mirror, profile, openalex: sources.openalex, ask: askFeed, fetchPdf: intake.fetchPdf, fulltext, pdfq, log, onChange: () => changed('survey') });
   const stats = createStats({ kb, feed, todos });
@@ -255,6 +266,23 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     if (G && p === '/api/lit/read') { const k = qs('key'); json(res, KEY.test(k) ? 200 : 404, KEY.test(k) ? reader.state(k) : { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb') { const r = (() => { try { return kb.read(qs('path')); } catch { return null; } })(); json(res, r ? 200 : 404, r || { error: 'not found' }); return true; }
     if (G && p === '/api/lit/kb/search') { json(res, 200, { items: kb.search(qs('q').slice(0, 200)) }); return true; }
+    if (G && p === '/api/lit/evidence/schemas') { json(res, 200, { ok: true, schemas: listSchemas() }); return true; }
+    if (G && p === '/api/lit/evidence') {
+      if (!kbStruct) { json(res, 503, { ok: false, msg: '结构化知识库不可用' }); return true; }
+      const schemaId = qs('schema') || DEFAULT_SCHEMA;
+      const items = kbStruct.listEvidence(schemaId, { onlyVerified: qs('onlyVerified') === '1' }).map((item) => evidencePaper(item, mirror));
+      json(res, 200, { ok: true, schema: getSchema(schemaId), items, stats: kbStruct.stats() });
+      return true;
+    }
+    if (G && (p === '/api/lit/contradictions' || p === '/api/lit/matrix')) {
+      if (!paradigm) { json(res, 503, { ok: false, msg: '矛盾分析模块不可用' }); return true; }
+      const schemaId = qs('schema') || DEFAULT_SCHEMA;
+      const result = p === '/api/lit/contradictions'
+        ? { items: paradigm.listContradictions(schemaId) }
+        : paradigm.buildMatrix(schemaId, { rowField: qs('row') || undefined, colField: qs('col') || undefined });
+      json(res, 200, { ok: true, ...result });
+      return true;
+    }
     if (G && p === '/api/lit/topics') { json(res, 200, { items: reader.topics() }); return true; }
     if (G && p === '/api/lit/topic/state') { json(res, 200, { job: reader.topicState(qs('path')) }); return true; }
     if (G && p === '/api/lit/proposals') { json(res, 200, { items: kb.proposals().map((x) => ({ ...x, title: (kb.read(x.path) || { meta: {} }).meta.title || x.path })) }); return true; }
@@ -286,6 +314,30 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       api.authorize().then((x) => { authError = x.ok ? '' : x.msg; changed('zotero'); if (x.ok) audit('lit-authorize', ip); });
       r = { ok: true, msg: '请到 Zotero 的网页桌面里点「始终允许」' };
     } else if (what === 'zotero/refresh') { r = await mirror.refresh(true).then(() => ({ ok: true }), (e) => ({ ok: false, msg: e.message })); }
+    else if (what === 'evidence/extract' || what === 'evidence/verify') {
+      const schemaId = d.schemaId || DEFAULT_SCHEMA;
+      if (!evidence) r = { ok: false, msg: '结构化知识库不可用' };
+      else if (!KEY.test(key)) r = { ok: false, msg: 'Zotero 条目键无效' };
+      else if (!getSchema(schemaId)) r = { ok: false, msg: '未知的证据表 Schema' };
+      else if (what === 'evidence/extract') {
+        try { r = await evidence.extractOne(key, { schemaId, force: d.force === true }); }
+        catch (e) { r = { ok: false, msg: e.message }; }
+      } else r = { ok: true, item: kbStruct.verifyEvidence({ zoteroKey: key, schemaId, fields: d.fields }) };
+      if (r.ok) changed('evidence');
+    }
+    else if (what === 'contradictions/run' || what === 'contradictions/status') {
+      if (!paradigm) r = { ok: false, msg: '矛盾分析模块不可用' };
+      else {
+        try {
+          if (what === 'contradictions/run') r = await paradigm.analyzeContradictions(d.schemaId || DEFAULT_SCHEMA);
+          else {
+            const item = paradigm.updateContradictionStatus(d.id, d.status);
+            r = item ? { ok: true, item } : { ok: false, msg: '找不到这条矛盾' };
+          }
+          if (r.ok) changed('contradictions');
+        } catch (e) { r = { ok: false, msg: e.message }; }
+      }
+    }
     else if (what === 'settings') { r = settings.set(d); if (r.ok) changed('settings'); }
     else if (what === 'settings/test') {
       // is the key / the source reachable? one small request
@@ -380,7 +432,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   }
 
   return { handle, morning, mirror, feed, cards, notes, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, downloads,
-    stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); downloads.stop(); if (agentSock) agentSock.stop(); } };
+    stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); downloads.stop(); if (agentSock) agentSock.stop(); if (kbStruct) kbStruct.close(); } };
 }
 
 module.exports = { createLiterature };

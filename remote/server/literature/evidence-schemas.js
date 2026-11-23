@@ -96,27 +96,37 @@ function buildExtractSchema(schemaId) {
   };
 }
 
+function collapseSpacedLetters(s) {
+  // Repair legacy OCR letter-spacing (e.g. "r e f l e c t i o n" -> "reflection", "a l t i t u d e" -> "altitude")
+  // only for runs of 3+ space-separated single ASCII letters on word boundaries.
+  return s.replace(/(?<![a-z0-9])([a-z](?: [a-z]){2,})(?![a-z0-9])/g, (m) => m.replace(/ /g, ''));
+}
+
 function normalizeForMatch(s) {
   if (s == null) return '';
-  let out = String(s);
+  let out = String(s).normalize('NFKC');
   // Remove soft hyphens and hyphenated line breaks (e.g. "electro-\nmagnetic" -> "electromagnetic")
   out = out.replace(/\u00AD/g, '');
   out = out.replace(/-\r?\n\s*/g, '');
-  // Full-width space and full-width ASCII -> half-width
+  // Full-width space and full-width ASCII -> half-width (kept as belt-and-suspenders after NFKC)
   out = out.replace(/\u3000/g, ' ');
   out = out.replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
   // Normalize common typographic punctuation
   out = out.replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, '-');
-  // Collapse whitespace and lowercase
-  return out.replace(/\s+/g, ' ').trim().toLowerCase();
+  // Collapse whitespace, lowercase, and repair legacy OCR spaced letters
+  out = out.replace(/\s+/g, ' ').trim().toLowerCase();
+  return collapseSpacedLetters(out);
 }
 
-// Numbers as the paper and the answer write them: 1.2e12, 10.5, 71, and "1.2 × 10^12" / thousands separators in the
-// same form, so a value can be checked against its quote.
+// Numbers as the paper and the answer write them: 1.2e12, 10.5, 71, and "1.2 × 10^12" / thousands separators /
+// PDF dropped-decimal scientific notation ("1 8 × 1011" -> "1.8e11") in the same form, so a value can be checked
+// against its quote without weakening tamper detection.
 function canonNumbers(s) {
-  let t = String(s == null ? '' : s);
+  let t = String(s == null ? '' : s).normalize('NFKC');
+  // PDF dropped decimal + superscript merged with 10: "1 8 × 1011" -> "1.8e11", "2 0 × 1010" -> "2.0e10"
+  t = t.replace(/(?<![\d.])(\d)\s+(\d)\s*(?:×|\*|x)\s*10\s*\^?\s*([+-]?\d+)(?!\d)/gi, '$1.$2e$3');
   t = t.replace(/(\d)\s*(?:×|\*|x)\s*10\s*\^?\s*([+-]?\d+)/gi, '$1e$2');
   t = t.replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?![\d])/g, (m) => m.replace(/,/g, ''));
   return t.toLowerCase();
@@ -230,7 +240,7 @@ function strictQuoteMatch(normQuote, pageNorm) {
   for (const num of numberTokens(normQuote)) {
     if (!hasNumberAtBoundary(pageNorm, num)) return false;
   }
-  const words = normQuote.match(/[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*/g) || [];
+  const words = normQuote.match(/(?<![a-z0-9])[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*/g) || [];
   let pos = 0;
   for (const w of words) {
     const re = new RegExp('(?<![a-z0-9])' + escapeRe(w) + '(?![a-z0-9])', 'g');
@@ -242,7 +252,11 @@ function strictQuoteMatch(normQuote, pageNorm) {
   for (const run of normQuote.match(/[\u4e00-\u9fff]{2,}/g) || []) {
     if (longestCommonSubstring(run, pageNorm) / run.length < MIN_CJK_RUN_RATIO) return false;
   }
-  return longestCommonSubstring(normQuote, pageNorm) / normQuote.length >= MIN_SHARED_RUN_RATIO;
+  const rawRatio = longestCommonSubstring(normQuote, pageNorm) / normQuote.length;
+  if (rawRatio >= MIN_SHARED_RUN_RATIO) return true;
+  const cq = canonNumbers(normQuote);
+  const cp = canonNumbers(pageNorm);
+  return cq.length > 0 && longestCommonSubstring(cq, cp) / cq.length >= MIN_SHARED_RUN_RATIO;
 }
 
 function isEmptyFieldValue(v) {
