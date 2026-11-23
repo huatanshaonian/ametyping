@@ -1,5 +1,5 @@
----
-name: ame-architect
+﻿---
+name: ame-team
 description: >
   Lead-architect playbook for orchestrating local subagents and cross-machine
   AmeMesh Swarm nodes across Claude Code, Antigravity, Codex, OpenCode, and Kiro.
@@ -7,7 +7,7 @@ description: >
   project, coordinate multiple agents, or execute a design plan (.md).
 ---
 
-# ame-architect：主控架构师协同实战指南
+# ame-team：主控架构师协同实战指南
 
 把「**主控想清楚、定死契约、亲自终验**」与「**Swarm 节点并行落地、黑板接力、自动回落**」彻底拆开。主控不陷在长编码或漫无目的的排查里，始终保持短回合、随时可响应用户。
 
