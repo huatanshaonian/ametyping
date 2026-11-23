@@ -63,7 +63,7 @@ export function initWidget(desktop) {
         }
       }
     }
-    for (const proj of mesh.projects() || []) {
+    for (const proj of mesh.list() || []) {
       for (const n of proj.nodes || []) {
         if (n.archived) continue;
         if (n.watchdogAlert) {
@@ -172,5 +172,5 @@ export function initWidget(desktop) {
   desktop.append(root);
   render();
   net.on('sessions', render);
-  mesh.on(render);
+  mesh.subscribe(render);
 }

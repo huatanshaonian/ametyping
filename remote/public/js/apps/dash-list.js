@@ -38,6 +38,111 @@ export function createList({ el, current, selected, onSelect, onNote }) {
       for (const s of m.sessions) {
         const key = m.machine + '|' + s.id, mk = marks.of(key);
         const mn = mesh.nodeOfKey(key);
+        const item = { s, m, key, mk, mn };
+        if (!filter.keep(item, lastLine(s), mn)) continue;
+        // hidden ones stay out unless asked for -- a search finds them anyway
+        if (mk.hidden && !filter.searching()) { hiddenN++; if (!showHidden) continue; }
+        if (onlyStarred && !mk.starred) continue;
+        (mk.group && gids.has(mk.group) ? inGroup.get(mk.group) : byMachine.get(m.machine)).push(item);
+      }
+    }
+    const order = [], wanted = new Set();
+    const unit = filter.searching() ? '个结果' : filter.view() === 'active' ? '个活动' : '个会话';
+    const allView = !filter.searching() && filter.view() === 'all';
+    // pinned first; otherwise the server's order (newest first) -- a group across machines is merged by last activity
+    const pinnedFirst = (a, b) => !!b.mk.pinned - !!a.mk.pinned;
+    const byLast = (a, b) => (b.s.last || 0) - (a.s.last || 0);
+    const section = (sk, hd, items, showMachine) => {
+      order.push(hd);
+      if (collapsed.has(sk)) return;
+      const limit = shown.get(sk) || PAGE;
+      for (const it of items.slice(0, limit)) { wanted.add(it.key); order.push(card(it, showMachine)); }
+      if (items.length > limit) {
+        const mo = head('more|' + sk);
+        mo.className = 'more'; mo.dataset.sec = sk;
+        mo.textContent = `显示更多（还有 ${items.length - limit} 个）`;
+        order.push(mo);
+      }
+    };
+    const roleRank = (it) => {
+      const n = it.mn && it.mn.node;
+      if (!n) return 4;
+      if (n.archived) return 5;
+      if (n.role === 'master') return 0;
+      if (n.role === 'verifier' || n.role === 'peer') return 1;
+      return 2;
+    };
+    for (const g of groups) {
+      const sk = 'g:' + g.id, proj = mesh.byGroup(g.id), hd = head(sk);
+      const rawItems = inGroup.get(g.id);
+      const items = proj ? rawItems.sort((a, b) => (!!b.mk.pinned - !!a.mk.pinned) || (roleRank(a) - roleRank(b)) || byLast(a, b)) : rawItems.sort(byLast).sort(pinnedFirst);
+      if (!items.length && !allView) continue;
+      const archN = proj ? (proj.nodes || []).filter((n) => n.archived).length : 0;
+      const extra = archN > 0 ? ` · 含${archN}归档` : '';
+      hd.className = 'mc grp' + (collapsed.has(sk) ? ' fold' : ''); hd.dataset.sec = sk; hd.dataset.group = g.id;
+      setText(hd, `${g.name} · ${items.length} ${unit}${extra}`, 'gi', proj);
+      section(sk, hd, items, true);
+    }
+    for (const m of machines) {
+      const items = byMachine.get(m.machine);
+      if (!items.length) continue;
+      const sk = 'm:' + m.machine, hd = head(sk);
+      hd.className = 'mc' + (m.online ? ' on' : '') + (m.machine === current ? ' cur' : '') + (collapsed.has(sk) ? ' fold' : ''); hd.dataset.sec = sk;
+      setText(hd, `${m.machine} · ${items.length} ${unit}${m.online ? '' : '（离线）'}${m.online && !m.control ? ' · 只读' : ''}`, 'dot');
+      section(sk, hd, items.sort(pinnedFirst), false);
+    }
+    if (hiddenN) {
+      const t = head('hidden');
+      t.className = 'more hid'; t.textContent = showHidden ? '收起已隐藏的会话' : `显示已隐藏的 ${hiddenN} 个会话`;
+      order.push(t);
+    }
+    if (!wanted.size) {
+      const e = head('none'); e.className = 'pick';
+      e.textContent = filter.searching() ? (filter.pending() ? '搜索中…' : `没有找到「${filter.query()}」。`)
+        : onlyStarred ? '没有星标的会话（右键会话可以加星标）。'
+        : filter.view() === 'active' ? '没有活动中的会话。点上面的「全部」看历史会话。' : '';
+      if (e.textContent) order.push(e);
+    }
+    for (const [k, c] of cards) if (!wanted.has(k)) { c.remove(); cards.delete(k); }
+    for (const [k, x] of heads) if (!order.includes(x)) { x.remove(); heads.delete(k); }
+    const empty = $('.empty', el); if (empty) empty.remove();
+    order.forEach((x, i) => { if (el.children[i] !== x) el.insertBefore(x, el.children[i] || null); });
+    while (el.children.length > order.length) el.lastElementChild.remove();
+  }
+  function setText(hd, text, mark, proj) {
+    const key = text + '|' + (proj ? proj.id : '');
+    if (hd.dataset.t === key) return;
+    hd.dataset.t = key;
+    hd.replaceChildren(
+      h('span', { class: 'fd', text: '' }),
+      h('span', { class: mark }),
+      h('span', { class: 'mct', text }),
+      proj ? h('button', { class: 'pm-jump', type: 'button', dataset: { proj: proj.id }, title: `在「项目管理」中查看 ${proj.name} 拓扑`, text: '🌐 拓扑' }) : null
+    );
+  }
+  // running subagents of the session (dash-agents.js)
+  const agentHtml = (s) => { const t = agentTag(s); return t ? `<span class="agb" title="${esc(t.title)}">${esc(t.text)}</span>` : ''; };
+  function card({ s, m, key, mk }, showMachine) {
+    let c = cards.get(key);
+    if (!c) {
+      c = h('div', { class: 'card', dataset: { key } }, h('div', { class: 'nm' }), h('div', { class: 'sm' }), h('div', { class: 'st' }),
+        h('button', { class: 'cm', type: 'button', title: '更多操作', 'aria-label': '更多操作', text: '⋯' }));   // (shown on touch screens)
+      cards.set(key, c);
+    }
+    const [cls, name] = stateName(s), n = (s.perms || []).length;
+    c.className = 'card' + (selected() === key ? ' sel' : '') + (mk.hidden ? ' hid' : '');
+    const left = s.state !== 'history' ? ctxLeft(s) : null;            // context running low: a tag on the card
+    // (whose session it is: Codex's or Claude Code's mark, or OpenCode's / Antigravity's followed by the AI provider's)
+    const isOc = String(s.id).startsWith('opencode:'), isAgy = String(s.id).startsWith('agy:'), isKiro = String(s.id).startsWith('kiro:');
+    const ai = (isOc || isAgy || isKiro) ? aiMark(s) : null;
+    const badge = isOc
+      ? `<span class="provs" title="OpenCode${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov opn"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : isAgy
+      ? `<span class="provs" title="Antigravity${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov agy"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : isKiro
+      ? `<span class="provs" title="Kiro${ai ? ' · ' + esc(ai.name) : ''}"><span class="prov kiro"></span>${ai ? `<span class="prov ai ai-${ai.slug}" title="${esc(ai.name)}"></span>` : ''}</span>`
+      : String(s.id).startsWith('codex:') ? '<span class="prov cdx" title="Codex 的会话"></span>' : '<span class="prov cla" title="Claude Code 的会话"></span>';
+    const mn = mesh.nodeOfKey(key);
     const shortModel = (raw) => String(raw || '').replace(/^magpie\/(?:devin\/)?/, '').replace(/-(?:medium|high|low)$/, (m) => (m === '-high' ? '(H)' : ''));
     const modelStr = (mn && mn.node && mn.node.model) || s.model || '';
     const modelBadge = modelStr ? `<span class="mrole mdl" title="模型：${esc(modelStr)}">${esc(shortModel(modelStr))}</span>` : '';
@@ -156,3 +261,4 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     destroy() { offMarks(); offMesh(); },
   };
 }
+
