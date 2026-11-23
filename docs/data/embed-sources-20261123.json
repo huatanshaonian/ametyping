@@ -1,0 +1,43 @@
+{
+ "at": "2026-11-23",
+ "note": "Read-only measurements on the NAS (knowledge.sqlite, search.db, literature/). chars = Python len() of the text (characters, not bytes). See docs/embedding-plan.md section 2.",
+ "archive": {
+  "knowledge_sqlite_bytes": 2605592576,
+  "search_db_bytes": 80900096,
+  "raw_mb_by_provider_kind": {
+   "claude native": 1742.6, "codex native": 292.6, "claude tool-output": 145.1, "opencode events": 52.8,
+   "opencode native": 42.6, "agy native": 26.6, "agy tool-output": 10.4, "kiro native": 5.5, "opencode tool-output": 3.6
+  },
+  "native_mb_by_month": {"2026-05": 0.3, "2026-06": 0.3, "2026-07": 8.4, "2026-08": 29.6, "2026-09": 9.1, "2026-10": 918.1, "2026-11": 1144.1},
+  "sources": 684
+ },
+ "search_db_lines": {
+  "from": "2026-08-26", "to": "2026-11-23",
+  "by_role": {
+   "tool": {"rows": 37044, "chars": 7905865},
+   "assistant": {"rows": 12455, "chars": 4196007},
+   "user": {"rows": 4960, "chars": 2648439},
+   "cmd": {"rows": 78, "chars": 7111},
+   "sys": {"rows": 359, "chars": 4400}
+  },
+  "user_assistant_chars_by_machine": {"huatanshaonian": 5682318, "dell97": 658102, "dell_laptop": 362162, "samsung_blue": 85198, "panasonic": 56666}
+ },
+ "search_db_docs": {
+  "report": {"rows": 52, "chars": 212599},
+  "mail": {"rows": 71, "chars": 169502},
+  "artifact": {"rows": 696, "chars": 53820},
+  "note": {"rows": 2, "chars": 31}
+ },
+ "knowledge_other": {
+  "memory": {"rows": 47, "chars": 20885},
+  "research_directory_summaries": {"rows": 35, "chars": 299175}
+ },
+ "literature": {
+  "zotero_items": 457, "with_abstract": 356, "abstract_chars": 292408, "title_chars": 26790,
+  "attachments": 538, "notes": 135, "annotations": 229,
+  "webdav_zips": 549, "webdav_bytes_human": "1.3G",
+  "fulltext_extracted_papers": 9,
+  "feed_items": 483, "feed_seen": 3033
+ },
+ "service": {"tokens_per_s": 5000, "tokens_per_char_sample": 0.5879, "token_sample_texts": 38}
+}

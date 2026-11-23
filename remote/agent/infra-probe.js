@@ -246,6 +246,10 @@ function createCollector({ isNas = false, nasRoot = '/volume2/docker/ame-remote'
       }
       const ts = await probeTcp('127.0.0.1', 41112, 500);
       services.push({ name: 'tailscaled', label: 'Tailscale 客户端', state: ts.ok ? 'running' : 'running', kind: 'process' });
+      // the embedding service (llama-server, docs/embedding-service.md); shown only where it listens. To see it as
+      // stopped when it is down, mark 'ame-embed' as watched on that machine in 网络与设备.
+      const embed = await probeTcp('127.0.0.1', 8090, 600);
+      if (embed.ok) services.push({ name: 'ame-embed', label: '向量服务 (llama-server :8090)', state: 'running', kind: 'port', port: 8090 });
     } else if (process.platform === 'linux') {
       const r = await runCmd('systemctl', ['list-units', '--type=service', '--state=running', '--no-pager', '--no-legend'], 3000);
       if (r.ok && r.out) {

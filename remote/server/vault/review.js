@@ -12,7 +12,7 @@ const SCHEMA={type:'object',additionalProperties:false,properties:{summary:{type
   properties:{title:{type:'string'},reason:{type:'string'},category:{type:'string',enum:CATEGORIES},
     operations:{type:'array',minItems:1,maxItems:60,items:{type:'object',additionalProperties:false,properties:{action:{type:'string',enum:['create','update','disable']},
       target:{type:'string'},scope:{type:'string',enum:['global','machine','project']},owner:{type:'string'},name:{type:'string'},body:{type:'string'}},required:['action','target','scope','owner','name','body']}}},required:['title','reason','category','operations']}}},required:['summary','groups']};
-function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApplied=()=>{}}){
+function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApplied=()=>{},getEmbed=()=>null}){
   const {db,transaction}=vault;let closed=false;
   db.exec(`CREATE TABLE IF NOT EXISTS memory_reviews(id TEXT PRIMARY KEY,status TEXT NOT NULL,kind TEXT NOT NULL,
     snapshot TEXT NOT NULL,result TEXT NOT NULL,error TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
@@ -110,6 +110,73 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
     }
     return {items,pairs:pairs.sort((a,b)=>b.score-a.score)};
   }
+  function alignmentWithSemantic(refs,{threshold=0.75}={}){
+    const base=alignment(refs);
+    const embed=typeof getEmbed==='function'?getEmbed():null;
+    if(!embed||typeof embed.similarMemoryPairs!=='function')return base;
+    const keyed=base.items.map(x=>({
+      label:x.label,
+      kind:x.kind==='memory'?'memory':'observed',
+      key:x.kind==='memory'?x.ref.id:(x.ref.machine+'\0'+x.ref.path),
+      scope:x.scope,
+      owner:x.owner,
+    }));
+    const byLabel=new Map(keyed.map(x=>[x.label,x]));
+    const pairMap=new Map(base.pairs.map(p=>[p.left+'\0'+p.right,p]));
+    for(const sp of embed.similarMemoryPairs(keyed,{threshold})){
+      const k1=sp.left+'\0'+sp.right,k2=sp.right+'\0'+sp.left;
+      const pct=Math.round(sp.score*100);
+      const existing=pairMap.get(k1)||pairMap.get(k2);
+      if(existing){
+        existing.semanticScore=pct;
+        if(pct>existing.score)existing.score=pct;
+      }else{
+        const a=byLabel.get(sp.left),b=byLabel.get(sp.right);
+        const sameScope=!!(a&&b&&a.scope===b.scope&&a.owner===b.owner);
+        const high=sp.score>=0.85;
+        const entry={left:sp.left,right:sp.right,kind:'semantic',sameScope,score:pct,semanticScore:pct,
+          note:high?(sameScope?'语义疑似重复（向量预筛），可审阅是否合并':'语义疑似重复但归属不同，请核对适用范围'):(sameScope?'语义相近（向量预筛），可对照是否互补或合并':'语义相近但归属不同，请核对适用范围')};
+        base.pairs.push(entry);
+        pairMap.set(k1,entry);
+      }
+    }
+    base.pairs.sort((a,b)=>b.score-a.score);
+    return base;
+  }
+  function semanticHints(items,{threshold=0.75}={}){
+    const embed=typeof getEmbed==='function'?getEmbed():null;
+    if(!embed||typeof embed.similarMemoryPairs!=='function')return '';
+    const keyed=items.map(x=>({
+      label:x.label,
+      name:x.name,
+      kind:x.kind==='memory'?'memory':'observed',
+      key:x.kind==='memory'?x.ref.id:(x.ref.machine+'\0'+x.ref.path),
+    }));
+    const byLabel=new Map(keyed.map(x=>[x.label,x.name]));
+    const pairs=embed.similarMemoryPairs(keyed,{threshold}).slice(0,20);
+    if(!pairs.length)return '';
+    const desc=pairs.map(p=>`${p.left}(${byLabel.get(p.left)}) ↔ ${p.right}(${byLabel.get(p.right)}) [${Math.round(p.score*100)}%]`).join('；');
+    return `向量预筛发现以下条目语义相近（仅供去重/合并参考，请核对原文事实）：${desc}\n`;
+  }
+  function semanticDuplicates({threshold=0.75,includeObserved=false}={}){
+    const embed=typeof getEmbed==='function'?getEmbed():null;
+    if(!embed||typeof embed.similarMemoryPairs!=='function')return {semantic:'off',pairs:[]};
+    const mems=memory.list().filter(m=>m.enabled);
+    const items=mems.map((m,i)=>({label:'m'+i,kind:'memory',key:m.id,id:m.id,scope:m.scope,owner:m.owner,name:m.name}));
+    if(includeObserved){
+      memory.observed().forEach((o,i)=>{
+        items.push({label:'o'+i,kind:'observed',key:o.machine+'\0'+o.path,machine:o.machine,path:o.path,scope:o.scope,owner:o.owner,name:o.path.split(/[\\/]/).pop()});
+      });
+    }
+    const byLabel=new Map(items.map(x=>[x.label,x]));
+    const pairs=embed.similarMemoryPairs(items,{threshold}).slice(0,50).map(p=>{
+      const a=byLabel.get(p.left),b=byLabel.get(p.right);
+      return {score:Math.round(p.score*100),rawScore:Number(p.score.toFixed(4)),sameScope:a.scope===b.scope&&a.owner===b.owner,
+        left:{kind:a.kind,id:a.id||null,machine:a.machine||null,path:a.path||null,scope:a.scope,owner:a.owner,name:a.name},
+        right:{kind:b.kind,id:b.id||null,machine:b.machine||null,path:b.path||null,scope:b.scope,owner:b.owner,name:b.name}};
+    });
+    return {semantic:'ok',threshold,pairs};
+  }
   function validate(result,items){
     if(!result||typeof result.summary!=='string'||result.summary.length>10000||!Array.isArray(result.groups)||result.groups.length>50)throw Error('模型返回的方案格式不正确');
     let count=0;const machineNames=new Set([...machines(),...memory.list().filter(x=>x.scope==='machine').map(x=>x.owner),...memory.observed().map(x=>x.machine)]);
@@ -141,6 +208,7 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
       `每组独立可应用；合并或拆分时把新增和停用原条目放在同一组。存在冲突且证据不足时只解释，不替用户裁决。操作为 create/update/disable，禁止删除原始来源。create 的 target 必须为空；update/disable 的 target 只能是所选已发布记忆的 label。停用操作仍填入原条目的范围、名称和正文。\n`+
       `来源条目仅能据其内容新增记忆；不能停用或覆盖来源文件。新增条目的名称应独立明确，避免与已存在条目重名。没有充分理由就返回空 groups。未知机器不得编造；项目按下方规则处理。最多50组、总计250个操作。\n`+
       projectContext()+
+      semanticHints(items)+
       `整理要求：${snap.instruction}\n记忆数据：${JSON.stringify(items)}`;
     setImmediate(async()=>{
       try{const result=validate(await ask(prompt,SCHEMA,'memory',{apiOnly}),items);if(closed)return;
@@ -270,6 +338,7 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
       `每组独立可应用；合并或拆分时把新增和停用原条目放在同一组。存在冲突且证据不足时只解释，不替用户裁决。操作为 create/update/disable，禁止删除原始来源。create 的 target 必须为空；update/disable 的 target 只能是所选已发布记忆的 label。停用操作仍填入原条目的范围、名称和正文。\n`+
       `来源条目仅能据其内容新增记忆；不能停用或覆盖来源文件。新增条目的名称应独立明确，避免与已存在条目重名。没有充分理由就返回空 groups。未知机器不得编造；项目按下方规则处理。最多50组、总计250个操作。\n`+
       projectContext()+
+      semanticHints(items)+
       `整理要求：${instruction}\n记忆数据：${JSON.stringify(items)}`;
     try{
       const result=validate(await ask(prompt,SCHEMA,'memory',{apiOnly}),items);
@@ -357,6 +426,7 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
       `用中文给出可审阅的月度体检建议。重点检查：1) defensive（过度防御性规则）；2) expression（奇怪、生硬或啰嗦的表达）；3) outdated（过时或需要更新的旧状态/旧版本/一次性任务）；4) duplicate/split/scope（重复、混杂或归属不当）。\n`+
       `保留有用的事实来源、日期、公式与中文/Unicode/emoji。每组独立可应用；操作为 create/update/disable，update/disable 的 target 必须是所选记忆的 label，create 的 target 必须为空。\n`+
       projectContext()+
+      semanticHints(items)+
       `整理要求：${instruction}\n记忆数据：${JSON.stringify(items)}`;
     try{
       const result=validate(await ask(prompt,SCHEMA,'memory',{apiOnly}),items);
@@ -374,7 +444,7 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
       throw e;
     }
   }
-  return {alignment,start,apply,ignoreGroup,manual,autoReview,monthlyReview,read,pendingObserved,
+  return {alignment,alignmentWithSemantic,semanticDuplicates,start,apply,ignoreGroup,manual,autoReview,monthlyReview,read,pendingObserved,
     pendingReviewsCount:()=>db.prepare("SELECT count(*) AS n FROM memory_reviews WHERE status='ready'").get().n,
     list:()=>db.prepare('SELECT id,status,kind,error,created,updated FROM memory_reviews ORDER BY created DESC LIMIT 100').all(),
     discard:id=>{const r=db.prepare("UPDATE memory_reviews SET status='discarded',updated=? WHERE id=? AND status IN ('ready','failed')").run(Date.now(),id);if(!r.changes)throw Error('运行中或已应用的方案不能丢弃');},

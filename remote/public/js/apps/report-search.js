@@ -19,7 +19,8 @@ function artifactItem(a, extra) {
 export function renderResults(q, r, { openReport }) {
   const notes = r.notes || [], mail = r.mail || [];
   const n = r.reports.length + r.artifacts.length + r.sessions.length + notes.length + mail.length;
-  const box = h('article', { class: 'rp' }, h('div', { class: 'rp-top' }, h('div', { class: 'rp-day', text: `搜索「${q}」` }), h('div', { class: 'rp-meta', text: n ? `${n} 项` : '' })));
+  const semNote = r.semantic === 'unavailable' ? ' · 语义检索暂不可用' : '';
+  const box = h('article', { class: 'rp' }, h('div', { class: 'rp-top' }, h('div', { class: 'rp-day', text: `搜索「${q}」` }), h('div', { class: 'rp-meta', text: (n ? `${n} 项` : '') + semNote })));
   if (!n) { box.append(h('p', { class: 'rp-empty', text: '没有找到。中文词之间用空格分开，每个词都要出现；也可以试试「问一问」。' })); return box; }
   if (r.reports.length) box.append(h('section', { class: 'rp-sec' }, h('h3', { text: `日报（${r.reports.length}）` }),
     h('ul', { class: 'rs-list' }, ...r.reports.map((x) => h('li', {},

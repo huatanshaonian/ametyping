@@ -1,0 +1,325 @@
+{
+ "at": "2026-11-23T10:34:11",
+ "chunk_chars": 600,
+ "scan_seconds": 27.4,
+ "raw_bytes": {
+  "claude:main": 1452209012,
+  "claude:subagent": 290530639,
+  "codex:main": 271786421,
+  "codex:subagent": 20823229
+ },
+ "totals": {
+  "claude:main:assistant": {
+   "messages": 7555,
+   "chars": 2364491,
+   "chunks": 9668
+  },
+  "claude:main:tool": {
+   "messages": 21910,
+   "chars": 27531712
+  },
+  "claude:main:user": {
+   "messages": 2355,
+   "chars": 999628,
+   "chunks": 3797
+  },
+  "claude:subagent:assistant": {
+   "messages": 218,
+   "chars": 80870,
+   "chunks": 310
+  },
+  "claude:subagent:tool": {
+   "messages": 3918,
+   "chars": 10875940
+  },
+  "claude:subagent:user": {
+   "messages": 94,
+   "chars": 147181,
+   "chunks": 297
+  },
+  "codex:main:assistant": {
+   "messages": 335,
+   "chars": 64600,
+   "chunks": 356
+  },
+  "codex:main:tool": {
+   "messages": 1194,
+   "chars": 1668913
+  },
+  "codex:main:user": {
+   "messages": 93,
+   "chars": 9217,
+   "chunks": 100
+  },
+  "codex:subagent:assistant": {
+   "messages": 21,
+   "chars": 5119,
+   "chunks": 21
+  },
+  "codex:subagent:tool": {
+   "messages": 27,
+   "chars": 16260
+  },
+  "codex:subagent:user": {
+   "messages": 21,
+   "chars": 255653,
+   "chunks": 437
+  }
+ },
+ "daily_chars": {
+  "2026-06-25": {
+   "claude:main": 20490
+  },
+  "2026-07-05": {
+   "codex:main": 1327
+  },
+  "2026-07-11": {
+   "codex:main": 7656
+  },
+  "2026-07-12": {
+   "claude:main": 14,
+   "codex:main": 48960
+  },
+  "2026-07-13": {
+   "codex:main": 455,
+   "codex:subagent": 34668
+  },
+  "2026-07-17": {
+   "codex:main": 3120,
+   "codex:subagent": 62799
+  },
+  "2026-07-20": {
+   "codex:main": 1004,
+   "codex:subagent": 34726
+  },
+  "2026-07-22": {
+   "codex:main": 8011,
+   "codex:subagent": 125239
+  },
+  "2026-07-24": {
+   "claude:main": 16710,
+   "codex:main": 3284,
+   "codex:subagent": 3340
+  },
+  "2026-07-26": {
+   "claude:main": 19920
+  },
+  "2026-09-01": {
+   "claude:main": 18437
+  },
+  "2026-09-03": {
+   "claude:main": 19805
+  },
+  "2026-09-04": {
+   "claude:main": 17552
+  },
+  "2026-09-07": {
+   "claude:subagent": 13549,
+   "claude:main": 70703
+  },
+  "2026-09-08": {
+   "claude:main": 32339
+  },
+  "2026-09-09": {
+   "claude:main": 26288
+  },
+  "2026-09-14": {
+   "claude:main": 23196
+  },
+  "2026-09-15": {
+   "claude:main": 53385
+  },
+  "2026-09-16": {
+   "claude:main": 18135
+  },
+  "2026-09-17": {
+   "claude:main": 5778
+  },
+  "2026-09-18": {
+   "claude:main": 3737
+  },
+  "2026-09-19": {
+   "claude:main": 6721
+  },
+  "2026-09-21": {
+   "claude:main": 23365
+  },
+  "2026-09-22": {
+   "claude:main": 5843
+  },
+  "2026-09-23": {
+   "claude:main": 57412
+  },
+  "2026-09-24": {
+   "claude:main": 17577
+  },
+  "2026-09-28": {
+   "claude:main": 121328,
+   "claude:subagent": 24347
+  },
+  "2026-09-29": {
+   "claude:main": 80808
+  },
+  "2026-09-30": {
+   "claude:main": 14847
+  },
+  "2026-10-01": {
+   "claude:main": 78543
+  },
+  "2026-10-02": {
+   "claude:main": 54657,
+   "claude:subagent": 2512
+  },
+  "2026-10-03": {
+   "claude:main": 52110,
+   "claude:subagent": 4044
+  },
+  "2026-10-04": {
+   "claude:main": 150780,
+   "claude:subagent": 3991
+  },
+  "2026-10-05": {
+   "claude:subagent": 7190,
+   "claude:main": 39145
+  },
+  "2026-10-06": {
+   "claude:main": 19288
+  },
+  "2026-10-08": {
+   "claude:main": 49625
+  },
+  "2026-10-09": {
+   "claude:subagent": 3198,
+   "claude:main": 40796
+  },
+  "2026-10-10": {
+   "claude:main": 60697
+  },
+  "2026-10-11": {
+   "claude:subagent": 5276,
+   "claude:main": 5041
+  },
+  "2026-10-12": {
+   "claude:main": 74307
+  },
+  "2026-10-13": {
+   "claude:main": 109328,
+   "claude:subagent": 3075
+  },
+  "2026-10-14": {
+   "claude:main": 98626,
+   "claude:subagent": 674
+  },
+  "2026-10-15": {
+   "claude:main": 55354
+  },
+  "2026-10-16": {
+   "claude:main": 13380
+  },
+  "2026-10-17": {
+   "claude:subagent": 10403,
+   "claude:main": 148165
+  },
+  "2026-10-18": {
+   "claude:main": 82152
+  },
+  "2026-10-19": {
+   "claude:main": 191718,
+   "claude:subagent": 22340
+  },
+  "2026-10-20": {
+   "claude:subagent": 23972,
+   "claude:main": 312604
+  },
+  "2026-10-21": {
+   "claude:subagent": 30422,
+   "claude:main": 253131
+  },
+  "2026-10-22": {
+   "claude:subagent": 5433,
+   "claude:main": 185553
+  },
+  "2026-10-23": {
+   "claude:main": 17714
+  },
+  "2026-10-24": {
+   "claude:main": 23046,
+   "claude:subagent": 3594
+  },
+  "2026-10-25": {
+   "claude:subagent": 10823,
+   "claude:main": 60786
+  },
+  "2026-10-26": {
+   "claude:subagent": 18996,
+   "claude:main": 19415
+  },
+  "2026-10-27": {
+   "claude:main": 123700,
+   "claude:subagent": 8099
+  },
+  "2026-10-28": {
+   "claude:main": 63119
+  },
+  "2026-10-30": {
+   "claude:main": 11930
+  },
+  "2026-10-31": {
+   "claude:main": 29164
+  },
+  "2026-11-02": {
+   "claude:main": 33360
+  },
+  "2026-11-03": {
+   "claude:main": 9336
+  },
+  "2026-11-05": {
+   "claude:main": 22
+  },
+  "2026-11-10": {
+   "claude:main": 7213
+  },
+  "2026-11-11": {
+   "claude:main": 6635
+  },
+  "2026-11-12": {
+   "claude:main": 19504,
+   "claude:subagent": 3225
+  },
+  "2026-11-13": {
+   "claude:main": 10245
+  },
+  "2026-11-16": {
+   "claude:main": 40556,
+   "claude:subagent": 22888
+  },
+  "2026-11-17": {
+   "claude:main": 57648
+  },
+  "2026-11-18": {
+   "claude:main": 33110
+  },
+  "2026-11-19": {
+   "claude:main": 2444
+  },
+  "2026-11-20": {
+   "claude:main": 4392
+  },
+  "2026-11-23": {
+   "claude:main": 41390
+  }
+ },
+ "message_length_quantiles": {
+  "p50": 67,
+  "p90": 884,
+  "p99": 4645,
+  "max": 36532,
+  "count": 10692
+ },
+ "tokens_per_char": 0.5879,
+ "token_sample": {
+  "texts": 38,
+  "chars": 7408,
+  "tokens": 4355
+ }
+}

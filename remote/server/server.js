@@ -36,6 +36,7 @@ const { createBoards } = require('./board');
 const { createMarks } = require('./session-marks');
 const { createExport } = require('./session-export');
 const searchIdx = require('./search-index');
+const embedMod = require('./embed');
 const { createGoogle } = require('./google');
 const { createCalendarView } = require('./calendar');
 const { createBackup } = require('./backup');
@@ -207,8 +208,10 @@ function broadcastSoon() {
 }
 const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
 // mesh is created further down; the memory service only reads its workspaces after startup.
+let embed = null;
 const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
   linked:id=>mesh.getProject(id)?.workspaces||[],
+  getEmbed:()=>embed,
   fresh:auth.isFresh,audit,log:console.error,
   ask:(...args)=>{if(!summary)throw Error('AI 功能未启用');return summary.ai.ask(...args);},model:()=>summary?summary.ai.pick('memory'):null,
   onAutoReview:r=>{broadcast({t:'knowledge-review',...r});if(r.pendingManual>0&&push)push.notify('infra',{title:r.kind==='monthly'?`月度记忆体检待确认 (${r.month||''})`:'记忆自动审阅待裁决',body:r.kind==='monthly'?`月度记忆整理已生成 ${r.pendingManual} 组修订建议（过度防御/表达润色/过时更新），未自动修改，请手动审阅确认。`:`已自动入库 ${r.autoApplied||0} 条无争议记忆；另有 ${r.pendingManual} 组存在矛盾或需确认归属，请在「记忆与存档」中审阅。`});}});
@@ -278,12 +281,23 @@ const withAgenda = (n) => google.agenda().then((today) => ({ ...n, today: { ...t
 // the conversations' full-text index (SQLite, data/search.db): follows what the store writes; built in the background
 const searchIndex = searchIdx.open({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), log: console.log });
 if (searchIndex) store.onAppend((f) => searchIndex.touched(f));
+// derived vector index (SQLite, data/vectors.sqlite): Stage 1 conversations + Stage 2 memories; disabled if cfg.embed is absent
+embed = embedMod.open({
+  cfg: cfg.embed,
+  dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
+  searchIndex,
+  memoryProvider: () => ({
+    memories: knowledge.memory.list(),
+    observed: knowledge.memory.observed().map((o) => knowledge.memory.readObserved(o.machine, o.path)).filter(Boolean),
+  }),
+  log: console.log,
+});
 const sendQuota = (sock, notice) => { try { sock.send(JSON.stringify({ t: 'quota-alert', notice })); } catch {} };
 magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
   onChange: () => broadcast({ t: 'magpie' }),
   onNotice: n => { for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) sendQuota(sock, n); } });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, searchIndex, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
+  resumeCmd, artifacts, todos, notes, searchIndex, embed, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar
@@ -316,10 +330,17 @@ const office = createOffice({ conf: cfg.office, dataDir: path.resolve(path.dirna
 // new mail is indexed a few seconds after it arrives, so a search finds little left to do
 if (searchIndex && summary) {
   const syncDocs = () => { try { summary.syncSearchDocs(); } catch (e) { console.log('搜索索引：文档同步失败 ' + e.message); } };
-  searchIndex.sweep(() => setImmediate(syncDocs));
+  searchIndex.sweep(() => {
+    setImmediate(syncDocs);
+    if (embed) { embed.job.start(); setImmediate(() => embed.job.runOnce()); }
+  });
   let docsT = null;
   mail.onNew(() => { clearTimeout(docsT); docsT = setTimeout(syncDocs, 3000); });
-} else if (searchIndex) searchIndex.sweep();
+} else if (searchIndex) {
+  searchIndex.sweep(() => {
+    if (embed) { embed.job.start(); setImmediate(() => embed.job.runOnce()); }
+  });
+}
 // 文献 (literature/index.js): the daily papers, cards, deep reading and the knowledge base, on the NAS's Zotero
 // (config "literature"; the model is the daily report's); open pages are told what changed
 const lit = cfg.literature ? createLiterature({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), cfg: cfg.literature, proxies: gProxies,
@@ -346,7 +367,7 @@ if (cfg.backup && cfg.backup.dir) {
   createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
     before: () => knowledge.vault.snapshot(snapFile), after: cleanSnap, log: console.log });
 }
-function flushAndExit() { try { magpie.stop(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { magpie.stop(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();embed&&embed.close();store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -714,6 +735,10 @@ const server = http.createServer(async (req, res) => {
     const w = walls.file(p.slice('/wallpaper/'.length));
     if (!w) return send(res, 404, 'not found');
     return fs.readFile(w.f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, w.type, { 'Cache-Control': 'max-age=86400' }));
+  }
+  if (req.method === 'GET' && p === '/api/embed/status') {
+    json(res, 200, embed ? await embed.status() : { ok: true, enabled: false });
+    return;
   }
   // 日报 (summary/index.js)
   if (summary && /^\/api\/(report|search|ask)/.test(p) && await summary.handle(req, res, url, ip, json)) return;

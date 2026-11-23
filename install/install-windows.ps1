@@ -172,7 +172,8 @@ if ((Get-Command agy -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $e
 
 # ---------------------------------------------------------------------------------------------------------------
 Step '开机自启（登录后在后台运行）'
-$user = "$env:USERDOMAIN\$env:USERNAME"
+# the signed-in account as Windows names it (MACHINE\user): over SSH USERDOMAIN is WORKGROUP, which no account maps to
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 foreach ($t in 'AmeTyping Pet', 'AmeTyping Headless', 'AmeTyping Agent') {
