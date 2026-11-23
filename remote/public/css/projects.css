@@ -1060,3 +1060,47 @@
 @media (max-width: 760px) {
   .pm-roles-grid { grid-template-columns: 1fr; }
 }
+
+/* Phase 3: Worktree Badge & Multi-Channel Bar */
+.pm-wt-badge {
+  display: inline-block;
+  padding: 0 5px;
+  font: 11px Consolas, monospace;
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #0284c7;
+}
+.pm-channel-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: var(--head-bg);
+  border: 1px solid #808080;
+  box-shadow: inset 1px 1px 0 #dfdfdf;
+}
+.pm-ch-btn {
+  padding: 2px 8px;
+  font: 11.5px Consolas, "Microsoft YaHei UI", monospace;
+  background: var(--gamepink);
+  color: var(--ink);
+  border: 1px solid #808080;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040;
+  cursor: pointer;
+}
+.pm-ch-btn:hover {
+  background: var(--tint-soft);
+}
+.pm-ch-btn.active {
+  background: var(--fill);
+  color: var(--on-fill);
+  font-weight: bold;
+  border-color: var(--border);
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff;
+}
+.pm-ch-add {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 11.5px;
+}

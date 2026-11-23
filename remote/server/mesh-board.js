@@ -32,6 +32,23 @@ function parseMentions(text) {
   return { mentions, mentionAll };
 }
 
+// Extract @#channel tokens as a deduplicated lowercase/trimmed array
+function parseChannelMentions(text) {
+  const src = String(text || '');
+  const re = /@#([A-Za-z0-9_\u4e00-\u9fa5-]+)/g;
+  const out = [];
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const tok = String(m[1] || '').trim().toLowerCase();
+    if (tok && !seen.has(tok)) {
+      seen.add(tok);
+      out.push(tok);
+    }
+  }
+  return out;
+}
+
 // Extract `#123` floor references as a sorted, deduplicated integer array
 function parseRefs(text) {
   const src = String(text || '');
@@ -144,6 +161,7 @@ function formatWakePrompt({ project, entry, targetNode, threshold = 500 }) {
 function createBoard({ dataDir }) {
   const dir = path.join(dataDir, 'mesh-boards');
   const seqCache = new Map(); // projectId -> highest seq number
+  const channelCache = new Map(); // projectId -> replayed channel states
 
   function filePathFor(projectId) {
     return path.join(dir, `${safeProjectId(projectId)}.jsonl`);
@@ -193,30 +211,109 @@ function createBoard({ dataDir }) {
       }
     }
     const mentionAll = Boolean(parsedMentions.mentionAll || entry.mentionAll);
+    const parsedChannelMentions = parseChannelMentions(text);
+    const explicitChannelMentions = Array.isArray(entry.mentionChannels)
+      ? entry.mentionChannels.map((x) => String(x || '').trim().toLowerCase()).filter(Boolean)
+      : [];
+    const mentionChannels = [...new Set([...parsedChannelMentions, ...explicitChannelMentions])];
     const parsedRefs = parseRefs(text);
     const explicitRefs = Array.isArray(entry.refs) ? entry.refs.map((x) => parseInt(x, 10)).filter((n) => Number.isSafeInteger(n) && n > 0) : [];
     const refs = [...new Set([...parsedRefs, ...explicitRefs])].sort((a, b) => a - b);
 
+    const kind = String(entry.kind || 'post') || 'post';
     const fullEntry = {
       seq: nextSeq,
       ts: Number(entry.ts) || Date.now(),
       channel: String(entry.channel || 'main') || 'main',
-      kind: String(entry.kind || 'post') || 'post',
+      kind,
       agent: String(entry.agent || '系统') || '系统',
       nodeId: entry.nodeId || null,
       text,
       mentions,
       mentionAll,
+      mentionChannels,
       refs,
       artifacts: Array.isArray(entry.artifacts) ? entry.artifacts : [],
       done: Boolean(entry.done),
       audit: entry.audit || null,
+      ...(kind === 'control' && entry.control ? { control: entry.control } : {}),
     };
 
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.appendFileSync(filePathFor(projectId), JSON.stringify(fullEntry) + '\n', { encoding: 'utf8', mode: 0o600 });
     seqCache.set(projectId, nextSeq);
+    channelCache.delete(projectId);
     return fullEntry;
+  }
+
+  function computeChannels(projectId) {
+    const map = new Map();
+    map.set('main', {
+      name: 'main',
+      desc: '',
+      archived: false,
+      subscribers: [],
+      createdAt: 0,
+    });
+    const entries = loadEntries(projectId);
+    for (const e of entries) {
+      if (e.kind !== 'control' || !e.control || typeof e.control !== 'object') continue;
+      const c = e.control;
+      const op = String(c.op || '');
+      const ch = String(c.channel || e.channel || '').trim().toLowerCase();
+      if (!ch) continue;
+      if (op === 'channel_create') {
+        const existing = map.get(ch);
+        const initSubs = Array.isArray(c.subscribers)
+          ? [...new Set(c.subscribers.map((x) => String(x || '').trim()).filter(Boolean))]
+          : [];
+        if (!existing) {
+          map.set(ch, {
+            name: ch,
+            desc: String(c.desc || '').trim(),
+            archived: false,
+            subscribers: initSubs,
+            createdAt: Number(e.ts) || 0,
+          });
+        } else {
+          if (typeof c.desc === 'string' && c.desc.trim()) existing.desc = c.desc.trim();
+          existing.archived = false;
+          for (const sid of initSubs) {
+            if (!existing.subscribers.includes(sid)) existing.subscribers.push(sid);
+          }
+        }
+      } else if (op === 'channel_subscribe') {
+        const nodeId = String(c.nodeId || '').trim();
+        if (!nodeId) continue;
+        let obj = map.get(ch);
+        if (!obj) {
+          obj = { name: ch, desc: '', archived: false, subscribers: [], createdAt: Number(e.ts) || 0 };
+          map.set(ch, obj);
+        }
+        if (!obj.subscribers.includes(nodeId)) obj.subscribers.push(nodeId);
+      } else if (op === 'channel_unsubscribe') {
+        const nodeId = String(c.nodeId || '').trim();
+        const obj = map.get(ch);
+        if (obj && nodeId) {
+          obj.subscribers = obj.subscribers.filter((x) => x !== nodeId);
+        }
+      } else if (op === 'channel_archive') {
+        const obj = map.get(ch);
+        if (obj && ch !== 'main') {
+          obj.archived = true;
+        }
+      }
+    }
+    return [...map.values()];
+  }
+
+  function getChannels(projectId) {
+    let list = channelCache.get(projectId);
+    if (!list) {
+      list = computeChannels(projectId);
+      channelCache.set(projectId, list);
+    }
+    return list.map((c) => ({ ...c, subscribers: [...c.subscribers] }));
   }
 
   function read(projectId, { since = 0, limit = 50, channel = '', seqList = null } = {}) {
@@ -244,6 +341,7 @@ function createBoard({ dataDir }) {
 
   function removeProject(projectId) {
     seqCache.delete(projectId);
+    channelCache.delete(projectId);
     const fp = filePathFor(projectId);
     try {
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
@@ -254,6 +352,7 @@ function createBoard({ dataDir }) {
     append,
     read,
     latestSeq,
+    getChannels,
     removeProject,
   };
 }
@@ -261,6 +360,7 @@ function createBoard({ dataDir }) {
 module.exports = {
   createBoard,
   parseMentions,
+  parseChannelMentions,
   parseRefs,
   formatWakePrompt,
   checkBoundaries,

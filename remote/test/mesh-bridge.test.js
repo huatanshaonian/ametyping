@@ -55,7 +55,7 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       req.on('end', () => {
         const d = JSON.parse(body || '{}');
         capturedRequests.push(d);
-        const NEW_OPS = new Set(['board_post', 'board_read', 'task']);
+        const NEW_OPS = new Set(['board_post', 'board_read', 'task', 'channel']);
         mesh.fromAgentRpc('pc-a', { ...d, t: 'mesh-req', rid: 'r1' }, {
           send(raw) {
             const reply = JSON.parse(raw);
@@ -74,7 +74,7 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
     const port = srv.address().port;
     const opts = { auth: { port, token, machine: 'pc-a' } };
 
-    assert.equal(MCP_TOOLS.length, 12);
+    assert.equal(MCP_TOOLS.length, 13);
     const statusTool = MCP_TOOLS.find((t) => t.name === 'mesh_status');
     assert.match(statusTool.description, /roleCatalog/);
     assert.match(statusTool.description, /pools/);
@@ -90,6 +90,8 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
     assert.equal(spawnTool.inputSchema.properties.boundaries.type, 'array');
     assert.equal(spawnTool.inputSchema.properties.doneWhen.type, 'array');
     assert.equal(spawnTool.inputSchema.properties.checks.type, 'array');
+    assert.deepEqual(spawnTool.inputSchema.properties.workspaceMode.enum, ['inherit', 'worktree']);
+    assert.equal(spawnTool.inputSchema.properties.branch.type, 'string');
 
     const reportTool = MCP_TOOLS.find((t) => t.name === 'mesh_report');
     assert.equal(reportTool.inputSchema.properties.doneWhenStatus.type, 'array');
@@ -98,6 +100,7 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
 
     const boardPostTool = MCP_TOOLS.find((t) => t.name === 'mesh_board_post');
     assert.ok(boardPostTool);
+    assert.match(boardPostTool.description, /@#频道名/);
     assert.deepEqual(boardPostTool.inputSchema.required, ['text']);
     assert.equal(boardPostTool.inputSchema.properties.channel.default, 'main');
     assert.equal(boardPostTool.inputSchema.properties.done.type, 'boolean');
@@ -112,6 +115,14 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
     assert.deepEqual(taskTool.inputSchema.required, ['action']);
     assert.deepEqual(taskTool.inputSchema.properties.action.enum, ['list', 'add', 'claim', 'update', 'remove']);
     assert.deepEqual(taskTool.inputSchema.properties.status.enum, ['pending', 'in_progress', 'review', 'done', 'blocked']);
+
+    const channelTool = MCP_TOOLS.find((t) => t.name === 'mesh_channel');
+    assert.ok(channelTool);
+    assert.deepEqual(channelTool.inputSchema.required, ['action']);
+    assert.deepEqual(channelTool.inputSchema.properties.action.enum, ['list', 'create', 'subscribe', 'unsubscribe', 'archive']);
+    assert.equal(channelTool.inputSchema.properties.channel.type, 'string');
+    assert.equal(channelTool.inputSchema.properties.desc.type, 'string');
+    assert.equal(channelTool.inputSchema.properties.nodeId.type, 'string');
 
     // 1. AI writes a folder note via `mesh_note`
     const noteRes = await handleMcpCall('mesh_note', {
@@ -191,6 +202,8 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
         alias: '验收节点',
         goal: '复核求解结果',
         prompt: '只读核查测试输出',
+        workspaceMode: 'worktree',
+        branch: 'feat/verify-1',
       }, opts);
       assert.equal(spawnRoleRes.ok, true);
       const spawnRoleReq = capturedRequests[capturedRequests.length - 1];
@@ -198,6 +211,20 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       assert.equal(spawnRoleReq.role, 'verifier');
       assert.equal(spawnRoleReq.pool, 'flagship');
       assert.equal(spawnRoleReq.model, 'claude-opus');
+      assert.equal(spawnRoleReq.workspaceMode, 'worktree');
+      assert.equal(spawnRoleReq.branch, 'feat/verify-1');
+
+      const channelRes = await handleMcpCall('mesh_channel', {
+        action: 'create',
+        channel: 'solver-dev',
+        desc: '求解器联调频道',
+      }, opts);
+      assert.equal(channelRes.ok, true);
+      const channelReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(channelReq.op, 'channel');
+      assert.equal(channelReq.action, 'create');
+      assert.equal(channelReq.channel, 'solver-dev');
+      assert.equal(channelReq.desc, '求解器联调频道');
 
       const bpRes = await handleMcpCall('mesh_board_post', {
         text: '完成求解 #1 @all',
@@ -286,6 +313,16 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       assert.deepEqual(cliTaskReq.doneWhen, ['d1', 'd2']);
       assert.deepEqual(cliTaskReq.checks, ['c1', 'c2']);
       assert.deepEqual(cliTaskReq.boardRefs, [7, 8]);
+
+      await runCli([
+        'channel',
+        '--action', 'subscribe',
+        '--channel', 'solver-dev',
+      ], opts);
+      const cliChannelReq = capturedRequests[capturedRequests.length - 1];
+      assert.equal(cliChannelReq.op, 'channel');
+      assert.equal(cliChannelReq.action, 'subscribe');
+      assert.equal(cliChannelReq.channel, 'solver-dev');
     } finally {
       if (prevProjEnv === undefined) delete process.env.AME_PROJECT_ID;
       else process.env.AME_PROJECT_ID = prevProjEnv;

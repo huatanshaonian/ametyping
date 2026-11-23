@@ -312,6 +312,8 @@ const MCP_TOOLS = [
         boundaries: { type: 'array', items: { type: 'string' }, description: '允许该节点修改的文件或目录白名单（由主控拆分配置，交卷时自动核对防越界）' },
         doneWhen: { type: 'array', items: { type: 'string' }, description: '编号的可核对验收条件列表' },
         checks: { type: 'array', items: { type: 'string' }, description: '交卷前必跑的验证命令列表' },
+        workspaceMode: { type: 'string', enum: ['inherit', 'worktree'], description: '工作区模式：inherit 共用目录（默认），worktree 自动切出独立 git worktree 分支并发隔离' },
+        branch: { type: 'string', description: '可选，workspaceMode=worktree 时指定新分支名' },
       },
       required: ['machine', 'cwd', 'goal', 'prompt'],
     },
@@ -405,12 +407,12 @@ const MCP_TOOLS = [
   },
   {
     name: 'mesh_board_post',
-    description: '向当前项目的统一共享黑板发帖，支持 @节点别名 或 @all 点名唤醒（<500字全文直注，>=500字极简门铃），支持用 #楼层号 引用历史帖子；done=true 时自动触发本机 git 改动边界对账。',
+    description: '向当前项目的统一共享黑板发帖，支持 @节点别名、@all 或 @#频道名 定向唤醒（<500字全文直注，>=500字极简门铃），支持用 #楼层号 引用历史帖子；done=true 时自动触发本机 git 改动边界对账。',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string', description: '可选，项目 ID' },
-        text: { type: 'string', description: '帖子内容（支持 @节点别名 / @all 点名，以及 #楼层号 引用）' },
+        text: { type: 'string', description: '帖子内容（支持 @节点别名 / @all / @#频道名 点名，以及 #楼层号 引用）' },
         channel: { type: 'string', default: 'main', description: "频道名称（默认 'main'）" },
         artifacts: { type: 'array', items: { type: 'string' }, description: '可选，关联产物文件路径列表' },
         done: { type: 'boolean', description: '可选，是否为交卷帖；done=true 时自动触发本机 git 改动边界对账' },
@@ -458,6 +460,21 @@ const MCP_TOOLS = [
       required: ['action'],
     },
   },
+  {
+    name: 'mesh_channel',
+    description: '管理当前项目黑板的多频道事件溯源（创建频道、订阅/退订频道、归档频道，支持 @#频道名 定向唤醒订阅成员）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'create', 'subscribe', 'unsubscribe', 'archive'], description: '频道操作' },
+        projectId: { type: 'string', description: '可选，项目 ID' },
+        channel: { type: 'string', description: '频道名称（create/subscribe/unsubscribe/archive 时必填）' },
+        desc: { type: 'string', description: '可选，频道描述' },
+        nodeId: { type: 'string', description: '可选，目标节点 ID 或别名' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 async function handleMcpCall(name, args = {}, opts = {}) {
@@ -474,6 +491,7 @@ async function handleMcpCall(name, args = {}, opts = {}) {
     case 'mesh_board_post': return rpc('board_post', args, opts);
     case 'mesh_board_read': return rpc('board_read', args, opts);
     case 'mesh_task': return rpc('task', args, opts);
+    case 'mesh_channel': return rpc('channel', args, opts);
     default: return { ok: false, msg: '未知的工具：' + name };
   }
 }
@@ -622,7 +640,7 @@ async function runCli(argv = process.argv.slice(2), opts = {}) {
       '  node tools/ame-mesh.js status [--projectId <id>] [--sessionId <id>]',
       '  node tools/ame-mesh.js tree --path <dir> [--machine <pc>] [--refresh]',
       '  node tools/ame-mesh.js note --path <dir> --aiNote <text> [--machine <pc>] [--tag <tag>]',
-      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy|kiro] [--role <role>] [--pool <pool>] [--model <model>] [--alias <name>]',
+      '  node tools/ame-mesh.js spawn --machine <pc> --cwd <dir> --goal <goal> --prompt <text> [--stopCondition <gate>] [--tool claude|codex|opencode|agy|kiro] [--role <role>] [--pool <pool>] [--model <model>] [--alias <name>] [--workspaceMode inherit|worktree] [--branch <name>]',
       '  node tools/ame-mesh.js send --toNodeId <node> --text <msg> [--goal <goal>] [--stopCondition <gate>]',
       '  node tools/ame-mesh.js report --summary <text> [--reviewStatus waiting_review|done|blocked] [--artifacts a.png,b.csv]',
       '  node tools/ame-mesh.js transfer --fromMachine <pc1> --fromPath <p1> --toMachine <pc2> --toPath <p2> [--size <bytes>] [--mode auto|manual_disk] [--note <text>]',
@@ -632,6 +650,7 @@ async function runCli(argv = process.argv.slice(2), opts = {}) {
       '  node tools/ame-mesh.js board-post --text <msg> [--projectId <id>] [--channel main] [--artifacts a,b] [--done] [--doneWhenStatus s1,s2] [--checksOutput <text>] [--boundaries p1,p2]',
       '  node tools/ame-mesh.js board-read [--projectId <id>] [--since <seq>] [--limit <n>] [--channel main] [--seqList 1,2,3]',
       '  node tools/ame-mesh.js task --action list|add|claim|update|remove [--projectId <id>] [--taskId <id>] [--title <text>] [--desc <text>] [--ownerNodeId <node>] [--status pending|in_progress|review|done|blocked] [--blockedBy t1,t2] [--boundaries p1,p2] [--doneWhen w1,w2] [--checks c1,c2] [--boardRefs 1,2] [--artifacts a,b]',
+      '  node tools/ame-mesh.js channel --action list|create|subscribe|unsubscribe|archive [--projectId <id>] [--channel <name>] [--desc <text>] [--nodeId <id>]',
       '  node tools/ame-mesh.js mcp   (启动标准 stdio MCP Server)',
     ].join('\n'));
     return;
@@ -661,6 +680,7 @@ async function runCli(argv = process.argv.slice(2), opts = {}) {
     'board-post': 'board_post',
     'board-read': 'board_read',
     task: 'task',
+    channel: 'channel',
   };
   const op = CLI_OP_MAP[cmd] || cmd;
   const res = await rpc(op, flags, opts);

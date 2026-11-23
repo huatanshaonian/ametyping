@@ -282,13 +282,16 @@ function mount(initialProjectId) {
   function renderBoardTab(proj) {
     let curProj = proj;
     let entries = [];
+    let activeChannel = 'main';
     let filterKind = 'all';
     let filterQuery = '';
     let loadedSeq = -1;
     let loading = false;
+    let loadToken = 0;
     let destroyed = false;
 
     const taskStripEl = h('div', { class: 'pm-task-strip' });
+    const channelBarEl = h('div', { class: 'pm-channel-bar' });
     const kindSel = h('select', { class: 'field pm-board-kind' },
       ...BOARD_KINDS.map(([val, lbl]) => h('option', { value: val, text: lbl }))
     );
@@ -317,7 +320,65 @@ function mount(initialProjectId) {
       mentionBarEl,
       h('div', { class: 'pm-composer-row' }, draftTa, sendBtn)
     );
-    const rootEl = h('div', { class: 'pm-board-wrap' }, taskStripEl, filterBarEl, feedEl, composerEl);
+    const rootEl = h('div', { class: 'pm-board-wrap' }, taskStripEl, channelBarEl, filterBarEl, feedEl, composerEl);
+
+    function getChannels(p) {
+      const raw = Array.isArray(p && p.channels) && p.channels.length
+        ? p.channels
+        : [{ name: 'main', archived: false }];
+      const list = raw
+        .map((c) => (typeof c === 'string' ? { name: c, archived: false } : c))
+        .filter((c) => c && c.name && !c.archived);
+      return list.length ? list : [{ name: 'main', archived: false }];
+    }
+
+    function renderChannels(p) {
+      const channels = getChannels(p);
+      if (!channels.some((c) => c.name === activeChannel)) {
+        activeChannel = channels[0].name;
+      }
+      channelBarEl.replaceChildren(
+        h('span', { class: 'pm-sec-title', text: '频道:' }),
+        ...channels.map((ch) => h('button', {
+          class: 'pm-ch-btn' + (ch.name === activeChannel ? ' active' : ''),
+          type: 'button',
+          text: `#${ch.name}`,
+          onclick: () => {
+            if (activeChannel === ch.name) return;
+            activeChannel = ch.name;
+            entries = [];
+            renderChannels(curProj);
+            loadBoard();
+          },
+        })),
+        h('button', {
+          class: 'btn pm-ch-add',
+          type: 'button',
+          text: '＋ 新建频道',
+          onclick: async () => {
+            const rawName = await askText({
+              title: '新建黑板频道',
+              label: '频道名称（如 gpu-solver / verifier，不含 # 号）：',
+              max: 32,
+            });
+            if (!rawName) return;
+            const channel = rawName.trim().replace(/^#+/, '');
+            if (!channel) return;
+            say(`正在创建频道 #${channel}…`);
+            const r = await mesh.channel({ action: 'create', projectId: curProj.id, channel });
+            if (!r || !r.ok) {
+              say((r && r.msg) || '创建频道失败');
+              return;
+            }
+            activeChannel = channel;
+            entries = [];
+            renderChannels(curProj);
+            await loadBoard();
+            say(`已创建并切换到频道 #${channel}`);
+          },
+        })
+      );
+    }
 
     function renderTasks(p) {
       const tasks = p.tasks || [];
@@ -503,11 +564,13 @@ function mount(initialProjectId) {
 
     async function loadBoard() {
       if (destroyed) return;
+      const token = ++loadToken;
+      const reqChan = activeChannel;
       loading = true;
       refreshBtn.disabled = true;
       if (!entries.length) renderFeed();
-      const r = await mesh.getBoard(curProj.id, { limit: 200 });
-      if (destroyed) return;
+      const r = await mesh.getBoard(curProj.id, { limit: 200, channel: reqChan });
+      if (destroyed || token !== loadToken) return;
       loading = false;
       refreshBtn.disabled = false;
       if (r && r.ok) {
@@ -522,7 +585,7 @@ function mount(initialProjectId) {
       if (!text) { draftTa.focus(); return; }
       sendBtn.disabled = true;
       say('正在发送消息到共享黑板…');
-      const r = await mesh.postBoard({ projectId: curProj.id, agent: '管理员', text });
+      const r = await mesh.postBoard({ projectId: curProj.id, channel: activeChannel, agent: '管理员', text });
       sendBtn.disabled = false;
       if (!r || !r.ok) {
         say((r && r.msg) || '发送到黑板失败');
@@ -547,6 +610,7 @@ function mount(initialProjectId) {
     sendBtn.addEventListener('click', submitPost);
 
     renderTasks(curProj);
+    renderChannels(curProj);
     renderMentions(curProj);
     loadBoard();
 
@@ -556,6 +620,7 @@ function mount(initialProjectId) {
       update(nextProj) {
         curProj = nextProj;
         renderTasks(nextProj);
+        renderChannels(nextProj);
         renderMentions(nextProj);
         const nextSeq = typeof nextProj.boardSeq === 'number' ? nextProj.boardSeq : 0;
         if (loadedSeq !== -1 && nextSeq !== loadedSeq) loadBoard();
@@ -1584,11 +1649,14 @@ function mount(initialProjectId) {
   function nodeCard(proj, n) {
     const [rCls, rText] = REVIEW_NAMES[n.reviewStatus] || ['run', n.reviewStatus || '就绪'];
     const inboxCount = Array.isArray(n.inbox) ? n.inbox.length : 0;
+    const hasWorktree = n.workspaceMode === 'worktree' || !!n.worktreeBranch;
+    const wtBranch = n.worktreeBranch || '隔离分支';
     return h('div', { class: `pm-node role-${n.role}` },
       h('div', { class: 'pm-node-top' },
         h('span', { class: `pm-role-tag ${n.role}`, text: ROLE_NAMES[n.role] || n.role }),
         h('b', { class: 'pm-node-name', text: n.alias || n.label || n.id }),
         h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}` }),
+        hasWorktree ? h('span', { class: 'pm-wt-badge', title: n.worktreePath || '', text: `worktree: ${wtBranch}` }) : null,
         h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
         n.asking ? h('span', { class: 'pm-badge err', text: '等你确认权限' }) : null
       ),
@@ -1626,6 +1694,49 @@ function mount(initialProjectId) {
           '关闭时自动唤醒'
         ),
         h('button', { class: 'btn no', type: 'button', text: '移除', onclick: async () => {
+          if (n.workspaceMode === 'worktree' && n.worktreePath) {
+            say('正在检查节点工作树分支状态…');
+            const wt = await mesh.checkWorktree(proj.id, n.id);
+            const dirty = !!(wt && wt.dirty);
+            const unmergedCommits = Number(wt && wt.unmergedCommits) || 0;
+            if (wt && wt.ok === false) {
+              const ok = await confirmBox(`无法检查节点「${n.alias || n.id}」工作树状态（${wt.msg || '目标节点可能离线'}）。确定仍要从项目拓扑中移除节点吗？`, { danger: true });
+              if (!ok) return;
+              await mesh.removeNode(proj.id, n.id);
+              return;
+            }
+            if (dirty || unmergedCommits > 0) {
+              const ok = await confirmBox(
+                `该节点工作树分支「${n.worktreeBranch || (wt && wt.branch) || '隔离分支'}」存在未提交改动或 ${unmergedCommits} 个未合并提交。建议先合并分支再删除；确定要移除节点并保留/清理工作树吗？`,
+                { title: '未合并工作树警告', ok: '继续移除', danger: true }
+              );
+              if (!ok) return;
+              const clean = await confirmBox(
+                `是否同时强制清理工作树目录与分支「${n.worktreePath}」？（选「保留工作树」可稍后手动合并）`,
+                { title: '清理工作树', ok: '强制清理', cancel: '保留工作树', danger: true }
+              );
+              if (clean) {
+                const wr = await mesh.removeWorktree(proj.id, n.id, true);
+                if (!wr || !wr.ok) say((wr && wr.msg) || '清理工作树失败，将继续移除拓扑节点');
+              }
+              await mesh.removeNode(proj.id, n.id);
+              say(clean ? '已清理工作树并移除节点' : '已移除节点（工作树目录已保留）');
+              return;
+            }
+            const ok = await confirmBox(`从项目拓扑中移除节点「${n.alias || n.id}」？（不会删除原对话记录）`, { danger: true });
+            if (!ok) return;
+            const clean = await confirmBox(
+              `工作树分支「${n.worktreeBranch || '隔离分支'}」无未提交改动或未合并提交，是否同时清理工作树目录？`,
+              { title: '清理工作树', ok: '清理工作树', cancel: '保留目录' }
+            );
+            if (clean) {
+              const wr = await mesh.removeWorktree(proj.id, n.id, false);
+              if (!wr || !wr.ok) say((wr && wr.msg) || '清理工作树失败，将继续移除拓扑节点');
+            }
+            await mesh.removeNode(proj.id, n.id);
+            say(clean ? '已清理工作树并移除节点' : '已移除节点');
+            return;
+          }
           if (await confirmBox(`从项目拓扑中移除节点「${n.alias || n.id}」？（不会删除原对话记录）`, { danger: true })) {
             await mesh.removeNode(proj.id, n.id);
           }
@@ -2020,6 +2131,20 @@ function mount(initialProjectId) {
       h('option', { value: 'opencode', text: 'OpenCode' }),
       h('option', { value: 'kiro', text: 'Kiro CLI' })
     );
+    const wsModeSel = h('select', { class: 'field' },
+      h('option', { value: 'inherit', text: 'inherit (共用目录)' }),
+      h('option', { value: 'worktree', text: 'worktree (独立 Git Worktree 分支)' })
+    );
+    const branchIn = h('input', {
+      class: 'field',
+      type: 'text',
+      placeholder: '分支名（可选，留空自动生成）',
+      disabled: true,
+    });
+    wsModeSel.addEventListener('change', () => {
+      branchIn.disabled = wsModeSel.value !== 'worktree';
+      if (branchIn.disabled) branchIn.value = '';
+    });
     const aliasIn = h('input', { class: 'field', type: 'text', placeholder: '如：电脑B-FEKO求解Worker' });
     const goalIn = h('input', { class: 'field', type: 'text', placeholder: '如：从 GitHub 拉取最新代码并跑完球体双站 RCS 误差对比' });
     const stopIn = h('input', { class: 'field', type: 'text', value: '产出结果图表与误差数据后立即停下汇报，等待主控会话 Review' });
@@ -2033,6 +2158,8 @@ function mount(initialProjectId) {
         wsQuick,
         h('label', { class: 'xnote-lbl', text: '目标电脑与工作目录：' }),
         h('div', { style: 'display:flex;gap:6px' }, machSel, cwdIn),
+        h('label', { class: 'xnote-lbl', text: '工作区模式与分支名：' }),
+        h('div', { style: 'display:flex;gap:6px' }, wsModeSel, branchIn),
         h('label', { class: 'xnote-lbl', text: 'Coding Agent 类型与节点别名：' }),
         h('div', { style: 'display:flex;gap:6px' }, toolSel, aliasIn),
         h('label', { class: 'xnote-lbl', text: '明确目标 (Goal)：' }),
@@ -2059,6 +2186,8 @@ function mount(initialProjectId) {
         machine: machSel.value,
         cwd: cwdIn.value.trim(),
         tool: toolSel.value,
+        workspaceMode: wsModeSel.value,
+        branch: wsModeSel.value === 'worktree' ? branchIn.value.trim() : '',
         alias: aliasIn.value.trim(),
         goal: goalIn.value.trim(),
         stopCondition: stopIn.value.trim(),

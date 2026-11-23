@@ -20,6 +20,7 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const child_process = require('child_process');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 const transcript = require('../../app/transcript');
 const { lineage } = require('../../app/running-sessions');
@@ -318,11 +319,131 @@ function apiOf(v) {
   return id && v.local === true ? { id, local: true } : null;
 }
 
+const GIT_EXEC_OPTS = { timeout: 10000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] };
+function execGit(args) {
+  return child_process.execFileSync('git', args, GIT_EXEC_OPTS);
+}
+
+function createGitWorktree(repoDir, alias = 'worker', requestedBranch = '') {
+  if (typeof repoDir !== 'string' || !repoDir.trim()) {
+    return { ok: false, msg: '目标目录不是 Git 仓库，无法创建 worktree' };
+  }
+  let repoRoot = '';
+  try {
+    repoRoot = execGit(['-C', repoDir.trim(), 'rev-parse', '--show-toplevel']).trim();
+  } catch {
+    return { ok: false, msg: '目标目录不是 Git 仓库，无法创建 worktree' };
+  }
+  if (!repoRoot) return { ok: false, msg: '目标目录不是 Git 仓库，无法创建 worktree' };
+  repoRoot = path.resolve(repoRoot);
+  const slug = String(alias || 'worker').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'worker';
+  const shortId = crypto.randomBytes(3).toString('hex');
+  const reqBr = typeof requestedBranch === 'string' ? requestedBranch.trim() : '';
+  const branch = (reqBr && /^[A-Za-z0-9._/-]{1,80}$/.test(reqBr) && !reqBr.includes('..') && !reqBr.startsWith('-'))
+    ? reqBr
+    : `mesh/${slug}-${shortId}`;
+  const wtBase = path.join(repoRoot, '.ame-worktrees');
+  const wtPath = path.join(wtBase, `${slug}-${shortId}`);
+  try {
+    fs.mkdirSync(wtBase, { recursive: true });
+    execGit(['-C', repoRoot, 'worktree', 'add', '-b', branch, wtPath]);
+  } catch (e) {
+    const detail = (e && (e.stderr || e.message) ? String(e.stderr || e.message) : '').trim().slice(0, 160);
+    return { ok: false, msg: '创建 git worktree 失败' + (detail ? '：' + detail : '') };
+  }
+  return { ok: true, worktreePath: wtPath, worktreeBranch: branch, worktreeParentRepo: repoRoot };
+}
+
+function checkGitWorktree(wtPath, parentRepo = '', branch = '') {
+  if (typeof wtPath !== 'string' || !wtPath.trim()) {
+    return { ok: false, dirty: false, unmergedCommits: 0, msg: '缺少 worktreePath 参数' };
+  }
+  const target = path.resolve(wtPath.trim());
+  try {
+    if (!fs.statSync(target).isDirectory()) {
+      return { ok: false, dirty: false, unmergedCommits: 0, msg: 'worktree 目录不存在' };
+    }
+  } catch {
+    return { ok: false, dirty: false, unmergedCommits: 0, msg: 'worktree 目录不存在' };
+  }
+  let statusOut = '';
+  try {
+    statusOut = execGit(['-C', target, 'status', '--porcelain']);
+  } catch {
+    return { ok: false, dirty: false, unmergedCommits: 0, msg: '无法读取 worktree git 状态' };
+  }
+  const changedCount = String(statusOut || '').split(/\r?\n/).filter((l) => l.trim().length > 0).length;
+  const dirty = changedCount > 0;
+  let targetBranch = typeof branch === 'string' ? branch.trim() : '';
+  if (!targetBranch) {
+    try {
+      const b = execGit(['-C', target, 'rev-parse', '--abbrev-ref', 'HEAD']).trim();
+      if (b && b !== 'HEAD') targetBranch = b;
+    } catch {}
+  }
+  const baseRepo = (typeof parentRepo === 'string' && parentRepo.trim()) ? path.resolve(parentRepo.trim()) : target;
+  let unmergedCommits = 0;
+  if (targetBranch && /^[A-Za-z0-9._/-]{1,80}$/.test(targetBranch) && !targetBranch.includes('..') && !targetBranch.startsWith('-')) {
+    try {
+      const cnt = execGit(['-C', baseRepo, 'rev-list', '--count', `HEAD..${targetBranch}`]).trim();
+      unmergedCommits = Number.parseInt(cnt, 10) || 0;
+    } catch {
+      unmergedCommits = 0;
+    }
+  }
+  const msg = dirty || unmergedCommits > 0
+    ? `存在 ${changedCount} 处未提交改动、${unmergedCommits} 个未合并提交`
+    : 'worktree 干净，无未合并提交';
+  return { ok: true, dirty, changedCount, unmergedCommits, msg };
+}
+
+function removeGitWorktree(wtPath, parentRepo = '', branch = '', force = false) {
+  if (typeof wtPath !== 'string' || !wtPath.trim()) {
+    return { ok: false, msg: '缺少 worktreePath 参数' };
+  }
+  const resolvedWt = path.resolve(wtPath.trim());
+  const wtParent = path.dirname(resolvedWt);
+  const wtName = path.basename(resolvedWt);
+  if (path.basename(wtParent) !== '.ame-worktrees' || !wtName || wtName === '.' || wtName === '..') {
+    return { ok: false, msg: '安全拦截：只能清理 .ame-worktrees 目录下的 worktree' };
+  }
+  const repo = (typeof parentRepo === 'string' && parentRepo.trim())
+    ? path.resolve(parentRepo.trim())
+    : path.dirname(wtParent);
+  if (typeof parentRepo === 'string' && parentRepo.trim()) {
+    const expectedBase = path.join(repo, '.ame-worktrees');
+    const norm = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+    if (norm(wtParent) !== norm(expectedBase)) {
+      return { ok: false, msg: '安全拦截：worktree 不属于指定的父仓库 .ame-worktrees 目录' };
+    }
+  }
+  const chk = checkGitWorktree(resolvedWt, repo, branch);
+  if (chk.ok && !force && (chk.dirty || chk.unmergedCommits > 0)) {
+    return {
+      ok: false,
+      dirty: chk.dirty,
+      unmergedCommits: chk.unmergedCommits,
+      msg: '该 worktree 存在未提交改动或未合并提交，请先合并或显式强制删除',
+    };
+  }
+  const args = ['-C', repo, 'worktree', 'remove'];
+  if (force) args.push('--force');
+  args.push(resolvedWt);
+  try {
+    execGit(args);
+  } catch (e) {
+    const detail = (e && (e.stderr || e.message) ? String(e.stderr || e.message) : '').trim().slice(0, 160);
+    return { ok: false, msg: '清理 worktree 失败' + (detail ? '：' + detail : '') };
+  }
+  return { ok: true, msg: '已清理 worktree' };
+}
+
 async function control(d) {
   if (!CONTROL) return { ok: false, msg: '这台机器没开远程控制（agent.json 里设 "control": true）' };
   const api = apiOf(d.api);
   if (d.api && !api && d.tool !== 'codex' && d.tool !== 'agy' && d.tool !== 'kiro' && !/^(codex|agy|kiro):/.test(String(d.id || ''))) return { ok: false, msg: '启动入口格式已更新，请刷新看板后再试' };
   let r;
+  let wtMeta = null;
   if (d.t === 'send' && typeof d.id === 'string' && typeof d.text === 'string' && d.text.trim() && d.text.length <= 8000) {
     r = await petCall('POST', '/control/send', { id: d.id, text: d.text });
   } else if (d.t === 'key' && typeof d.id === 'string' && typeof d.key === 'string' && /^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) {
@@ -332,6 +453,16 @@ async function control(d) {
   } else if (d.t === 'launch' && typeof d.cwd === 'string' && typeof d.prompt === 'string' && d.prompt.length <= 8000) {
     if (!browse.enabled) return { ok: false, msg: '这台电脑没开放文件浏览' };
     let cwd; try { cwd = await browse.folder(d.cwd); } catch (e) { return { ok: false, msg: e.message }; }
+    if (d.workspaceMode === 'worktree') {
+      const wt = createGitWorktree(cwd, d.worktreeAlias || 'worker', d.worktreeBranch || '');
+      if (!wt.ok) return { ok: false, msg: wt.msg };
+      cwd = wt.worktreePath;
+      wtMeta = {
+        worktreePath: wt.worktreePath,
+        worktreeBranch: wt.worktreeBranch,
+        worktreeParentRepo: wt.worktreeParentRepo,
+      };
+    }
     let meshEnv;
     if (d.meshEnv && typeof d.meshEnv === 'object' && !Array.isArray(d.meshEnv)) {
       const cleanEnv = {};
@@ -359,13 +490,20 @@ async function control(d) {
     r = await petCall('POST', '/control/launch', { cwd, resume: d.id, api: /^(codex|opencode|agy|kiro):/.test(d.id) ? undefined : api || undefined });
   } else if (d.t === 'decide' && typeof d.id === 'string' && typeof d.perm === 'string' && ['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) {
     r = await petCall('POST', '/control/decide', { session: d.id, id: d.perm, choice: d.choice, answers: d.choice === 'answer' ? d.answers : undefined });
+  } else if (d.t === 'worktree-check') {
+    if (typeof d.worktreePath !== 'string' || !d.worktreePath.trim()) return { ok: false, msg: '缺少 worktreePath 参数' };
+    return checkGitWorktree(d.worktreePath, d.worktreeParentRepo || d.parentRepo || '', d.worktreeBranch || d.branch || '');
+  } else if (d.t === 'worktree-remove') {
+    if (typeof d.worktreePath !== 'string' || !d.worktreePath.trim()) return { ok: false, msg: '缺少 worktreePath 参数' };
+    return removeGitWorktree(d.worktreePath, d.worktreeParentRepo || d.parentRepo || '', d.worktreeBranch || d.branch || '', d.force === true);
   } else return { ok: false, msg: '无效请求' };
   if (!r) return { ok: false, msg: '本机糖糖没在运行，没法操作' };
   if (r.ok === false && !petAllows) return { ok: false, msg: '糖糖菜单里没勾「允许远程控制」' };
   setTimeout(() => tick(true), 300);
   // a Shift+Tab reports the permission mode it switched to
   return { ok: !!r.ok, msg: typeof r.msg === 'string' ? r.msg.slice(0, 200) : '', mode: typeof r.mode === 'string' ? r.mode : undefined,
-    screen: typeof r.screen === 'string' ? r.screen.slice(0, 9000) : undefined };
+    screen: typeof r.screen === 'string' ? r.screen.slice(0, 9000) : undefined,
+    ...(r.ok && wtMeta ? wtMeta : {}) };
 }
 
 // ---------- shape for the server ----------
@@ -524,7 +662,7 @@ function connect() {
         sendJSON({ t: 'infra-ctl-res', rid: d.rid, ...r, report: rep || undefined });
       });
     }
-    else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume') && typeof d.rid === 'string') {
+    else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume' || d.t === 'worktree-check' || d.t === 'worktree-remove') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
   });
@@ -635,7 +773,6 @@ async function tick(force) {
 }
 setInterval(tick, SCAN_MS);
 setInterval(()=>{nativeArchive.tick();if(cfg.fullArchive!==false)openCodeExport.tick();memorySync.tick().catch(e=>console.error('记忆采集失败：'+e.message));},500).unref();
-const crypto = require('crypto');
 // Collect local git working-tree changes (zero-token boundary audit for report / done board_post)
 function collectGitAudit(cwd) {
   if (typeof cwd !== 'string' || !cwd.trim()) return null;

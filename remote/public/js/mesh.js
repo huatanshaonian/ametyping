@@ -96,6 +96,9 @@ export async function getBoard(projectId, opts = {}) {
 }
 export const postBoard = (d) => post('board/post', d);
 export const task = (d) => post('task', d);
+export const checkWorktree = (projectId, nodeId) => post('worktree-check', { projectId, nodeId });
+export const removeWorktree = (projectId, nodeId, force = false) => post('worktree-remove', { projectId, nodeId, force });
+export const channel = (d) => post('channel', d);
 
 export async function getRoles() {
   try {
