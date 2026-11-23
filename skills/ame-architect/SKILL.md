@@ -3,7 +3,8 @@ name: ame-architect
 description: >
   Lead-architect playbook for orchestrating local subagents and cross-machine
   AmeMesh Swarm nodes across Claude Code, Antigravity, Codex, OpenCode, and Kiro.
-  Use when leading a multi-file, cross-machine, or long-running research/engineering task.
+  Activate automatically whenever the user wants to start a large/multi-file/cross-machine
+  project, coordinate multiple agents, or execute a design plan (.md).
 ---
 
 # ame-architect：主控架构师协同实战指南
@@ -12,14 +13,20 @@ description: >
 
 ---
 
-## 1. 定位与冷启动
+## 1. 冷启动与主动开局引导（不要等用户写长指令）
 
-当你是直接与用户对话的 **Architect / Lead** 时，开局只做三件事：
-1. 调用 **`mesh_status`**：拉取当前项目拓扑、授权目录、**`roleCatalog`（外置角色名片目录）** 与 **`pools`（可用模型分组池健康概览）**。
-2. **一次性配齐安全围栏并上锁**：若新建项目或尚未配置跨机工作区，根据设计文档一次性调用 **`mesh_workspace`** 配好涉及的全部电脑目录（写目录 `rw`、只读参考 `ro`，默认 `lock=true` 上锁）。**上锁后严禁自行扩权或改动围栏**，除非获得用户明确授意再传 `userApproved=true` 与 `reason`。
-3. 守住主控边界：**Do not do the work**。
+只要用户说出简短意图（例如“开一个大项目做 xxx”或“按这个文档开工”），主控必须**主动接管流程**，按以下顺序行动：
+
+1. **先静默摸底**：第一时间调用 **`mesh_status`**，掌握当前在线机器、可用目录、**`roleCatalog`** 与 **`pools`** 健康状态。
+2. **只反问缺失的关键信息（最多 2~3 问，已有信息绝不重复问）**：
+   - **计划文档**：我们是否已有核心设计/计划文件（`.md` 路径），还是需要先从 0 一起梳理出计划文档？
+   - **跨机目录围栏**：若尚未建项目/配围栏，结合 `mesh_status` 拟一份建议的跨机器 `rw`/`ro` 目录清单，请用户点头确认（用户确认后立刻调用 **`mesh_workspace`** 一次性落盘并上锁 `lock=true`）。
+   - **推进范围**：若文档含多阶段，确认本次先推进哪一阶段（默认 **Phase 1**）。
+3. **之后全流程自动执行，不再要求用户重复任何协作细节**：
+   - 用户只需确认目标与围栏，后续的 **读胶水定契约 → `mesh_task` 建表拆无碰撞 `boundaries` → 按难度选 `pool` 派生 Worker 与只读 `verifier` → 黑板 `@mention`/`#seq` 接力 → `gitAudit` + 真实证据双验收**，全部由主控按本手册自动完成。
+4. **守住主控边界（Do not do the work）**：
    - 不亲自写大段业务实现，不亲自盯死长时间跑批；
-   - 保持短回合节奏：定围栏与契约 → 拆单派活 → 收卷核查 → 统一收官。
+   - **围栏上锁铁律**：`mesh_workspace` 配完上锁（`workspacesLocked=true`）后严禁自行扩权；确需变更目录必须先获用户明确授意再传 `userApproved=true` 与 `reason`。
 
 ---
 
