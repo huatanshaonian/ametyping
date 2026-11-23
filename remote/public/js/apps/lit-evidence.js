@@ -315,7 +315,7 @@ function matrixView(ctx, schema, say) {
           const a = 0.15 + 0.6 * (x.count / max);
           return h('td', { style: S.td + `text-align:center;cursor:pointer;font-weight:bold;color:${a > 0.5 ? 'var(--on-fill)' : 'var(--ink)'};background:color-mix(in srgb, var(--fill) ${Math.round(a * 100)}%, var(--surface));` + (on ? 'outline:2px solid var(--border);outline-offset:-2px;' : ''),
             text: String(x.count), title: '点开看这几篇', onclick: () => showCell(r, c, x) });
-        }))))));
+        }))))) ;
     const gapBox = gaps.length ? h('div', { style: 'margin-top:10px;font-size:12.5px;' },
       h('b', { style: 'color:var(--border);', text: `空白组合（${gaps.length}）：` }),
       h('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;' }, ...gaps.map((g) => h('i', { class: 'tag', style: 'font-size:11.5px;', text: gapText(g) })))) : null;
