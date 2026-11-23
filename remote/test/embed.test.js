@@ -319,12 +319,18 @@ test('Stage 2 E2E: memory vectors detect semantically duplicate memories and rec
     assert.equal(lexAlign.pairs.length, 0);
 
     // Semantic alignment catches m1 <-> m2 while ignoring unrelated m3
-    const semAlign = review.alignmentWithSemantic(refs, { threshold: 0.85 });
+    const semAlign = review.alignmentWithSemantic(refs, { threshold: 0.75 });
     assert.equal(semAlign.pairs.length, 1);
     assert.equal(semAlign.pairs[0].kind, 'semantic');
     assert.equal(semAlign.pairs[0].left, 'item1');
     assert.equal(semAlign.pairs[0].right, 'item2');
     assert.ok(semAlign.pairs[0].semanticScore >= 85);
+
+    // Whole-vault semantic duplicates scan
+    const dups = review.semanticDuplicates({ threshold: 0.75 });
+    assert.equal(dups.semantic, 'ok');
+    assert.equal(dups.pairs.length, 1);
+    assert.ok(dups.pairs[0].score >= 85);
 
     // Query relevant memories for a question
     const qMem = await embed.search.queryMemories('代码改完什么时候 commit', { topK: 2 });

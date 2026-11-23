@@ -77,6 +77,10 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
           const byId=new Map(memory.list().filter(m=>m.enabled).map(m=>[m.id,m]));
           const items=r.items.map(hit=>{const m=byId.get(hit.key);return m?{id:m.id,scope:m.scope,owner:m.owner,name:m.name,body:m.body,score:Number(hit.score.toFixed(4))}:null;}).filter(Boolean);
           json(res,200,{ok:true,semantic:'ok',items,ms:r.ms});
+        }else if(p==='/api/knowledge/duplicates'){
+          const th=Math.max(0.5,Math.min(0.99,Number(url.searchParams.get('threshold'))||0.75));
+          const obs=url.searchParams.get('observed')==='1';
+          json(res,200,{ok:true,...review.semanticDuplicates({threshold:th,includeObserved:obs})});
         }
         else if(p==='/api/knowledge/raw'||p==='/api/knowledge/opencode'){
           const m=url.searchParams.get('machine'),key=url.searchParams.get('key'),gen=url.searchParams.get('generation');
@@ -122,7 +126,11 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
         if(!machines.get(d.machine)?.online)throw Error('目标电脑离线，已发布的记忆会在重连时同步');
         publish(d.machine);
       }else throw Error('未知的管理操作');
-      if(['/api/knowledge/save','/api/knowledge/promote','/api/knowledge/project','/api/knowledge/review/apply','/api/knowledge/review/auto'].includes(p))publishAll();
+      if(['/api/knowledge/save','/api/knowledge/promote','/api/knowledge/project','/api/knowledge/review/apply','/api/knowledge/review/auto'].includes(p)){
+        publishAll();
+        const embed=typeof getEmbed==='function'?getEmbed():null;
+        if(embed&&embed.job&&typeof embed.job.syncMemoriesOnce==='function')setImmediate(()=>{embed.job.syncMemoriesOnce().catch(()=>{});});
+      }
       audit('knowledge-change',p,String(d.id||d.machine||'').slice(0,200));
       json(res,200,{ok:true,item:result});
     }catch(e){if(!res.headersSent)json(res,200,{ok:false,msg:e.message});else res.destroy();}

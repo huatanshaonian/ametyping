@@ -169,11 +169,12 @@ export function createReviewPanel({ refs, clearSelection = null, get, notify, ap
       const d = await send('align', { refs: refs() });
       if (dead) return;
       const box = h('div', { class: 'knowledge-card' },
-        h('h3', { class: 'knowledge-section-title', text: '逐条对照 (2-gram 相似度与行级差异)' }),
-        h('p', { class: 'ghint', text: '高亮表示另一条中没有的原文行；相似度只用于找线索，不代表事实相同或矛盾。' }));
+        h('h3', { class: 'knowledge-section-title', text: '逐条对照 (2-gram 与语义向量相似度)' }),
+        h('p', { class: 'ghint', text: '高亮表示另一条中没有的原文行；相似度（含向量语义预筛）只用于找线索，不代表事实相同或矛盾。' }));
       for (const p of d.pairs) {
         const a = d.items.find(x => x.label === p.left), b = d.items.find(x => x.label === p.right);
-        box.append(h('details', { class: 'knowledge-version-item', open: true }, h('summary', { text: a.name + ' ↔ ' + b.name + ' · 相似度 ' + p.score + '% · ' + p.note }),
+        const simLabel = p.kind === 'semantic' ? `语义相似度 ${p.score}%` : (p.semanticScore ? `相似度 ${p.score}%（语义 ${p.semanticScore}%）` : `相似度 ${p.score}%`);
+        box.append(h('details', { class: 'knowledge-version-item', open: true }, h('summary', { text: `${a.name} ↔ ${b.name} · ${simLabel} · ${p.note}` }),
           h('div', { class: 'knowledge-columns' }, h('div', {}, h('b', { text: a.source }), difference(a.body, b.body)), h('div', {}, h('b', { text: b.source }), difference(b.body, a.body)))));
       }
       if (!d.pairs.length) box.append(h('p', { text: '没有发现正文重复或明显文字相似的条目，仍可逐条核对或调用智能整理。' }));
