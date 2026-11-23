@@ -14,8 +14,9 @@ const fmt = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getD
 function createQA({ search, reports, notes = null, mail = () => null, ask, log = () => {} }) {
   let job = null;
 
-  // every word searched on its own; a result scores one point per word that found it
-  function gather(terms) {
+  // every word searched on its own; a result scores one point per word that found it.
+  // When semantic search is available, also recall sessions using the original full question.
+  async function gather(terms, rawQ = '') {
     const R = new Map(), C = new Map(), F = new Map(), N = new Map(), M = new Map();
     for (const t of terms) {
       const r = search.search(t, { maxSessions: 20, hitsPerSession: 2 });
@@ -29,6 +30,20 @@ function createQA({ search, reports, notes = null, mail = () => null, ask, log =
       for (const x of r.artifacts) { const k = x.machine + '|' + x.path; const e = F.get(k) || { ...x, score: 0 }; e.score++; F.set(k, e); }
       for (const x of r.notes || []) { const e = N.get(x.id) || { ...x, score: 0 }; e.score++; N.set(x.id, e); }
       for (const x of r.mail || []) { const e = M.get(x.key) || { ...x, score: 0 }; e.score++; M.set(x.key, e); }
+    }
+    if (rawQ && typeof search.searchHybrid === 'function') {
+      try {
+        const sem = await search.searchHybrid(rawQ, { scope: 'sessions', maxSessions: 12, hitsPerSession: 2 });
+        if (sem && sem.semantic === 'ok') {
+          sem.sessions.forEach((x, idx) => {
+            const k = x.machine + '|' + x.id;
+            const e = C.get(k) || { ...x, hits: [], score: 0 };
+            e.score += Math.max(0.5, 2 - idx * 0.15);
+            for (const h of x.hits || []) if (e.hits.length < 4 && !e.hits.some((y) => y.snippet === h.snippet)) e.hits.push(h);
+            C.set(k, e);
+          });
+        }
+      } catch {}
     }
     const top = (m, n, by) => [...m.values()].sort((a, b) => b.score - a.score || by(b) - by(a)).slice(0, n);
     return { reports: top(R, 6, (x) => Date.parse(x.date)), sessions: top(C, 15, (x) => x.last), artifacts: top(F, 10, (x) => Date.parse(x.last || 0) || 0), notes: top(N, 6, (x) => x.updated), mail: top(M, 6, (x) => x.date) };
@@ -58,7 +73,7 @@ function createQA({ search, reports, notes = null, mail = () => null, ask, log =
       '', '问题：' + j.q,
     ].join('\n'), TERMS_SCHEMA, 'ask');
     j.terms = [...new Set((t.terms || []).map((x) => String(x).trim()).filter(Boolean))].slice(0, 10);
-    const found = gather(j.terms);
+    const found = await gather(j.terms, j.q);
     j.found = { reports: found.reports.length, sessions: found.sessions.length, artifacts: found.artifacts.length, notes: found.notes.length, mail: found.mail.length };
     if (!found.reports.length && !found.sessions.length && !found.artifacts.length && !found.notes.length && !found.mail.length) {
       Object.assign(j, { answer: `没有找到相关的记录（搜了：${j.terms.join('、')}）。可以换个说法再问，或者直接在上面的搜索框里搜关键词。`, sources: [] });

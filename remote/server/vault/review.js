@@ -12,7 +12,7 @@ const SCHEMA={type:'object',additionalProperties:false,properties:{summary:{type
   properties:{title:{type:'string'},reason:{type:'string'},category:{type:'string',enum:CATEGORIES},
     operations:{type:'array',minItems:1,maxItems:60,items:{type:'object',additionalProperties:false,properties:{action:{type:'string',enum:['create','update','disable']},
       target:{type:'string'},scope:{type:'string',enum:['global','machine','project']},owner:{type:'string'},name:{type:'string'},body:{type:'string'}},required:['action','target','scope','owner','name','body']}}},required:['title','reason','category','operations']}}},required:['summary','groups']};
-function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApplied=()=>{}}){
+function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApplied=()=>{},getEmbed=()=>null}){
   const {db,transaction}=vault;let closed=false;
   db.exec(`CREATE TABLE IF NOT EXISTS memory_reviews(id TEXT PRIMARY KEY,status TEXT NOT NULL,kind TEXT NOT NULL,
     snapshot TEXT NOT NULL,result TEXT NOT NULL,error TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
@@ -109,6 +109,38 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
         note:exact?(sameScope?'正文相同，可审阅是否合并':'正文相同但归属不同，请核对适用范围'):'文字相似，仅为核对线索；不代表事实相同或冲突'});
     }
     return {items,pairs:pairs.sort((a,b)=>b.score-a.score)};
+  }
+  function alignmentWithSemantic(refs,{threshold=0.85}={}){
+    const base=alignment(refs);
+    const embed=typeof getEmbed==='function'?getEmbed():null;
+    if(!embed||typeof embed.similarMemoryPairs!=='function')return base;
+    const keyed=base.items.map(x=>({
+      label:x.label,
+      kind:x.kind==='memory'?'memory':'observed',
+      key:x.kind==='memory'?x.ref.id:(x.ref.machine+'\0'+x.ref.path),
+      scope:x.scope,
+      owner:x.owner,
+    }));
+    const byLabel=new Map(keyed.map(x=>[x.label,x]));
+    const pairMap=new Map(base.pairs.map(p=>[p.left+'\0'+p.right,p]));
+    for(const sp of embed.similarMemoryPairs(keyed,{threshold})){
+      const k1=sp.left+'\0'+sp.right,k2=sp.right+'\0'+sp.left;
+      const pct=Math.round(sp.score*100);
+      const existing=pairMap.get(k1)||pairMap.get(k2);
+      if(existing){
+        existing.semanticScore=pct;
+        if(pct>existing.score)existing.score=pct;
+      }else{
+        const a=byLabel.get(sp.left),b=byLabel.get(sp.right);
+        const sameScope=!!(a&&b&&a.scope===b.scope&&a.owner===b.owner);
+        const entry={left:sp.left,right:sp.right,kind:'semantic',sameScope,score:pct,semanticScore:pct,
+          note:sameScope?'语义高度接近（向量预筛），可审阅是否合并':'语义高度接近但归属不同，请核对适用范围'};
+        base.pairs.push(entry);
+        pairMap.set(k1,entry);
+      }
+    }
+    base.pairs.sort((a,b)=>b.score-a.score);
+    return base;
   }
   function validate(result,items){
     if(!result||typeof result.summary!=='string'||result.summary.length>10000||!Array.isArray(result.groups)||result.groups.length>50)throw Error('模型返回的方案格式不正确');
@@ -374,7 +406,7 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
       throw e;
     }
   }
-  return {alignment,start,apply,ignoreGroup,manual,autoReview,monthlyReview,read,pendingObserved,
+  return {alignment,alignmentWithSemantic,start,apply,ignoreGroup,manual,autoReview,monthlyReview,read,pendingObserved,
     pendingReviewsCount:()=>db.prepare("SELECT count(*) AS n FROM memory_reviews WHERE status='ready'").get().n,
     list:()=>db.prepare('SELECT id,status,kind,error,created,updated FROM memory_reviews ORDER BY created DESC LIMIT 100').all(),
     discard:id=>{const r=db.prepare("UPDATE memory_reviews SET status='discarded',updated=? WHERE id=? AND status IN ('ready','failed')").run(Date.now(),id);if(!r.changes)throw Error('运行中或已应用的方案不能丢弃');},

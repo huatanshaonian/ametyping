@@ -23,7 +23,8 @@ const matches = (low, terms) => terms.every((t) => low.includes(t));
 // notes (server/notes.js, optional): the notepad's notes are searched too
 // index (server/search-index.js, optional): conversations are looked up there once it is ready; scanned until then
 // mail() -> the mail store (server/mail/store.js) or null: its messages are searched too
-function createSearch({ storeDir, reports, artifacts, notes = null, sessions, index = null, mail = () => null }) {
+// embed (server/embed/index.js, optional): semantic vector search fused via RRF with keyword results
+function createSearch({ storeDir, reports, artifacts, notes = null, sessions, index = null, mail = () => null, embed = null }) {
   const docs = createDocSearch({ storeDir, reports, notes, artifacts, mail, index, snippet, matches });
   const cache = new Map();                            // file -> { key, lines: [{ t, role, text, low }] }
 
@@ -107,7 +108,45 @@ function createSearch({ storeDir, reports, artifacts, notes = null, sessions, in
       .map(({ seen, full, first, ...s }) => ({ ...s, hits: (full.length ? full : first).sort(newest).slice(0, hitsPerSession)
         .map((l) => ({ t: l.t, role: l.role, snippet: snippet(l.text, terms) })) }));
   }
-  return { search, syncDocs: docs.syncNow };
+  // Async hybrid search: runs keyword search + (when embed is enabled and online) semantic search, fused via RRF.
+  // Falls back cleanly to keyword-only when embed is offline or times out (sets semantic: 'unavailable').
+  async function searchHybrid(q, { maxSessions = 30, hitsPerSession = 3, scope = 'all', mode = 'hybrid' } = {}) {
+    const out = search(q, { maxSessions, hitsPerSession, scope });
+    const text = String(q || '').trim();
+    if (!text || !embed || mode === 'keyword') {
+      out.semantic = 'off';
+      return out;
+    }
+    const vec = await embed.search.querySessions(text, {
+      topChunks: 50,
+      maxSessions: Math.max(maxSessions, 30),
+      hitsPerSession,
+    });
+    if (!vec.ok) {
+      out.semantic = 'unavailable';
+      return out;
+    }
+    const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || '_';
+    const titles = new Map();
+    for (const [m, list] of Object.entries(sessions())) for (const s of list) titles.set(safe(m) + '|' + safe(s.id), { ...s, machine: m });
+    const vecSessions = vec.sessions.map((f) => {
+      const meta = titles.get(f.machine + '|' + f.session) || {};
+      return {
+        machine: meta.machine || f.machine,
+        id: meta.id || f.session,
+        title: meta.title || meta.project || f.session.slice(0, 8),
+        project: meta.project || '',
+        last: f.last,
+        vecScore: f.vecScore,
+        hits: f.hits.map((h) => ({ t: h.t, role: h.role, snippet: h.snippet })),
+      };
+    });
+    out.sessions = embed.fuseSessions(out.sessions, vecSessions, { maxSessions, hitsPerSession });
+    out.semantic = 'ok';
+    return out;
+  }
+
+  return { search, searchHybrid, syncDocs: docs.syncNow };
 }
 
 module.exports = { createSearch };

@@ -65,6 +65,7 @@ function open({ dataDir, log = () => {} }) {
   return {
     // conversations
     find: L.find, touched: L.touched, catchUp: L.catchUp, sweep, ready: () => ready,
+    scanLines: L.scanLines, maxRowid: L.maxRowid,
     // documents (reports, notes, artifacts, mail): kept in step by the caller just before a search
     docs: D,
     close: () => { try { db.close(); } catch {} },

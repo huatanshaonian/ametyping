@@ -32,6 +32,7 @@ function createLines(db, { dataDir, log }) {
     addChunk: db.prepare('INSERT INTO chunks (lo, hi, machine, session, tmax, file) VALUES (?, ?, ?, ?, ?, ?)'),
     maxRow: db.prepare('SELECT rowid AS r FROM lines ORDER BY rowid DESC LIMIT 1'),   // (max(rowid) would read every row)
     growChunk: db.prepare('UPDATE chunks SET hi = ?, tmax = max(tmax, ?) WHERE lo = ?'),
+    scanAfter: db.prepare("SELECT rowid, text, machine, session, t, role, file FROM lines WHERE rowid > ? AND role IN ('user', 'assistant') ORDER BY rowid ASC LIMIT ?"),
   };
   const cond = condMaker(db, 'lines', 'vocab');
   const rel = (f) => path.relative(dataDir, f).replace(/\\/g, '/');
@@ -42,7 +43,18 @@ function createLines(db, { dataDir, log }) {
   const byLo = () => { if (byLo.gen !== chunkGen) { byLo.map = new Map(chunks.map((c) => [c.lo, c])); byLo.gen = chunkGen; } return byLo.map; };
   // the chunks holding rows that match an FTS query (SQLite does the row -> chunk step: fast for common words too)
   const chunksSql = db.prepare(`SELECT DISTINCT (SELECT lo FROM chunks WHERE lo <= lines.rowid ORDER BY lo DESC LIMIT 1) AS clo FROM lines WHERE ${cond.MATCH}`);
+  const chunksBm25Sql = db.prepare(`SELECT (SELECT lo FROM chunks WHERE lo <= lines.rowid ORDER BY lo DESC LIMIT 1) AS clo, bm25(lines) AS score FROM lines WHERE ${cond.MATCH}`);
   function chunksMatching(arg) { const map = byLo(); return chunksSql.all(arg).map((r) => map.get(r.clo)).filter(Boolean); }
+  function sessionBm25(arg) {
+    const map = byLo(), scores = new Map();
+    for (const r of chunksBm25Sql.iterate(arg)) {
+      const ch = map.get(r.clo);
+      if (!ch) continue;
+      const prev = scores.get(ch.key);
+      if (prev === undefined || r.score < prev) scores.set(ch.key, r.score);
+    }
+    return scores;
+  }
 
   // read one conversation file on from where the index stands (only whole lines: the store appends whole lines)
   function catchUp(f) {
@@ -119,12 +131,30 @@ function createLines(db, { dataDir, log }) {
     }
     const all = cond.all(terms), both = all.list, first = [all.each[0]];
     let fullSet;
-    if (terms.length === 1) fullSet = new Set(cand.keys());
-    else if (all.match) fullSet = new Set(chunksMatching(both[0].arg).map((ch) => ch.key));
-    else fullSet = new Set(db.prepare(`SELECT DISTINCT machine, session FROM lines WHERE ${both.map((c) => c.sql).join(' AND ')}`).all(...both.map((c) => c.arg)).map((r) => r.machine + '|' + r.session));
-    const out = [...cand].map(([k, last]) => ({ k, last, all: fullSet.has(k) }))
-      .sort((x, y) => (y.all - x.all) || (y.last - x.last)).slice(0, maxSessions);
-    const split = (x) => { const [machine, session] = x.k.split('|'); return { machine, session, last: x.last, all: x.all }; };
+    const bm25Scores = new Map();
+    if (terms.length === 1) {
+      fullSet = new Set(cand.keys());
+      if (all.match) for (const [k, s] of sessionBm25(both[0].arg)) bm25Scores.set(k, s);
+    } else if (all.match) {
+      const bothScores = sessionBm25(both[0].arg);
+      fullSet = new Set(bothScores.keys());
+      for (const [k, s] of bothScores) bm25Scores.set(k, s);
+      // For sessions where terms are spread across different records, sum per-term best BM25
+      if (fullSet.size < cand.size) {
+        const partSum = new Map();
+        for (const c of all.each) {
+          for (const [k, s] of sessionBm25(c.arg)) {
+            if (!fullSet.has(k) && cand.has(k)) partSum.set(k, (partSum.get(k) || 0) + s);
+          }
+        }
+        for (const [k, s] of partSum) bm25Scores.set(k, s);
+      }
+    } else {
+      fullSet = new Set(db.prepare(`SELECT DISTINCT machine, session FROM lines WHERE ${both.map((c) => c.sql).join(' AND ')}`).all(...both.map((c) => c.arg)).map((r) => r.machine + '|' + r.session));
+    }
+    const out = [...cand].map(([k, last]) => ({ k, last, all: fullSet.has(k), bm25: bm25Scores.has(k) ? bm25Scores.get(k) : 0 }))
+      .sort((x, y) => (y.all - x.all) || (x.bm25 - y.bm25) || (y.last - x.last)).slice(0, maxSessions);
+    const split = (x) => { const [machine, session] = x.k.split('|'); return { machine, session, last: x.last, all: x.all, bm25: x.bm25 }; };
     if (!all.match) {
       // a LIKE term (a lone CJK character) cannot use row ranges: one pass over the matching rows, newest first, for all
       // the shown sessions at once
@@ -162,7 +192,16 @@ function createLines(db, { dataDir, log }) {
     return out.map((x) => ({ ...split(x), hits: x.all ? hitsIn(x.k, sBoth, both) : hitsIn(x.k, sFirst, first) }));
   }
 
-  return { catchUp, touched, fresh, allFiles, find };
+  function scanLines({ afterRowid = 0, limit = 500 } = {}) {
+    fresh();
+    return q.scanAfter.all(Number(afterRowid) || 0, Math.max(1, Number(limit) || 500));
+  }
+
+  function maxRowid() {
+    return Number((q.maxRow.get() || {}).r || 0);
+  }
+
+  return { catchUp, touched, fresh, allFiles, find, scanLines, maxRowid };
 }
 
 module.exports = { createLines, recText, SCHEMA, DROP };

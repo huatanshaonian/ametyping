@@ -76,11 +76,13 @@ function createDocs(db, { log }) {
     }
   }
 
-  // -> [{ ref, t, text }]: every term in the one document, newest first
+  // -> [{ ref, t, text }]: every term in the one document, ranked by BM25 when FTS MATCH is used, else newest first
   function find(terms, kind, limit = 50) {
-    const all = cond.all(terms).list;
-    return db.prepare(`SELECT ref, t, text FROM docs WHERE ${all.map((c) => c.sql).join(' AND ')} AND kind = ? ORDER BY t DESC LIMIT ?`)
-      .all(...all.map((c) => c.arg), kind, limit);
+    const all = cond.all(terms);
+    const list = all.list;
+    const order = all.match ? 'bm25(docs) ASC, t DESC' : 't DESC';
+    return db.prepare(`SELECT ref, t, text FROM docs WHERE ${list.map((c) => c.sql).join(' AND ')} AND kind = ? ORDER BY ${order} LIMIT ?`)
+      .all(...list.map((c) => c.arg), kind, limit);
   }
 
   return { sync, tail, find };

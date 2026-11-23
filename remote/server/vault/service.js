@@ -4,7 +4,7 @@ const {createMemory}=require('./memory');
 const {convert}=require('./opencode');
 const {createReview}=require('./review');
 const drain=res=>new Promise(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});
-function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null,onAutoReview=null,linked=()=>[]}){
+function createVaultService({dir,machines,control,fresh,audit,log=console.error,ask=null,model=()=>null,onAutoReview=null,linked=()=>[],getEmbed=()=>null}){
   const vault=openVault(dir),memory=createMemory(vault,{linked});
   // Linked 项目管理 workspaces live outside SQLite, so their signature is part of the published version.
   const version=()=>(vault.db.prepare("SELECT value FROM vault_meta WHERE key='memory_version'").get()?.value||'')+':'+memory.linkSignature();
@@ -17,7 +17,7 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
     if(ws)try{ws.send(JSON.stringify({t:'memory-bundle',...memory.bundle(name)}));}catch{log('记忆下发连接中断，重连后同步：'+name);}
   }
   const publishAll=()=>{for(const name of machines.keys())publish(name);publishedVersion=version();};
-  const review=createReview({vault,memory,ask,model,machines:()=>[...machines.keys()],
+  const review=createReview({vault,memory,ask,model,machines:()=>[...machines.keys()],getEmbed,
     onAutoApplied:outcome=>{if(outcome.autoApplied>0)publishAll();if(onAutoReview)try{onAutoReview(outcome);}catch{}}});
   // Also notice migrations performed through the same memory module by an administrator on the NAS.
   const timer=setInterval(()=>{try{if(version()!==publishedVersion)publishAll();}catch(e){log('记忆版本检查失败：'+e.message);}},5000);timer.unref();
@@ -67,6 +67,17 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
         else if(p==='/api/knowledge/reviews')json(res,200,{ok:true,items:review.list()});
         else if(p==='/api/knowledge/review')json(res,200,{ok:true,item:review.read(url.searchParams.get('id'))});
         else if(p==='/api/knowledge/preview')json(res,200,{ok:true,...memory.bundle(url.searchParams.get('machine')||'')});
+        else if(p==='/api/knowledge/similar'){
+          const q=String(url.searchParams.get('q')||'').trim().slice(0,500);
+          const k=Math.max(1,Math.min(30,Number(url.searchParams.get('k'))||8));
+          const embed=typeof getEmbed==='function'?getEmbed():null;
+          if(!embed||!q){json(res,200,{ok:true,semantic:embed?'ok':'off',items:[]});return true;}
+          const r=await embed.search.queryMemories(q,{topK:k,kinds:['memory']});
+          if(!r.ok){json(res,200,{ok:true,semantic:'unavailable',items:[]});return true;}
+          const byId=new Map(memory.list().filter(m=>m.enabled).map(m=>[m.id,m]));
+          const items=r.items.map(hit=>{const m=byId.get(hit.key);return m?{id:m.id,scope:m.scope,owner:m.owner,name:m.name,body:m.body,score:Number(hit.score.toFixed(4))}:null;}).filter(Boolean);
+          json(res,200,{ok:true,semantic:'ok',items,ms:r.ms});
+        }
         else if(p==='/api/knowledge/raw'||p==='/api/knowledge/opencode'){
           const m=url.searchParams.get('machine'),key=url.searchParams.get('key'),gen=url.searchParams.get('generation');
           const s=gen?vault.source(m,key,gen):vault.latest(m,key);
@@ -97,7 +108,7 @@ function createVaultService({dir,machines,control,fresh,audit,log=console.error,
       if(!fresh(sess)){json(res,200,{ok:false,need:'totp',msg:'需要再输一次验证码'});return true;}
       const d=JSON.parse(await readBody(req,2*1024*1024));let result;
       if(p==='/api/knowledge/save')result=memory.save(d);
-      else if(p==='/api/knowledge/align')result=review.alignment(d.refs);
+      else if(p==='/api/knowledge/align')result=review.alignmentWithSemantic(d.refs);
       else if(p==='/api/knowledge/review/start')result=review.start(d);
       else if(p==='/api/knowledge/review/auto')result=await review.autoReview(d);
       else if(p==='/api/knowledge/review/monthly')result=await review.monthlyReview({...d,force:d.force!==false});
