@@ -468,4 +468,82 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('Master-only mesh_workspace one-shot fence setup with automatic lock and userApproved unlock', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-ws-lock-'));
+    try {
+      const machines = new Map([
+        ['pc-a', { name: 'pc-a', online: true, control: true, files: true, sessions: new Map() }],
+        ['dell97', { name: 'dell97', online: true, control: true, files: true, sessions: new Map() }],
+      ]);
+      const mesh = createMesh({
+        dataDir: tmp,
+        machines,
+        store: { sessions: () => ({}), info: () => null },
+        marks: createMarks({ dataDir: tmp }),
+        fsCatalog: createFsCatalog({ dataDir: tmp, machines }),
+        dispatchControl: async () => ({ ok: true }),
+      });
+
+      // 1. Master configures cross-machine workspaces once -> auto-locked + board brief
+      const r1 = mesh.configureWorkspaces({
+        projectName: '围栏锁测试',
+        fromMachine: 'pc-a',
+        fromSessionId: 's-master',
+        workspaces: [
+          { machine: 'pc-a', path: 'D:\\proj', mode: 'rw', tag: 'code' },
+          { machine: 'dell97', path: '/home/dell/proj', mode: 'rw', tag: 'solver' },
+        ],
+      });
+      assert.equal(r1.ok, true);
+      assert.equal(r1.workspacesLocked, true);
+      assert.equal(r1.workspaces.length, 2);
+      const projId = r1.project.id;
+
+      // 2. Subsequent modification without userApproved is blocked
+      const rBlocked = mesh.configureWorkspaces({
+        projectId: projId,
+        fromMachine: 'pc-a',
+        fromSessionId: 's-master',
+        workspaces: [{ machine: 'pc-a', path: 'D:\\other', mode: 'rw' }],
+      });
+      assert.equal(rBlocked.ok, false);
+      assert.equal(rBlocked.locked, true);
+
+      // 3. Worker node is always denied even with userApproved=true
+      const w = mesh.upsertNode(projId, { machine: 'dell97', sessionId: 's-worker', role: 'worker', alias: 'w1' });
+      const rWorker = mesh.configureWorkspaces({
+        projectId: projId,
+        fromNodeId: w.node.id,
+        userApproved: true,
+        reason: 'worker试图越权',
+        workspaces: [{ machine: 'dell97', path: '/etc', mode: 'rw' }],
+      });
+      assert.equal(rWorker.ok, false);
+      assert.match(rWorker.msg, /仅 Master/);
+
+      // 4. Master with explicit userApproved=true + reason succeeds and logs control audit to board
+      const rUnlocked = mesh.configureWorkspaces({
+        projectId: projId,
+        fromMachine: 'pc-a',
+        fromSessionId: 's-master',
+        userApproved: true,
+        reason: '用户授意新增只读数据目录',
+        workspaces: [
+          { machine: 'pc-a', path: 'D:\\proj', mode: 'rw', tag: 'code' },
+          { machine: 'dell97', path: '/home/dell/proj', mode: 'rw', tag: 'solver' },
+          { machine: 'dell97', path: '/home/dell/ref', mode: 'ro', tag: 'data' },
+        ],
+      });
+      assert.equal(rUnlocked.ok, true);
+      assert.equal(rUnlocked.workspaces.length, 3);
+      assert.equal(rUnlocked.workspacesLocked, true);
+
+      const board = mesh.readBoard({ projectId: projId, since: 0 });
+      assert.ok(board.entries.some((e) => e.kind === 'brief' && e.text.includes('初始化并锁定')));
+      assert.ok(board.entries.some((e) => e.kind === 'control' && e.text.includes('用户授意新增只读数据目录')));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

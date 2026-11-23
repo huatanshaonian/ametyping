@@ -475,6 +475,35 @@ const MCP_TOOLS = [
       required: ['action'],
     },
   },
+  {
+    name: 'mesh_workspace',
+    description: '仅限 Master 主控使用：为项目一次性配置跨机器工作区安全围栏（rw 读写 / ro 只读），配置后默认自动上锁（workspacesLocked=true）。锁定后禁止擅自改动或扩权；仅当用户明确授意时方可传 userApproved=true 与 reason 解锁更新，并在黑板留审计记录。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: '可选，项目 ID（不填且提供 projectName 时自动建项目）' },
+        projectName: { type: 'string', description: '可选，新建项目的名称' },
+        workspaces: {
+          type: 'array',
+          description: '允许访问的跨机器文件夹列表',
+          items: {
+            type: 'object',
+            properties: {
+              machine: { type: 'string', description: '电脑名称' },
+              path: { type: 'string', description: '目录绝对路径' },
+              mode: { type: 'string', enum: ['rw', 'ro'], description: '读写权限（rw 或 ro）' },
+              tag: { type: 'string', description: '可选语义标签（solver/results/code/data/docs）' },
+            },
+            required: ['machine', 'path'],
+          },
+        },
+        lock: { type: 'boolean', description: '配置后是否立即上锁（默认 true）' },
+        userApproved: { type: 'boolean', description: '仅在已锁定且获得用户明确授意时设为 true' },
+        reason: { type: 'string', description: '解锁更新围栏时的原因说明（记录在黑板）' },
+      },
+      required: ['workspaces'],
+    },
+  },
 ];
 
 async function handleMcpCall(name, args = {}, opts = {}) {
@@ -492,6 +521,7 @@ async function handleMcpCall(name, args = {}, opts = {}) {
     case 'mesh_board_read': return rpc('board_read', args, opts);
     case 'mesh_task': return rpc('task', args, opts);
     case 'mesh_channel': return rpc('channel', args, opts);
+    case 'mesh_workspace': return rpc('workspace', args, opts);
     default: return { ok: false, msg: '未知的工具：' + name };
   }
 }

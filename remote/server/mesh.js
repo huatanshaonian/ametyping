@@ -400,6 +400,7 @@ function createMesh({
         groupId: '',
         autoResumeMaster: d.autoResumeMaster !== false, // default true: auto wake master on report
         workspaces: [],
+        workspacesLocked: !!d.workspacesLocked,
         nodes: [],
         edges: [],
         tasks: [],
@@ -415,6 +416,7 @@ function createMesh({
       if (name) proj.name = name;
       if (typeof d.desc === 'string') proj.desc = cleanStr(d.desc, 500);
       if (typeof d.autoResumeMaster === 'boolean') proj.autoResumeMaster = d.autoResumeMaster;
+      if (typeof d.workspacesLocked === 'boolean') proj.workspacesLocked = d.workspacesLocked;
       proj.updatedAt = Date.now();
     }
     if (Array.isArray(d.workspaces)) {
@@ -440,6 +442,94 @@ function createMesh({
     board.removeProject(id);
     save();
     return { ok: true };
+  }
+
+  // Master-only one-shot workspace fence setup with automatic locking (immutable unless explicitly userApproved)
+  function configureWorkspaces({
+    projectId,
+    projectName,
+    workspaces,
+    lock = true,
+    userApproved = false,
+    reason = '',
+    fromNodeId,
+    fromMachine,
+    fromSessionId,
+    callerCwd,
+  } = {}) {
+    const resolved = resolveCaller({
+      projectId,
+      nodeId: fromNodeId,
+      machine: fromMachine,
+      sessionId: fromSessionId,
+      callerCwd,
+    });
+    if (resolved.node && resolved.node.role !== 'master') {
+      return { ok: false, msg: '仅 Master 主控节点有权配置项目工作区安全围栏' };
+    }
+    let proj = resolved.project || (projectId ? data.projects.find((x) => x.id === projectId) : null);
+    if (!proj) {
+      const r = saveProject({ name: projectName || `协同项目 ${new Date().toISOString().slice(5, 10)}` });
+      if (!r.ok) return r;
+      proj = data.projects.find((x) => x.id === r.project.id);
+    }
+    if (!proj) return { ok: false, msg: '找不到所属项目' };
+
+    if (proj.workspacesLocked === true && userApproved !== true) {
+      return {
+        ok: false,
+        locked: true,
+        msg: '项目工作区安全围栏已锁定（workspacesLocked=true）。除非获得用户明确授意并传入 userApproved=true 与 reason，否则禁止改动或扩权。',
+      };
+    }
+
+    if (!Array.isArray(workspaces) || !workspaces.length) {
+      return { ok: false, msg: 'workspaces 不能为空数组，请提供至少一个 { machine, path, mode } 规则' };
+    }
+    const cleaned = workspaces
+      .filter((w) => w && typeof w.machine === 'string' && typeof w.path === 'string' && w.machine.trim() && w.path.trim())
+      .slice(0, 40)
+      .map((w) => ({
+        machine: cleanStr(w.machine, 60),
+        path: cleanStr(w.path, 500),
+        mode: w.mode === 'ro' ? 'ro' : 'rw',
+        tag: cleanStr(w.tag, 40),
+      }));
+    if (!cleaned.length) {
+      return { ok: false, msg: 'workspaces 中没有有效的 { machine, path } 条目' };
+    }
+
+    const wasLocked = proj.workspacesLocked === true;
+    proj.workspaces = cleaned;
+    proj.workspacesLocked = lock !== false;
+    proj.updatedAt = Date.now();
+
+    // Auto-register calling session as Master if not yet bound
+    if (!resolved.node && fromMachine && fromSessionId) {
+      upsertNode(proj.id, { machine: fromMachine, sessionId: fromSessionId, role: 'master', alias: '主控会话', cwd: callerCwd || '' });
+    }
+
+    const fenceList = cleaned.map((w) => `${w.machine}:${w.path} (${w.mode})`).join('；');
+    const cleanReason = cleanStr(reason, 200);
+    const noteText = wasLocked
+      ? `[安全围栏已按用户授意更新并${proj.workspacesLocked ? '重新锁定' : '解锁'}] 原因：${cleanReason || '用户明确授意'}\n允许范围：${fenceList}`
+      : `[项目安全围栏已由 Master 初始化并${proj.workspacesLocked ? '锁定' : '暂未锁定'}]\n允许范围：${fenceList}`;
+    board.append(proj.id, {
+      channel: 'main',
+      kind: wasLocked ? 'control' : 'brief',
+      agent: (resolved.node && (resolved.node.alias || resolved.node.id)) || 'Master',
+      nodeId: resolved.node ? resolved.node.id : '',
+      text: noteText,
+      control: wasLocked ? { op: 'workspaces_update', locked: proj.workspacesLocked, reason: cleanReason } : undefined,
+    });
+    save();
+    return {
+      ok: true,
+      workspaces: proj.workspaces,
+      workspacesLocked: proj.workspacesLocked,
+      project: enrichProject(proj),
+      msg: proj.workspacesLocked ? '安全围栏已配置并锁定（后续除非用户明确授意，不再允许改动）' : '安全围栏已配置',
+    };
   }
 
   // Check if a folder path on a machine is permitted by the project's workspace scope
@@ -2698,6 +2788,10 @@ function createMesh({
         const r = manageChannel({ ...d, fromNodeId: d.fromNodeId || callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
+      if (op === 'workspace') {
+        const r = configureWorkspaces({ ...d, fromNodeId: d.fromNodeId || callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        return reply(r);
+      }
       if (op === 'transfer') {
         const r = requestTransfer({ ...d, fromMachine: d.fromMachine || machineName });
         return reply(r);
@@ -2757,6 +2851,7 @@ function createMesh({
     requestTransfer,
     confirmTransfer,
     flushInbox,
+    configureWorkspaces,
     checkWorkspaceAccess,
     onMachineState,
     onSessionMeta,

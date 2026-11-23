@@ -74,7 +74,10 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
     const port = srv.address().port;
     const opts = { auth: { port, token, machine: 'pc-a' } };
 
-    assert.equal(MCP_TOOLS.length, 13);
+    assert.equal(MCP_TOOLS.length, 14);
+    const workspaceTool = MCP_TOOLS.find((t) => t.name === 'mesh_workspace');
+    assert.ok(workspaceTool);
+    assert.deepEqual(workspaceTool.inputSchema.required, ['workspaces']);
     const statusTool = MCP_TOOLS.find((t) => t.name === 'mesh_status');
     assert.match(statusTool.description, /roleCatalog/);
     assert.match(statusTool.description, /pools/);
