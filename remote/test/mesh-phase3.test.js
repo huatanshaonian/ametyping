@@ -656,6 +656,7 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
         rid: 'r-ws',
         op: 'workspace',
         projectName: '轻量写操作测试',
+        sessionId: 'agy:master-embed',
         callerCwd: 'D:\\ametyping-embed',
         workspaces: [{ machine: 'huatanshaonian', path: 'D:\\ametyping', mode: 'rw' }],
       }, mockWs);
@@ -663,8 +664,8 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
       assert.equal(wsReply.ok, true);
       assert.ok(wsReply.projectId);
       assert.equal(wsReply.project.workspaces[0].snapshot, undefined);
-      // Master auto-bound even without sessionId (by callerCwd), so mesh_status sees self!
-      const statusAfterWs = mesh.scopedViewFor({ projectId: wsReply.projectId, machine: 'huatanshaonian', callerCwd: 'D:\\ametyping-embed' });
+      // Master auto-bound when explicit sessionId is present
+      const statusAfterWs = mesh.scopedViewFor({ projectId: wsReply.projectId, machine: 'huatanshaonian', sessionId: 'agy:master-embed', callerCwd: 'D:\\ametyping-embed' });
       assert.ok(statusAfterWs.self);
       assert.equal(statusAfterWs.self.role, 'master');
 

@@ -72,7 +72,39 @@ function savePendingMeshEvent(evt, home = os.homedir()) {
   } catch {}
 }
 
-async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId, resource = 'none', opts = {} }) {
+function buildAssignedEnv(job, baseEnv = process.env) {
+  const env = { ...baseEnv };
+  if (!job || typeof job !== 'object') return env;
+
+  if (Array.isArray(job.assignedGpus) && job.assignedGpus.length > 0) {
+    const gpuStr = job.assignedGpus.join(',');
+    if (env.AME_ASSIGNED_GPUS === undefined) env.AME_ASSIGNED_GPUS = gpuStr;
+    if (env.CUDA_VISIBLE_DEVICES === undefined) env.CUDA_VISIBLE_DEVICES = gpuStr;
+  }
+  if (Array.isArray(job.assignedNuma) && job.assignedNuma.length > 0) {
+    const numaStr = job.assignedNuma.join(',');
+    if (env.AME_ASSIGNED_NUMA === undefined) env.AME_ASSIGNED_NUMA = numaStr;
+  }
+  if (typeof job.assignedCpus === 'string' && job.assignedCpus.trim()) {
+    if (env.AME_ASSIGNED_CPUS === undefined) env.AME_ASSIGNED_CPUS = job.assignedCpus.trim();
+  }
+  // For single-NUMA CPU jobs, set a sensible OMP_NUM_THREADS (physical cores estimate) to avoid cross-socket jitter
+  if (
+    job.resource === 'cpu'
+    && Array.isArray(job.assignedNuma)
+    && job.assignedNuma.length === 1
+    && env.OMP_NUM_THREADS === undefined
+  ) {
+    const cpuCount = Number(job.assignedCpuCount) || 0;
+    if (cpuCount > 0) {
+      const threads = cpuCount >= 4 ? Math.max(1, Math.floor(cpuCount / 2)) : cpuCount;
+      env.OMP_NUM_THREADS = String(threads);
+    }
+  }
+  return env;
+}
+
+async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId, resource = 'none', gpus, numa, opts = {} }) {
   const startMs = Date.now();
   const logDir = path.dirname(logFile);
   try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
@@ -81,21 +113,27 @@ async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectI
 
   // Optional Mini-Slurm resource slot acquisition (gpu / cpu)
   let queueJobId = '';
+  let grantedJob = null;
   let hbTimer = null;
   const cleanRes = resource === 'gpu' || resource === 'cpu' ? resource : 'none';
   if (cleanRes !== 'none') {
     try {
-      const enq = await rpc('queue', {
+      const enqPayload = {
         action: 'enqueue',
         resource: cleanRes,
         label: label || commandArgs[0],
         command: commandArgs.join(' ').slice(0, 400),
         projectId: projectId || '',
         nodeId: nodeId || '',
-      }, rpcOpts);
+      };
+      if (gpus !== undefined && gpus !== null && gpus !== '') enqPayload.gpus = gpus;
+      if (numa !== undefined && numa !== null && numa !== '') enqPayload.numa = numa;
+      const enq = await rpc('queue', enqPayload, rpcOpts);
       if (enq && enq.ok && enq.job) {
         queueJobId = enq.job.id;
-        if (!enq.granted) {
+        if (enq.granted) {
+          grantedJob = enq.job;
+        } else {
           outStream.write(`[AmeMesh 算力队列] 作业 ${queueJobId} 已入队等待 ${cleanRes.toUpperCase()} 槽位（${enq.job.waitReason || '排队中'}）...\n`);
           while (true) {
             await new Promise((r) => setTimeout(r, 5000));
@@ -106,9 +144,19 @@ async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectI
               outStream.end();
               return { ok: false, cancelled: true, exitCode: 1, logFile };
             }
-            if (pr.granted) break;
+            if (pr.granted) {
+              grantedJob = pr.job;
+              break;
+            }
           }
-          outStream.write(`[AmeMesh 算力队列] 已获得 ${cleanRes.toUpperCase()} 槽位，开始执行。\n`);
+          const allocSummary = grantedJob
+            ? [
+              grantedJob.assignedGpus && grantedJob.assignedGpus.length ? `GPU=[${grantedJob.assignedGpus.join(',')}]` : '',
+              grantedJob.assignedNuma && grantedJob.assignedNuma.length ? `NUMA=[${grantedJob.assignedNuma.join(',')}]` : '',
+              grantedJob.assignedCpus ? `CPUS=${grantedJob.assignedCpus}` : '',
+            ].filter(Boolean).join(' ')
+            : '';
+          outStream.write(`[AmeMesh 算力队列] 已获得 ${cleanRes.toUpperCase()} 槽位${allocSummary ? '（' + allocSummary + '）' : ''}，开始执行。\n`);
         }
         hbTimer = setInterval(() => {
           rpc('queue', { action: 'heartbeat', jobId: queueJobId }, rpcOpts).catch(() => {});
@@ -129,9 +177,11 @@ async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectI
 
   const isBatch = /\.(cmd|bat)$/i.test(commandArgs[0]);
   const useShell = commandArgs.length === 1 || isBatch;
+  const childEnv = buildAssignedEnv(grantedJob, process.env);
   const child = child_process.spawn(commandArgs[0], commandArgs.slice(1), {
     cwd: cwd || process.cwd(),
     shell: useShell,
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -266,6 +316,8 @@ async function runBgMcp(args = {}, opts = {}) {
     nodeId: args.targetNodeId || args.nodeId || process.env.AME_NODE_ID || '',
     sessionId,
     resource,
+    ...(args.gpus !== undefined ? { gpus: args.gpus } : {}),
+    ...(args.numa !== undefined ? { numa: args.numa } : {}),
   };
   const child = child_process.spawn(
     process.execPath,
@@ -449,6 +501,8 @@ const MCP_TOOLS = [
         projectId: { type: 'string', description: '可选，所属项目 ID' },
         targetNodeId: { type: 'string', description: '可选，完成后唤醒的目标节点 ID' },
         resource: { type: 'string', enum: ['none', 'gpu', 'cpu'], default: 'none', description: '可选算力排队锁：gpu 或 cpu 时自动按机排队（若外部进程正占硬件自动等待空闲再跑，默认 none 直接执行）' },
+        gpus: { description: '可选（resource="gpu" 时生效）：申请的 GPU 卡数，支持正整数（如 1、2）或 "all"（整机合并），默认 1；拿到槽位后自动注入 CUDA_VISIBLE_DEVICES / AME_ASSIGNED_GPUS / AME_ASSIGNED_NUMA' },
+        numa: { description: '可选（resource="cpu" 时生效）：申请的 NUMA 节点槽位数，支持正整数（如 1、2）或 "all"，默认 1；拿到槽位后自动注入 AME_ASSIGNED_NUMA / AME_ASSIGNED_CPUS / OMP_NUM_THREADS' },
       },
       required: ['command'],
     },
@@ -689,16 +743,31 @@ async function runCli(argv = process.argv.slice(2), opts = {}) {
     const projectId = runFlags.projectId || process.env.AME_PROJECT_ID || '';
     const nodeId = runFlags.nodeId || runFlags.targetNodeId || process.env.AME_NODE_ID || '';
     const sessionId = runFlags.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
+    const resource = runFlags.resource === 'gpu' || runFlags.resource === 'cpu' ? runFlags.resource : 'none';
+    const gpus = runFlags.gpus !== undefined ? (String(runFlags.gpus).toLowerCase() === 'all' ? 'all' : Number(runFlags.gpus)) : undefined;
+    const numa = runFlags.numa !== undefined ? (String(runFlags.numa).toLowerCase() === 'all' ? 'all' : Number(runFlags.numa)) : undefined;
     const isFg = Boolean(runFlags.fg);
+    const runPayload = {
+      commandArgs,
+      label,
+      logFile,
+      cwd,
+      projectId,
+      nodeId,
+      sessionId,
+      resource,
+      ...(gpus !== undefined ? { gpus } : {}),
+      ...(numa !== undefined ? { numa } : {}),
+    };
     if (isFg) {
-      const r = await executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId });
+      const r = await executeCommandWorker(runPayload);
       console.log(JSON.stringify(r, null, 2));
       if (!r.ok) process.exitCode = r.exitCode || 1;
       return;
     }
     const child = child_process.spawn(
       process.execPath,
-      [__filename, '__run_worker', JSON.stringify({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId })],
+      [__filename, '__run_worker', JSON.stringify(runPayload)],
       { detached: true, stdio: 'ignore', cwd }
     );
     child.unref();
@@ -745,7 +814,7 @@ async function runCli(argv = process.argv.slice(2), opts = {}) {
       '  node tools/ame-mesh.js send --toNodeId <node> --text <msg> [--goal <goal>] [--stopCondition <gate>]',
       '  node tools/ame-mesh.js report --summary <text> [--reviewStatus waiting_review|done|blocked] [--artifacts a.png,b.csv]',
       '  node tools/ame-mesh.js transfer --fromMachine <pc1> --fromPath <p1> --toMachine <pc2> --toPath <p2> [--size <bytes>] [--mode auto|manual_disk] [--note <text>]',
-      '  node tools/ame-mesh.js run [--cwd <dir>] [--label <name>] [--log <file>] [--projectId <id>] [--nodeId <id>] [--fg] -- <cmd> [args...]',
+      '  node tools/ame-mesh.js run [--cwd <dir>] [--label <name>] [--log <file>] [--projectId <id>] [--nodeId <id>] [--resource none|gpu|cpu] [--gpus <n|all>] [--numa <n|all>] [--fg] -- <cmd> [args...]',
       '  node tools/ame-mesh.js watch-pid --pid <pid> [--label <name>] [--cwd <dir>] [--projectId <id>] [--nodeId <id>] [--intervalMs <ms>] [--fg]',
       '  node tools/ame-mesh.js trigger --action add|list|remove|pause|resume [--projectId <id>] [--triggerId <id>] [--machine <pc>] [--path <dir>] [--glob <pattern>] [--maxDepth <1-6>] [--targetNodeId <id>] [--label <text>]',
       '  node tools/ame-mesh.js board-post --text <msg> [--projectId <id>] [--channel main] [--artifacts a,b] [--done] [--doneWhenStatus s1,s2] [--checksOutput <text>] [--boundaries p1,p2]',
@@ -793,4 +862,4 @@ if (require.main === module) {
   runCli();
 }
 
-module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal, savePendingMeshEvent, executeCommandWorker, watchPidWorker, runBgMcp, runCli, parseCliFlags };
+module.exports = { rpc, handleMcpCall, MCP_TOOLS, loadAuth, callLocal, savePendingMeshEvent, buildAssignedEnv, executeCommandWorker, watchPidWorker, runBgMcp, runCli, parseCliFlags };

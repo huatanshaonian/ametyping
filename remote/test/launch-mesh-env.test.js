@@ -134,7 +134,8 @@ test('headless/launch.js passes syntax check and formats agy/other tails properl
   assert.equal(buildTail({ agy: true, prompt: '' }), '');
   assert.equal(buildTail({ agy: true, agyThread: '11111111-2222-3333-4444-555555555555', prompt: 'ignored' }),
     " --conversation '11111111-2222-3333-4444-555555555555'");
-  assert.equal(buildTail({ thread: 't-123' }), " resume 't-123'");
+  assert.equal(buildTail({ thread: 't-123' }), " -c check_for_update_on_startup=false resume 't-123'");
+  assert.equal(buildTail({ codex: true, model: 'gpt-6.2-sol', prompt: 'hi' }), " -c check_for_update_on_startup=false --model 'gpt-6.2-sol' 'hi'");
   assert.equal(buildTail({ kiro: true, prompt: 'hi kiro' }), " chat 'hi kiro'");
   assert.equal(buildTail({ kiroThread: 'k-123' }), " chat --resume-id 'k-123'");
   assert.equal(buildTail({ resume: '22222222-2222-3333-4444-555555555555' }),

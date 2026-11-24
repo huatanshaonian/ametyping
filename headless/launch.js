@@ -44,10 +44,11 @@ function buildTail({ thread, agyThread, kiroThread, kiro, agy, codex, resume, pr
   const trimmed = prompt && prompt.trim();
   const m = !resume && !thread && !agyThread && !kiroThread ? cleanModel(model) : '';
   const mFlag = m ? ' --model ' + q(m) : '';
-  return thread ? ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread)
+  const codexNoUpdate = ' -c check_for_update_on_startup=false';
+  return thread ? codexNoUpdate + ' resume ' + q(thread) : agyThread ? ' --conversation ' + q(agyThread)
     : kiroThread ? ' chat --resume-id ' + q(kiroThread) : kiro ? ' chat' + (trimmed ? ' ' + q(prompt) : '')
     : agy ? mFlag + (trimmed ? ' -i ' + q(trimmed) : '')
-    : codex ? mFlag + (trimmed ? ' ' + q(prompt) : '')
+    : codex ? codexNoUpdate + mFlag + (trimmed ? ' ' + q(prompt) : '')
     : resume ? ' --resume ' + q(resume) : mFlag + (trimmed ? ' ' + q(prompt) : '');
 }
 
@@ -168,19 +169,21 @@ function answerTrust(name, codex = false, agy = false, onCliUpdate = null) {
     }
     if (codex) {
       if (/Do you trust the contents of this directory/i.test(text)) { if (/[›>❯]\s*2\.\s*No/i.test(text)) await keys('Up'); await keys('Enter'); }
-      else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore)/i.test(text)) {
+      else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore|Dismiss|Later|Continue without)/i.test(text)) {
+        // [暂时没用] 当前启动 Codex 已默认传入 `-c check_for_update_on_startup=false` 禁用启动更新弹窗，
+        // 此处的 cli-update 信号回传与自动按 Skip 仅保留作兜底，暂不再主动触发。
         if (!updateNotified && typeof onCliUpdate === 'function') {
           updateNotified = true;
           const verLine = String(text).split(/\r?\n/).find((l) => /Update available|New version available/i.test(l)) || 'Update available';
           try { onCliUpdate({ tool: 'codex', detail: verLine.trim().slice(0, 160), at: Date.now() }); } catch {}
         }
-        const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore)/i.exec(text);
+        const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore|Dismiss|Later|Continue without)/i.exec(text);
         const curM = /[›>❯]\s*(\d)\./.exec(text);
         const diff = (skipM ? Number(skipM[1]) : 2) - (curM ? Number(curM[1]) : 1);
         for (let k = 0; k < Math.abs(diff); k++) await keys(diff > 0 ? 'Down' : 'Up');
         await keys('Enter');
       }
-      else if (/enter confirm|Press enter to continue/i.test(text) || /›\s+Ask Codex to do anything|esc to interrupt/.test(text)) return;
+      else if ((/enter confirm|Press enter to continue/i.test(text) && !/Update available|New version available/i.test(text)) || /›\s+Ask Codex to do anything|esc to interrupt/.test(text)) return;
       return void setTimeout(tick, 700);
     }
     if (/Yes, I trust this folder|Do you trust the contents of this project/i.test(text)) {

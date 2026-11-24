@@ -830,43 +830,6 @@ function createMesh({
     return { ok: true };
   }
 
-  function inferLiveSessionId(machineName, callerCwd = '') {
-    const liveSessions = machines && machines.get(machineName)?.sessions;
-    if (!liveSessions || !liveSessions.size) return '';
-    const entries = [...liveSessions.entries()].map(([sid, sess]) => ({
-      sid,
-      sess: sess || {},
-      cwd: (store && store.info && store.info(machineName, sid)?.cwd) || (sess && sess.cwd) || '',
-      last: (sess && sess.last) || 0,
-      active: sess && ['working', 'thinking', 'reading', 'message'].includes(sess.state),
-    }));
-    const byRecent = (a, b) => (b.active - a.active) || (b.last - a.last);
-
-    if (callerCwd) {
-      const normCaller = normFolderPath(callerCwd);
-      const exactOrSub = entries.filter((x) => x.cwd && (normFolderPath(x.cwd) === normCaller || isSubPath(x.cwd, callerCwd)));
-      if (exactOrSub.length) {
-        exactOrSub.sort(byRecent);
-        return exactOrSub[0].sid;
-      }
-      const base = path.basename(callerCwd.replace(/[\\/]+$/, '')).toLowerCase();
-      if (base) {
-        const byProj = entries.filter((x) => String(x.sess.project || '').toLowerCase() === base);
-        if (byProj.length) {
-          byProj.sort(byRecent);
-          return byProj[0].sid;
-        }
-      }
-    }
-    if (entries.length === 1) return entries[0].sid;
-    const working = entries.filter((x) => x.active);
-    if (working.length) {
-      working.sort((a, b) => b.last - a.last);
-      return working[0].sid;
-    }
-    return '';
-  }
-
   function compactProjectForRpc(proj) {
     if (!proj || typeof proj !== 'object') return proj;
     return {
@@ -966,18 +929,15 @@ function createMesh({
     proj.workspacesLocked = lock !== false;
     proj.updatedAt = Date.now();
 
-    // Auto-register calling session as Master if not yet bound (infer live sessionId when env is absent)
-    if (!resolved.node && fromMachine) {
-      const inferredSid = fromSessionId || inferLiveSessionId(fromMachine, callerCwd);
-      if (inferredSid || callerCwd) {
-        upsertNode(proj.id, {
-          machine: fromMachine,
-          sessionId: inferredSid || '',
-          role: 'master',
-          alias: '主控会话',
-          cwd: callerCwd || '',
-        });
-      }
+    // Auto-register calling session as Master only when explicit fromSessionId is provided (never guess unrelated sessions)
+    if (!resolved.node && fromMachine && fromSessionId) {
+      upsertNode(proj.id, {
+        machine: fromMachine,
+        sessionId: fromSessionId,
+        role: 'master',
+        alias: '主控会话',
+        cwd: callerCwd || '',
+      });
     }
 
     const fenceList = cleaned.map((w) => `${w.machine}:${w.path} (${w.mode})`).join('；');
@@ -1913,7 +1873,7 @@ function createMesh({
       proj = data.projects.find((x) => x.id === r.project.id);
     }
 
-    // Ensure master node is registered if caller provided fromMachine + (fromSessionId or live session fallback)
+    // Ensure master node is registered ONLY when caller explicitly provides fromSessionId (never guess unrelated sessions)
     let masterNode = resolved.node;
     if (!masterNode && fromNodeId) {
       masterNode = proj.nodes.find((n) => n.id === fromNodeId || n.alias === fromNodeId) || null;
@@ -1931,19 +1891,6 @@ function createMesh({
         ...(callerCwd ? { cwd: callerCwd } : {}),
       });
       if (mr.ok) masterNode = mr.node;
-    }
-    if (!masterNode && fromMachine && !fromSessionId) {
-      const matchedSid = inferLiveSessionId(fromMachine, callerCwd);
-      if (matchedSid || callerCwd) {
-        const mr = upsertNode(proj.id, {
-          machine: fromMachine,
-          sessionId: matchedSid || '',
-          role: 'master',
-          alias: '主控会话',
-          ...(callerCwd ? { cwd: callerCwd } : {}),
-        });
-        if (mr.ok) masterNode = mr.node;
-      }
     }
 
     // Workspace access boundary check
@@ -3667,11 +3614,20 @@ function createMesh({
       }
       if (op === 'queue') {
         const act = String(d.action || 'list').trim().toLowerCase();
-        if (act === 'enqueue') return reply(computeQueue.enqueue({ ...d, machine: d.machine || machineName, nodeId: d.nodeId || callerNodeId }));
+        if (act === 'enqueue') {
+          return reply(computeQueue.enqueue({
+            ...d,
+            machine: d.machine || machineName,
+            nodeId: d.nodeId || callerNodeId,
+            gpus: d.gpus,
+            numa: d.numa,
+          }));
+        }
         if (act === 'poll') return reply(computeQueue.poll(d.jobId));
         if (act === 'heartbeat') return reply(computeQueue.heartbeat(d.jobId));
         if (act === 'complete') return reply(computeQueue.complete(d.jobId, { ok: d.ok !== false, reason: d.reason || '' }));
         if (act === 'cancel') return reply(computeQueue.cancel(d.jobId));
+        if (act === 'topology') return reply({ ok: true, machine: d.machine || machineName, topology: computeQueue.topologyFor(d.machine || machineName) });
         return reply(computeQueue.list({ machine: d.machine || '', resource: d.resource || '' }));
       }
       if (op === 'trigger') {
