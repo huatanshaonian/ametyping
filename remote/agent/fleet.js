@@ -172,9 +172,11 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     }
   }
 
-  function startGuard() {
+  // waitSec: how long the guard waits for the new agent (tests: short)
+  function startGuard({ waitSec = 0 } = {}) {
     const guard = path.join(__dirname, 'update-guard.js');
-    const args = [guard, '--dir', dir, '--root', root, '--task', cfg.task || 'AmeTyping Agent', '--unit', cfg.unit || 'ame-agent'];
+    const args = [guard, '--dir', dir, '--root', root, '--task', cfg.task || 'AmeTyping Agent', '--unit', cfg.unit || 'ame-agent',
+      ...(waitSec ? ['--wait', String(waitSec)] : [])];
     if (platform === 'linux') {
       // a transient unit of its own: restarting ame-agent stops every process in ame-agent's group, this one not
       const child = spawn('systemd-run', ['--user', '--collect', '--quiet', '--unit', 'ame-update-guard-' + Date.now(), process.execPath, ...args],
@@ -185,8 +187,12 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       // through WMI: a process that is not the agent's child, so not in the scheduled task's job that ends with it
       const cmd = [process.execPath, ...args].map((a) => '"' + a.replace(/"/g, '') + '"').join(' ');
       const ps = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${cmd.replace(/'/g, "''")}' }; if ($r.ReturnValue -ne 0) { exit 1 }`;
-      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true, detached: true });
+      // (not detached: under the agent's scheduled task (conhost --headless) a detached PowerShell gets no console and
+      // exits at once with 0 having run nothing -- found on dell211 2026-11-25, every Windows update then waited for a
+      // guard that never started. The process WMI makes is outside the task's job either way.)
+      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true });
       child.on('error', (e) => log('更新守护没启动：' + e.message));
+      child.on('close', (code) => { if (code) log('更新守护没启动：PowerShell 退出码 ' + code); });
       child.unref();
     } else throw new Error('这个系统不支持自动重启');
   }
@@ -198,7 +204,7 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     try { writeJSON(pendingFile, { ...p, healthy: Date.now(), healthyPid: process.pid }); } catch {}
   }
 
-  return { version, have, stage, apply, markHealthy, dir };
+  return { version, have, stage, apply, markHealthy, dir, _startGuard: startGuard };
 }
 
 module.exports = { createFleet, blobId, SAFE };
