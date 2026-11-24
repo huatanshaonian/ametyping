@@ -8,12 +8,12 @@ const {createReview}=require('./review');
 const {createDirectories}=require('./directories');
 
 function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
-  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null, egress = null, getEmbed = () => null, onMemoryChange = () => {} }) {
+  audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null, egress = null, getEmbed = () => null, getLit = () => null, onMemoryChange = () => {} }) {
   const store = createResearchStore(vault), db = vault.db;
   const pilots=createPilots(path.dirname(vault.file));
   const review=createReview({vault,pilots,listProjects,saveProject});
   if(control)review.seed();
-  const directories=createDirectories({vault,review,store,getMagpie,egress,getEmbed,listProjects,saveProject});
+  const directories=createDirectories({vault,review,store,getMagpie,egress,getEmbed,getLit,listProjects,saveProject});
   const settingsFile = path.join(path.dirname(vault.file),'research-api.json');
   const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile,'utf8')); } catch(e) { if(e.code==='ENOENT')return {};throw Error('NAS DeepSeek 专用配置无法读取'); } };
   const credentials = resolve || (() => resolveDeepseek({...config,...readSettings()}));

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 文献下载的 MCP (stdio): lets an agent ask the literature module for papers by DOI and save their PDFs. It talks to the
+// 文献的 MCP (stdio): lets an agent query the local knowledge base, request papers by DOI, and save their PDFs. It talks to the
 // running server over the module's local socket (agent-socket.js), so every request goes into the same queue as the
 // window's (one paper at a time through the library access, its pace and daily cap). Nothing listens on the network.
 // No dependencies beyond Node itself: the file can be copied anywhere.
@@ -113,7 +113,9 @@ const LIMITS = '限制：一次最多提交 20 个 DOI；所有请求（包括 W
   '同一个 DOI 重复提交会返回原来的任务，失败的 DOI 1 小时内不会重试。';
 const INSTRUCTIONS = '这是用户自己的文献下载服务（经机构订阅下载，PDF 存进用户的 Zotero）。' + LIMITS +
   '提交是异步的：submit_downloads 立即返回任务号，下载要几分钟到几小时。之后用 download_status 查询，间隔不要短于 1 分钟；完成（state=done）后用 save_pdf 存到本地。' +
-  'needsUser=true（人机验证、机构登录、Zotero 授权）时不要重试或重复提交，请告诉用户到 Windose 的「文献 › 文献库」处理。只提交用户确实需要的文献，不要批量爬取。';
+  'needsUser=true（人机验证、机构登录、Zotero 授权）时不要重试或重复提交，请告诉用户到 Windose 的「文献 › 文献库」处理。只提交用户确实需要的文献，不要批量爬取。\n' +
+  '科研调研分三步。① 先查家底，调用本地只读工具梳理已有基准与矛盾，并报告返回的 coverage。② 必查外部，结合 OpenAlex/NTRS/arXiv/Web 交叉核验近 2～3 年的新进展和空白区。③ 下载回流，发现本地缺失的高价值论文后，调用 submit_downloads 入库。';
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const TOOLS = [
   { name: 'submit_downloads', description: '按 DOI 提交文献下载（异步，立即返回任务号与当前状态）。' + LIMITS + '返回的 limits 是队列当前的实际限额。',
     inputSchema: { type: 'object', properties: { dois: { type: 'array', items: { type: 'string', maxLength: 300 }, minItems: 1, maxItems: 20, description: 'DOI，例如 10.1109/TAP.2020.1234567（也可带 https://doi.org/ 前缀）' } }, required: ['dois'], additionalProperties: false },
@@ -124,6 +126,18 @@ const TOOLS = [
   { name: 'save_pdf', description: '把已完成（state=done）任务的 PDF 存到运行这个 MCP 的电脑上。path 是绝对路径，以 .pdf 结尾，所在目录必须已存在；已有同名文件时默认不覆盖。',
     inputSchema: { type: 'object', properties: { id: { type: 'string', maxLength: 40 }, path: { type: 'string', maxLength: 1000 }, overwrite: { type: 'boolean' } }, required: ['id', 'path'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'search_library', description: '检索个人 Zotero 库。优先语义检索，语义服务不可用时按标题和摘要检索。返回论文与本地库覆盖度。',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1 }, k: { type: 'integer', minimum: 1, maximum: 50, default: 10 } }, required: ['query'], additionalProperties: false },
+    annotations: READ_ONLY },
+  { name: 'query_evidence', description: '按证据表字段查询本地结构化证据。filters 的键为字段 ID，值用于匹配字段文本。',
+    inputSchema: { type: 'object', properties: { schema_id: { type: 'string', default: 'plasma_rcs_v1' }, filters: { type: 'object' }, only_verified: { type: 'boolean', default: false } }, additionalProperties: false },
+    annotations: READ_ONLY },
+  { name: 'get_contradictions_and_gaps', description: '读取已记录的矛盾和证据覆盖矩阵。row_field、col_field 采用证据表字段 ID。',
+    inputSchema: { type: 'object', properties: { schema_id: { type: 'string', default: 'plasma_rcs_v1' }, row_field: { type: 'string' }, col_field: { type: 'string' } }, additionalProperties: false },
+    annotations: READ_ONLY },
+  { name: 'read_paper_pages', description: '按从 1 开始的页码读取本地论文文本。最多返回 8 页，每页最多 8000 字。',
+    inputSchema: { type: 'object', properties: { key: { type: 'string', pattern: '^[A-Z0-9]{8}$' }, pages: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1, maxItems: 8 } }, required: ['key', 'pages'], additionalProperties: false },
+    annotations: READ_ONLY },
 ];
 
 function createMcp(call, by = () => 'agent') {
@@ -131,7 +145,17 @@ function createMcp(call, by = () => 'agent') {
     for (const k of Object.keys(a)) if (!Object.hasOwn(tool.inputSchema.properties, k)) throw new Error('未知参数 ' + k);
     for (const k of tool.inputSchema.required || []) if (a[k] == null) throw new Error('缺少参数 ' + k);
   };
-  const need = (r) => { if (r.s >= 400 || !r.j) throw new Error((r.j && r.j.msg) || '文献服务返回 ' + r.s); return r.j; };
+  const need = (r) => {
+    if (r.s < 400 && r.j) return r.j;
+    const error = new Error(r.j?.msg || '文献服务返回 ' + r.s);
+    if (r.j?.coverage) error.coverage = r.j.coverage;
+    throw error;
+  };
+  const get = async (route, params) => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value != null) qs.set(key, value);
+    return need(await call('GET', qs.size ? `${route}?${qs}` : route));
+  };
   async function run(name, a = {}) {
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) throw new Error('未知工具 ' + name);
@@ -144,6 +168,16 @@ function createMcp(call, by = () => 'agent') {
       const ids = a.ids == null ? [] : a.ids;
       if (!Array.isArray(ids) || ids.length > 50 || ids.some((x) => typeof x !== 'string' || !/^[\w-]{1,40}$/.test(x))) throw new Error('ids 无效');
       return need(await call('GET', '/v1/downloads' + (ids.length ? '?ids=' + ids.join(',') : '')));
+    }
+    if (name === 'search_library') {
+      if (typeof a.query !== 'string' || !a.query.trim()) throw new Error('query 须为非空字符串');
+      return get('/v1/search', { q: a.query, k: a.k });
+    }
+    if (name === 'query_evidence') return need(await call('POST', '/v1/evidence/query', a));
+    if (name === 'get_contradictions_and_gaps') return get('/v1/contradictions', { schema: a.schema_id, row: a.row_field, col: a.col_field });
+    if (name === 'read_paper_pages') {
+      if (!Array.isArray(a.pages) || !a.pages.length || a.pages.some((page) => !Number.isSafeInteger(page) || page < 1)) throw new Error('pages 须为正整数数组');
+      return get('/v1/pages', { key: a.key, pages: a.pages.join(',') });
     }
     // save_pdf
     if (typeof a.id !== 'string' || !/^[\w-]{1,40}$/.test(a.id)) throw new Error('id 无效');
@@ -180,7 +214,7 @@ function serve(call, input = process.stdin, output = process.stdout) {
       else if (q.method === 'tools/list') res.result = { tools: TOOLS };
       else if (q.method === 'tools/call') {
         try { res.result = { content: [{ type: 'text', text: JSON.stringify(await mcp.run(q.params && q.params.name, (q.params && q.params.arguments) || {})) }] }; }
-        catch (e) { res.result = { isError: true, content: [{ type: 'text', text: e.message }] }; }
+        catch (e) { res.result = { isError: true, content: [{ type: 'text', text: e.coverage ? JSON.stringify({ ok: false, msg: e.message, coverage: e.coverage }) : e.message }] }; }
       } else res.error = { code: -32601, message: '不支持的方法 ' + q.method };
     } catch (e) { res.error = { code: -32603, message: e.message }; }
     write(res);
