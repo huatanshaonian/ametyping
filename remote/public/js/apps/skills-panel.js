@@ -1,12 +1,14 @@
 // 控制面板 › Skill 与协同 (Skill 文档、角色提示词 .md、全局模型池、机器角色备忘)
 import { h, ago } from '../util.js';
 import * as net from '../net.js';
+import { panel as fleetPanel } from './fleet-panel.js';
 
 const TABS = [
   { id: 'skills', label: 'Skill 管理' },
   { id: 'roles', label: '角色提示词 (.md)' },
   { id: 'pools', label: '全局模型池' },
   { id: 'machines', label: '机器角色备忘' },
+  { id: 'fleet', label: '设备与 Harness' },
 ];
 
 const POOL_ORDER = ['fast-coder', 'flagship', 'heavy-reasoner', 'image-gen'];
@@ -653,6 +655,13 @@ function createMachinesView() {
   return { root, load };
 }
 
+// 设备与 Harness (fleet-panel.js): made the first time the tab is opened, then refreshed on each visit
+function createFleetView() {
+  const root = h('div', { class: 'skp-fleet' });
+  let p = null;
+  return { root, load() { if (!p) { p = fleetPanel(); root.replaceChildren(p.root); } else p.show(); } };
+}
+
 export function panel(initialTab) {
   const root = h('div', { class: 'mcp skp' });
   const tabBar = h('div', { class: 'skp-tabs', role: 'tablist', 'aria-label': 'Skill 与协同管理' });
@@ -692,6 +701,7 @@ export function panel(initialTab) {
     }),
     pools: createPoolsView(),
     machines: createMachinesView(),
+    fleet: createFleetView(),
   };
 
   let active = TABS.some((t) => t.id === initialTab) ? initialTab : 'skills';

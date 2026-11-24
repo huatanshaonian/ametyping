@@ -3,17 +3,23 @@
 //   the bundle   <dataDir>/fleet/bundle/{manifest.json, files/...}: what an agent machine runs at the deployed commit,
 //                put there by remote/deploy/deploy.js (manifest: { commit, files: { path: blob }, headless: [paths],
 //                known: [every blob id these paths ever had] -- a file with another id was edited on that machine)
-//   agent -> server  fleet-version { mode, commit, auto, why, last, control, magpieKey }   on every connection
-//                    fleet-have / fleet-ack / fleet-result / agent-config-result           answers (by rid)
+//   agent -> server  fleet-version { mode, commit, auto, why, last, control, magpieKey, harnesses, proxy }   on connecting
+//                    fleet-have / fleet-ack / fleet-result / agent-config-result / harness-result  answers (by rid)
 //   server -> agent  fleet-check { files } -> fleet-files { items } ... -> fleet-apply { commit, mode, files, headless }
-//                    agent-config { gateway, key?, models, targets, template }
+//                    agent-config { gateway, key?, models, targets, proxy, template }
+//                    harness-run { id, action: install|update, proxy }   Claude Code / Codex / OpenCode / Antigravity
+// Harnesses: Claude Code and OpenCode use Magpie on the LAN (no proxy); Codex keeps its ChatGPT sign-in and goes through
+// the computer's proxy (per computer, else settings.proxy), as do the downloads of an install or update.
 // The update goes out by itself (settings.auto) when the bundle changes and when a machine behind it connects -- once
 // a commit and machine: a failure waits for 「更新」 in the panel. A machine whose agent says it is a development copy
 // (agent/fleet.js: several worktrees, a branch, uncommitted changes, "autoUpdate": false) is never updated.
 //   GET  /api/fleet                         the picture
 //   POST /api/fleet/settings   (code)       { auto, gateway, models }
 //   POST /api/fleet/update     (code)       { machine, force }      force: also over files edited on that machine
-//   POST /api/fleet/configure  (code)       { machine, targets, reissue }
+//   POST /api/fleet/configure  (code)       { machine, targets, reissue, proxy }
+//   POST /api/fleet/harness    (code)       { machine | '*', id | '*', action }   '*': every installed one, one after
+//                                           another on a computer (all computers at once); answers at once, the
+//                                           outcome comes with the 'fleet' broadcast
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -21,17 +27,25 @@ const crypto = require('crypto');
 const { createMagpieKeys } = require('./magpie-keys');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
-const TARGETS = ['claude', 'codex', 'opencode'];
+const TARGETS = ['claude', 'opencode', 'codex'];
+const KEYED = ['claude', 'opencode'];                 // (use the computer's Magpie key; Codex only gets the proxy)
+const HARNESSES = ['claude', 'codex', 'opencode', 'agy'];
+const PROXY = /^https?:\/\/[^\s'"\\]+$/;
 const BATCH = 1.5 * 1024 * 1024;
 const str = (v, n = 300) => (typeof v === 'string' ? v.slice(0, n) : '');
 
 function createFleet({ dataDir, machines, control = false, audit = () => {}, onChange = () => {}, log = () => {},
   magpieConfig = {}, magpieKeys = createMagpieKeys({ config: magpieConfig }), models = () => [],
   templateFile = path.join(__dirname, '..', '..', 'public', 'downloads', 'opencode-magpie.json'),
-  replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3 }) {
+  replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, harnessTimeoutMs = 17 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3 }) {
   const dir = path.join(dataDir, 'fleet'), bundleDir = path.join(dir, 'bundle'), stateFile = path.join(dir, 'state.json');
-  let state = { settings: { auto: true, gateway: '', models: {} }, keys: {}, runs: {} };
+  // net: { machine: { proxy } }; harness: { machine: { id: { action, status, msg, before, after, notes, log, at } } }
+  let state = { settings: { auto: true, gateway: '', models: {}, proxy: '' }, keys: {}, runs: {}, net: {}, harness: {} };
   try { const s = JSON.parse(fs.readFileSync(stateFile, 'utf8')); state = { ...state, ...s, settings: { ...state.settings, ...(s.settings || {}) } }; } catch {}
+  for (const k of ['net', 'harness']) if (!state[k] || typeof state[k] !== 'object') state[k] = {};
+  if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
+  delete state.settings.models.codex;                  // (Codex is not pointed at Magpie any more)
+  const proxyOf = (name) => (state.net[name] && state.net[name].proxy) || state.settings.proxy || '';
   if (!state.settings.gateway) {
     try { const t = JSON.parse(fs.readFileSync(templateFile, 'utf8')); state.settings.gateway = String(t.providers.magpie.settings.baseURL || '').replace(/\/v1\/?$/, ''); } catch {}
   }
@@ -154,7 +168,10 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
         dirty: +d.dirty || 0, auto: d.auto === true, why: str(d.why, 200), platform: str(d.platform, 20), node: str(d.node, 20),
         control: d.control === true, pending: d.pending === true,
         last: d.last && typeof d.last === 'object' ? { ok: d.last.ok === true, commit: str(d.last.commit, 40), tried: str(d.last.tried, 40), msg: str(d.last.msg, 300), at: str(d.last.at, 40), notes: Array.isArray(d.last.notes) ? d.last.notes.slice(0, 8).map((n) => str(n, 200)) : [] } : null,
-        magpieKey: d.magpieKey && typeof d.magpieKey === 'object' ? { id: str(d.magpieKey.id, 80), name: str(d.magpieKey.name, 120) } : null };
+        magpieKey: d.magpieKey && typeof d.magpieKey === 'object' ? { id: str(d.magpieKey.id, 80), name: str(d.magpieKey.name, 120) } : null,
+        proxy: PROXY.test(d.proxy || '') ? d.proxy : '',
+        harnesses: Array.isArray(d.harnesses) ? d.harnesses.filter((x) => x && HARNESSES.includes(x.id)).map((x) => ({
+          id: x.id, label: str(x.label, 40), installed: x.installed === true, version: str(x.version, 80), path: str(x.path, 300) })) : null };
       m.fleet = ws.fleet;
       // an update that restarted the agent: done when it is back at that commit (or rolled back: the guard says so)
       const run = state.runs[m.name];
@@ -167,7 +184,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       setTimeout(() => maybeAuto(m.name), 3000).unref?.();
       return true;
     }
-    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result'].includes(d.t) && typeof d.rid === 'string') {
+    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result', 'harness-result'].includes(d.t) && typeof d.rid === 'string') {
       const p = pending.get(d.rid);
       if (p && p.ws === ws && (p.want === d.t || d.t === 'fleet-result')) p.done(d);
       return true;
@@ -177,18 +194,28 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
   function dropSocket(ws) { for (const [, p] of pending) if (p.ws === ws) p.done({ ok: false, msg: '连接断了' }); }
 
   // ---- 一键配置 ----
-  async function configure(name, { targets, reissue = false } = {}, ip = '') {
+  // the computer's proxy, kept here (it goes along with every 一键配置 and harness run)
+  function setProxy(name, proxy) {
+    if (proxy && !PROXY.test(proxy)) return false;
+    if (proxy) state.net[name] = { proxy }; else delete state.net[name];
+    try { save(); } catch {}
+    return true;
+  }
+  async function configure(name, { targets, reissue = false, proxy } = {}, ip = '') {
     const ws = socketOf(name), v = ws && ws.fleet;
     if (!ws) return { ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
     if (!v.control) return { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' };
     const list = (Array.isArray(targets) ? targets : []).filter((t) => TARGETS.includes(t));
     if (!list.length) return { ok: false, msg: '选一个要配置的 agent' };
-    if (!state.settings.gateway) return { ok: false, msg: '先填网关地址' };
+    if (typeof proxy === 'string' && !setProxy(name, proxy.trim())) return { ok: false, msg: '代理地址要是 http(s)://… 的形式' };
+    const keyed = list.some((t) => KEYED.includes(t));
+    if (keyed && !state.settings.gateway) return { ok: false, msg: '先填网关地址' };
+    if (list.includes('codex') && !proxyOf(name)) return { ok: false, msg: 'Codex 要走代理：先填这台电脑的代理（或默认代理）' };
     let template = null; try { template = JSON.parse(fs.readFileSync(templateFile, 'utf8')); } catch {}
-    const msg = { t: 'agent-config', gateway: state.settings.gateway, models: state.settings.models || {}, targets: list, template };
+    const msg = { t: 'agent-config', gateway: state.settings.gateway, models: state.settings.models || {}, targets: list, template, proxy: proxyOf(name) };
     let key = null;
     const have = v.magpieKey && v.magpieKey.id;
-    if (reissue || !have || !(await magpieKeys.usable(have).catch(() => true))) {
+    if (keyed && (reissue || !have || !(await magpieKeys.usable(have).catch(() => true)))) {
       try { key = await magpieKeys.issue('windose-' + name); }
       catch (e) { if (reissue || !have) return { ok: false, msg: e.message }; }
     }
@@ -200,24 +227,69 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       results: Array.isArray(r.results) ? r.results.map((x) => ({ target: str(x.target, 20), ok: x.ok === true, file: str(x.file, 300), backup: str(x.backup, 300), msg: str(x.msg, 300) })) : [] };
   }
 
+  // ---- harnesses: install / update ----
+  const harnessBusy = new Set();                        // machine names with a run going (one harness at a time there)
+  function setHarness(name, id, r) {
+    state.harness[name] = { ...(state.harness[name] || {}), [id]: { ...r, at: new Date().toISOString() } };
+    try { save(); } catch {}
+    onChange();
+  }
+  async function runOne(name, id, action, by) {
+    const ws = socketOf(name);
+    if (!ws) { setHarness(name, id, { action, status: 'failed', msg: '这台电脑不在线，或 agent 版本太旧' }); return false; }
+    setHarness(name, id, { action, status: 'running', msg: action === 'install' ? '安装中' : '更新中' });
+    audit('fleet-harness', by, name, id, action);
+    const r = await ask(ws, { t: 'harness-run', id, action, proxy: proxyOf(name) }, 'harness-result', harnessTimeoutMs);
+    setHarness(name, id, { action, status: r.ok ? 'ok' : 'failed', msg: str(r.msg, 300) || (r.ok ? '完成' : '失败'),
+      before: str(r.before, 80), after: str(r.after, 80), notes: Array.isArray(r.notes) ? r.notes.slice(0, 6).map((n) => str(n, 300)) : [],
+      log: str(r.log, 3000) });
+    return r.ok === true;
+  }
+  // one machine: one harness, or with id '*' every installed one (update only), one after another
+  function harnessRun(name, id, action, by = '') {
+    const ws = socketOf(name), v = ws && ws.fleet;
+    if (!ws) return { ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
+    if (!v.control) return { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' };
+    if (action !== 'install' && action !== 'update') return { ok: false, msg: '只能安装或更新' };
+    const ids = id === '*' ? (v.harnesses || []).filter((x) => x.installed).map((x) => x.id) : [id];
+    if (id === '*' && action !== 'update') return { ok: false, msg: '只能一起更新，不能一起安装' };
+    if (!ids.length || !ids.every((x) => HARNESSES.includes(x))) return { ok: false, msg: id === '*' ? '这台电脑没有装任何 harness' : '不认识的 harness' };
+    if (harnessBusy.has(name)) return { ok: false, msg: '这台电脑正在安装或更新' };
+    harnessBusy.add(name);
+    (async () => { try { for (const x of ids) await runOne(name, x, action, by); } finally { harnessBusy.delete(name); onChange(); } })()
+      .catch((e) => log('harness ' + name + ' 出错：' + e.message));
+    return { ok: true, msg: `已开始${action === 'install' ? '安装' : '更新'}：${ids.join('、')}` };
+  }
+  function harnessAll(by = '') {
+    const started = [], skipped = [];
+    for (const name of machines.keys()) {
+      const ws = socketOf(name), v = ws && ws.fleet;
+      if (!ws || !v.control || !(v.harnesses || []).some((x) => x.installed)) continue;
+      const r = harnessRun(name, '*', 'update', by);
+      if (r.ok) started.push(name); else skipped.push(name + '（' + r.msg + '）');
+    }
+    return { ok: started.length > 0, msg: started.length ? `已开始更新：${started.join('、')}${skipped.length ? '；没开始：' + skipped.join('、') : ''}` : '没有可以更新的电脑' + (skipped.length ? '：' + skipped.join('、') : '') };
+  }
+
   function view() {
     const b = bundle();
     const names = new Set([...machines.keys(), ...Object.keys(state.runs)]);
     const list = [...names].filter((n) => n !== 'nas').sort().map((name) => {
       const m = machines.get(name), ws = socketOf(name), v = (ws && ws.fleet) || (m && m.fleet) || null;
       return { name, online: !!(m && m.online), version: v, supported: !!ws, run: state.runs[name] || null,
-        key: state.keys[name] || null, behind: !!(b && v && v.commit && v.commit !== b.commit) };
+        key: state.keys[name] || null, behind: !!(b && v && v.commit && v.commit !== b.commit),
+        proxy: (state.net[name] && state.net[name].proxy) || '', harness: state.harness[name] || {}, harnessBusy: harnessBusy.has(name) };
     });
     let tpl = false; try { fs.accessSync(templateFile); tpl = true; } catch {}
     return { control, bundle: b ? { commit: b.commit, at: b.at || '', files: Object.keys(b.files).length } : null,
-      settings: state.settings, magpie: magpieKeys.available(), template: tpl, models: models(), machines: list, targets: TARGETS };
+      settings: state.settings, magpie: magpieKeys.available(), template: tpl, models: models(), machines: list, targets: TARGETS, harnesses: HARNESSES };
   }
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;
     if (!p.startsWith('/api/fleet')) return false;
     if (req.method === 'GET' && p === '/api/fleet') { json(res, 200, view()); return true; }
-    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure'].includes(p)) return false;
+    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure', '/api/fleet/harness'].includes(p)) return false;
     if (!control) { json(res, 200, { ok: false, msg: '服务器处于只读模式' }); return true; }
     if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
     let d = {}; try { d = JSON.parse(await readBody(req, 20000)); } catch { json(res, 200, { ok: false, msg: '请求格式不正确' }); return true; }
@@ -230,22 +302,32 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       }
       if (d.models && typeof d.models === 'object') {
         s.models = {};
-        for (const k of ['opus', 'sonnet', 'haiku', 'fable', 'codex']) if (typeof d.models[k] === 'string' && /^[\w./:@#-]{0,160}$/.test(d.models[k]) && d.models[k]) s.models[k] = d.models[k];
+        for (const k of ['opus', 'sonnet', 'haiku', 'fable']) if (typeof d.models[k] === 'string' && /^[\w./:@#-]{0,160}$/.test(d.models[k]) && d.models[k]) s.models[k] = d.models[k];
+      }
+      if (typeof d.proxy === 'string') {
+        if (d.proxy.trim() && !PROXY.test(d.proxy.trim())) { json(res, 200, { ok: false, msg: '默认代理要是 http(s)://… 的形式' }); return true; }
+        s.proxy = d.proxy.trim();
       }
       state.settings = s; save(); audit('fleet-settings', ip, s.auto ? 'auto' : 'manual'); onChange();
       if (s.auto) for (const name of machines.keys()) maybeAuto(name);
       json(res, 200, { ok: true, settings: s }); return true;
     }
     const name = String(d.machine || '');
+    if (p === '/api/fleet/harness') {
+      const id = String(d.id || ''), action = String(d.action || '');
+      if (name === '*') { json(res, 200, action === 'update' && id === '*' ? harnessAll(ip) : { ok: false, msg: '所有电脑只能一起更新全部 harness' }); return true; }
+      if (!NAME.test(name)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
+      json(res, 200, harnessRun(name, id, action, ip)); return true;
+    }
     if (!NAME.test(name)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
     if (p === '/api/fleet/update') {
       audit('fleet-update-request', ip, name, d.force ? 'force' : '');
       json(res, 200, await update(name, { force: d.force === true, by: 'manual' })); return true;
     }
-    json(res, 200, await configure(name, { targets: d.targets, reissue: d.reissue === true }, ip)); return true;
+    json(res, 200, await configure(name, { targets: d.targets, reissue: d.reissue === true, proxy: typeof d.proxy === 'string' ? d.proxy : undefined }, ip)); return true;
   }
 
-  return { fromAgent, dropSocket, handle, view, update, configure, bundle, close: () => clearInterval(timer) };
+  return { fromAgent, dropSocket, handle, view, update, configure, harnessRun, harnessAll, bundle, close: () => clearInterval(timer) };
 }
 
 module.exports = { createFleet };

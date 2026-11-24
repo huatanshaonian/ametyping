@@ -8,7 +8,8 @@ const fs = require('fs'), os = require('os'), path = require('path'), http = req
 const { execFileSync } = require('child_process');
 const { createFleet: createAgentFleet, blobId } = require('../agent/fleet');
 const { guard } = require('../agent/update-guard');
-const { createAgentConfig, codexToml } = require('../agent/agent-config');
+const { createAgentConfig, withBypass } = require('../agent/agent-config');
+const { createHarness, readNet, writeNet, proxyFor } = require('../agent/harness');
 const { createFleet: createServerFleet } = require('../server/fleet');
 const { createMagpieKeys } = require('../server/fleet/magpie-keys');
 
@@ -128,18 +129,92 @@ test('Claude Code settings: only the gateway keys change; ANTHROPIC_API_KEY goes
   assert.equal(bad.ok, false); assert.equal(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'), '{ broken');
 });
 
-test('Codex config.toml: provider table replaced, top-level keys set, other tables kept, idempotent', () => {
-  const old = '# mine\nmodel = "o3"\napproval_policy = "never"\n\n[model_providers.magpie]\nname = "old"\nbase_url = "http://x"\n\n[mcp_servers.ame-mesh]\ncommand = "node"\nargs = ["a", "b"]\n';
-  const once = codexToml(old, { gateway: 'https://gw.example', key: 'sk-abc', model: 'magpie/gpt' });
-  assert.match(once, /^model_provider = "magpie"$/m); assert.match(once, /^model = "magpie\/gpt"$/m);
-  assert.match(once, /approval_policy = "never"/); assert.match(once, /\[mcp_servers\.ame-mesh\]\ncommand = "node"\nargs = \["a", "b"\]/);
-  assert.equal((once.match(/\[model_providers\.magpie\]/g) || []).length, 1); assert.doesNotMatch(once, /name = "old"/);
-  assert.match(once, /base_url = "https:\/\/gw\.example\/v1"/); assert.match(once, /experimental_bearer_token = "sk-abc"/);
-  // the top-level keys stay before the first table (TOML would put them into it otherwise)
-  assert.ok(once.indexOf('model_provider') < once.indexOf('[mcp_servers'));
-  assert.equal(codexToml(once, { gateway: 'https://gw.example', key: 'sk-abc', model: 'magpie/gpt' }), once);
-  const fresh = codexToml('', { gateway: 'https://gw.example', key: 'sk-abc' });
-  assert.match(fresh, /^model_provider = "magpie"\n/); assert.doesNotMatch(fresh, /^model =/m);
+test('Claude Code with a proxy of its own: the gateway goes into NO_PROXY; none is added where there is no proxy', () => {
+  assert.equal(withBypass('localhost,127.0.0.1', 'gw.example'), 'localhost,127.0.0.1,gw.example');
+  assert.equal(withBypass('localhost,GW.example', 'gw.example'), 'localhost,GW.example');
+  assert.equal(withBypass('*', 'gw.example'), '*');
+  assert.equal(withBypass('', 'gw.example'), 'localhost,127.0.0.1,gw.example');
+  const home = tmp('home'), c = createAgentConfig({ home, env: {} });
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({ env: { HTTPS_PROXY: 'http://p:1', NO_PROXY: 'localhost', no_proxy: 'localhost' } }));
+  const key = { id: 'k', name: 'n', secret: 'sk-new-secret-1' };
+  const r = c.apply({ gateway: 'https://gw.example', key, targets: ['claude'] });
+  const e = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'))).env;
+  assert.equal(e.NO_PROXY, 'localhost,gw.example'); assert.equal(e.no_proxy, 'localhost,gw.example'); assert.match(r.results[0].msg, /NO_PROXY/);
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({ env: {} }));
+  c.apply({ gateway: 'https://gw.example', targets: ['claude'] });
+  const e2 = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'))).env;
+  assert.ok(!('NO_PROXY' in e2) && !Object.keys(e2).some((k) => /proxy/i.test(k)), JSON.stringify(e2));
+});
+
+test('Codex: its config.toml is left alone; the proxy is recorded for it; no Magpie key needed', () => {
+  const home = tmp('home'), c = createAgentConfig({ home, env: {} });
+  const toml = '# mine\nmodel = "gpt-6.2-sol"\n[mcp_servers.ame-mesh]\ncommand = "node"\n';
+  write(path.join(home, '.codex', 'config.toml'), toml);
+  const none = c.apply({ targets: ['codex'] });
+  assert.equal(none.ok, false); assert.match(none.results[0].msg, /代理/);
+  assert.equal(c.apply({ targets: ['codex'], proxy: 'socks5://x' }).ok, false);
+  const r = c.apply({ targets: ['codex'], proxy: 'http://127.0.0.1:10808' });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.key, null);
+  assert.equal(fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8'), toml);
+  assert.deepEqual(readNet(home), { proxy: 'http://127.0.0.1:10808', tools: ['codex'] });
+  assert.equal(proxyFor('codex', home), 'http://127.0.0.1:10808'); assert.equal(proxyFor('claude', home), '');
+  // a proxy sent along with another target is kept for installs, without making Codex use it
+  const home2 = tmp('home'), c2 = createAgentConfig({ home: home2, env: {} });
+  c2.apply({ gateway: 'https://gw.example', key: { id: 'k', name: 'n', secret: 'sk-new-secret-1' }, targets: ['claude'], proxy: 'http://10.0.0.1:3128' });
+  assert.deepEqual(readNet(home2), { proxy: 'http://10.0.0.1:3128', tools: [] });
+});
+
+// ---------- agent: harnesses ----------
+function fakeHarnessHost({ installed = {} } = {}) {
+  const home = tmp('home'), bin = path.join(home, 'bin'), root = tmp('root'), calls = [];
+  fs.mkdirSync(bin, { recursive: true });
+  for (const [n, v] of Object.entries(installed)) write(path.join(bin, n), v);
+  for (const f of ['install-codex-hooks.js', 'install-mesh-mcp.js']) write(path.join(root, f), '');
+  const exec = async (cmd, args, o = {}) => {
+    calls.push({ cmd, args, proxy: o.env && o.env.HTTPS_PROXY });
+    if (args[0] === '--version') { try { return { ok: true, out: fs.readFileSync(cmd, 'utf8') + '\n', err: '' }; } catch { return { ok: false, out: '', err: 'x' }; } }
+    if (args[0] === 'install' && args[1] === '-g') { write(path.join(bin, 'codex'), 'codex-cli 0.171.0'); return { ok: true, out: 'added 2 packages', err: '' }; }
+    if (args[0] === 'update' || args[0] === 'upgrade') { write(cmd, String(fs.readFileSync(cmd, 'utf8')).replace(/\d+$/, (n) => +n + 1)); return { ok: true, out: 'updated', err: '' }; }
+    return { ok: true, out: '', err: '' };
+  };
+  const hz = createHarness({ home, root, platform: 'linux', env: { PATH: bin, HOME: home }, exec });
+  return { home, bin, root, calls, hz };
+}
+
+test('harness inventory: found by the program, with its version', async () => {
+  const { hz } = fakeHarnessHost({ installed: { claude: '2.1.330 (Claude Code)', agy: '1.5.14' } });
+  const inv = await hz.inventory();
+  assert.deepEqual(inv.map((x) => x.id), ['claude', 'codex', 'opencode', 'agy']);
+  const by = Object.fromEntries(inv.map((x) => [x.id, x]));
+  assert.equal(by.claude.installed, true); assert.equal(by.claude.version, '2.1.330 (Claude Code)');
+  assert.equal(by.codex.installed, false); assert.equal(by.agy.version, '1.5.14');
+});
+
+test('harness install: the fixed command, through the recorded proxy, then the AmeTyping hooks and MCP', async () => {
+  const { home, root, calls, hz } = fakeHarnessHost();
+  writeNet({ proxy: 'http://127.0.0.1:10808', tools: ['codex'] }, home);
+  assert.equal((await hz.run('rm', 'install')).ok, false);
+  assert.equal((await hz.run('codex', 'uninstall')).ok, false);
+  assert.match((await hz.run('codex', 'update')).msg, /先安装/);
+  const r = await hz.run('codex', 'install');
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.after, 'codex-cli 0.171.0');
+  const npm = calls.find((c) => c.args[0] === 'install');
+  assert.deepEqual(npm.args.slice(0, 3), ['install', '-g', '@openai/codex@latest']); assert.equal(npm.proxy, 'http://127.0.0.1:10808');
+  const after = calls.filter((c) => c.cmd === process.execPath).map((c) => path.basename(c.args[0]));
+  assert.deepEqual(after, ['install-codex-hooks.js', 'install-mesh-mcp.js']);
+  assert.ok(calls.filter((c) => c.cmd === process.execPath).every((c) => c.args[0].startsWith(root)));
+  assert.match(r.notes.join(' '), /codex login/);
+  assert.match((await hz.run('codex', 'install')).msg, /已经装了/);
+  // the proxy can be given for one run; a malformed one is refused
+  assert.match((await hz.run('codex', 'update', { proxy: 'http://a b' })).msg, /代理/);
+});
+
+test('harness update: its own updater (claude update, opencode upgrade)', async () => {
+  const { bin, calls, hz } = fakeHarnessHost({ installed: { claude: '2.1.330', opencode: '1.19.6' } });
+  const r = await hz.run('claude', 'update');
+  assert.equal(r.ok, true); assert.equal(r.before, '2.1.330'); assert.equal(r.after, '2.1.331');
+  assert.deepEqual(calls.find((c) => c.args[0] === 'update'), { cmd: path.join(bin, 'claude'), args: ['update'], proxy: undefined });
+  assert.equal((await hz.run('opencode', 'update')).after, '1.19.7');
 });
 
 test('OpenCode: the key file, the gateway in providers.magpie; the template for a computer without opencode.json', () => {
@@ -234,13 +309,16 @@ function setup({ agentCfg = {}, edited = false, platform = 'linux', env = { INVO
     else if (d.t === 'fleet-files') { try { reply('fleet-ack', { n: agent.stage(d.run, d.items) }); } catch (e) { reply('fleet-result', { ok: false, msg: e.message }); } }
     else if (d.t === 'fleet-apply') agent.apply(d).then((r) => reply('fleet-result', r));
     else if (d.t === 'agent-config') reply('agent-config-result', conf.apply(d));
+    else if (d.t === 'harness-run') setTimeout(() => reply('harness-result', { ok: true, id: d.id, before: '1.0', after: '1.1', msg: '已更新：1.1', notes: [] }), 20);
   } };
   const m = { name: 'dell97', online: true, sockets: new Set([ws]) };
   machines.set('dell97', m);
   const changes = [];
   fleet = createServerFleet({ dataDir, machines, control: true, onChange: () => changes.push(1), tickMs: 3600e3, magpieKeys,
     templateFile: path.join(dataDir, 'none.json') });
-  const hello = async () => fleet.fromAgent(m, { t: 'fleet-version', ...(await agent.version()), control: true, magpieKey: conf.keyInfo() }, ws);
+  const harnesses = [{ id: 'claude', installed: true, version: '1.0' }, { id: 'codex', installed: true, version: '1.0' },
+    { id: 'opencode', installed: false }, { id: 'agy', installed: false }];
+  const hello = async () => fleet.fromAgent(m, { t: 'fleet-version', ...(await agent.version()), control: true, magpieKey: conf.keyInfo(), harnesses }, ws);
   return { fleet, agent, root, home, ws, hello, guards: () => guards, dataDir };
 }
 const until = async (f, ms = 5000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await new Promise((r) => setTimeout(r, 20)); } return false; };
@@ -288,11 +366,15 @@ test('一键配置: a key made for the computer goes to its agent once; the serv
   const s = setup({ magpieKeys: { available: () => ({ ok: true }), usable: async (id) => id === 'k-1', issue: async (name) => { issued.push(name); return { id: 'k-1', name, secret: 'sk-machine-secret', rotated: false }; } } });
   s.agent.apply = async () => ({ ok: false, msg: 'not in this test' });
   await s.hello();
-  const r = await s.fleet.configure('dell97', { targets: ['claude', 'codex'] });
+  assert.match((await s.fleet.configure('dell97', { targets: ['codex'] })).msg, /代理/);
+  assert.deepEqual(issued, []);                                        // (Codex alone needs no key)
+  const r = await s.fleet.configure('dell97', { targets: ['claude', 'codex'], proxy: 'http://127.0.0.1:10808' });
   assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(issued, ['windose-dell97']);
   assert.equal(r.key.issued, true); assert.equal(r.key.id, 'k-1');
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.home, '.claude', 'settings.json'))).env.ANTHROPIC_AUTH_TOKEN, 'sk-machine-secret');
-  assert.match(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8'), /experimental_bearer_token = "sk-machine-secret"/);
+  assert.equal(fs.existsSync(path.join(s.home, '.codex', 'config.toml')), false);
+  assert.equal(proxyFor('codex', s.home), 'http://127.0.0.1:10808');
+  assert.equal(s.fleet.view().machines[0].proxy, 'http://127.0.0.1:10808');
   const state = fs.readFileSync(path.join(s.dataDir, 'fleet', 'state.json'), 'utf8');
   assert.doesNotMatch(state, /sk-machine-secret/); assert.match(state, /k-1/);
   assert.doesNotMatch(JSON.stringify(s.fleet.view()), /sk-machine-secret/);
@@ -300,4 +382,27 @@ test('一键配置: a key made for the computer goes to its agent once; the serv
   await s.hello();
   const again = await s.fleet.configure('dell97', { targets: ['claude'] });
   assert.equal(again.ok, true); assert.equal(again.key.issued, false); assert.deepEqual(issued, ['windose-dell97']);
+});
+
+test('harnesses: one machine updates its installed ones one after another, with its proxy; all machines at once', async () => {
+  const s = setup();
+  s.agent.apply = async () => ({ ok: false, msg: 'not in this test' });
+  await s.hello();
+  s.fleet.configure('dell97', { targets: ['codex'], proxy: 'http://127.0.0.1:10808' });
+  assert.ok(await until(() => s.fleet.view().machines[0].proxy));
+  assert.match(s.fleet.harnessRun('dell97', '*', 'install').msg, /只能一起更新/);
+  assert.match(s.fleet.harnessRun('dell97', 'rm', 'update').msg, /不认识/);
+  const r = s.fleet.harnessRun('dell97', '*', 'update');
+  assert.equal(r.ok, true, r.msg); assert.match(r.msg, /claude、codex/);
+  assert.match(s.fleet.harnessRun('dell97', 'claude', 'update').msg, /正在/);       // (one run at a time on a machine)
+  assert.ok(await until(() => !s.fleet.view().machines[0].harnessBusy));
+  const runs = s.ws.sent.filter((d) => d.t === 'harness-run');
+  assert.deepEqual(runs.map((d) => d.id), ['claude', 'codex']);
+  assert.ok(runs.every((d) => d.action === 'update' && d.proxy === 'http://127.0.0.1:10808'));
+  const h = s.fleet.view().machines[0].harness;
+  assert.equal(h.claude.status, 'ok'); assert.equal(h.codex.after, '1.1');
+  const all = s.fleet.harnessAll();
+  assert.equal(all.ok, true, all.msg); assert.match(all.msg, /dell97/);
+  assert.ok(await until(() => !s.fleet.view().machines[0].harnessBusy));
+  assert.equal(s.ws.sent.filter((d) => d.t === 'harness-run').length, 4);
 });
