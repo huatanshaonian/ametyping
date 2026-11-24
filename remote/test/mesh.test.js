@@ -267,12 +267,28 @@ test('caller identity injection, callerCwd resolution without sessionId, and aut
       },
     });
 
-    // a) spawnWorker with empty fromSessionId auto-registers master via callerCwd/store.info,
+    // a0) spawnWorker with empty fromSessionId must NEVER guess or hijack an unrelated live session as master
+    const noGuessRes = await mesh.spawnWorker({
+      projectName: '防盲猜串台测试',
+      fromMachine: 'pc-a',
+      fromSessionId: '',
+      callerCwd: 'G:\\proj_master',
+      machine: 'gpu-b',
+      cwd: '/data/work_no_guess',
+      tool: 'claude',
+      goal: '防误绑测试',
+      prompt: 'hi',
+    });
+    assert.equal(noGuessRes.ok, true);
+    assert.equal(noGuessRes.project.nodes.some((n) => n.sessionId === 'claude:master-a'), false, 'Must NOT hijack unrelated live session');
+    dispatched.length = 0;
+
+    // a) spawnWorker with explicit fromSessionId auto-registers master,
     //    injects projectId & nodeId into prompt, and includes meshEnv in launch payload
     const spawnRes = await mesh.spawnWorker({
       projectName: '流式传输与身份注入测试',
       fromMachine: 'pc-a',
-      fromSessionId: '',
+      fromSessionId: 'claude:master-a',
       callerCwd: 'G:\\proj_master',
       machine: 'gpu-b',
       cwd: '/data/work_b',

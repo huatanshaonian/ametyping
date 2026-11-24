@@ -68,13 +68,15 @@ async function greet(bridge, pid, prompt, onUpdate = null) {
     if (/Do you trust the contents of this directory/i.test(text)) {
       if (/[›>❯]\s*2\.\s*No/i.test(text)) await bridge.key(pid, 'up');
       await bridge.key(pid, 'enter');
-    } else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore)/i.test(text)) {
+    } else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore|Dismiss|Later|Continue without)/i.test(text)) {
+      // [暂时没用] 当前启动 Codex 已默认传入 `-c check_for_update_on_startup=false` 从根源禁用启动更新弹窗，
+      // 此处的 cli-update 信号回传与自动按 Skip 仅保留作兜底，暂不再主动触发。
       if (!updateNotified && typeof onUpdate === 'function') {
         updateNotified = true;
         const verLine = String(text).split(/\r?\n/).find((l) => /Update available|New version available/i.test(l)) || 'Update available';
         try { onUpdate({ tool: 'codex', detail: verLine.trim().slice(0, 160), at: Date.now() }); } catch {}
       }
-      const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore)/i.exec(text);
+      const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore|Dismiss|Later|Continue without)/i.exec(text);
       const curM = /[›>❯]\s*(\d)\./.exec(text);
       const skipIdx = skipM ? Number(skipM[1]) : 2;
       const curIdx = curM ? Number(curM[1]) : 1;
@@ -84,7 +86,7 @@ async function greet(bridge, pid, prompt, onUpdate = null) {
         await sleep(120);
       }
       await sleep(180); await bridge.key(pid, 'enter');
-    } else if (/enter confirm|Press enter to continue/i.test(text)) return;
+    } else if (/enter confirm|Press enter to continue/i.test(text) && !/Update available|New version available/i.test(text)) return;
     else if (/›\s+Ask Codex to do anything/.test(text)) { if (prompt) await send(bridge, pid, prompt); return; }
   }
 }

@@ -333,7 +333,8 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     const modelArgs = (!resume && model) ? ['--model', model] : [];
     // (Codex/agy/kiro first message is typed into it once it is up, not passed along: it may be started through
     // cmd.exe, where a sentence with quotes or an & in it does not survive as an argument)
-    const args = thread ? [...cx.args, 'resume', thread] : codex ? [...cx.args, ...modelArgs]
+    const codexNoUpdate = ['-c', 'check_for_update_on_startup=false'];
+    const args = thread ? [...cx.args, ...codexNoUpdate, 'resume', thread] : codex ? [...cx.args, ...codexNoUpdate, ...modelArgs]
       : agyThread ? [...cx.args, '--conversation', agyThread] : agy ? [...cx.args, ...modelArgs]
       : kiroThread ? [...cx.args, 'chat', '--resume-id', kiroThread] : kiro ? [...cx.args, 'chat']
       : [...(resume ? ['--resume', resume] : [...modelArgs, ...(first ? [first] : [])])];
