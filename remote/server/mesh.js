@@ -10,6 +10,8 @@ const { createWatchdog, loadMeshConfig } = require('./mesh-watchdog');
 const { createBoard, formatWakePrompt, checkBoundaries } = require('./mesh-board');
 const { createRoleStore } = require('./mesh-roles');
 const { createModelRouter } = require('./mesh-model-router');
+const { createComputeQueue } = require('./mesh-compute-queue');
+const { evaluateFableAdvice } = require('./mesh-fable-advisor');
 
 const MAX_PROJECTS = 50;
 const MAX_NODES = 60;
@@ -93,6 +95,7 @@ function createMesh({
   marks,
   fsCatalog,
   getMagpie = () => null,
+  getTodos = () => [],
   dispatchControl = null, // async (machineName, payload) => { ok, msg }
   onChange = () => {},
   audit = () => {},
@@ -101,7 +104,40 @@ function createMesh({
   const file = path.join(dataDir, 'mesh-projects.json');
   const board = createBoard({ dataDir });
   const roleStore = createRoleStore({ dataDir });
-  const modelRouter = createModelRouter({ dataDir, getMagpie });
+  const localQuotas = new Map(); // provider -> { ...quota, machine, reportedAt }
+  function onLocalQuota(machineName, quota) {
+    if (!quota || typeof quota !== 'object' || !quota.provider) return;
+    const prov = cleanStr(quota.provider, 40).toLowerCase();
+    if (!prov) return;
+    const prev = localQuotas.get(prov);
+    const nextTs = Date.parse(quota.readAt || '') || Date.now();
+    const prevTs = prev ? (Date.parse(prev.readAt || '') || prev.reportedAt || 0) : 0;
+    if (!prev || nextTs >= prevTs) {
+      localQuotas.set(prov, {
+        ...quota,
+        provider: prov,
+        machine: cleanStr(machineName, 60),
+        reportedAt: Date.now(),
+      });
+    }
+  }
+  function listLocalQuotas() {
+    return [...localQuotas.values()];
+  }
+  let watchdog = null;
+  const modelRouter = createModelRouter({
+    dataDir,
+    getMagpie,
+    getLocalQuotas: () => listLocalQuotas(),
+    getExpiringHarnesses: () => {
+      const cfg = watchdog ? watchdog.getConfig() : {};
+      return Array.isArray(cfg.expiringFirstHarnesses) ? cfg.expiringFirstHarnesses : ['codex'];
+    },
+  });
+  const computeQueue = createComputeQueue({
+    dataDir,
+    getMachineProbe: (mName) => (machines && machines.get(mName) && machines.get(mName).computeProbe) || null,
+  });
   let data = { projects: [] };
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -573,6 +609,50 @@ function createMesh({
     } catch (e) {
       return { ok: false, msg: '还原/删除 Skill 失败：' + e.message };
     }
+  }
+
+  // ---------- CLI update signals (machine|tool -> { machine, tool, detail, at }) ----------
+  const cliUpdatesFile = path.join(dataDir, 'mesh-cli-updates.json');
+  function loadCliUpdates() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(cliUpdatesFile, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  let cliUpdatesMap = loadCliUpdates();
+  function persistCliUpdates() {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(cliUpdatesFile + '.tmp', JSON.stringify(cliUpdatesMap, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+      fs.renameSync(cliUpdatesFile + '.tmp', cliUpdatesFile);
+    } catch {}
+  }
+  function onCliUpdate(machineName, d = {}) {
+    const mach = cleanStr(machineName, 60);
+    const tool = cleanStr(d.tool, 32).toLowerCase();
+    if (!mach || !tool) return;
+    const key = `${mach}|${tool}`;
+    cliUpdatesMap[key] = {
+      machine: mach,
+      tool,
+      detail: cleanStr(d.detail, 160) || 'Update available',
+      at: Number(d.at) || Date.now(),
+    };
+    persistCliUpdates();
+  }
+  function listCliUpdates() {
+    return Object.values(cliUpdatesMap).sort((a, b) => (b.at || 0) - (a.at || 0));
+  }
+  function clearCliUpdate({ machine = '', tool = '' } = {}) {
+    const m = cleanStr(machine, 60);
+    const t = cleanStr(tool, 32).toLowerCase();
+    if (m && t) delete cliUpdatesMap[`${m}|${t}`];
+    else if (m) { for (const k of Object.keys(cliUpdatesMap)) if (k.startsWith(m + '|')) delete cliUpdatesMap[k]; }
+    else cliUpdatesMap = {};
+    persistCliUpdates();
+    return { ok: true, updates: listCliUpdates() };
   }
 
   // ---------- Machine role & hardware profiles (dataDir/mesh-machine-profiles.json) ----------
@@ -1368,7 +1448,7 @@ function createMesh({
     save();
   }
 
-  const watchdog = createWatchdog({
+  watchdog = createWatchdog({
     dataDir,
     getProjects: () => data.projects,
     getMachines: () => (machines || new Map()),
@@ -1775,31 +1855,50 @@ function createMesh({
     return { ok: false, msg: '未知的 task 操作：' + action };
   }
 
+  const SPAWN_ALLOWED_KEYS = new Set([
+    'projectId', 'projectName', 'machine', 'cwd', 'role', 'pool', 'tool', 'model', 'api',
+    'alias', 'goal', 'stopCondition', 'prompt', 'boundaries', 'doneWhen', 'checks',
+    'workspaceMode', 'branch',
+    // Internal RPC / caller identity fields
+    't', 'rid', 'op', 'sessionId', 'nodeId', 'fromNodeId', 'fromMachine', 'fromSessionId', 'callerCwd',
+  ]);
+
   // Spawn a new Worker session on a remote machine in an allowed folder and bind it to the project topology
-  async function spawnWorker({
-    projectId,
-    projectName,
-    fromNodeId,
-    fromMachine,
-    fromSessionId,
-    callerCwd,
-    machine,
-    cwd,
-    role = 'worker',
-    pool = '',
-    tool = '',
-    model = '',
-    api = '',
-    alias = '',
-    goal = '',
-    stopCondition = '',
-    prompt = '',
-    boundaries = [],
-    doneWhen = [],
-    checks = [],
-    workspaceMode = '',
-    branch = '',
-  }) {
+  async function spawnWorker(rawParams = {}) {
+    if (rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)) {
+      const unknownKeys = Object.keys(rawParams).filter((k) => rawParams[k] !== undefined && !SPAWN_ALLOWED_KEYS.has(k));
+      if (unknownKeys.length) {
+        return {
+          ok: false,
+          invalidParams: unknownKeys,
+          msg: `mesh_spawn 收到未定义参数：${unknownKeys.join(', ')}。请改用 pool（推荐，如 fast-coder / flagship / heavy-reasoner，由系统按额度自动选型），或显式指定 tool（claude/codex/opencode/agy/kiro）、model 与 alias；禁止凭记忆传参。`,
+        };
+      }
+    }
+    const {
+      projectId,
+      projectName,
+      fromNodeId,
+      fromMachine,
+      fromSessionId,
+      callerCwd,
+      machine,
+      cwd,
+      role = 'worker',
+      pool = '',
+      tool = '',
+      model = '',
+      api = '',
+      alias = '',
+      goal = '',
+      stopCondition = '',
+      prompt = '',
+      boundaries = [],
+      doneWhen = [],
+      checks = [],
+      workspaceMode = '',
+      branch = '',
+    } = rawParams || {};
     const resolved = resolveCaller({
       projectId,
       nodeId: fromNodeId,
@@ -1861,10 +1960,17 @@ function createMesh({
       : (roleDef && roleDef.workspaceMode === 'worktree' ? 'worktree' : 'inherit');
     const cleanBranch = cleanStr(branch, 120);
     const cleanTool = cleanStr(tool, 40);
+    if (cleanTool && !TOOLS.includes(cleanTool)) {
+      return {
+        ok: false,
+        msg: `不支持的 tool 值「${cleanTool}」（仅支持 ${TOOLS.join(' / ')}）；常规派活推荐不传 tool，直接传 pool（如 fast-coder / flagship / heavy-reasoner）。`,
+      };
+    }
     const hasExplicitTool = Boolean(cleanTool && TOOLS.includes(cleanTool));
     const cleanPool = cleanStr(pool, 60);
     const cleanModel = cleanStr(model, 120);
-    const effectivePool = cleanPool || (!hasExplicitTool && roleDef && roleDef.defaultPool ? roleDef.defaultPool : '');
+    // Default to pool routing when neither pool nor explicit tool is specified (never silently default to claude)
+    const effectivePool = cleanPool || (!hasExplicitTool ? ((roleDef && roleDef.defaultPool) || 'fast-coder') : '');
 
     const workerNodeId = idGen('node');
 
@@ -2066,6 +2172,17 @@ function createMesh({
     }
 
     const explicitTool = hasExplicitTool ? cleanTool : 'claude';
+    // Pre-check Magpie quota / cooldown even when Master explicitly specifies a tool
+    if (typeof modelRouter.evaluateToolQuota === 'function') {
+      const qEval = modelRouter.evaluateToolQuota(explicitTool, cleanModel);
+      if (qEval && !qEval.healthy) {
+        return {
+          ok: false,
+          exhausted: true,
+          msg: `指定 Harness「${explicitTool}${cleanModel ? ':' + cleanModel : ''}」当前无法拉起：${qEval.reason || qEval.magpieInfo || '额度已耗尽或处于冷却'}。请改用 pool（如 fast-coder / flagship）由系统自动分流，或更换其他可用 Harness。`,
+        };
+      }
+    }
     const maxCaps = getMaxPerHarness();
     const toolCap = Number(maxCaps[explicitTool]);
     if (Number.isFinite(toolCap) && toolCap > 0) {
@@ -3182,6 +3299,33 @@ function createMesh({
       json(res, 200, { ok: true, machines: machinesSummary() });
       return true;
     }
+    if (req.method === 'GET' && p === '/api/mesh/cli-updates') {
+      json(res, 200, { ok: true, updates: listCliUpdates() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/queue') {
+      const mach = url.searchParams.get('machine') || '';
+      const resource = url.searchParams.get('resource') || '';
+      json(res, 200, computeQueue.list({ machine: mach, resource }));
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/local-quotas') {
+      json(res, 200, { ok: true, quotas: listLocalQuotas() });
+      return true;
+    }
+    if (req.method === 'GET' && p === '/api/mesh/fable-advice') {
+      const force = url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true';
+      const mpStatus = typeof getMagpie === 'function' ? getMagpie()?.status?.() : null;
+      const todoItems = typeof getTodos === 'function' ? (getTodos() || []) : [];
+      json(res, 200, evaluateFableAdvice({
+        magpieStatus: mpStatus,
+        projects: data.projects,
+        todos: todoItems,
+        readBoard: (pid, opts) => board.read(pid, opts),
+        force,
+      }));
+      return true;
+    }
     if (req.method === 'GET' && p === '/api/mesh/board') {
       const projectId = url.searchParams.get('projectId') || '';
       const nodeId = url.searchParams.get('nodeId') || '';
@@ -3203,7 +3347,7 @@ function createMesh({
     let d = {};
     try { d = JSON.parse(await readBody(req, 32768)); } catch {}
     // Operations that act on remote machines require a fresh TOTP session
-    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm', '/api/mesh/board/post', '/api/mesh/worktree-remove'].includes(p);
+    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/fable-advice/launch', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm', '/api/mesh/board/post', '/api/mesh/worktree-remove'].includes(p);
     if (needsStepUp && typeof isFresh === 'function' && !isFresh()) {
       json(res, 200, { ok: false, need: 'totp', msg: '远程操作前请再输一次验证码' });
       return true;
@@ -3262,6 +3406,31 @@ function createMesh({
     if (p === '/api/mesh/transfer-confirm') {
       const r = await confirmTransfer(d.projectId, d.transferId, d);
       if (r.ok) audit('mesh-transfer-confirm', ip, String(d.transferId || ''));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/fable-advice/launch') {
+      const mach = cleanStr(d.machine, 60);
+      const cwd = cleanStr(d.cwd, 500);
+      const title = cleanStr(d.title, 120) || 'Fable 顾问诊断';
+      const prompt = cleanStr(d.advisorPrompt || d.prompt, 7000);
+      if (!mach || !cwd || !prompt) {
+        json(res, 200, { ok: false, msg: '启动 Fable 顾问会话需要指定 machine、cwd 与 prompt' });
+        return true;
+      }
+      const r = await spawnWorker({
+        projectId: cleanStr(d.projectId, 40) || undefined,
+        machine: mach,
+        cwd,
+        role: 'verifier',
+        tool: 'opencode',
+        model: 'magpie/devin/claude-fable-5-2',
+        alias: cleanStr(d.alias, 60) || 'fable-advisor',
+        goal: `只读深度诊断与方案拍板：${title}`,
+        stopCondition: '输出根因分析、方案对比与最小验证步骤后停下，严禁修改任何业务文件',
+        prompt,
+      });
+      if (r.ok) audit('mesh-fable-launch', ip, mach, title.slice(0, 60));
       json(res, 200, r);
       return true;
     }
@@ -3329,6 +3498,22 @@ function createMesh({
     if (p === '/api/mesh/machine-profiles') {
       const r = saveMachineProfile(d);
       if (r.ok) audit('mesh-machine-profiles', ip, 'save', String(d.machine || '').slice(0, 60));
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/cli-updates') {
+      const r = clearCliUpdate(d);
+      audit('mesh-cli-updates', ip, 'clear', `${d.machine || 'all'}:${d.tool || 'all'}`);
+      json(res, 200, r);
+      return true;
+    }
+    if (p === '/api/mesh/queue') {
+      let r;
+      if (d.op === 'cancel') r = computeQueue.cancel(d.jobId);
+      else if (d.op === 'clear_done') r = computeQueue.clearDone();
+      else if (d.op === 'set_slots') r = computeQueue.setSlots(d);
+      else r = { ok: false, msg: '未知的 queue 操作' };
+      if (r.ok) audit('mesh-queue', ip, String(d.op || ''), String(d.jobId || d.machine || ''));
       json(res, 200, r);
       return true;
     }
@@ -3480,6 +3665,15 @@ function createMesh({
       if (op === 'event') {
         return reply(await emitEvent({ ...d, fromMachine: d.fromMachine || machineName }));
       }
+      if (op === 'queue') {
+        const act = String(d.action || 'list').trim().toLowerCase();
+        if (act === 'enqueue') return reply(computeQueue.enqueue({ ...d, machine: d.machine || machineName, nodeId: d.nodeId || callerNodeId }));
+        if (act === 'poll') return reply(computeQueue.poll(d.jobId));
+        if (act === 'heartbeat') return reply(computeQueue.heartbeat(d.jobId));
+        if (act === 'complete') return reply(computeQueue.complete(d.jobId, { ok: d.ok !== false, reason: d.reason || '' }));
+        if (act === 'cancel') return reply(computeQueue.cancel(d.jobId));
+        return reply(computeQueue.list({ machine: d.machine || '', resource: d.resource || '' }));
+      }
       if (op === 'trigger') {
         if (d.action === 'list') {
           const proj = d.projectId ? data.projects.find((p) => p.id === d.projectId) : null;
@@ -3533,6 +3727,11 @@ function createMesh({
     checkWorkspaceAccess,
     onMachineState,
     onSessionMeta,
+    onCliUpdate,
+    listCliUpdates,
+    clearCliUpdate,
+    onLocalQuota,
+    listLocalQuotas,
     fromAgentResult,
     fromAgentRpc,
     fromAgentFs,
@@ -3545,6 +3744,7 @@ function createMesh({
     watchdog,
     roleStore,
     modelRouter,
+    computeQueue,
   };
 }
 

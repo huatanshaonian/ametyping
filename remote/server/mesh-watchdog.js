@@ -19,6 +19,7 @@ const DEFAULT_CONFIG = {
   mentionTimeoutMin: 10,
   swarmStallMin: 5,
   maxClaudePerProject: 2,
+  expiringFirstHarnesses: ['codex'],
 };
 
 const QUOTA_ERR_RE = /429|RESOURCE_EXHAUSTED|out of credits|quota|usage limit|rate limit/i;
@@ -412,10 +413,24 @@ function createWatchdog({
           }
         }
 
-        // W7: 点名未回帖 / 静默额度耗尽检测
+        // W7 & First-Turn Quota Check: 点名未回帖 / 静默额度耗尽检测
         const isIdle = ['idle', 'done'].includes(liveState) && !liveAsking;
         const lastMentionedSeq = node.lastMentionedSeq || 0;
         const lastPostSeq = node.lastPostSeq || 0;
+
+        // First-turn or post-mention quota/rate-limit error detection on ANY idle running non-master node
+        const hasQuotaErr = isIdle && QUOTA_ERR_RE.test(live.lastAct || '');
+        if (node.role !== 'master' && hasQuotaErr) {
+          const actSig = `${live.lastAct || ''}|${lastMentionedSeq}`;
+          if (typeof onQuotaExhausted === 'function' && track.quotaTriggeredAct !== actSig) {
+            track.quotaTriggeredAct = actSig;
+            track.quotaTriggeredSeq = lastMentionedSeq;
+            Promise.resolve(onQuotaExhausted(proj, node, live.lastAct)).catch(() => {});
+          }
+        } else if (!hasQuotaErr) {
+          track.quotaTriggeredAct = '';
+        }
+
         if (lastPostSeq >= lastMentionedSeq) {
           track.mentionNudgeCount = 0;
           track.lastMentionNudgedAt = 0;
@@ -427,11 +442,8 @@ function createWatchdog({
             }
           }
         } else if (node.lastMentionedAt > 0 && isIdle) {
-          if (QUOTA_ERR_RE.test(live.lastAct || '')) {
-            if (typeof onQuotaExhausted === 'function' && track.quotaTriggeredSeq !== lastMentionedSeq) {
-              track.quotaTriggeredSeq = lastMentionedSeq;
-              Promise.resolve(onQuotaExhausted(proj, node, live.lastAct)).catch(() => {});
-            }
+          if (hasQuotaErr) {
+            // Already handled by the universal quota check above; do not nudge
           } else if (curTime - node.lastMentionedAt >= cfg.mentionTimeoutMin * 60e3) {
             if ((track.mentionNudgeCount || 0) < 2) {
               const refTime = track.mentionNudgeCount === 0

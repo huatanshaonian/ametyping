@@ -66,6 +66,51 @@ function checkMachine(name, local, extraOk) {
   if (extraOk.length) say(`  （${name} 上另有 ${extraOk.length} 个 git 里没有的文件，不动：${extraOk.slice(0, 5).join('、')}${extraOk.length > 5 ? ' …' : ''}）`);
 }
 
+// Exclusive NAS deploy lock (POSIX atomic mkdir) so concurrent worktrees/agents never collide on NAS deployment.
+const LOCK_DIR = `${NAS.dir}/.ame-deploy.lock`;
+const LOCK_STALE_SEC = 600; // 10 min stale lock auto-reclaim
+const LOCK_WAIT_MS = 180000; // wait up to 3 min for an in-flight deploy
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+let lockHeld = false;
+
+function releaseDeployLock() {
+  if (!lockHeld) return;
+  lockHeld = false;
+  try { ssh(NAS.ssh, `rm -rf ${LOCK_DIR}`, { allowFail: true }); } catch {}
+}
+
+async function acquireDeployLock(commit) {
+  if (DRY) return;
+  const os = require('os');
+  const holder = `${os.hostname()}:pid=${process.pid}:commit=${commit.slice(0, 7)}:${new Date().toISOString()}`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  while (true) {
+    const res = String(ssh(NAS.ssh,
+      `L=${LOCK_DIR}; ` +
+      `if [ -d "$L" ]; then ` +
+      `  MT=$(stat -c %Y "$L" 2>/dev/null || echo 0); NOW=$(date +%s); ` +
+      `  if [ "$MT" -gt 0 ] && [ $((NOW - MT)) -gt ${LOCK_STALE_SEC} ]; then rm -rf "$L"; fi; ` +
+      `fi; ` +
+      `if mkdir "$L" 2>/dev/null; then printf '%s\\n' '${holder}' > "$L/owner"; echo ACQUIRED; ` +
+      `else echo BUSY:$(cat "$L/owner" 2>/dev/null || echo unknown); fi`,
+      { allowFail: true }
+    )).trim();
+    if (res === 'ACQUIRED') {
+      lockHeld = true;
+      return;
+    }
+    if (Date.now() >= deadline) {
+      fail(`等待部署排他锁超时（当前持锁者：${res.replace(/^BUSY:/, '')}）；如确认无部署在跑，可在 NAS 删除 ${LOCK_DIR}`);
+    }
+    say(`  [排他锁] 另一部署进行中（${res.replace(/^BUSY:/, '')}），5 秒后重试…`);
+    await sleepMs(5000);
+  }
+}
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { releaseDeployLock(); process.exit(130); });
+}
+
 (async () => {
   // ---- 1. the commit ----
   step(`提交 ${REF}`);
@@ -81,6 +126,9 @@ function checkMachine(name, local, extraOk) {
     const r = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'test', 'run.js')], { stdio: 'inherit' });
     if (r.status !== 0) fail('测试没通过，不部署');
   }
+
+  await acquireDeployLock(commit);
+  try {
 
   // ---- 2. the NAS ----
   step(`群晖（${NAS.ssh}:${NAS.dir}）`);
@@ -175,4 +223,7 @@ function checkMachine(name, local, extraOk) {
   if (!DRY) ssh(NAS.ssh, `cat > ${NAS.dir}/deployed.json`, { input: JSON.stringify({ ref: REF, commit, at: new Date().toISOString() }, null, 2) });
   step(DRY ? '检查完毕（没有改动任何机器）' : `部署完成：${commit.slice(0, 7)}`);
   if (appChanged.length) say(`糖糖本体（app/）自上次部署以来有改动（${appChanged.length} 个文件）：重启糖糖后生效`);
-})().catch((e) => fail(e.message));
+  } finally {
+    releaseDeployLock();
+  }
+})().catch((e) => { releaseDeployLock(); fail(e.message); });

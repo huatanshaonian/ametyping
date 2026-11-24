@@ -6,25 +6,25 @@ const path = require('path');
 
 const DEFAULT_POOLS = {
   'fast-coder': [
-    { harness: 'agy', model: 'gemini-4-hydrogen-medium', quirks: '' },
+    { harness: 'agy', model: 'gemini-4-hydrogen-medium', magpieProvider: 'antigravity', quirks: '' },
     { harness: 'codex', model: 'gpt-6.2-terra', magpieProvider: 'openai', quirks: '' },
-    { harness: 'agy', model: 'claude-sonnet-5-5-medium', quirks: '' },
-    { harness: 'claude', model: 'sonnet', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'claude-sonnet-5-5-medium', magpieProvider: 'antigravity', quirks: '' },
+    { harness: 'claude', model: 'sonnet', magpieProvider: 'claude', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
   ],
   flagship: [
-    { harness: 'agy', model: 'gemini-4-neon-medium', quirks: '' },
+    { harness: 'agy', model: 'gemini-4-neon-medium', magpieProvider: 'antigravity', quirks: '' },
     { harness: 'codex', model: 'gpt-6.2-sol', magpieProvider: 'openai', quirks: '' },
-    { harness: 'agy', model: 'claude-opus-5-5-medium', quirks: '' },
-    { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'claude-opus-5-5-medium', magpieProvider: 'antigravity', quirks: '' },
+    { harness: 'claude', model: 'opus', magpieProvider: 'claude', quirks: '' },
     { harness: 'opencode', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
   ],
   'heavy-reasoner': [
-    { harness: 'agy', model: 'gemini-4-carbon-high', quirks: '' },
-    { harness: 'opencode', model: 'magpie/devin/claude-fable-5-2', quirks: '' },
+    { harness: 'agy', model: 'gemini-4-carbon-high', magpieProvider: 'antigravity', quirks: '' },
+    { harness: 'opencode', model: 'magpie/devin/claude-fable-5-2', magpieProvider: 'devin', quirks: '' },
     { harness: 'codex', model: 'gpt-6.2-astra', magpieProvider: 'openai', quirks: '' },
-    { harness: 'agy', model: 'claude-opus-5-5-high', quirks: '' },
-    { harness: 'claude', model: 'opus', magpieProvider: 'anthropic', quirks: '' },
+    { harness: 'agy', model: 'claude-opus-5-5-high', magpieProvider: 'antigravity', quirks: '' },
+    { harness: 'claude', model: 'opus', magpieProvider: 'claude', quirks: '' },
   ],
   'image-gen': [
     { harness: 'codex', model: 'gpt-image', quirks: '' },
@@ -70,7 +70,13 @@ function candidateKey(harness, model = '') {
   return `${String(harness || '').trim()}|${String(model || '').trim()}`;
 }
 
-function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.now() }) {
+function createModelRouter({
+  dataDir,
+  getMagpie = () => null,
+  getLocalQuotas = () => [],
+  getExpiringHarnesses = () => ['codex'],
+  now = () => Date.now(),
+}) {
   const poolsFile = path.join(dataDir, 'mesh-pools.json');
   const cooldowns = new Map(); // "harness|model" -> { status: 'cooldown', harness, model, reason, resetAt, updatedAt }
 
@@ -115,28 +121,115 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
 
   const LOW_QUOTA_THRESHOLD = 0.10; // Remaining < 10% -> deprioritize in favor of healthier candidates
 
-  function evaluateMagpie(candidate, magpieStatus, lowThreshold = LOW_QUOTA_THRESHOLD) {
-    const mp = String((candidate && candidate.magpieProvider) || '').trim().toLowerCase();
-    if (!mp || !magpieStatus || !Array.isArray(magpieStatus.accounts)) {
-      return { matched: false, exhausted: false, lowQuota: false, minRatio: null, magpieInfo: '', resetAt: null };
+  const PROVIDER_ALIASES = {
+    anthropic: ['anthropic', 'claude'],
+    claude: ['claude', 'anthropic'],
+    openai: ['openai', 'codex'],
+    codex: ['codex', 'openai'],
+    antigravity: ['antigravity', 'agy'],
+    agy: ['agy', 'antigravity'],
+  };
+
+  function providerMatches(acct, mp) {
+    if (!acct || typeof acct !== 'object' || !mp) return false;
+    const prov = String(acct.provider || '').trim().toLowerCase();
+    const name = String(acct.name || '').trim().toLowerCase();
+    // Skip gateway /~keys connection limit cards; those are key caps, not upstream provider quotas
+    if (prov.endsWith('/~keys')) return false;
+    const aliases = PROVIDER_ALIASES[mp] || [mp];
+    for (const a of aliases) {
+      if (prov === a || name === a || prov.endsWith('/' + a)) return true;
     }
-    const matched = magpieStatus.accounts.filter((a) => {
-      if (!a || typeof a !== 'object') return false;
-      return String(a.provider || '').toLowerCase() === mp || String(a.name || '').toLowerCase() === mp;
-    });
+    return false;
+  }
+
+  function inferMagpieProvider(harness, model = '') {
+    const h = String(harness || '').trim().toLowerCase();
+    const m = String(model || '').trim().toLowerCase();
+    if (m.includes('devin')) return 'devin';
+    if (h === 'claude') return 'claude';
+    if (h === 'codex') return 'openai';
+    if (h === 'agy') return 'antigravity';
+    if (h === 'kiro') return 'kiro';
+    if (h === 'opencode') {
+      if (m.includes('gpt') || m.includes('openai')) return 'openai';
+      if (m.includes('claude')) return 'claude';
+      if (m.includes('deepseek')) return 'deepseek';
+    }
+    return '';
+  }
+
+  function windowRatio(w) {
+    if (!w || w.unlimited === true || typeof w.remaining !== 'number' || !Number.isFinite(w.remaining)) return null;
+    if (typeof w.limit === 'number' && Number.isFinite(w.limit) && w.limit > 0) {
+      return Math.max(0, Math.min(1, w.remaining / w.limit));
+    }
+    // Percentage-based windows (e.g. Magpie remote cc-ubuntu/claude: { remaining: 56, limit: null, used: 44 })
+    if (w.limit == null && w.remaining >= 0 && w.remaining <= 100) {
+      if (w.used == null || (typeof w.used === 'number' && Math.abs((w.remaining + w.used) - 100) <= 2)) {
+        return Math.max(0, Math.min(1, w.remaining / 100));
+      }
+    }
+    return null;
+  }
+
+  function mergedQuotaStatus(explicitStatus = null) {
+    const base = explicitStatus !== null ? explicitStatus : (typeof getMagpie === 'function' ? getMagpie()?.status?.() : null);
+    const baseAccounts = Array.isArray(base && base.accounts) ? base.accounts : [];
+    const localList = typeof getLocalQuotas === 'function' ? (getLocalQuotas() || []) : [];
+    if (!localList.length) return base;
+    const merged = [...baseAccounts];
+    for (const lq of localList) {
+      if (!lq || typeof lq !== 'object' || !lq.provider) continue;
+      // Only fill in providers not already reported by Magpie
+      const lp = String(lq.provider).toLowerCase();
+      if (!merged.some((a) => providerMatches(a, lp))) merged.push(lq);
+    }
+    return { ...(base && typeof base === 'object' ? base : {}), accounts: merged };
+  }
+
+  function evaluateMagpie(candidate, magpieStatus, lowThreshold = LOW_QUOTA_THRESHOLD) {
+    const curTime = now();
+    const explicitMp = String((candidate && candidate.magpieProvider) || '').trim().toLowerCase();
+    const mp = explicitMp || inferMagpieProvider(candidate && candidate.harness, candidate && candidate.model);
+    if (!mp || !magpieStatus || !Array.isArray(magpieStatus.accounts)) {
+      return { matched: false, exhausted: false, lowQuota: false, expiring: false, expiringScore: 0, expiringInfo: '', minRatio: null, magpieInfo: '', resetAt: null };
+    }
+    const matched = magpieStatus.accounts.filter((a) => providerMatches(a, mp));
     if (!matched.length) {
-      return { matched: false, exhausted: false, lowQuota: false, minRatio: null, magpieInfo: '', resetAt: null };
+      return { matched: false, exhausted: false, lowQuota: false, expiring: false, expiringScore: 0, expiringInfo: '', minRatio: null, magpieInfo: '', resetAt: null };
     }
 
+    const candModel = String((candidate && candidate.model) || '').toLowerCase();
+    const wantFamily = (mp === 'antigravity' || mp === 'agy')
+      ? (/claude|sonnet|opus|haiku/.test(candModel) ? 'claude' : /gemini|hydrogen|neon|carbon/.test(candModel) ? 'gemini' : '')
+      : '';
+
     let resetAt = null;
-    const finiteWindowsOf = (acct) => (Array.isArray(acct.windows) ? acct.windows : []).filter(
-      (w) => w && w.unlimited !== true && typeof w.remaining === 'number' && Number.isFinite(w.remaining)
-    );
+    const finiteWindowsOf = (acct) => {
+      const all = (Array.isArray(acct.windows) ? acct.windows : []).filter((w) => {
+        if (!w || w.unlimited === true || typeof w.remaining !== 'number' || !Number.isFinite(w.remaining)) return false;
+        // If a local/cached window's resetsAt has already passed, treat it as reset rather than stale exhaustion
+        if (w.resetsAt) {
+          const rMs = typeof w.resetsAt === 'number' ? w.resetsAt : Date.parse(w.resetsAt);
+          if (Number.isFinite(rMs) && rMs <= curTime) return false;
+        }
+        return true;
+      });
+      if (wantFamily) {
+        const re = wantFamily === 'claude' ? /claude/i : /gemini/i;
+        const scoped = all.filter((w) => re.test(String(w.name || '')) || re.test(String(w.pool || '')));
+        if (scoped.length > 0) return scoped;
+      }
+      return all;
+    };
     const isAcctExhausted = (acct) => {
       if (acct.status === 'error') return true;
       const finiteWindows = finiteWindowsOf(acct);
-      if (finiteWindows.length > 0 && finiteWindows.every((w) => w.remaining <= 0)) {
-        for (const w of finiteWindows) {
+      // Bottleneck semantics: if ANY active window (e.g. 5h window) is exhausted (remaining <= 0), requests will fail now
+      const exhaustedWins = finiteWindows.filter((w) => w.remaining <= 0);
+      if (exhaustedWins.length > 0) {
+        for (const w of exhaustedWins) {
           if (w.resetsAt) {
             const parsed = typeof w.resetsAt === 'number' ? w.resetsAt : Date.parse(w.resetsAt);
             if (Number.isFinite(parsed) && (!resetAt || parsed < resetAt)) resetAt = parsed;
@@ -154,18 +247,19 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
         matched: true,
         exhausted: true,
         lowQuota: false,
+        expiring: false,
+        expiringScore: 0,
+        expiringInfo: '',
         minRatio: 0,
         magpieInfo: matched.every((a) => a.status === 'error') ? 'Magpie 账号状态异常' : 'Magpie 额度已耗尽',
         resetAt,
       };
     }
 
-    // Compute remaining ratio across finite windows with positive limits
+    // Compute remaining ratio across finite windows (supports both limit-based and percentage-based windows)
     let bestAcctMinRatio = null;
     for (const a of healthyAccounts) {
-      const ratios = finiteWindowsOf(a)
-        .filter((w) => typeof w.limit === 'number' && w.limit > 0)
-        .map((w) => Math.max(0, Math.min(1, w.remaining / w.limit)));
+      const ratios = finiteWindowsOf(a).map(windowRatio).filter((r) => r !== null);
       if (ratios.length) {
         const acctMin = Math.min(...ratios);
         if (bestAcctMinRatio === null || acctMin > bestAcctMinRatio) bestAcctMinRatio = acctMin;
@@ -173,13 +267,48 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     }
     const lowQuota = bestAcctMinRatio !== null && bestAcctMinRatio < lowThreshold;
 
+    // Expiring-first detection (only for whitelisted harnesses, e.g. codex — explicitly excluding manual claude)
+    const expList = typeof getExpiringHarnesses === 'function' ? (getExpiringHarnesses() || []) : [];
+    const expSet = new Set(expList.map((x) => String(x || '').trim().toLowerCase()));
+    const candHarness = String((candidate && candidate.harness) || '').trim().toLowerCase();
+    let expiring = false;
+    let expiringScore = 0;
+    let expiringInfo = '';
+    if (!lowQuota && expSet.has(candHarness)) {
+      for (const a of healthyAccounts) {
+        for (const w of finiteWindowsOf(a)) {
+          if (!w.resetsAt) continue;
+          const rMs = typeof w.resetsAt === 'number' ? w.resetsAt : Date.parse(w.resetsAt);
+          if (!Number.isFinite(rMs) || rMs <= curTime) continue;
+          const ratio = windowRatio(w);
+          if (ratio === null) continue;
+          const hoursLeft = (rMs - curTime) / 3600e3;
+          const mins = Number(w.windowMinutes) || 0;
+          const isLong = mins >= 1440 || /7\s*day|7天|week|day|天/i.test(String(w.name || ''));
+          const isExpiringWin = isLong
+            ? (hoursLeft <= 24 && ratio >= 0.25)
+            : (hoursLeft <= 0.75 && ratio >= 0.30);
+          if (isExpiringWin) {
+            const score = ratio / Math.max(0.1, hoursLeft);
+            if (score > expiringScore) {
+              expiring = true;
+              expiringScore = Math.round(score * 100) / 100;
+              const pct = Math.round(ratio * 100);
+              const leftLabel = hoursLeft >= 1 ? `${Math.round(hoursLeft * 10) / 10}h` : `${Math.max(1, Math.round(hoursLeft * 60))}m`;
+              expiringInfo = `临近重置优先（${w.name || '额度'}剩 ${pct}%，${leftLabel} 后重置）`;
+            }
+          }
+        }
+      }
+    }
+
     // Build concise remaining summary from the first healthy account
     let info = '';
     for (const a of healthyAccounts) {
-      const wins = Array.isArray(a.windows) ? a.windows : [];
+      const wins = finiteWindowsOf(a);
       const firstWin = wins.find((w) => w && w.display) || wins.find((w) => w && typeof w.remaining === 'number');
       if (firstWin) {
-        info = firstWin.display || `${firstWin.remaining}${firstWin.unit ? ' ' + firstWin.unit : ''}`;
+        info = firstWin.display || `${firstWin.remaining}${firstWin.unit ? ' ' + firstWin.unit : (firstWin.limit == null ? '%' : '')}`;
         break;
       }
       if (a.balance && typeof a.balance.amount === 'number') {
@@ -190,8 +319,10 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     if (lowQuota) {
       const pct = Math.round(bestAcctMinRatio * 100);
       info = info ? `${info}（低余额 ${pct}%）` : `低余额 ${pct}%`;
+    } else if (expiring && expiringInfo) {
+      info = info ? `${info} · ${expiringInfo}` : expiringInfo;
     }
-    return { matched: true, exhausted: false, lowQuota, minRatio: bestAcctMinRatio, magpieInfo: info, resetAt: null };
+    return { matched: true, exhausted: false, lowQuota, expiring, expiringScore, expiringInfo, minRatio: bestAcctMinRatio, magpieInfo: info, resetAt: null };
   }
 
   function evaluateCandidate(candidate, magpieStatus = null) {
@@ -203,7 +334,7 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       cd = null;
     }
 
-    const mpStatus = magpieStatus !== null ? magpieStatus : (typeof getMagpie === 'function' ? getMagpie()?.status?.() : null);
+    const mpStatus = mergedQuotaStatus(magpieStatus);
     const mpEval = evaluateMagpie(candidate, mpStatus);
 
     if (cd) {
@@ -211,6 +342,8 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
         status: 'cooldown',
         healthy: false,
         lowQuota: false,
+        expiring: false,
+        expiringScore: 0,
         minRatio: mpEval.minRatio,
         reason: cd.reason,
         resetAt: cd.resetAt,
@@ -223,6 +356,8 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
         status: 'exhausted',
         healthy: false,
         lowQuota: false,
+        expiring: false,
+        expiringScore: 0,
         minRatio: 0,
         reason: mpEval.magpieInfo,
         resetAt: mpEval.resetAt,
@@ -234,6 +369,8 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
         status: 'low_quota',
         healthy: true,
         lowQuota: true,
+        expiring: false,
+        expiringScore: 0,
         minRatio: mpEval.minRatio,
         reason: '剩余额度不足 10%，优先避让',
         resetAt: null,
@@ -241,11 +378,13 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       };
     }
     return {
-      status: 'healthy',
+      status: mpEval.expiring ? 'expiring_priority' : 'healthy',
       healthy: true,
       lowQuota: false,
+      expiring: !!mpEval.expiring,
+      expiringScore: mpEval.expiringScore || 0,
       minRatio: mpEval.minRatio,
-      reason: '',
+      reason: mpEval.expiringInfo || '',
       resetAt: null,
       magpieInfo: mpEval.magpieInfo,
     };
@@ -292,12 +431,13 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     const availSet = Array.isArray(availableHarnesses) && availableHarnesses.length
       ? new Set(availableHarnesses.map((x) => String(x).toLowerCase()))
       : null;
-    const mpStatus = typeof getMagpie === 'function' ? getMagpie()?.status?.() : null;
+    const mpStatus = mergedQuotaStatus(null);
     const byHarness = (activeCounts && activeCounts.byHarness) || {};
     const byCandidate = (activeCounts && activeCounts.byCandidate) || {};
     const projHarness = (projectHarnessCounts && typeof projectHarnessCounts === 'object') ? projectHarnessCounts : {};
     const caps = (maxPerHarness && typeof maxPerHarness === 'object') ? maxPerHarness : {};
 
+    const AGY_HIGH_CONCURRENCY = 10;
     const viable = [];
     list.forEach((cand, idx) => {
       const key = candidateKey(cand.harness, cand.model);
@@ -307,21 +447,34 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
       if (Number.isFinite(cap) && cap > 0 && (projHarness[cand.harness] || 0) >= cap) return;
       const evalRes = evaluateCandidate(cand, mpStatus);
       if (!evalRes.healthy) return;
+      const hLoad = byHarness[cand.harness] || 0;
+      const isAgy = cand.harness === 'agy';
+      // AGY supports high concurrency (up to 10 total) before spilling over to Codex/Claude Code
+      const overflowTier = isAgy ? (hLoad >= AGY_HIGH_CONCURRENCY ? 1 : 0) : 0;
+      const spreadLoad = isAgy ? 0 : hLoad;
       viable.push({
         cand,
         evalRes,
         idx,
         lowTier: evalRes.lowQuota ? 1 : 0,
-        harnessLoad: byHarness[cand.harness] || 0,
-        candLoad: byCandidate[key] || 0,
+        expiringTier: evalRes.expiring ? 0 : 1,
+        expiringScore: evalRes.expiringScore || 0,
+        overflowTier,
+        harnessLoad: spreadLoad,
+        candLoad: isAgy ? 0 : (byCandidate[key] || 0),
       });
     });
 
     if (viable.length) {
-      // Tier 1: non-low-quota (>=10%) always before low-quota (<10%)
-      // Tier 2: spread load across harnesses first, then specific candidate, then configured priority
+      // Tier 1: non-low-quota (>=10%) before low-quota (<10%)
+      // Tier 2: expiring-first whitelisted candidates (e.g. Codex nearing reset with >=25% left)
+      // Tier 3: non-overflowing candidates (AGY < 10 stays in priority order before spilling to Codex/Claude)
+      // Tier 4: spread load across non-AGY harnesses, then configured priority order
       viable.sort((a, b) =>
         (a.lowTier - b.lowTier) ||
+        (a.expiringTier - b.expiringTier) ||
+        (b.expiringScore - a.expiringScore) ||
+        (a.overflowTier - b.overflowTier) ||
         (a.harnessLoad - b.harnessLoad) ||
         (a.candLoad - b.candLoad) ||
         (a.idx - b.idx)
@@ -347,7 +500,7 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
 
   function getPoolsStatus() {
     const pools = loadPools();
-    const mpStatus = typeof getMagpie === 'function' ? getMagpie()?.status?.() : null;
+    const mpStatus = mergedQuotaStatus(null);
     const out = {};
     for (const [name, list] of Object.entries(pools)) {
       out[name] = list.map((cand) => ({
@@ -368,6 +521,13 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     }));
   }
 
+  function evaluateToolQuota(harness, model = '') {
+    const h = String(harness || '').trim().toLowerCase();
+    const m = String(model || '').trim();
+    const mp = inferMagpieProvider(h, m);
+    return evaluateCandidate({ harness: h, model: m, ...(mp ? { magpieProvider: mp } : {}) });
+  }
+
   return {
     getPools,
     savePools,
@@ -376,6 +536,7 @@ function createModelRouter({ dataDir, getMagpie = () => null, now = () => Date.n
     markCooldown,
     resetCooldown,
     selectCandidate,
+    evaluateToolQuota,
   };
 }
 

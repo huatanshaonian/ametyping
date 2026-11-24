@@ -5,7 +5,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 const AGY_EXE = /^agy(?:\.exe)?$/i;
 const SHIM = /^(node|cmd)\.exe$/i;
@@ -91,4 +91,22 @@ function resume(id, cwd, text) {
   return p;
 }
 
-module.exports = { AGY_EXE, findAgy, send, greet, started, command, resume };
+const AGY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Locate an already-running interactive agy.exe process opened with `--conversation <id>` or `--conversation=<id>`
+// (covers sessions manually resumed in PowerShell or surviving a pet restart before their next hook fires).
+function findRunningByConversation(rawId) {
+  const id = String(rawId || '').replace(/^agy:/, '').trim();
+  if (!AGY_UUID.test(id)) return Promise.resolve(0);
+  if (process.platform !== 'win32') return Promise.resolve(0);
+  const psCmd = `Get-CimInstance Win32_Process -Filter "Name='agy.exe'" | Where-Object { $_.CommandLine -match '--conversation[=\\s]+${id}' -and $_.CommandLine -notmatch '(^|\\s)-p(\\s|$)' } | Select-Object -First 1 -ExpandProperty ProcessId`;
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+      if (err) return resolve(0);
+      const pid = parseInt(String(stdout || '').trim(), 10);
+      resolve(Number.isSafeInteger(pid) && pid > 0 ? pid : 0);
+    });
+  });
+}
+
+module.exports = { AGY_EXE, findAgy, send, greet, started, command, resume, findRunningByConversation };

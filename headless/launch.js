@@ -61,7 +61,7 @@ function claudeBin(env) {
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
 // resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's
 // ("codex:<id>") -- `codex resume <id>`
-function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null, meshEnv = null, model = '' }) {
+function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = null, meshEnv = null, model = '', onCliUpdate = null }) {
   return new Promise((resolve) => {
     const mEnv = cleanMeshEnv(meshEnv);
     const cleanMod = cleanModel(model);
@@ -122,7 +122,7 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}exec ${q(bin)}${settings}${tail}`;
     newSession(['new-session', '-d', '-s', name, '-c', cwd, cmd], tag, (err, _o, stderr) => {
       if (err) { try { fs.unlinkSync(envFile); } catch {} if (sf) sf.cleanup(); return resolve({ ok: false, msg: '启动失败：' + String(stderr || err.message).trim().slice(0, 150) }); }
-      answerTrust(name, codex || kiro, agy);
+      answerTrust(name, codex || kiro, agy, onCliUpdate);
       resolve({ ok: true, msg: resume ? `已在 tmux 会话「${name}」里接着这个对话（ssh 上去 tmux attach -t ${name} 可接手）` : `已在 tmux 会话「${name}」里启动（ssh 上去 tmux attach -t ${name} 可接手；新文件夹会自动确认信任）` });
     });
   });
@@ -144,10 +144,11 @@ function newSession(args, tag, done) {
 
 // answer the folder-trust prompt of a freshly started session (only that prompt; gives up after ~25 s)
 // codex: Codex's own wording of it, and its "update now?" (not now)
-function answerTrust(name, codex = false, agy = false) {
+function answerTrust(name, codex = false, agy = false, onCliUpdate = null) {
   const pane = () => new Promise((r) => execFile('tmux', ['capture-pane', '-p', '-t', name + ':'], { timeout: 3000 }, (e, out) => r(e ? null : String(out))));
   const keys = (...k) => new Promise((r) => execFile('tmux', ['send-keys', '-t', name + ':', ...k], { timeout: 3000 }, () => r()));
   let n = 0;
+  let updateNotified = false;
   const tick = async () => {
     if (++n > 35) return;
     const text = await pane();
@@ -160,8 +161,19 @@ function answerTrust(name, codex = false, agy = false) {
       return void setTimeout(tick, 700);
     }
     if (codex) {
-      if (/Do you trust the contents of this directory/.test(text)) { if (/›\s*2\.\s*No/.test(text)) await keys('Up'); await keys('Enter'); }
-      else if (/Update available/.test(text) && /\d\.\s*Skip/.test(text)) { if (/›\s*1\./.test(text)) await keys('Down'); await keys('Enter'); }
+      if (/Do you trust the contents of this directory/i.test(text)) { if (/[›>❯]\s*2\.\s*No/i.test(text)) await keys('Up'); await keys('Enter'); }
+      else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore)/i.test(text)) {
+        if (!updateNotified && typeof onCliUpdate === 'function') {
+          updateNotified = true;
+          const verLine = String(text).split(/\r?\n/).find((l) => /Update available|New version available/i.test(l)) || 'Update available';
+          try { onCliUpdate({ tool: 'codex', detail: verLine.trim().slice(0, 160), at: Date.now() }); } catch {}
+        }
+        const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore)/i.exec(text);
+        const curM = /[›>❯]\s*(\d)\./.exec(text);
+        const diff = (skipM ? Number(skipM[1]) : 2) - (curM ? Number(curM[1]) : 1);
+        for (let k = 0; k < Math.abs(diff); k++) await keys(diff > 0 ? 'Down' : 'Up');
+        await keys('Enter');
+      }
       else if (/enter confirm|Press enter to continue/i.test(text) || /›\s+Ask Codex to do anything|esc to interrupt/.test(text)) return;
       return void setTimeout(tick, 700);
     }

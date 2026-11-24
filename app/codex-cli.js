@@ -59,17 +59,31 @@ async function send(bridge, pid, text) {
 // A Codex just started in a new console (remote-control.js launch): what it asks before it is ready is answered --
 // whether to trust the folder (starting it there from the dashboard is that choice) and whether to update now (not
 // now) -- then the first message is typed in. Anything else it asks (hooks to review ...) is left for you.
-async function greet(bridge, pid, prompt) {
+async function greet(bridge, pid, prompt, onUpdate = null) {
+  let updateNotified = false;
   for (let n = 0; n < 45; n++) {
     await sleep(700);
     const text = await bridge.screen(pid);
     if (text == null) return;                                        // the window is gone
-    if (/Do you trust the contents of this directory/.test(text)) {
-      if (/›\s*2\.\s*No/.test(text)) await bridge.key(pid, 'up');
+    if (/Do you trust the contents of this directory/i.test(text)) {
+      if (/[›>❯]\s*2\.\s*No/i.test(text)) await bridge.key(pid, 'up');
       await bridge.key(pid, 'enter');
-    } else if (/Update available/.test(text) && /\d\.\s*Skip/.test(text)) {
-      if (/›\s*1\./.test(text)) await bridge.key(pid, 'down');
-      await sleep(200); await bridge.key(pid, 'enter');
+    } else if (/Update available|New version available/i.test(text) && /(\d)\.\s*(?:Skip|Not now|Ignore)/i.test(text)) {
+      if (!updateNotified && typeof onUpdate === 'function') {
+        updateNotified = true;
+        const verLine = String(text).split(/\r?\n/).find((l) => /Update available|New version available/i.test(l)) || 'Update available';
+        try { onUpdate({ tool: 'codex', detail: verLine.trim().slice(0, 160), at: Date.now() }); } catch {}
+      }
+      const skipM = /(\d)\.\s*(?:Skip|Not now|Ignore)/i.exec(text);
+      const curM = /[›>❯]\s*(\d)\./.exec(text);
+      const skipIdx = skipM ? Number(skipM[1]) : 2;
+      const curIdx = curM ? Number(curM[1]) : 1;
+      const diff = skipIdx - curIdx;
+      for (let k = 0; k < Math.abs(diff); k++) {
+        await bridge.key(pid, diff > 0 ? 'down' : 'up');
+        await sleep(120);
+      }
+      await sleep(180); await bridge.key(pid, 'enter');
     } else if (/enter confirm|Press enter to continue/i.test(text)) return;
     else if (/›\s+Ask Codex to do anything/.test(text)) { if (prompt) await send(bridge, pid, prompt); return; }
   }

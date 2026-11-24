@@ -72,11 +72,59 @@ function savePendingMeshEvent(evt, home = os.homedir()) {
   } catch {}
 }
 
-function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId, opts = {} }) {
+async function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nodeId, sessionId, resource = 'none', opts = {} }) {
   const startMs = Date.now();
   const logDir = path.dirname(logFile);
   try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
   const outStream = fs.createWriteStream(logFile, { flags: 'a' });
+  const rpcOpts = { ...opts, cwd: cwd || opts.cwd };
+
+  // Optional Mini-Slurm resource slot acquisition (gpu / cpu)
+  let queueJobId = '';
+  let hbTimer = null;
+  const cleanRes = resource === 'gpu' || resource === 'cpu' ? resource : 'none';
+  if (cleanRes !== 'none') {
+    try {
+      const enq = await rpc('queue', {
+        action: 'enqueue',
+        resource: cleanRes,
+        label: label || commandArgs[0],
+        command: commandArgs.join(' ').slice(0, 400),
+        projectId: projectId || '',
+        nodeId: nodeId || '',
+      }, rpcOpts);
+      if (enq && enq.ok && enq.job) {
+        queueJobId = enq.job.id;
+        if (!enq.granted) {
+          outStream.write(`[AmeMesh 算力队列] 作业 ${queueJobId} 已入队等待 ${cleanRes.toUpperCase()} 槽位（${enq.job.waitReason || '排队中'}）...\n`);
+          while (true) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const pr = await rpc('queue', { action: 'poll', jobId: queueJobId }, rpcOpts);
+            if (!pr || !pr.ok) break;
+            if (pr.job && pr.job.status === 'cancelled') {
+              outStream.write('[AmeMesh 算力队列] 作业已被取消，退出。\n');
+              outStream.end();
+              return { ok: false, cancelled: true, exitCode: 1, logFile };
+            }
+            if (pr.granted) break;
+          }
+          outStream.write(`[AmeMesh 算力队列] 已获得 ${cleanRes.toUpperCase()} 槽位，开始执行。\n`);
+        }
+        hbTimer = setInterval(() => {
+          rpc('queue', { action: 'heartbeat', jobId: queueJobId }, rpcOpts).catch(() => {});
+        }, 30000);
+        if (hbTimer.unref) hbTimer.unref();
+      }
+    } catch {}
+  }
+
+  const releaseSlot = async (ok, reason = '') => {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (queueJobId) {
+      try { await rpc('queue', { action: 'complete', jobId: queueJobId, ok, reason }, rpcOpts); } catch {}
+    }
+  };
+
   const rollingLines = [];
 
   const isBatch = /\.(cmd|bat)$/i.test(commandArgs[0]);
@@ -107,6 +155,7 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
       outStream.end();
       const durationMs = Date.now() - startMs;
       const code = exitCode !== null ? exitCode : 1;
+      await releaseSlot(code === 0, code === 0 ? '' : `exit ${code}`);
       const tail = rollingLines.join('\n');
       const evt = {
         source: 'run',
@@ -121,7 +170,6 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
         nodeId: nodeId || '',
         sessionId: sessionId || '',
       };
-      const rpcOpts = { ...opts, cwd: cwd || opts.cwd };
       try {
         const r = await rpc('event', evt, rpcOpts);
         if (!r || !r.ok) {
@@ -135,6 +183,7 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
     child.on('error', async (err) => {
       outStream.end();
       const durationMs = Date.now() - startMs;
+      await releaseSlot(false, err.message);
       const tail = '启动进程失败: ' + err.message;
       const evt = {
         source: 'run',
@@ -149,7 +198,6 @@ function executeCommandWorker({ commandArgs, label, logFile, cwd, projectId, nod
         nodeId: nodeId || '',
         sessionId: sessionId || '',
       };
-      const rpcOpts = { ...opts, cwd: cwd || opts.cwd };
       try {
         const r = await rpc('event', evt, rpcOpts);
         if (!r || !r.ok) savePendingMeshEvent(evt);
@@ -208,6 +256,7 @@ async function runBgMcp(args = {}, opts = {}) {
   const sessionId = args.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
   const projectId = args.projectId || process.env.AME_PROJECT_ID || '';
 
+  const resource = args.resource === 'gpu' || args.resource === 'cpu' ? args.resource : 'none';
   const workerPayload = {
     commandArgs: [cmdStr],
     label,
@@ -216,6 +265,7 @@ async function runBgMcp(args = {}, opts = {}) {
     projectId,
     nodeId: args.targetNodeId || args.nodeId || process.env.AME_NODE_ID || '',
     sessionId,
+    resource,
   };
   const child = child_process.spawn(
     process.execPath,
@@ -398,6 +448,7 @@ const MCP_TOOLS = [
         logFile: { type: 'string', description: '可选，输出日志文件路径' },
         projectId: { type: 'string', description: '可选，所属项目 ID' },
         targetNodeId: { type: 'string', description: '可选，完成后唤醒的目标节点 ID' },
+        resource: { type: 'string', enum: ['none', 'gpu', 'cpu'], default: 'none', description: '可选算力排队锁：gpu 或 cpu 时自动按机排队（若外部进程正占硬件自动等待空闲再跑，默认 none 直接执行）' },
       },
       required: ['command'],
     },

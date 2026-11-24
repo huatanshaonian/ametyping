@@ -258,7 +258,7 @@ const notes = createNotes({ dataDir: path.resolve(path.dirname(CONFIG), cfg.data
 const exporter = createExport({ store, resumeCmd });     // 导出: one conversation as a .md / .txt file
 const marks = createMarks({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), onChange: () => broadcast({ t: 'marks' }), audit: (...a) => audit(...a) });
 let magpie;
-const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, getMagpie: () => magpie, onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
+const mesh = createMesh({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, store, marks, fsCatalog, getMagpie: () => magpie, getTodos: () => (todos && typeof todos.list === 'function' ? todos.list() : []), onChange: () => broadcast({ t: 'mesh' }), audit: (...a) => audit(...a), notify: (msg) => push && push.notify('mesh', msg) });
 // Google (calendar diary + events, Drive copies of notes), through the same proxies as the daily summary
 const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const researchEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
@@ -488,6 +488,9 @@ function onAgentMessage(m, raw, ws) {
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string' && mesh.fromAgentFs(m, d)) return;
   if ((d.t === 'fs-res' || d.t === 'fs-chunk' || d.t === 'fs-end' || d.t === 'fs-up-ack' || d.t === 'fs-up-done') && typeof d.rid === 'string') return fsRelay.fromAgent(m, d);
   if (d.t === 'mesh-req' && typeof d.rid === 'string') return mesh.fromAgentRpc(m.name, d, ws);
+  if (d.t === 'cli-update' && typeof d.tool === 'string') return mesh.onCliUpdate(m.name, d);
+  if (d.t === 'compute-probe' && d.probe && typeof d.probe === 'object') { m.computeProbe = d.probe; mesh.computeQueue.reconcile(); return; }
+  if (d.t === 'local-quota' && d.quota && typeof d.quota === 'object') { mesh.onLocalQuota(m.name, d.quota); return; }
   if ((d.t === 'mcp-req' || d.t === 'mcp-status') && mcpHub.fromAgent(m, d, ws)) return;
   if (d.t === 'result' && typeof d.rid === 'string' && mesh.fromAgentResult(m.name, d)) return;
   if (d.t === 'result' && typeof d.rid === 'string') return finishAction(d.rid, m.name, !!d.ok, str(d.msg, 200), d.mode, typeof d.screen === 'string' ? str(d.screen, 9000) : undefined);

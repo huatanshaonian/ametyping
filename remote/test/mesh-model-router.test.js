@@ -220,7 +220,7 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.ok(Array.isArray(scope.roleCatalog) && scope.roleCatalog.some((l) => l.startsWith('verifier')));
       assert.ok(Array.isArray(scope.pools) && scope.pools.some((p) => p.name === 'flagship'));
 
-      // 2. Spawn verifier (defaults to flagship pool; claude fails -> spreads away from busy agy/codex to idle opencode)
+      // 2. Spawn verifier (defaults to flagship pool; AGY Gemini is #1 and supports high concurrency up to 10)
       const spRes = await mesh.spawnWorker({
         projectId: projId,
         fromNodeId: masterNode.id,
@@ -233,16 +233,17 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(spRes.ok, true);
       assert.equal(spRes.node.role, 'verifier');
       assert.equal(spRes.node.pool, 'flagship');
-      assert.equal(spRes.node.tool, 'opencode');
-      assert.equal(spRes.node.model, 'gpt-6.2-astra');
+      assert.equal(spRes.node.tool, 'agy');
+      assert.equal(spRes.node.model, 'gemini-4-neon-medium');
 
       const launchAttemptTools = launchCalls.filter((c) => c.payload.t === 'launch').map((c) => c.payload.tool);
-      assert.deepEqual(launchAttemptTools, ['claude', 'opencode']);
-      const agyLaunch = launchCalls[1].payload;
+      assert.deepEqual(launchAttemptTools, ['agy']);
+      const agyLaunch = launchCalls[0].payload;
       assert.match(agyLaunch.prompt, /只读硬约束|NEVER modify business code/);
       assert.match(agyLaunch.prompt, /readOnly=true/);
 
-      // Claude should now be in cooldown inside flagship pool
+      // Mark claude in cooldown and verify pools HTTP API + reset-cooldown
+      mesh.modelRouter.markCooldown('claude', 'opus', 'simulated 429');
       const poolsBefore = mesh.modelRouter.getPoolsStatus();
       assert.equal(poolsBefore.flagship.find((c) => c.harness === 'claude').status, 'cooldown');
 
@@ -335,8 +336,16 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(pick1.ok, true);
       assert.equal(pick1.candidate.harness, 'agy');
 
+      // AGY < 10 active still stays on AGY (high concurrency)
+      const pickStillAgy = router.selectCandidate('fast-coder', {
+        activeCounts: { byHarness: { agy: 9 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 9 } },
+      });
+      assert.equal(pickStillAgy.ok, true);
+      assert.equal(pickStillAgy.candidate.harness, 'agy');
+
+      // AGY reaches 10 -> spills over to codex
       const pick2 = router.selectCandidate('fast-coder', {
-        activeCounts: { byHarness: { agy: 1 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 1 } },
+        activeCounts: { byHarness: { agy: 10 }, byCandidate: { 'agy|gemini-4-hydrogen-medium': 10 } },
       });
       assert.equal(pick2.ok, true);
       assert.equal(pick2.candidate.harness, 'codex');
@@ -345,6 +354,118 @@ describe('mesh Swarm Phase 2 integration (roles + model pool fallback + HTTP API
       assert.equal(pick3.ok, true);
       assert.equal(pick3.candidate.harness, 'claude');
       assert.equal(pick3.candidate.status, 'low_quota');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('treats ANY exhausted window (e.g. 5h=0 while 7d=56 on cc-ubuntu/claude) as exhausted, scopes AGY Claude vs Gemini, and enforces spawnWorker validation/default-pool/explicit-tool-quota', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-router-5h-'));
+    try {
+      const mockMagpie = {
+        status: () => ({
+          accounts: [
+            {
+              provider: 'cc-ubuntu/claude',
+              name: 'cc-ubuntu/claude · Remote Magpie',
+              status: 'ok',
+              windows: [
+                { name: '5 hours', pool: '', remaining: 0, limit: null, used: 100, unlimited: false },
+                { name: '7 days', pool: '', remaining: 56, limit: null, used: 44, unlimited: false },
+              ],
+            },
+            {
+              provider: 'antigravity',
+              name: 'AGY',
+              status: 'ok',
+              windows: [
+                { name: 'Claude 5 hours', pool: 'claude', remaining: 0, limit: null, used: 100, unlimited: false },
+                { name: 'Gemini 5 hours', pool: 'gemini', remaining: 80, limit: null, used: 20, unlimited: false },
+              ],
+            },
+          ],
+        }),
+      };
+
+      const router = createModelRouter({ dataDir: tmp, getMagpie: () => mockMagpie });
+      // cc-ubuntu/claude 5h=0 -> claude MUST be exhausted even though 7d=56
+      const claudeEval = router.evaluateToolQuota('claude', 'sonnet');
+      assert.equal(claudeEval.healthy, false);
+      assert.equal(claudeEval.status, 'exhausted');
+
+      // AGY Claude 5h=0 -> AGY Claude exhausted, AGY Gemini still healthy
+      const agyClaude = router.evaluateToolQuota('agy', 'claude-sonnet-5-5-medium');
+      assert.equal(agyClaude.healthy, false);
+      assert.equal(agyClaude.status, 'exhausted');
+      const agyGemini = router.evaluateToolQuota('agy', 'gemini-4-hydrogen-medium');
+      assert.equal(agyGemini.healthy, true);
+
+      // Integrate with mesh.spawnWorker
+      const launchCalls = [];
+      const machines = new Map([
+        ['pc-a', {
+          name: 'pc-a',
+          online: true,
+          control: true,
+          sessions: new Map(),
+        }],
+      ]);
+      const mesh = createMesh({
+        dataDir: tmp,
+        machines,
+        getMagpie: () => mockMagpie,
+        dispatchControl: async (machineName, payload) => {
+          launchCalls.push({ machine: machineName, payload });
+          return { ok: true, msg: 'ok' };
+        },
+        onChange: () => {},
+        audit: () => {},
+      });
+      const proj = mesh.saveProject({ name: 'SpawnGate', workspaces: [{ machine: 'pc-a', path: 'D:\\work', mode: 'rw' }] }).project;
+      const master = mesh.upsertNode(proj.id, { machine: 'pc-a', sessionId: 'agy:master-1', role: 'master', alias: 'master' }).node;
+
+      // 1. Unknown param `harness` must be rejected (never silently default to claude)
+      const badParam = await mesh.spawnWorker({
+        projectId: proj.id,
+        fromNodeId: master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\work',
+        harness: 'codex',
+        goal: 'test unknown param',
+        prompt: 'hi',
+      });
+      assert.equal(badParam.ok, false);
+      assert.deepEqual(badParam.invalidParams, ['harness']);
+      assert.equal(launchCalls.length, 0);
+
+      // 2. Explicit tool='claude' when 5h exhausted must be refused with exhausted=true
+      const explicitExhausted = await mesh.spawnWorker({
+        projectId: proj.id,
+        fromNodeId: master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\work',
+        tool: 'claude',
+        goal: 'test explicit exhausted',
+        prompt: 'hi',
+      });
+      assert.equal(explicitExhausted.ok, false);
+      assert.equal(explicitExhausted.exhausted, true);
+      assert.equal(launchCalls.length, 0);
+
+      // 3. Neither pool nor tool -> automatically routes via default fast-coder pool (picks AGY Gemini)
+      const autoPool = await mesh.spawnWorker({
+        projectId: proj.id,
+        fromNodeId: master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\work',
+        alias: 'auto-worker',
+        goal: 'test default pool',
+        prompt: 'hi',
+      });
+      assert.equal(autoPool.ok, true);
+      assert.equal(autoPool.node.pool, 'fast-coder');
+      assert.equal(autoPool.node.tool, 'agy');
+      assert.equal(autoPool.node.model, 'gemini-4-hydrogen-medium');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

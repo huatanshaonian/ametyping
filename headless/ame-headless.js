@@ -166,6 +166,9 @@ function controlOk(req) {
   const t = Buffer.from(String(req.headers['x-ame-control'] || ''));
   return !req.headers.origin && t.length === CONTROL_TOKEN.length && crypto.timingSafeEqual(t, Buffer.from(CONTROL_TOKEN));
 }
+const cliUpdates = new Map();
+const recordCliUpdate = (u) => { if (u && u.tool) cliUpdates.set(String(u.tool), { tool: String(u.tool).slice(0, 32), detail: String(u.detail || '').slice(0, 160), at: Number(u.at) || Date.now() }); };
+
 function controlState() {
   return sessions.list().map((s) => ({
     id: s.id, label: sessions.label(s), project: s.project, provider: s.provider, state: s.state, via: sessions.via(s),
@@ -178,7 +181,7 @@ function controlState() {
 async function onControl(req, res, body) {
   const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (!controlOk(req)) return out(403, { ok: false });
-  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState() });
+  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState(), cliUpdates: [...cliUpdates.values()] });
   let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
   if (req.method === 'POST' && req.url === '/control/send') {
     const text = typeof d.text === 'string' ? d.text : '';
@@ -199,7 +202,7 @@ async function onControl(req, res, body) {
     const withEnv = sessions.list().filter((x) => x.env).sort((a, b) => b.last - a.last)[0];
     const resume = typeof d.resume === 'string' ? d.resume : '';
     if (resume) { const s = sessions.map.get(resume); if (s && s.claudePid && proc.alive(s.claudePid, s.claudeComm)) return out(200, { ok: false, msg: '这个会话还开着' }); }
-    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api, meshEnv: d.meshEnv, model: d.model }));
+    return out(200, await launch({ cwd: d.cwd, prompt: d.prompt || '', resume, tool: ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', env: withEnv ? withEnv.env : process.env, api: d.api, meshEnv: d.meshEnv, model: d.model, onCliUpdate: recordCliUpdate }));
   }
   if (req.method === 'POST' && req.url === '/control/decide') {
     if (typeof d.session !== 'string' || !permissions.list(d.session).some((p) => p.id === d.id)) return out(200, { ok: false, msg: '这个确认已经结束了' });

@@ -24,11 +24,12 @@ export function initWidget(desktop) {
   if (document.getElementById('approvewidget')) return;
   let collapsed = prefs.get('approve.collapsed', false);
   let dismissedSig = ''; // user clicked "先收到底层" for this exact set of pending IDs
+  const hiddenSigs = new Set(); // user clicked "×" to forcibly clear specific items
   const busyPerms = new Set();
 
   const rows = h('div', { class: 'mpw-rows apw-rows' });
   const status = h('small', { class: 'mpw-status', text: '暂无待审批项', role: 'status' });
-  const title = h('span', { class: 'mpw-title', text: '待我介入' });
+  const title = h('span', { class: 'mpw-title', text: '待介入' });
   const sinkBtn = h('button', {
     class: 'mpw-fold apw-sink',
     type: 'button',
@@ -40,8 +41,8 @@ export function initWidget(desktop) {
       render();
     },
   });
-  const foldBtn = h('button', { class: 'mpw-fold', type: 'button', title: '收起 / 展开', 'aria-label': '收起或展开待我介入便签' });
-  const root = h('section', { id: 'approvewidget', class: 'mp-widget ap-widget', 'aria-label': '待我介入与权限审批便签' },
+  const foldBtn = h('button', { class: 'mpw-fold', type: 'button', title: '收起 / 展开', 'aria-label': '收起或展开待介入便签' });
+  const root = h('section', { id: 'approvewidget', class: 'mp-widget ap-widget', 'aria-label': '待介入与权限审批便签' },
     h('div', { class: 'mpw-head apw-head' }, h('img', { src: icon('msg_information', true), alt: '' }), title, sinkBtn, foldBtn),
     h('div', { class: 'mpw-body apw-body' }, rows, status)
   );
@@ -78,7 +79,15 @@ export function initWidget(desktop) {
         }
       }
     }
-    return items;
+    return items.filter((it) => !hiddenSigs.has(it.sig));
+  }
+
+  async function forceClear(it) {
+    hiddenSigs.add(it.sig);
+    if (it.kind === 'alert') {
+      try { await mesh.dismissWatchdog(it.projectId, it.node.id); } catch {}
+    }
+    render();
   }
 
   let latestSig = '';
@@ -121,7 +130,7 @@ export function initWidget(desktop) {
       collapsed = false;
       applyFold();
     }
-    title.textContent = items.length ? `待我介入 (${items.length})` : '待我介入';
+    title.textContent = items.length ? `待介入 (${items.length})` : '待介入';
 
     if (!items.length) {
       rows.replaceChildren(h('div', { class: 'mpw-empty', text: '全部畅通，暂无权限确认或告警。' }));
@@ -137,7 +146,8 @@ export function initWidget(desktop) {
           h('div', { class: 'apw-meta' },
             h('span', { class: 'apw-tag perm', text: '权限' }),
             h('b', { class: 'apw-name', text: it.label }),
-            h('small', { text: it.machine })
+            h('small', { text: it.machine }),
+            h('button', { class: 'mpw-fold', type: 'button', title: '强制消除此条提示', text: '×', onclick: () => forceClear(it) })
           ),
           h('div', { class: 'apw-desc', text: permBrief(it.perm) }),
           h('div', { class: 'apw-acts' },
@@ -152,7 +162,8 @@ export function initWidget(desktop) {
         h('div', { class: 'apw-meta' },
           h('span', { class: 'apw-tag alert', text: '告警' }),
           h('b', { class: 'apw-name', text: it.node.alias || it.node.id }),
-          h('small', { text: it.projectName })
+          h('small', { text: it.projectName }),
+          h('button', { class: 'mpw-fold', type: 'button', title: '强制消除此条告警', text: '×', onclick: () => forceClear(it) })
         ),
         h('div', { class: 'apw-desc', text: `${it.alert.label || '看门狗告警'}${it.alert.detail ? ' · ' + it.alert.detail : ''}` }),
         h('div', { class: 'apw-acts' },

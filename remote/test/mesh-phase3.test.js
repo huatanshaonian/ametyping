@@ -936,6 +936,18 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
         });
         assert.equal(poolDiverted.ok, true);
         assert.notEqual(poolDiverted.node.tool, 'claude');
+
+        // CLI update signal: record -> GET /api/mesh/cli-updates -> POST clear
+        fxOc.mesh.onCliUpdate('pc-a', { tool: 'codex', detail: 'Update available 0.1.0 -> 0.2.0', at: 123456 });
+        let cuBody = null;
+        await fxOc.mesh.handle({ method: 'GET' }, {}, new URL('http://local/api/mesh/cli-updates'), '127.0.0.1', (_r, _c, b) => { cuBody = b; }, async () => '{}');
+        assert.equal(cuBody.ok, true);
+        assert.equal(cuBody.updates.length, 1);
+        assert.equal(cuBody.updates[0].machine, 'pc-a');
+        assert.equal(cuBody.updates[0].tool, 'codex');
+        await fxOc.mesh.handle({ method: 'POST' }, {}, new URL('http://local/api/mesh/cli-updates'), '127.0.0.1', (_r, _c, b) => { cuBody = b; }, async () => JSON.stringify({ machine: 'pc-a', tool: 'codex' }));
+        assert.equal(cuBody.ok, true);
+        assert.equal(cuBody.updates.length, 0);
       } finally {
         fxOc.cleanup();
       }

@@ -787,7 +787,7 @@ function controlState() {
 async function onControl(req, res, body) {
   const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (!controlOk(req)) return out(403, { ok: false });
-  if (req.method === 'GET' && req.url === '/control/state') return out(200, { control: !!settings.remoteControl, sessions: controlState() });
+  if (req.method === 'GET' && req.url === '/control/state') return out(200, { control: !!settings.remoteControl, sessions: controlState(), cliUpdates: [...cliUpdates.values()] });
   let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
   // the NAS wrote a daily report: a note for the morning bubble (information only -- not remote control)
   if (req.method === 'POST' && req.url === '/control/report') return out(200, { ok: morning.setNote(d) });
@@ -928,7 +928,9 @@ const mailNotice = createMailNotice({ BrowserWindow, ipcMain, screen, anchor: ()
   enabled: () => settings.mailBubble !== false, dashboardUrl: () => settings.dashboardUrl, openExternal: (u) => shell.openExternal(u) });
 const quotaNotice = createQuotaNotice({ app, BrowserWindow, ipcMain, screen, anchor: () => (win && !win.isDestroyed() ? win.getBounds() : null),
   dashboardUrl: () => settings.dashboardUrl, openExternal: u => shell.openExternal(u) });
-const { chatSend, chatKey, chatScreen, launch, btwList } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home'), onBtw: btwToChat });
+const cliUpdates = new Map();
+const recordCliUpdate = (u) => { if (u && u.tool) cliUpdates.set(String(u.tool), { tool: String(u.tool).slice(0, 32), detail: String(u.detail || '').slice(0, 160), at: Number(u.at) || Date.now() }); };
+const { chatSend, chatKey, chatScreen, launch, btwList } = createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home: () => app.getPath('home'), onBtw: btwToChat, onCliUpdate: recordCliUpdate });
 ipcMain.handle('chat-send', (_e, id, text) => (String(text || '').trim() ? chatSend(id, String(text)) : { ok: false, msg: '' }));
 
 // drag / resize run entirely in the main process: a timer reads the real cursor every 8 ms.

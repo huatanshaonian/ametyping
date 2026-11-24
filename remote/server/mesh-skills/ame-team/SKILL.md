@@ -22,6 +22,7 @@ description: >
    - **计划文档**：我们是否已有核心设计/计划文件（`.md` 路径），还是需要先从 0 一起梳理出计划文档？
    - **跨机目录围栏**：若尚未建项目/配围栏，结合 `mesh_status` 拟一份建议的跨机器 `rw`/`ro` 目录清单，请用户点头确认（用户确认后立刻调用 **`mesh_workspace`** 一次性落盘并上锁 `lock=true`）。
    - **推进范围**：若文档含多阶段，确认本次先推进哪一阶段（默认 **Phase 1**）。
+   - **交付放行档位（Delivery Gate）**：默认 **L1（保守档）**——本地验收全绿后停下等你确认再合并部署；若你明确指定 **L2（受锁自动上线验证档）**，Master 在测试与 `verifier` 全绿后自动走带排他锁的 `deploy.js` 合并上线并跑实测；若指定 **L3（硬门禁跨阶段自治档）**，仅在定量指标达标且零冲突时自动进入下一阶段（遇到代码冲突、指标不达标或主观架构分叉立刻停下找你）。
 3. **之后全流程自动执行，不再要求用户重复任何协作细节**：
    - 用户只需确认目标与围栏，后续的 **读胶水定契约 → `mesh_task` 建表拆无碰撞 `boundaries` → 按难度选 `pool` 派生 Worker 与只读 `verifier` → 黑板 `@mention`/`#seq` 接力 → `gitAudit` + 真实证据双验收**，全部由主控按本手册自动完成。
 4. **守住主控边界（Do not do the work）**：
@@ -105,4 +106,5 @@ mesh_spawn(machine="dell97", cwd="/work/repo", role="worker", pool="fast-coder",
 - **热上下文复用（优先于重拉新节点）**：当某个已完工的 Worker 所在子领域有后续串联/修补任务时，**不要重新 `mesh_spawn`**，直接调用 **`mesh_send(toNodeId=..., text=..., goal=..., stopCondition=...)`** 复用这个上下文还热乎的节点接着干。
 - **静默批准结单**：节点处于 `waiting_review` 且验收通过时，直接调用 **`mesh_review(nodeId=..., action="approve")`** 静默结单（不用借道 `mesh_report`）。
 - **打回返工**：发现问题时调用 **`mesh_review(nodeId=..., action="reject", note="具体问题与修改要求")`**，自动切回 `running` 并在黑板发帖唤醒该节点。
-- **退役归档（保留拓扑痕迹）**：确认某个 Worker 或 `verifier` 彻底干完活、不再需要参与后续阶段时，调用 **`mesh_review(nodeId=..., action="archive")`** 将其归档退役（默认保留窗口；若确定要结束该会话，**显式传 `closeTerminal=true`** 向其发送 `/exit` 优雅退出，服务端硬限制绝不关闭 `master`）——归档后不再被看门狗巡检、不再参与 `@all` 唤醒、不再占用活跃并发配额，但**永久保留在拓扑图与黑板历史痕迹中**。
+- **上下文压缩 / 重启恢复硬规则**：会话发生上下文压缩（Context Compaction）或重启后，首次调用 `mesh_spawn` / `mesh_review` 前，**必须重新阅读本 `SKILL.md` 及对应 MCP 工具 schema**，严禁凭记忆传参（如误传不存在的 `harness` 字段）；日常派活默认只传 `pool`（如 `fast-coder` / `flagship` / `heavy-reasoner`）由路由自动选型，仅在确需指定特定 CLI 时才显式传 `tool`（若该 CLI 额度耗尽，服务端会直接报错拒绝拉起）。
+- **退役归档（保留拓扑痕迹）**：确认某个 Worker 或 `verifier` 彻底干完活、不再需要参与后续阶段时，调用 **`mesh_review(nodeId=..., action="archive")`** 将其归档退役（默认保留窗口；若确定要结束该会话，**显式传 `closeTerminal=true`** 向其发送 `/exit` 优雅退出，服务端硬限制绝不关闭 `master`）——归档后不再被看门狗巡检、不再参与 `@all` 唤醒、不再占用活跃并发配额，但**永久保留在拓扑图与黑板历史痕迹中**。若 `closeTerminal=true` 返回 `terminalClosed: false`，**Master 必须主动在回复中列出未关闭的节点别名/窗口，提醒用户手动关闭**，避免桌面残留僵尸终端。

@@ -45,6 +45,8 @@ const { createAgentConfig } = require('./agent-config');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
+const { probeCompute } = require('./compute-probe');
+const { readCodexRateLimits } = require('./codex-quota');
 const { createCollector, stateSignature } = require('./infra-probe');
 const infraCollector = createCollector({ isNas: false });
 let infraIntervalMs = 60000, infraWatched = [], infraTargets = [], lastInfraAt = 0, lastInfraSig = '', infraBusy = false;
@@ -332,11 +334,56 @@ function petCall(method, p, body) {
     req.end(data);
   });
 }
+const sentCliUpdates = new Map(); // tool -> last reported `at`
+let lastProbeAt = 0;
+let lastProbeSig = '';
+function maybeReportComputeProbe() {
+  if (!ws || ws.readyState !== 1) return;
+  const now = Date.now();
+  if (now - lastProbeAt < 15000) return;
+  try {
+    const probe = probeCompute();
+    const sig = `${probe.hasGpu}|${probe.gpuBusy}|${probe.cpuBusy}`;
+    if (sig !== lastProbeSig || now - lastProbeAt >= 60000) {
+      lastProbeSig = sig;
+      lastProbeAt = now;
+      sendJSON({ t: 'compute-probe', probe });
+    }
+  } catch {}
+  pushLocalQuota(now);
+}
+
+let lastLocalQuotaAt = 0, lastLocalQuotaSig = '';
+function pushLocalQuota(now = Date.now()) {
+  if (!ws || ws.readyState !== 1) return;
+  if (now - lastLocalQuotaAt < 60000) return;
+  lastLocalQuotaAt = now;
+  try {
+    const q = readCodexRateLimits();
+    if (!q) return;
+    const sig = JSON.stringify(q.windows);
+    if (sig !== lastLocalQuotaSig) {
+      lastLocalQuotaSig = sig;
+      sendJSON({ t: 'local-quota', quota: q });
+    }
+  } catch {}
+}
+
 async function pollPet() {
   const r = CONTROL ? await petCall('GET', '/control/state') : null;
   pet.clear();
   petUp = !!r; petAllows = !!r && r.control !== false;
   if (r && Array.isArray(r.sessions)) for (const s of r.sessions) if (s && typeof s.id === 'string') pet.set(s.id, s);
+  if (r && Array.isArray(r.cliUpdates) && ws && ws.readyState === 1) {
+    for (const u of r.cliUpdates) {
+      if (!u || typeof u.tool !== 'string' || !u.tool) continue;
+      const at = Number(u.at) || 0;
+      if (sentCliUpdates.get(u.tool) === at) continue;
+      sentCliUpdates.set(u.tool, at);
+      sendJSON({ t: 'cli-update', tool: u.tool, detail: String(u.detail || '').slice(0, 160), at });
+    }
+  }
+  maybeReportComputeProbe();
 }
 // the only things the agent does for the server: type a reply, press a navigation key, read the terminal's screen
 // (its menus), answer a permission card,

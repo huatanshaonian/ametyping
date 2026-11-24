@@ -40,7 +40,7 @@ function meshPsPrefix(mEnv) {
 }
 
 // deps: { sessions, permissions, bridge, procAlive, pushBubble, home, onBtw }
-function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home, onBtw = () => {} }) {
+function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBubble, home, onBtw = () => {}, onCliUpdate = null }) {
   // /btw answers read off the console (btw-panel.js): kept on the session for the agent (/control/state), and
   // onBtw(s, item) for the panel's own conversation
   const btw = btwPanel.createBtw({ onChange: onBtw });
@@ -127,7 +127,28 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       if (r.ok && s) { s.last = Date.now(); }
       return r;
     }
-    const s = sessions.get(id);
+    let s = sessions.get(id);
+    if (String(id).startsWith('agy:') && (!s || !s.claudePid || !(await procAlive(s.claudePid)))) {
+      const rawId = String(id).slice(4);
+      const livePid = typeof agyCli.findRunningByConversation === 'function'
+        ? await agyCli.findRunningByConversation(rawId)
+        : 0;
+      if (livePid > 0) {
+        const tNow = Date.now();
+        if (!s) {
+          s = { id, provider: 'agy', rawSession: rawId, project: '', cwd: '', lines: [], steps: 0, t0: tNow, last: tNow, born: tNow };
+          sessions.set(id, s);
+        }
+        Object.assign(s, { state: 'idle', last: tNow, dormant: false, claudePid: livePid, fromPid: null, headless: false, terminal: true });
+        s.processIdentity = bridge.identity ? await bridge.identity(livePid) : null;
+        try { require('./agy-sessions').remember(s, home()); } catch {}
+        pushBubble(null);
+      } else if (!s && /^[0-9a-f-]{36}$/i.test(rawId)) {
+        const tNow = Date.now();
+        s = { id, provider: 'agy', rawSession: rawId, project: '', cwd: home(), lines: [], steps: 0, t0: tNow, last: tNow, born: tNow, state: 'ended' };
+        sessions.set(id, s);
+      }
+    }
     const t = await terminalOf(s);
     if (t.msg) return { ok: false, msg: t.msg };
     if (t.pid) {
@@ -329,7 +350,7 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     } else pid = await bridge.launch(exe, args, cwd);
     if (!pid) return { ok: false, msg: '启动失败' };
     if (resume && api) { const s = sessions.get(resume); if (s) s.api = api.id; }
-    if (codex) codexCli.greet(bridge, pid, thread ? '' : first).catch(() => {});
+    if (codex) codexCli.greet(bridge, pid, thread ? '' : first, onCliUpdate).catch(() => {});
     else if (agy) agyCli.greet(bridge, pid, agyThread ? '' : first).catch(() => {});
     else if (kiro) kiroCli.greet(bridge, pid, kiroThread ? '' : first).catch(() => {});
     else answerTrust(pid);
