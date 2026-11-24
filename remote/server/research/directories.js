@@ -152,7 +152,7 @@ const ASSISTANT_SCHEMA={
   required:['mood','headline','answer','key_results','locations','evidence_refs','follow_ups'],
 };
 
-function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=null,getEmbed=()=>null,listProjects=()=>[],saveProject=null}){
+function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=null,getEmbed=()=>null,getLit=()=>null,listProjects=()=>[],saveProject=null}){
   const db=vault.db;
   const dataDir=path.dirname(vault.file);
   db.exec(`CREATE TABLE IF NOT EXISTS research_directory_summaries(id TEXT PRIMARY KEY,project TEXT NOT NULL,machine TEXT NOT NULL,path TEXT NOT NULL,
@@ -717,6 +717,66 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       memories=allMems.slice(0,30);
     }
 
+    let litEvidence=[];
+    let litContradictions=[];
+    let litBenchmarks=[];
+    const lit=typeof getLit==='function'?getLit():null;
+    if(lit&&lit.kbStruct){
+      try{
+        const kb=lit.kbStruct;
+        const mirror=lit.mirror||null;
+        const semKeys=[];
+        if(embed&&embed.search&&typeof embed.search.queryLit==='function'){
+          const lr=await embed.search.queryLit(q,{topK:8}).catch(()=>null);
+          if(lr&&lr.ok&&Array.isArray(lr.items)){
+            for(const h of lr.items)if(h&&h.key)semKeys.push(h.key);
+          }
+        }
+        const allEv=[...(kb.listEvidence('plasma_rcs_v1')||[]),...(kb.listEvidence('aero_stealth_v1')||[])];
+        const byKey=new Map();
+        for(const ev of allEv)if(!byKey.has(ev.zoteroKey))byKey.set(ev.zoteroKey,ev);
+        const picked=[];
+        const seen=new Set();
+        const pushEv=(ev)=>{
+          if(!ev||seen.has(ev.zoteroKey)||picked.length>=6)return;
+          seen.add(ev.zoteroKey);
+          const item=mirror&&typeof mirror.item==='function'?mirror.item(ev.zoteroKey):null;
+          const compactFields={};
+          for(const [fk,fv] of Object.entries(ev.fields||{})){
+            if(fv&&fv.value&&fv.verified)compactFields[fk]={value:String(fv.value).slice(0,140),page:fv.page||0};
+          }
+          picked.push({
+            zoteroKey:ev.zoteroKey,
+            schemaId:ev.schemaId,
+            title:item?String(item.title||'').slice(0,120):ev.zoteroKey,
+            year:item?item.year||'':'',
+            verifiedRatio:ev.verifiedRatio,
+            fields:compactFields,
+          });
+        };
+        for(const k of semKeys)pushEv(byKey.get(k));
+        if(picked.length<6&&tokens.length){
+          for(const ev of allEv){
+            const item=mirror&&typeof mirror.item==='function'?mirror.item(ev.zoteroKey):null;
+            const hay=([item&&item.title,JSON.stringify(ev.fields||{})].filter(Boolean).join(' ')).toLowerCase();
+            if(tokens.some(tk=>hay.includes(tk.toLowerCase())))pushEv(ev);
+          }
+        }
+        litEvidence=picked;
+        const allContra=kb.listContradictions?kb.listContradictions():[];
+        litContradictions=(allContra||[])
+          .filter(c=>!tokens.length||tokens.some(tk=>(String(c.topic||'')+' '+String(c.summary||'')).toLowerCase().includes(tk.toLowerCase())))
+          .slice(0,4)
+          .map(c=>({schemaId:c.schemaId,topic:c.topic,verdict:c.verdict,summary:String(c.summary||'').slice(0,240),status:c.status}));
+        if(!litContradictions.length&&litEvidence.length){
+          litContradictions=(allContra||[]).slice(0,3).map(c=>({schemaId:c.schemaId,topic:c.topic,verdict:c.verdict,summary:String(c.summary||'').slice(0,240),status:c.status}));
+        }
+        if(kb.listBenchmarks){
+          litBenchmarks=(kb.listBenchmarks()||[]).slice(0,4).map(b=>({id:b.id,title:b.title,zoteroKeys:b.zoteroKeys,status:b.status,errorSummary:b.errorSummary,npzPath:b.npzPath}));
+        }
+      }catch{}
+    }
+
     const recentTurns=Array.isArray(history)?history.slice(-4).map(h=>({
       q:String(h.q||'').slice(0,300),
       a:String(h.a||'').slice(0,500),
@@ -744,6 +804,7 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       '输入 3：原文证据池（编号 E1..En）：',
       JSON.stringify(evidencePool.map(({event_id,...rest})=>rest)),
       semanticPassages.length?'\n输入 4：跨设备语义检索到的相关原始对话片段（补充参考，可能包含尚未汇总的新对话）：\n'+JSON.stringify(semanticPassages):'',
+      (litEvidence.length||litContradictions.length||litBenchmarks.length)?'\n输入 5：已核验的结构化文献证据表、跨论文分歧与物理基准复算（回答跨论文定量对比时请标明 Zotero Key 与页码）：\n'+JSON.stringify({evidence:litEvidence,contradictions:litContradictions,benchmarks:litBenchmarks}):'',
       '',
       '用户当前问题：',
       q,
@@ -765,6 +826,7 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
         role:String(l.role||'').trim(),
       })).filter(l=>l.path):[],
       evidence:matchedEv.length?matchedEv:evidencePool.slice(0,2),
+      litEvidence,
       follow_ups:Array.isArray(res.follow_ups)?res.follow_ups.map(x=>String(x).trim()).filter(Boolean).slice(0,3):[],
       model:model||resolveDefaultModel()||DEFAULT_MODEL,
       semantic:semanticStatus,

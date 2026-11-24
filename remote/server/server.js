@@ -264,7 +264,7 @@ const gProxies = (cfg.summary && cfg.summary.proxies) || [];
 const researchEgress = gProxies.length ? createEgress({ proxies: gProxies, log: console.log }) : null;
 const research = createResearch({vault:knowledge.vault,config:cfg.research||{},getProject:id=>mesh.getProject(id),
   listProjects:()=>mesh.listProjects(),saveProject:d=>mesh.saveProject(d),getMagpie:()=>magpie,egress:researchEgress,
-  getEmbed:()=>embed,
+  getEmbed:()=>embed,getLit:()=>lit,
   onMemoryChange:()=>broadcast({t:'knowledge'}),
   control:CONTROL,fresh:auth.isFresh,audit,log:console.error});
 // phone notifications (Web Push, push/): to the browsers' push services through the same proxies as Google
