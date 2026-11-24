@@ -18,8 +18,19 @@ const { execFile, spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 // a bundle path: relative, no .., nothing inside a .git folder
 const SAFE = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!(?:.*\/)?\.git(?:\/|$))[A-Za-z0-9._\-/]{1,200}$/;
-const run = (cmd, args, cwd, timeout = 120e3) => new Promise((res) => execFile(cmd, args, { cwd, timeout, windowsHide: true, maxBuffer: 8e6 },
+const run = (cmd, args, cwd, timeout = 120e3, env = undefined) => new Promise((res) => execFile(cmd, args, { cwd, timeout, windowsHide: true, maxBuffer: 8e6, ...(env ? { env } : {}) },
   (e, out, err) => res({ ok: !e, out: String(out || '').trim(), err: String(err || '').trim() || (e ? e.message : '') })));
+// the way out this computer uses (set for it, else found by the agent: harness.js) -- git pull reaches GitHub through it;
+// the agent's own environment has no proxy (2026-11-25: panasonic and dell211 could not pull direct)
+function netEnv(home, env) {
+  let n = {}; try { n = require('./harness').readNet(home); } catch {}
+  const p = n.proxy || n.detected;
+  if (!p) return env;
+  const out = { ...env };
+  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) out[k] = p;
+  try { out.NO_PROXY = out.no_proxy = require('./harness').NO_PROXY; } catch {}
+  return out;
+}
 // git's id of a file's content, text taken with LF line ends as git stores it (as deploy-lib.js does)
 function blobId(buf) {
   if (!buf.includes(0)) buf = Buffer.from(buf.toString('binary').replace(/\r\n/g, '\n'), 'binary');
@@ -37,7 +48,7 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
   const dir = path.join(home, '.ametyping', 'fleet');
   const pendingFile = path.join(dir, 'pending.json'), lastFile = path.join(dir, 'last.json');
   const versionFile = path.join(root, '.ame-version.json');
-  const git = (args, t) => gitRun('git', ['-C', root, ...args], root, t);
+  const git = (args, t) => gitRun('git', ['-C', root, ...args], root, t, args[0] === 'pull' || args[0] === 'fetch' ? netEnv(home, env) : undefined);
   let staging = null;                                     // { rid, dir, files: Map(path -> blob) }
 
   async function version() {
@@ -120,8 +131,8 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       const notes = [];
       for (const [sub, args] of [['app', ['install', '--no-audit', '--no-fund']], ['remote', ['install', '--omit=dev', '--no-audit', '--no-fund']]]) {
         if (!changed.some((f) => f === `${sub}/package.json` || f === `${sub}/package-lock.json`)) continue;
-        const r = platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'npm', ...args], path.join(root, sub), 600e3)
-          : await run('npm', args, path.join(root, sub), 600e3);
+        const r = platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'npm', ...args], path.join(root, sub), 600e3, netEnv(home, env))
+          : await run('npm', args, path.join(root, sub), 600e3, netEnv(home, env));
         if (!r.ok) notes.push(`${sub}/ 的依赖没装成：${r.err.slice(-160)}`);
       }
       await hooks(changed, notes);

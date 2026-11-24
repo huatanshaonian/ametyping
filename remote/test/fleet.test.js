@@ -626,3 +626,23 @@ test('a computer\'s proxy: set for it, else what its agent found, else the defau
   assert.equal(run.proxy, 'http://10.1.1.1:3128'); assert.equal(run.fallback, ''); assert.equal(typeof run.target, 'string');
   s.fleet.close();
 });
+
+test('git mode: git pull goes through the way out found for this computer (the agent has no proxy of its own)', async () => {
+  const root = tmp('git'), home = tmp('home');
+  git(root, 'init', '-q', '-b', 'main'); git(root, 'config', 'user.email', 't@t'); git(root, 'config', 'user.name', 't');
+  write(path.join(root, 'a.js'), '1\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'one');
+  writeNet({ detected: 'http://192.168.114.1:7890', detectedAt: 1 }, home);
+  const calls = [];
+  const gitRun = async (cmd, args, cwd, t, env) => { calls.push({ args, proxy: env && env.HTTPS_PROXY, noProxy: env && env.NO_PROXY });
+    return args.includes('pull') ? { ok: false, out: '', err: 'stop here' } : { ok: true, out: args.includes('rev-parse') ? (args.includes('--abbrev-ref') ? 'main' : 'c'.repeat(40)) : '', err: '' }; };
+  const f = createAgentFleet({ root, home, platform: 'linux', gitRun });
+  await f.apply({ rid: 'r', mode: 'git', commit: 'd'.repeat(40) });
+  const pull = calls.find((c) => c.args.includes('pull'));
+  assert.ok(pull, 'git pull was run'); assert.equal(pull.proxy, 'http://192.168.114.1:7890'); assert.match(pull.noProxy, /192\.168\.0\.0\/16/);
+  // other git commands (status, rev-parse) without it
+  assert.ok(calls.filter((c) => !c.args.includes('pull')).every((c) => !c.proxy));
+  // set for the computer: that one
+  writeNet({ proxy: 'http://10.0.0.5:3128' }, home);
+  calls.length = 0; await f.apply({ rid: 'r2', mode: 'git', commit: 'd'.repeat(40) });
+  assert.equal(calls.find((c) => c.args.includes('pull')).proxy, 'http://10.0.0.5:3128');
+});
