@@ -20,11 +20,20 @@
 //   POST /api/fleet/harness    (code)       { machine | '*', id | '*', action }   '*': every installed one, one after
 //                                           another on a computer (all computers at once); answers at once, the
 //                                           outcome comes with the 'fleet' broadcast
+//   POST /api/fleet/check      (code)       the daily harness check now
+//   POST /api/fleet/netprobe   (code)       { machine }  that computer looks again for its way out
+// The daily harness check (settings.daily { on, at: 'HH:MM' }, before the daily report at 04:30): the newest version of
+// each harness and what changed (releases.js), then every online computer that allows it updates what it has behind
+// that -- on Windows not a harness with a session open there (its files are in use); never one set off in the panel.
+// What happened goes into the next daily report (digest()), the major changes marked.
+// A computer's proxy: set for it in the panel, else the one its agent found works (harness.js detectNet), else the default.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createMagpieKeys } = require('./magpie-keys');
+const { createReleases, cmp } = require('./releases');
+const { createEgress } = require('../egress');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const TARGETS = ['claude', 'opencode', 'codex'];
@@ -33,19 +42,42 @@ const HARNESSES = ['claude', 'codex', 'opencode', 'agy'];
 const PROXY = /^https?:\/\/[^\s'"\\]+$/;
 const BATCH = 1.5 * 1024 * 1024;
 const str = (v, n = 300) => (typeof v === 'string' ? v.slice(0, n) : '');
+const REACH = ['openai', 'npm', 'github', 'claude', 'agy'];
+const reachOf = (r) => Object.fromEntries(REACH.map((k) => [k, !!(r && r[k] === true)]));
+const toolOf = (id) => (/^(codex|opencode|agy|kiro):/.exec(String(id)) || [, 'claude'])[1];
 
 function createFleet({ dataDir, machines, control = false, audit = () => {}, onChange = () => {}, log = () => {},
   magpieConfig = {}, magpieKeys = createMagpieKeys({ config: magpieConfig }), models = () => [],
   templateFile = path.join(__dirname, '..', '..', 'public', 'downloads', 'opencode-magpie.json'),
-  replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, harnessTimeoutMs = 17 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3 }) {
+  replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, harnessTimeoutMs = 17 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3,
+  egressProxies = [], aiAsk = null, releases = null, now = () => Date.now(), dailyGraceMs = 15 * 60e3 }) {
+  // (the daily check waits until the server has been up this long: a throwaway test server -- remote/test/run.js stops
+  // each test within 10 minutes -- never makes its agents update the harnesses installed on the computer running it)
+  const startedAt = now();
   const dir = path.join(dataDir, 'fleet'), bundleDir = path.join(dir, 'bundle'), stateFile = path.join(dir, 'state.json');
   // net: { machine: { proxy } }; harness: { machine: { id: { action, status, msg, before, after, notes, log, at } } }
-  let state = { settings: { auto: true, gateway: '', models: {}, proxy: '' }, keys: {}, runs: {}, net: {}, harness: {} };
+  // harnessLog: [{ at, machine, id, action, before, after, ok, msg, by }] (newest first); daily: { date, at, msg }
+  let state = { settings: { auto: true, gateway: '', models: {}, proxy: '', daily: { on: true, at: '03:40' }, harnessOff: {} },
+    keys: {}, runs: {}, net: {}, harness: {}, harnessLog: [], daily: null };
   try { const s = JSON.parse(fs.readFileSync(stateFile, 'utf8')); state = { ...state, ...s, settings: { ...state.settings, ...(s.settings || {}) } }; } catch {}
   for (const k of ['net', 'harness']) if (!state[k] || typeof state[k] !== 'object') state[k] = {};
+  if (!Array.isArray(state.harnessLog)) state.harnessLog = [];
   if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
+  if (!state.settings.daily || typeof state.settings.daily !== 'object') state.settings.daily = { on: true, at: '03:40' };
+  if (!state.settings.harnessOff || typeof state.settings.harnessOff !== 'object') state.settings.harnessOff = {};
   delete state.settings.models.codex;                  // (Codex is not pointed at Magpie any more)
-  const proxyOf = (name) => (state.net[name] && state.net[name].proxy) || state.settings.proxy || '';
+  const rel = releases || createReleases({ dataDir, ask: (...a) => (aiAsk ? aiAsk(...a) : Promise.reject(new Error('AI 没启用'))), log, now,
+    egress: Array.isArray(egressProxies) && egressProxies.length ? createEgress({ proxies: egressProxies, log }) : null });
+  // set for the computer > found by its agent > the default; with where it came from
+  function netOf(name) {
+    const set = state.net[name] && state.net[name].proxy;
+    if (set) return { proxy: set, source: '为这台电脑设置的' };
+    const ws = socketOf(name), d = ws && ws.fleet && ws.fleet.net;
+    if (d && d.recommended) return { proxy: d.recommended, source: '自动检测：' + (d.recommendedSource || '') };
+    if (d && d.needProxy === false) return { proxy: '', source: '自动检测：直连就能到' };
+    return { proxy: state.settings.proxy || '', source: state.settings.proxy ? '默认代理' : '' };
+  }
+  const proxyOf = (name) => netOf(name).proxy;
   if (!state.settings.gateway) {
     try { const t = JSON.parse(fs.readFileSync(templateFile, 'utf8')); state.settings.gateway = String(t.providers.magpie.settings.baseURL || '').replace(/\/v1\/?$/, ''); } catch {}
   }
@@ -171,7 +203,14 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
         magpieKey: d.magpieKey && typeof d.magpieKey === 'object' ? { id: str(d.magpieKey.id, 80), name: str(d.magpieKey.name, 120) } : null,
         proxy: PROXY.test(d.proxy || '') ? d.proxy : '',
         harnesses: Array.isArray(d.harnesses) ? d.harnesses.filter((x) => x && HARNESSES.includes(x.id)).map((x) => ({
-          id: x.id, label: str(x.label, 40), installed: x.installed === true, version: str(x.version, 80), path: str(x.path, 300) })) : null };
+          id: x.id, label: str(x.label, 40), installed: x.installed === true, version: str(x.version, 80), path: str(x.path, 300),
+          method: x.method === 'npm' ? 'npm' : x.method === 'self' ? 'self' : '', line: x.line === 'legacy' ? 'legacy' : undefined })) : null,
+        // the agent's look for a way out (harness.js detectNet): which proxy works, reached from where
+        net: d.net && typeof d.net === 'object' ? { at: +d.net.at || 0, needProxy: d.net.needProxy !== false,
+          recommended: PROXY.test(d.net.recommended || '') ? d.net.recommended : '', recommendedSource: str(d.net.recommendedSource, 60),
+          direct: d.net.direct && d.net.direct.reach && typeof d.net.direct.reach === 'object' ? reachOf(d.net.direct.reach) : null,
+          routes: Array.isArray(d.net.routes) ? d.net.routes.slice(0, 8).filter((r) => r && PROXY.test(r.url || '')).map((r) => ({
+            url: r.url, source: str(r.source, 60), ms: +r.ms || 0, reach: reachOf(r.reach) })) : [] } : null };
       m.fleet = ws.fleet;
       // an update that restarted the agent: done when it is back at that commit (or rolled back: the guard says so)
       const run = state.runs[m.name];
@@ -184,7 +223,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       setTimeout(() => maybeAuto(m.name), 3000).unref?.();
       return true;
     }
-    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result', 'harness-result'].includes(d.t) && typeof d.rid === 'string') {
+    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result', 'harness-result', 'harness-net-result'].includes(d.t) && typeof d.rid === 'string') {
       const p = pending.get(d.rid);
       if (p && p.ws === ws && (p.want === d.t || d.t === 'fleet-result')) p.done(d);
       return true;
@@ -212,7 +251,8 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     if (keyed && !state.settings.gateway) return { ok: false, msg: '先填网关地址' };
     if (list.includes('codex') && !proxyOf(name)) return { ok: false, msg: 'Codex 要走代理：先填这台电脑的代理（或默认代理）' };
     let template = null; try { template = JSON.parse(fs.readFileSync(templateFile, 'utf8')); } catch {}
-    const msg = { t: 'agent-config', gateway: state.settings.gateway, models: state.settings.models || {}, targets: list, template, proxy: proxyOf(name) };
+    const msg = { t: 'agent-config', gateway: state.settings.gateway, models: state.settings.models || {}, targets: list, template,
+      proxy: (state.net[name] && state.net[name].proxy) || '', fallback: state.settings.proxy || '' };
     let key = null;
     const have = v.magpieKey && v.magpieKey.id;
     if (keyed && (reissue || !have || !(await magpieKeys.usable(have).catch(() => true)))) {
@@ -234,41 +274,130 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     try { save(); } catch {}
     onChange();
   }
+  function logHarness(e) { state.harnessLog = [{ ...e, at: now() }, ...state.harnessLog].slice(0, 300); }
   async function runOne(name, id, action, by) {
     const ws = socketOf(name);
     if (!ws) { setHarness(name, id, { action, status: 'failed', msg: '这台电脑不在线，或 agent 版本太旧' }); return false; }
     setHarness(name, id, { action, status: 'running', msg: action === 'install' ? '安装中' : '更新中' });
     audit('fleet-harness', by, name, id, action);
-    const r = await ask(ws, { t: 'harness-run', id, action, proxy: proxyOf(name) }, 'harness-result', harnessTimeoutMs);
-    setHarness(name, id, { action, status: r.ok ? 'ok' : 'failed', msg: str(r.msg, 300) || (r.ok ? '完成' : '失败'),
+    const set = state.net[name] && state.net[name].proxy;
+    // the agent prefers the proxy set for it, then the one it found, then the default (fallback)
+    const r = await ask(ws, { t: 'harness-run', id, action, proxy: set || '', fallback: state.settings.proxy || '', target: rel.latestOf(id) },
+      'harness-result', harnessTimeoutMs);
+    const rec = { action, status: r.ok ? 'ok' : 'failed', msg: str(r.msg, 300) || (r.ok ? '完成' : '失败'),
       before: str(r.before, 80), after: str(r.after, 80), notes: Array.isArray(r.notes) ? r.notes.slice(0, 6).map((n) => str(n, 300)) : [],
-      log: str(r.log, 3000) });
+      log: str(r.log, 3000) };
+    setHarness(name, id, rec);
+    logHarness({ machine: name, id, action, before: rec.before, after: rec.after, ok: r.ok === true, msg: rec.msg, by: by === 'daily' ? 'daily' : 'manual' });
     return r.ok === true;
   }
+  // the harnesses in use on a Windows computer (a session of it open there): not updated by the daily check -- their
+  // files cannot be replaced while running (Linux replaces them under a running program without harm)
+  function inUse(name) {
+    const m = machines.get(name), v = socketOf(name) && socketOf(name).fleet;
+    if (!m || !v || v.platform !== 'win32') return new Set();
+    return new Set([...(m.sessions || new Map()).values()].map((s) => toolOf(s.id)));
+  }
   // one machine: one harness, or with id '*' every installed one (update only), one after another
-  function harnessRun(name, id, action, by = '') {
+  // only: the ids to take (the daily check: those behind the newest)
+  function harnessRun(name, id, action, by = '', only = null) {
     const ws = socketOf(name), v = ws && ws.fleet;
     if (!ws) return { ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
     if (!v.control) return { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' };
     if (action !== 'install' && action !== 'update') return { ok: false, msg: '只能安装或更新' };
-    const ids = id === '*' ? (v.harnesses || []).filter((x) => x.installed).map((x) => x.id) : [id];
+    const ids = (id === '*' ? (v.harnesses || []).filter((x) => x.installed).map((x) => x.id) : [id]).filter((x) => !only || only.includes(x));
     if (id === '*' && action !== 'update') return { ok: false, msg: '只能一起更新，不能一起安装' };
-    if (!ids.length || !ids.every((x) => HARNESSES.includes(x))) return { ok: false, msg: id === '*' ? '这台电脑没有装任何 harness' : '不认识的 harness' };
+    if (!ids.length || !ids.every((x) => HARNESSES.includes(x))) return { ok: false, msg: id === '*' ? (only ? '都是最新版' : '这台电脑没有装任何 harness') : '不认识的 harness' };
     if (harnessBusy.has(name)) return { ok: false, msg: '这台电脑正在安装或更新' };
     harnessBusy.add(name);
     (async () => { try { for (const x of ids) await runOne(name, x, action, by); } finally { harnessBusy.delete(name); onChange(); } })()
       .catch((e) => log('harness ' + name + ' 出错：' + e.message));
     return { ok: true, msg: `已开始${action === 'install' ? '安装' : '更新'}：${ids.join('、')}` };
   }
+  // what is behind the newest on a computer: ids (an unknown newest counts as behind: the update finds out)
+  function behindOn(v) {
+    return (v.harnesses || []).filter((x) => x.installed && (x.line === 'legacy' || !rel.latestOf(x.id) || cmp(x.version, rel.latestOf(x.id)) < 0)).map((x) => x.id);
+  }
+  // every computer (by: 'daily' -- only what is behind, not what is in use on Windows, not a computer set off)
   function harnessAll(by = '') {
     const started = [], skipped = [];
     for (const name of machines.keys()) {
       const ws = socketOf(name), v = ws && ws.fleet;
       if (!ws || !v.control || !(v.harnesses || []).some((x) => x.installed)) continue;
-      const r = harnessRun(name, '*', 'update', by);
+      let only = null;
+      if (by === 'daily') {
+        if (state.settings.harnessOff[name]) { skipped.push(name + '（设了不自动更新）'); continue; }
+        const busy = inUse(name), behind = behindOn(v);
+        only = behind.filter((x) => !busy.has(x));
+        for (const x of behind.filter((y) => busy.has(y))) logHarness({ machine: name, id: x, action: 'update', ok: false, by: 'daily', skipped: true, msg: '有会话开着，这次没更新（Windows 上换不了正在用的文件）' });
+        if (!only.length) { if (behind.length) skipped.push(name + '（在用）'); continue; }
+      }
+      const r = harnessRun(name, '*', 'update', by, only);
       if (r.ok) started.push(name); else skipped.push(name + '（' + r.msg + '）');
     }
-    return { ok: started.length > 0, msg: started.length ? `已开始更新：${started.join('、')}${skipped.length ? '；没开始：' + skipped.join('、') : ''}` : '没有可以更新的电脑' + (skipped.length ? '：' + skipped.join('、') : '') };
+    return { ok: started.length > 0, msg: started.length ? `已开始更新：${started.join('、')}${skipped.length ? '；没开始：' + skipped.join('、') : ''}` : '没有要更新的电脑' + (skipped.length ? '：' + skipped.join('、') : '') };
+  }
+
+  // ---- the daily harness check ----
+  let checking = null;
+  async function dailyCheck(by = 'daily') {
+    if (checking) return checking;
+    checking = (async () => {
+      // what changed since the oldest version still installed somewhere
+      const since = {};
+      for (const name of machines.keys()) {
+        const v = socketOf(name) && socketOf(name).fleet;
+        for (const x of (v && v.harnesses) || []) if (x.installed && x.version && (!since[x.id] || cmp(x.version, since[x.id]) < 0)) since[x.id] = x.version;
+      }
+      const r = await rel.check({ since });
+      const errs = Object.entries(r.errors).map(([k, e]) => `${k}：${e}`);
+      const all = control && state.settings.daily.on ? harnessAll('daily') : { ok: false, msg: control ? '自动更新关着' : '服务器只读' };
+      const today = new Date(now());
+      state.daily = { date: `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`, at: now(), by,
+        msg: `新版本 ${r.fresh.length ? r.fresh.map((f) => `${f.label} ${f.to}`).join('、') : '没有'}；${all.msg}${errs.length ? '；查询出错：' + errs.join('，') : ''}` };
+      try { save(); } catch {}
+      onChange();
+      log('harness 每日检查：' + state.daily.msg);
+      return state.daily;
+    })().finally(() => { checking = null; });
+    return checking;
+  }
+  // once a day, after settings.daily.at (local time); a NAS that was off then does it when it is back
+  function dailyDue() {
+    const d = state.settings.daily;
+    if (!d.on || now() - startedAt < dailyGraceMs) return false;
+    const t = new Date(now()), [hh, mm] = String(d.at || '03:40').split(':').map(Number);
+    const at = new Date(t); at.setHours(hh || 0, mm || 0, 0, 0);
+    return t >= at && !(state.daily && state.daily.at >= at.getTime());
+  }
+  const dailyTimer = setInterval(() => { if (dailyDue()) dailyCheck().catch((e) => log('harness 每日检查出错：' + e.message)); }, Math.min(tickMs, 5 * 60e3));
+  if (dailyTimer.unref) dailyTimer.unref();
+
+  // for the daily report of [from, to): the new versions found (major changes marked), what each computer updated,
+  // and what is still behind -- null when nothing happened
+  function digest(from, to) {
+    const releasesIn = rel.historyBetween(from, to);
+    const updates = state.harnessLog.filter((e) => e.at >= from && e.at < to && e.action === 'update' && (e.before !== e.after || !e.ok || e.skipped))
+      .map(({ machine, id, before, after, ok, msg, by, skipped, at }) => ({ machine, id, before, after, ok, msg, by, skipped: !!skipped, at }));
+    const installs = state.harnessLog.filter((e) => e.at >= from && e.at < to && e.action === 'install')
+      .map(({ machine, id, after, ok, msg, at }) => ({ machine, id, after, ok, msg, at }));
+    const behind = [];
+    for (const name of machines.keys()) {
+      const v = socketOf(name) && socketOf(name).fleet;
+      if (!v) continue;
+      for (const id of behindOn(v)) if (rel.latestOf(id)) behind.push({ machine: name, id, version: ((v.harnesses || []).find((x) => x.id === id) || {}).version || '', latest: rel.latestOf(id) });
+    }
+    if (!releasesIn.length && !updates.length && !installs.length) return null;
+    return { releases: releasesIn, updates, installs, behind, checkedAt: (state.daily && state.daily.at) || 0 };
+  }
+
+  // a computer looks again for its way out
+  async function netProbe(name) {
+    const ws = socketOf(name), v = ws && ws.fleet;
+    if (!ws) return { ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
+    if (!v.control) return { ok: false, msg: '这台电脑没开远程控制' };
+    const r = await ask(ws, { t: 'harness-net-probe' }, 'harness-net-result', 90e3);
+    return r.ok ? { ok: true, msg: r.net && r.net.recommended ? '找到能用的代理：' + r.net.recommended : r.net && r.net.needProxy === false ? '直连就能到' : '没找到能到 OpenAI 的代理' } : { ok: false, msg: r.msg || '检测失败' };
   }
 
   function view() {
@@ -278,18 +407,20 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       const m = machines.get(name), ws = socketOf(name), v = (ws && ws.fleet) || (m && m.fleet) || null;
       return { name, online: !!(m && m.online), version: v, supported: !!ws, run: state.runs[name] || null,
         key: state.keys[name] || null, behind: !!(b && v && v.commit && v.commit !== b.commit),
-        proxy: (state.net[name] && state.net[name].proxy) || '', harness: state.harness[name] || {}, harnessBusy: harnessBusy.has(name) };
+        proxy: (state.net[name] && state.net[name].proxy) || '', effective: netOf(name), harness: state.harness[name] || {},
+        harnessBusy: harnessBusy.has(name), harnessOff: !!state.settings.harnessOff[name], behindHarness: v ? behindOn(v).filter((id) => rel.latestOf(id)) : [] };
     });
     let tpl = false; try { fs.accessSync(templateFile); tpl = true; } catch {}
     return { control, bundle: b ? { commit: b.commit, at: b.at || '', files: Object.keys(b.files).length } : null,
-      settings: state.settings, magpie: magpieKeys.available(), template: tpl, models: models(), machines: list, targets: TARGETS, harnesses: HARNESSES };
+      settings: state.settings, magpie: magpieKeys.available(), template: tpl, models: models(), machines: list, targets: TARGETS, harnesses: HARNESSES,
+      releases: rel.view(), daily: state.daily, checking: !!checking };
   }
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
     const p = url.pathname;
     if (!p.startsWith('/api/fleet')) return false;
     if (req.method === 'GET' && p === '/api/fleet') { json(res, 200, view()); return true; }
-    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure', '/api/fleet/harness'].includes(p)) return false;
+    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure', '/api/fleet/harness', '/api/fleet/check', '/api/fleet/netprobe'].includes(p)) return false;
     if (!control) { json(res, 200, { ok: false, msg: '服务器处于只读模式' }); return true; }
     if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
     let d = {}; try { d = JSON.parse(await readBody(req, 20000)); } catch { json(res, 200, { ok: false, msg: '请求格式不正确' }); return true; }
@@ -308,11 +439,30 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
         if (d.proxy.trim() && !PROXY.test(d.proxy.trim())) { json(res, 200, { ok: false, msg: '默认代理要是 http(s)://… 的形式' }); return true; }
         s.proxy = d.proxy.trim();
       }
+      if (d.daily && typeof d.daily === 'object') {
+        const at = typeof d.daily.at === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.daily.at) ? d.daily.at : s.daily.at;
+        s.daily = { on: typeof d.daily.on === 'boolean' ? d.daily.on : s.daily.on, at };
+      }
+      // a computer set off (or on again) for the daily update: { harnessOff: { machine, off } }
+      if (d.harnessOff && typeof d.harnessOff === 'object' && NAME.test(String(d.harnessOff.machine || ''))) {
+        s.harnessOff = { ...s.harnessOff };
+        if (d.harnessOff.off === true) s.harnessOff[d.harnessOff.machine] = true; else delete s.harnessOff[d.harnessOff.machine];
+      }
       state.settings = s; save(); audit('fleet-settings', ip, s.auto ? 'auto' : 'manual'); onChange();
       if (s.auto) for (const name of machines.keys()) maybeAuto(name);
       json(res, 200, { ok: true, settings: s }); return true;
     }
+    if (p === '/api/fleet/check') {
+      if (checking) { json(res, 200, { ok: false, msg: '正在检查' }); return true; }
+      audit('fleet-harness-check', ip);
+      dailyCheck('manual').catch((e) => log('harness 检查出错：' + e.message));
+      json(res, 200, { ok: true, msg: '已开始：先查各 harness 的新版本，再让落后的电脑更新' }); return true;
+    }
     const name = String(d.machine || '');
+    if (p === '/api/fleet/netprobe') {
+      if (!NAME.test(name)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
+      json(res, 200, await netProbe(name)); return true;
+    }
     if (p === '/api/fleet/harness') {
       const id = String(d.id || ''), action = String(d.action || '');
       if (name === '*') { json(res, 200, action === 'update' && id === '*' ? harnessAll(ip) : { ok: false, msg: '所有电脑只能一起更新全部 harness' }); return true; }
@@ -327,7 +477,8 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     json(res, 200, await configure(name, { targets: d.targets, reissue: d.reissue === true, proxy: typeof d.proxy === 'string' ? d.proxy : undefined }, ip)); return true;
   }
 
-  return { fromAgent, dropSocket, handle, view, update, configure, harnessRun, harnessAll, bundle, close: () => clearInterval(timer) };
+  return { fromAgent, dropSocket, handle, view, update, configure, harnessRun, harnessAll, dailyCheck, dailyDue, digest, netProbe, bundle,
+    close: () => { clearInterval(timer); clearInterval(dailyTimer); } };
 }
 
 module.exports = { createFleet };

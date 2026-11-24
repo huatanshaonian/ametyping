@@ -326,3 +326,6 @@ html[data-theme="win98"] .skp-list { border: 0; box-shadow: var(--sunken); paddi
   .skp-split { grid-template-columns: 1fr; }
   .skp-list { max-height: 200px; }
 }
+.fleet-off { display: block; margin-top: 2px; } .fleet .fleet-major { color: var(--border); font-weight: bold; }
+.fleet-rel { margin: 4px 0 0 1em; padding: 0; } .fleet-rel li { margin-bottom: 3px; }
+.fleet td code { font: 11.5px Consolas, monospace; }

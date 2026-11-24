@@ -16,7 +16,9 @@ const MAX_ARTIFACTS = 80;
 // calendar(from, to): the Google Calendar events in the window (google/index.js forReport; it also syncs 重要计划 ticked
 // off in Google Tasks first), background for the report; none when Google is not connected
 // ask(prompt, schema, task): one question to the model that job uses, the backup when it fails (ai/ask.js)
-function createGenerator({ store, reports, classify, ask, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, backupBytes = 5e6 }) {
+// harness(from, to): new versions of the coding agents and what each computer updated in the window (fleet/index.js
+// digest): shown in the report as it is, the major changes the release notes have first
+function createGenerator({ store, reports, classify, ask, resumeCmd, log = () => {}, artifacts = null, todos = null, calendar = null, harness = null, backupBytes = 5e6 }) {
   // files the sessions wrote that git does not keep (no repository with a remote, or not committed): each machine's
   // agent checks them (only files that session wrote, not secrets) and sends copies of small ones. A machine that is
   // offline: its files are listed unchecked.
@@ -102,6 +104,7 @@ function createGenerator({ store, reports, classify, ask, resumeCmd, log = () =>
       : { headline: '这段时间没有 AI 会话记录', projects: [], open: [], plans: [], keywords: [], artifacts: [], todos: [], notes: [] };
     const report = assemble(job, items, ans, arts, important);
     if (events.length) report.events = events;
+    if (harness && !job.brief) { try { const hx = harness(from, to); if (hx) report.harness = hx; } catch (e) { log('日报：harness 更新没能写进去：' + e.message); } }
     // what the model found done is ticked off the list, with its reason
     for (const t of report.todosDone) todos.complete(t.id, date, t.evidence);
     reports.save(report);

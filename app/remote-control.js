@@ -16,6 +16,9 @@ const kiroCli = require('./kiro-cli');
 const opencode = require('./opencode');
 const btwPanel = require('./btw-panel');
 const claudeApi = require('./claude-api');
+// this computer's proxy for Codex (remote/agent/harness.js; a copy of the pet without remote/ has none)
+let harnessProxy = () => '', harnessNoProxy = 'localhost,127.0.0.1,::1';
+try { ({ proxyFor: harnessProxy, NO_PROXY: harnessNoProxy } = require('../remote/agent/harness')); } catch {}
 const { createProfiles } = claudeApi;
 
 // (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
@@ -341,10 +344,15 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     // profile: the pet's own environment has no proxy set) -- Claude Code is then started from that PowerShell, as you
     // would by hand. (The Linux service has ~/.ametyping/launch.sh for the same.) The command goes in encoded: no quoting.
     const pre = path.join(home(), '.ametyping', 'launch.ps1');
+    // Codex goes abroad through this computer's proxy (set here or found by the agent: remote/agent/harness.js), set
+    // after launch.ps1 so that it holds; Claude Code / OpenCode reach Magpie on the LAN
+    const cxProxy = codex ? harnessProxy('codex') : '';
+    const proxyCmd = cxProxy ? ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'].map((k) => `$env:${k} = ${ps(cxProxy)}; `).join('')
+      + `$env:NO_PROXY = ${ps(harnessNoProxy)}; ` : '';
     let pid;
-    if (fs.existsSync(pre) || api || mEnv) {
+    if (fs.existsSync(pre) || api || mEnv || cxProxy) {
       const preCmd = fs.existsSync(pre) && !api ? `. ${ps(pre)}; ` : '';
-      const baseCmd = api ? createProfiles().windowCommand(api.id, cwd, args) : `${preCmd}& ${ps(exe)} ${args.map(ps).join(' ')}`;
+      const baseCmd = api ? createProfiles().windowCommand(api.id, cwd, args) : `${preCmd}${proxyCmd}& ${ps(exe)} ${args.map(ps).join(' ')}`;
       const cmd = `${meshPsPrefix(mEnv)}${baseCmd}`;
       pid = await bridge.launch('powershell.exe', ['-NoLogo', ...(api ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : []), ...(mEnv ? [] : ['-NoExit']), '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], cwd);
     } else pid = await bridge.launch(exe, args, cwd);

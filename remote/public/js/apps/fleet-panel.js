@@ -52,23 +52,65 @@ export function panel() {
     return h('div', {}, h('small', { class: r.status === 'failed' || r.status === 'blocked' ? 'bad' : '', text: `${STATUS[r.status] || r.status}：${r.msg || ''}` }),
       ...(r.notes || []).map((n) => h('div', {}, h('small', { text: '· ' + n }))), h('div', {}, h('small', { text: ago(r.at) })));
   }
-  // the harnesses of one computer: version, install / update, the last outcome
+  // the harnesses of one computer: version (against the newest), install / update, the last outcome
+  const newest = (id) => ((data.releases && data.releases.latest && data.releases.latest[id]) || {}).version || '';
+  const vplain = (s) => (String(s || '').match(/\d+\.\d+\.\d+/) || [''])[0];
   function harnessCell(m) {
     const v = m.version, list = v && v.harnesses;
     if (!list) return h('small', { text: v ? 'agent 版本旧，不上报' : '' });
     const can = data.control && m.online && v.control && !m.harnessBusy;
+    const behind = new Set(m.behindHarness || []);
     return h('div', { class: 'fleet-hs' }, ...list.map((x) => {
       const r = m.harness[x.id];
-      const btn = can ? h('button', { class: 'btn fleet-sm', type: 'button', text: x.installed ? '更新' : '安装', disabled: busy, onclick: () =>
+      const btn = can ? h('button', { class: 'btn fleet-sm', type: 'button', text: x.installed ? (x.line === 'legacy' ? '迁移到 2.x' : '更新') : '安装', disabled: busy, onclick: () =>
         act('harness', { machine: m.name, id: x.id, action: x.installed ? 'update' : 'install' }, `${m.name}：${x.installed ? '更新' : '安装'} ${NAMES[x.id]}…`) }) : '';
       const last = r ? h('small', { class: r.status === 'failed' ? 'bad' : '', title: [...(r.notes || []), r.log || ''].filter(Boolean).join('\n'),
         text: ` ${r.status === 'running' ? '…' + r.msg : r.msg}${r.status !== 'running' ? '（' + ago(r.at) + '）' : ''}` }) : '';
+      const ver = x.installed ? ` ${vplain(x.version) || x.version || '已装'}${x.method === 'npm' ? ' · npm' : ''}` : ' 没装';
       return h('div', { class: 'fleet-h' + (x.installed ? '' : ' off') }, h('b', { text: NAMES[x.id] || x.label }),
-        h('small', { text: x.installed ? ' ' + (x.version || '已装') : ' 没装' }), btn, last,
+        h('small', { text: ver, title: x.path || '' }),
+        behind.has(x.id) ? h('small', { class: 'bad', text: x.line === 'legacy' ? ' 旧的 1.x 线' : ` → ${newest(x.id)}` }) : '',
+        btn, last,
         ...(r && r.status !== 'running' && r.notes && r.notes.length ? r.notes.map((n) => h('div', {}, h('small', { text: '· ' + n }))) : []));
     }), can && list.some((x) => x.installed) ? h('button', { class: 'btn fleet-sm', type: 'button', text: '全部更新', disabled: busy,
       onclick: () => act('harness', { machine: m.name, id: '*', action: 'update' }, `${m.name}：更新全部 harness…`) }) : '',
+    data.control && v.control ? h('label', { class: 'fleet-off' }, h('input', { type: 'checkbox', checked: !m.harnessOff, disabled: busy,
+      onchange: (e) => act('settings', { harnessOff: { machine: m.name, off: !e.target.checked } }, '保存中…') }), h('small', { text: ' 每天自动更新' })) : '',
     m.harnessBusy ? h('small', { text: '正在进行…' }) : '');
+  }
+  // the way out this computer uses for Codex and downloads, where it came from, and what the agent found
+  const REACH = [['openai', 'OpenAI'], ['npm', 'npm'], ['github', 'GitHub'], ['claude', 'Claude 下载'], ['agy', 'agy 下载']];
+  function netCell(m) {
+    const v = m.version, e = m.effective || {}, n = v && v.net;
+    const reach = (r) => REACH.map(([k, l]) => (r && r.reach && r.reach[k] ? '✓' : '✗') + l).join(' ');
+    const detail = n ? [`直连：${reach(n.direct)}`, ...(n.routes || []).map((r) => `${r.url}（${r.source}）：${reach(r)} · ${r.ms} ms`), `检测于 ${ago(new Date(n.at).toISOString())}`].join('\n') : '';
+    return h('div', {}, h('code', { text: e.proxy || (e.source ? '直连' : '—'), title: detail }),
+      h('div', {}, h('small', { text: e.source || (v && v.harnesses ? '还没检测' : '') })),
+      n && n.needProxy && !n.recommended ? h('div', {}, h('small', { class: 'bad', text: '没找到能到 OpenAI 的代理' })) : '',
+      data.control && m.online && v && v.control ? h('button', { class: 'btn fleet-sm', type: 'button', text: '重新检测', disabled: busy,
+        onclick: () => act('netprobe', { machine: m.name }, `${m.name}：检测网络…`) }) : '');
+  }
+  // the daily harness check: when, the last one, the newest versions and what changed
+  function dailyBox() {
+    const s = data.settings, d = s.daily || {}, rel = data.releases || {};
+    const on = h('input', { type: 'checkbox', checked: !!d.on });
+    const at = h('input', { type: 'time', value: d.at || '03:40' });
+    const save = h('button', { class: 'btn', type: 'button', text: '保存', disabled: !data.control || busy,
+      onclick: () => act('settings', { daily: { on: on.checked, at: at.value } }, '保存中…') });
+    const now = h('button', { class: 'btn', type: 'button', text: data.checking ? '正在检查…' : '现在检查并更新', disabled: !data.control || busy || data.checking,
+      onclick: () => act('check', {}, '开始检查…') });
+    const latest = Object.entries(rel.latest || {}).map(([id, x]) => `${NAMES[id] || id} ${x.version}`).join(' · ');
+    const hist = (rel.history || []).slice(0, 6).map((r) => h('li', {}, h('b', { text: `${r.label} ${r.to}` }), h('small', { text: ` ${ago(new Date(r.at).toISOString())}` }),
+      ...(r.major || []).map((t) => h('div', {}, h('small', { class: 'fleet-major', text: '★ ' + t }))),
+      ...(r.highlights || []).slice(0, 2).map((t) => h('div', {}, h('small', { text: '· ' + t })))));
+    return h('div', { class: 'mcp-card' },
+      h('div', { class: 'mcp-h' }, h('b', { text: '每天检查 harness 更新' })),
+      h('p', { class: 'ghint', text: '每天在写日报之前查一次各 harness 的新版本，读更新日志（重大变化会写进日报），再让落后的电脑自动更新。Windows 上开着会话的那个 harness 当天跳过（文件在用，换不了）。' }),
+      h('div', { class: 'fleet-row' }, h('label', {}, on, ' 每天'), at, save, now),
+      h('p', {}, h('small', { text: data.daily ? `上次：${ago(new Date(data.daily.at).toISOString())} · ${data.daily.msg}` : '还没检查过' })),
+      latest ? h('p', {}, h('small', { text: '最新版本：' + latest + (rel.checkedAt ? `（${ago(new Date(rel.checkedAt).toISOString())}查的）` : '') })) : '',
+      rel.error ? h('p', {}, h('small', { class: 'bad', text: rel.error })) : '',
+      hist.length ? h('ul', { class: 'fleet-rel' }, ...hist) : '');
   }
   function actions(m) {
     const out = [];
@@ -91,7 +133,9 @@ export function panel() {
       const c = h('input', { type: 'checkbox', checked: true }); c.dataset.t = t;
       return h('label', {}, c, ' ' + (NAMES[t] || t), h('small', { text: `（${TARGET_NOTE[t] || ''}${inst.get(t) === false ? '；还没装，配置先写好，装上就能用' : ''}）` }));
     });
-    const proxy = h('input', { type: 'url', value: m.proxy || '', placeholder: data.settings.proxy ? '默认 ' + data.settings.proxy : PROXY_HINT, size: 30 });
+    const eff = m.effective || {};
+    const proxy = h('input', { type: 'url', value: m.proxy || '', size: 30,
+      placeholder: eff.proxy && !m.proxy ? `不填：${eff.proxy}（${eff.source}）` : data.settings.proxy ? '默认 ' + data.settings.proxy : PROXY_HINT });
     const reissue = h('input', { type: 'checkbox', checked: !(m.version.magpieKey && m.version.magpieKey.id) });
     const out = h('div');
     const go = h('button', { class: 'btn', type: 'button', text: '写入配置', onclick: async () => {
@@ -111,7 +155,7 @@ export function panel() {
       h('div', { class: 'fleet-checks' }, ...checks),
       h('label', { class: 'fleet-row' }, h('span', { text: '这台电脑的代理' }), proxy),
       h('label', {}, reissue, m.version.magpieKey && m.version.magpieKey.id ? ` 重新发一把密钥（现在用的是 ${m.version.magpieKey.name || m.version.magpieKey.id}，旧的会失效）` : ' 给这台电脑发一把自己的 Magpie 密钥'),
-      h('p', { class: 'ghint', text: '只改各配置文件里 Magpie 相关的几项，其余保持原样；每个文件改之前都会备份到这台电脑的 ~/.ametyping/config-backups。代理也用于在这台电脑上安装、更新 harness。' }),
+      h('p', { class: 'ghint', text: '只改各配置文件里 Magpie 相关的几项，其余保持原样；每个文件改之前都会备份到这台电脑的 ~/.ametyping/config-backups。代理不填就用自动检测到的；填了就固定用这个，也用于在这台电脑上安装、更新 harness。' }),
       go, out));
     cfgBox.scrollIntoView({ block: 'nearest' });
   }
@@ -134,7 +178,7 @@ export function panel() {
       h('h4', { class: 'aim-h', text: '一键配置用的网关、代理和模型' }),
       h('label', { class: 'fleet-row' }, h('span', { text: '网关地址' }), gw),
       h('label', { class: 'fleet-row' }, h('span', { text: '默认代理' }), px),
-      h('p', { class: 'ghint', text: '默认代理：没单独填代理的电脑用它（Codex 和安装、更新时下载）。每台电脑的代理在它的「配置 agent」里改。' }),
+      h('p', { class: 'ghint', text: '每台电脑用哪个代理（Codex，以及安装、更新时的下载）：在它的「配置 agent」里填了的就用它；没填就用它的 agent 自己检测到能通的（看「网络」一栏）；都没有才用这里的默认代理。' }),
       list, ...inputs, save,
       h('p', { class: mag.ok ? 'ghint' : 'ghint bad', text: mag.ok ? 'Magpie 管理密钥已配置：配置一台电脑时自动给它发一把自己的网关密钥（名字是 windose-电脑名）。'
         : '自动发密钥还不能用：' + (mag.msg || '') }),
@@ -147,7 +191,7 @@ export function panel() {
     const b = data.bundle;
     const rows = data.machines.map((m) => h('tr', {},
       h('td', {}, h('b', { text: m.name }), h('small', { text: m.online ? ' 在线' : ' 离线' })),
-      h('td', {}, versionCell(m)), h('td', {}, runCell(m)), h('td', {}, harnessCell(m)), h('td', {}, actions(m))));
+      h('td', {}, versionCell(m)), h('td', {}, runCell(m)), h('td', {}, harnessCell(m)), h('td', {}, netCell(m)), h('td', {}, actions(m))));
     const anyHarness = data.machines.some((m) => m.online && m.version && m.version.control && (m.version.harnesses || []).some((x) => x.installed));
     body.replaceChildren(
       h('p', {}, h('b', { text: 'NAS 上的更新包：' }), b ? h('span', {}, h('code', { text: short(b.commit) }), h('small', { text: ` ${b.files} 个文件 · ${ago(b.at)}` }))
@@ -155,9 +199,9 @@ export function panel() {
       data.control && anyHarness ? h('p', {}, h('button', { class: 'btn', type: 'button', text: '所有电脑：更新全部 harness', disabled: busy,
         onclick: () => act('harness', { machine: '*', id: '*', action: 'update' }, '正在让所有电脑更新 harness…') }),
       h('small', { text: ' 每台电脑一个接一个地更新它装了的 Claude Code / Codex / OpenCode / Antigravity，电脑之间同时进行' })) : '',
-      rows.length ? h('table', { class: 'mcp-t' }, h('thead', {}, h('tr', {}, h('th', { text: '电脑' }), h('th', { text: 'agent 版本' }), h('th', { text: '状态' }), h('th', { text: 'Harness' }), h('th', { text: '' }))), h('tbody', {}, ...rows))
+      rows.length ? h('table', { class: 'mcp-t' }, h('thead', {}, h('tr', {}, h('th', { text: '电脑' }), h('th', { text: 'agent 版本' }), h('th', { text: '状态' }), h('th', { text: 'Harness' }), h('th', { text: '网络' }), h('th', { text: '' }))), h('tbody', {}, ...rows))
         : h('p', { class: 'ghint', text: '还没有电脑连上来。' }),
-      cfgBox, settingsBox());
+      cfgBox, dailyBox(), settingsBox());
     if (!data.control) say('服务器处于只读模式：只能看，不能更新或配置。');
   }
   const off = net.on('fleet', () => { if (!busy) load(); });

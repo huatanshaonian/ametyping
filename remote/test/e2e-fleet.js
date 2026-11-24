@@ -68,7 +68,7 @@ function start(file, extra = {}) {
 
     start(R + '/server/server.js');
     await until(async () => { try { return (await request('GET', '/login')).status === 200; } catch { return false; } });
-    start(R + '/agent/agent.js', { HOME, USERPROFILE: HOME, AME_AGENT_CONFIG: ACFG, AME_HARNESS_DELAY_MS: '1500' });
+    start(R + '/agent/agent.js', { HOME, USERPROFILE: HOME, AME_AGENT_CONFIG: ACFG, AME_HARNESS_DELAY_MS: '1500', AME_NO_NET_PROBE: '1' });
     const login = await request('POST', '/api/login', { user: 'u', password: 'fleet-e2e-password', code: auth.totpAt(cfg.totpSecret, Math.floor(Date.now() / 30000)) });
     const cookie = login.cookie;
     const view = async () => (await request('GET', '/api/fleet', null, cookie)).value;
@@ -91,6 +91,16 @@ function start(file, extra = {}) {
     ok('the agent reports the four harnesses it looked for', Array.isArray(hs) && hs.map((x) => x.id).join() === 'claude,codex,opencode,agy' && hs.every((x) => typeof x.installed === 'boolean'), hs);
     const bad = (await request('POST', '/api/fleet/harness', { machine: 'box', id: '*', action: 'install' }, cookie)).value;
     ok('installing everything at once is refused (only updates go together)', bad.ok === false && /一起更新/.test(bad.msg), bad);
+    ok('each harness says how it was installed', hs.filter((x) => x.installed).every((x) => x.method === 'npm' || x.method === 'self'), hs);
+    const v0 = await view();
+    ok('the daily harness check is on by default at 03:40, before the 04:30 report', v0.settings.daily.on === true && v0.settings.daily.at === '03:40' && !!v0.releases, v0.settings);
+    const dset = (await request('POST', '/api/fleet/settings', { daily: { on: true, at: '03:15' }, harnessOff: { machine: 'box', off: true } }, cookie)).value;
+    ok('the daily check time and a computer set off are saved', dset.ok && dset.settings.daily.at === '03:15' && dset.settings.harnessOff.box === true, dset);
+    const badTime = (await request('POST', '/api/fleet/settings', { daily: { at: '25:99' } }, cookie)).value;
+    ok('a wrong time keeps the old one', badTime.ok && badTime.settings.daily.at === '03:15', badTime);
+    ok('the computer shows as set off', (await box()).harnessOff === true);
+    await request('POST', '/api/fleet/settings', { harnessOff: { machine: 'box', off: false } }, cookie);
+    ok('and on again', (await box()).harnessOff === false);
     const c = (await request('POST', '/api/fleet/configure', { machine: 'box', targets: ['claude', 'codex', 'opencode'], proxy: 'http://127.0.0.1:7890' }, cookie)).value;
     ok('一键配置 succeeds with a key made for this computer', c.ok === true && c.key && c.key.issued && c.key.name === 'windose-box', c);
     ok('the key was made through the management API with no browser headers', magpieKeys.length === 1 && magpieKeys[0].name === 'windose-box' && magpieSeen.filter((s) => s.url.startsWith('/v1/magpie/admin/')).every((s) => !s.origin && !s.fetchMode), magpieSeen);

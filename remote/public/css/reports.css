@@ -69,3 +69,10 @@ a.rp-sess { text-decoration: none; display: inline-block; }
 .rp-star { width: 20px; padding: 0; border: 0; background: none; color: var(--warn); font-size: 14px; line-height: 1; cursor: pointer; vertical-align: -1px; }
 .rp-star:hover { transform: scale(1.2); }
 .rp-open .st-done-ok .rp-mark { color: var(--ok); }
+/* 编程工具更新 (report-view.js harnessBox) */
+.rp-harness .rp-hx-l { list-style: none; padding-left: 4px; }
+.rp-hx { margin: 4px 0; } .rp-hx small { color: var(--muted); } .rp-hx a { font-size: 12px; }
+.rp-hx ul { margin: 2px 0 2px 1.2em; padding: 0; } .rp-hx-m { list-style: none; margin-left: 0.4em !important; }
+.rp-hx-m li { font-weight: bold; } .rp-hx-m .rp-mark { color: var(--border); margin-right: 4px; }
+.rp-hx-o { color: var(--muted); font-size: 12.5px; margin-left: 1.2em; }
+.rp-hx-has-major { border-left: 3px solid var(--border); padding-left: 8px; }

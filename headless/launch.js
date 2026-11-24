@@ -17,8 +17,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { codexBin, threadOf } = require('./codex');
-let harnessProxy = () => '';
-try { harnessProxy = require('../remote/agent/harness').proxyFor; } catch {}
+let harnessProxy = () => '', harnessNoProxy = 'localhost,127.0.0.1,::1';
+try { ({ proxyFor: harnessProxy, NO_PROXY: harnessNoProxy } = require('../remote/agent/harness')); } catch {}
 const { agyBin, threadOf: agyThreadOf } = require('./agy');
 const { kiroBin, threadOf: kiroThreadOf } = require('./kiro');
 const opencode = require('../app/opencode');
@@ -119,10 +119,10 @@ function launch({ cwd, prompt, env, resume = '', tool = 'claude', api: apiArg = 
     const explicit = api && proxy !== 'inherit' && /^https?:\/\//.test(proxy)
       ? `export NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1'; ` : '';
     const settings = sf ? ' ' + sf.args.map(q).join(' ') : '';
-    // Codex goes abroad: the proxy 一键配置 recorded for it on this computer (remote/agent/harness.js), last so that
+    // Codex goes abroad: the proxy set for this computer or found by its agent (remote/agent/harness.js), last so that
     // neither launch.sh nor a recent session's NO_PROXY=* takes it away
     const hp = codex ? harnessProxy('codex') : '';
-    const viaProxy = hp ? `export ${['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'].map((k) => `${k}=${q(hp)}`).join(' ')} NO_PROXY='localhost,127.0.0.1,::1' no_proxy='localhost,127.0.0.1,::1'; ` : '';
+    const viaProxy = hp ? `export ${['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'].map((k) => `${k}=${q(hp)}`).join(' ')} NO_PROXY=${q(harnessNoProxy)} no_proxy=${q(harnessNoProxy)}; ` : '';
     // every alias uses the default ~/.claude memory, even if launch.sh or a recent session set another one
     const tail = buildTail({ thread, agyThread, kiroThread, kiro, agy, codex, resume, prompt, model: cleanMod });
     const cmd = `. ${q(envFile)}; rm -f ${q(envFile)}; [ -f ${q(pre)} ] && . ${q(pre)}; unset CLAUDE_CONFIG_DIR; ${direct}${explicit}${viaProxy}exec ${q(bin)}${settings}${tail}`;

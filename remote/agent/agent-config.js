@@ -96,12 +96,13 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
     return { file, backup: b };
   }
   // Codex: its own sign-in, this computer's proxy (config.toml is not touched)
-  function codex({ proxy }) {
-    if (!proxy) throw new Error('没填这台电脑的代理，Codex 没有改动');
-    const n = net();
-    writeNet({ proxy, tools: [...new Set([...n.tools, 'codex'])] }, home);
+  // (proxy: set for this computer; else the one the agent found works here; else the panel's default)
+  function codex({ proxy, fallback }) {
+    const n = net(), via = proxy || n.detected || fallback;
+    if (!via) throw new Error('这台电脑没有可用的代理（没设置，自动检测也没找到），Codex 没有改动');
+    writeNet({ tools: [...new Set([...n.tools, 'codex'])], ...(proxy || (!n.detected && fallback) ? { proxy: proxy || fallback } : {}) }, home);
     return { file: path.join(home, '.ametyping', 'harness-net.json'),
-      msg: `看板启动的 Codex 会话和安装、更新走 ${proxy}；自己在终端里开的 Codex 用终端的代理设置` };
+      msg: `看板启动的 Codex 会话和安装、更新走 ${via}${proxy ? '' : n.detected && via === n.detected ? '（自动检测到的）' : '（默认代理）'}；自己在终端里开的 Codex 用终端的代理设置` };
   }
   const WRITERS = { claude, opencode, codex };
 
@@ -115,6 +116,7 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
       catch { return { ok: false, msg: '网关地址不对' }; }
     }
     const proxy = typeof d.proxy === 'string' ? d.proxy.trim() : '';
+    const fallback = typeof d.fallback === 'string' && PROXY_URL.test(d.fallback.trim()) ? d.fallback.trim() : '';
     if (proxy && !PROXY_URL.test(proxy)) return { ok: false, msg: '代理地址格式不对' };
     // the proxy is this computer's: kept for installs and updates even when Codex is not among the targets
     if (proxy && proxy !== net().proxy) writeNet({ ...net(), proxy }, home);
@@ -129,7 +131,7 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
     for (const t of targets) {
       if (!WRITERS[t]) { results.push({ target: t, ok: false, msg: '不支持' }); continue; }
       try {
-        results.push({ target: t, ok: true, ...WRITERS[t]({ gateway, secret: key && key.secret, proxy: proxy || net().proxy,
+        results.push({ target: t, ok: true, ...WRITERS[t]({ gateway, secret: key && key.secret, proxy: proxy || net().proxy, fallback,
           models: object(d.models) ? d.models : {}, template: object(d.template) ? d.template : null }) });
       } catch (e) { results.push({ target: t, ok: false, msg: e.message }); }
     }

@@ -97,27 +97,42 @@ const agentConfig = createAgentConfig();
 const harness = createHarness();
 // (the harnesses are looked up a while after start, not while the connection and the first pet calls are being set up:
 // on Windows a socket opened while a child process is started there could hang -- the first pet poll did, in e2e)
-let harnessList = null, harnessTimer = null;
+// the way out found here (harness.js detectNet): after the harnesses, then every 12 hours and when asked
+let harnessList = null, harnessTimer = null, netFound = null, netBusy = null;
+const netView = (n) => n && { at: n.at, needProxy: n.needProxy, recommended: n.recommended, recommendedSource: n.recommendedSource,
+  direct: { reach: n.direct.reach }, routes: n.routes.map(({ url, source, reach, ms }) => ({ url, source, reach, ms })) };
+function lookForWayOut() {
+  if (process.env.AME_NO_NET_PROBE) return Promise.resolve(null);       // (tests: no requests to the outside)
+  if (!netBusy) netBusy = harness.detectNet().then((n) => { netFound = n; return n; }, (e) => { console.error('网络检测失败：' + e.message); return null; })
+    .finally(() => { netBusy = null; });
+  return netBusy;
+}
 function sendFleetVersion() {
   fleet.version()
     .then((v) => sendJSON({ t: 'fleet-version', ...v, control: CONTROL, magpieKey: agentConfig.keyInfo() || undefined,
-      harnesses: harnessList || undefined, proxy: agentConfig.net().proxy || undefined }))
+      harnesses: harnessList || undefined, proxy: agentConfig.net().proxy || undefined, net: netView(netFound) || undefined }))
     .catch((e) => console.error('版本信息读取失败：' + e.message));
   if (!harnessList && !harnessTimer) {
-    harnessTimer = setTimeout(() => harness.inventory().then((l) => { harnessList = l; sendFleetVersion(); }, () => {}),
-      +process.env.AME_HARNESS_DELAY_MS || 20e3);
+    harnessTimer = setTimeout(() => harness.inventory().then((l) => { harnessList = l; sendFleetVersion(); }, () => {})
+      .then(() => CONTROL && lookForWayOut().then((n) => n && sendFleetVersion())), +process.env.AME_HARNESS_DELAY_MS || 20e3);
     harnessTimer.unref();
+    if (CONTROL) setInterval(() => lookForWayOut().then((n) => n && sendFleetVersion()), 12 * 3600e3).unref();
   }
 }
 // after an install / update: the list again, then the version message with it
 function refreshHarnesses() { harness.inventory({ fresh: true }).then((l) => { harnessList = l; }, () => {}).finally(sendFleetVersion); }
 function onFleetMessage(d) {
   const reply = (t, o) => sendJSON({ t, rid: d.rid, ...o });
-  if (!CONTROL) return reply(d.t === 'agent-config' ? 'agent-config-result' : d.t === 'harness-run' ? 'harness-result' : 'fleet-result', { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' });
+  if (!CONTROL) return reply(d.t === 'agent-config' ? 'agent-config-result' : d.t === 'harness-run' ? 'harness-result' : d.t === 'harness-net-probe' ? 'harness-net-result' : 'fleet-result', { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' });
   if (d.t === 'harness-run') {
-    harness.run(String(d.id || ''), String(d.action || ''), typeof d.proxy === 'string' && d.proxy ? { proxy: d.proxy } : {})
+    const s = (v) => (typeof v === 'string' ? v : '');
+    harness.run(String(d.id || ''), String(d.action || ''), { proxy: s(d.proxy), fallback: s(d.fallback), target: s(d.target) })
       .then((r) => reply('harness-result', r), (e) => reply('harness-result', { ok: false, msg: '出错：' + e.message }))
       .finally(refreshHarnesses);
+    return;
+  }
+  if (d.t === 'harness-net-probe') {
+    lookForWayOut().then((n) => { reply('harness-net-result', n ? { ok: true, net: netView(n) } : { ok: false, msg: '检测失败' }); sendFleetVersion(); });
     return;
   }
   if (d.t === 'fleet-check') return reply('fleet-have', { have: fleet.have(d.files) });
@@ -709,7 +724,7 @@ function connect() {
     if(nativeArchive.handle(d))return;
     if(d.t==='memory-bundle'){memorySync.handle(d).catch(e=>console.error('记忆同步失败：'+e.message));return;}
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
-    else if ((d.t === 'fleet-check' || d.t === 'fleet-files' || d.t === 'fleet-apply' || d.t === 'agent-config' || d.t === 'harness-run') && typeof d.rid === 'string') onFleetMessage(d);
+    else if ((d.t === 'fleet-check' || d.t === 'fleet-files' || d.t === 'fleet-apply' || d.t === 'agent-config' || d.t === 'harness-run' || d.t === 'harness-net-probe') && typeof d.rid === 'string') onFleetMessage(d);
     else if (d.t === 'sync' && d.offsets && typeof d.offsets === 'object') {
       fleet.markHealthy();                             // (this agent reached the server: an update's guard stops waiting)
       // where the server stands per session: (re)start streaming there
