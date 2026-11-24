@@ -52,6 +52,7 @@ const { createAgentSocket, defaultSocket, evidencePaper, DEFAULT_SCHEMA, KEY } =
 const { openKbStruct } = require('./kb-struct');
 const { listSchemas, getSchema } = require('./evidence-schemas');
 const { createEvidence } = require('./evidence');
+const { createBenchmark } = require('./benchmark');
 
 function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, reports = () => null, mail = () => null, log = console.log, audit = () => {}, onChange = () => {}, embed = null }) {
   if (!cfg || cfg.enabled === false || !ask) return null;
@@ -68,19 +69,78 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const api = createLocalApi({ base: cfg.zotero || 'http://127.0.0.1:23119', http, dir, log });
   const kb = createKb({ dir: path.resolve(cfg.kbDir || path.join(dir, 'kb')), log, onChange: () => changed('kb') });
   let intake = null;
+  let scheduleAutoEvidence = () => {};
   const mirror = createMirror({ api, dir, log, everyMs: cfg.refreshMs != null ? +cfg.refreshMs : 60e3, onChange: () => { changed('library'); if (intake) intake.onLibrary().catch(() => {});
     // (the library's vectors follow it: only the new and changed abstracts / notes are embedded)
-    if (embed && embed.job && typeof embed.job.syncLitOnce === 'function') setImmediate(() => { Promise.resolve().then(() => embed.job.syncLitOnce()).catch(() => {}); }); } });
+    if (embed && embed.job && typeof embed.job.syncLitOnce === 'function') setImmediate(() => { Promise.resolve().then(() => embed.job.syncLitOnce()).catch(() => {}); });
+    setImmediate(() => scheduleAutoEvidence()); } });
   const webdav = createWebdav({ dir: cfg.webdavDir || '' });
   const fulltext = createFulltext({ dir, mirror, webdav, bin: cfg.pdftotext || 'pdftotext', http, ntrsBase: E.ntrs || undefined, iaBase: E.dtic || undefined, log });
   const kbStruct = openKbStruct({ dir, log });
   const evidence = kbStruct && createEvidence({ kbStruct, mirror, fulltext, ask: askRead, log });
+  const benchmark = kbStruct && createBenchmark({ kbStruct, dir, log });
   let paradigm = null;
   if (kbStruct) {
     try {
       const { createParadigm } = require('./paradigm');
       paradigm = createParadigm({ kbStruct, embed, mirror, ask: askRead, log });
     } catch (e) { log('文献：矛盾分析模块不可用：' + e.message); }
+  }
+  // Auto-incremental evidence extraction + throttled paradigm update when new/changed PDFs appear in Zotero
+  if (cfg.autoEvidence !== false && evidence && kbStruct) {
+    let autoRunning = false;
+    let autoPending = false;
+    const lastParadigmAt = new Map();
+    const PARADIGM_COOLDOWN_MS = 30 * 60e3;
+    const PLASMA_COLS = new Set(['等离子体RCS', '等离子体鞘套电磁散射']);
+    const AERO_COLS = new Set(['气动隐身', '调研工作', '每日文献', '基础理论']);
+    const runAutoOnce = async () => {
+      if (autoRunning) { autoPending = true; return; }
+      autoRunning = true;
+      try {
+        const plasmaKeys = new Set();
+        const aeroKeys = new Set();
+        for (const c of mirror.collections()) {
+          if (PLASMA_COLS.has(c.name)) {
+            for (const it of mirror.inCollection(c.key)) if (fulltext.hasPdf(it.key)) plasmaKeys.add(it.key);
+          }
+        }
+        for (const c of mirror.collections()) {
+          if (AERO_COLS.has(c.name)) {
+            for (const it of mirror.inCollection(c.key)) if (!plasmaKeys.has(it.key) && fulltext.hasPdf(it.key)) aeroKeys.add(it.key);
+          }
+        }
+        const pairs = [
+          ['plasma_rcs_v1', [...plasmaKeys]],
+          ['aero_stealth_v1', [...aeroKeys]],
+        ];
+        for (const [schemaId, keys] of pairs) {
+          const existing = new Set((kbStruct.listEvidence(schemaId) || []).map((r) => r.zoteroKey));
+          const todo = keys.filter((k) => !existing.has(k));
+          if (!todo.length) continue;
+          let added = 0;
+          for (const k of todo.slice(0, 10)) {
+            try {
+              const r = await evidence.extractPaper(k, schemaId, { force: false });
+              if (r && r.ok && !r.skipped) { added++; changed('evidence'); }
+            } catch (e) { log(`文献自动证据抽取失败 ${k}：${e.message}`); }
+          }
+          if (added > 0 && paradigm && (Date.now() - (lastParadigmAt.get(schemaId) || 0) >= PARADIGM_COOLDOWN_MS)) {
+            lastParadigmAt.set(schemaId, Date.now());
+            try {
+              await paradigm.analyzeContradictions(schemaId, { threshold: 0.68 });
+              changed('evidence');
+            } catch (e) { log(`文献自动矛盾更新失败 ${schemaId}：${e.message}`); }
+          }
+        }
+      } catch (e) {
+        log('文献自动增量抽取异常：' + e.message);
+      } finally {
+        autoRunning = false;
+        if (autoPending) { autoPending = false; setImmediate(runAutoOnce); }
+      }
+    };
+    scheduleAutoEvidence = () => { runAutoOnce().catch(() => {}); };
   }
   // 控制面板 › 文献: keys, the contact address and the push's numbers, read by the sources and the push as they run
   const settings = createSettings({ dir, cfg });
@@ -283,6 +343,11 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       json(res, 200, { ok: true, ...result });
       return true;
     }
+    if (G && p === '/api/lit/benchmarks') {
+      if (!benchmark) { json(res, 503, { ok: false, msg: '基准复算模块不可用' }); return true; }
+      json(res, 200, { ok: true, items: benchmark.list({ status: qs('status') || null, zoteroKey: qs('key') || null }) });
+      return true;
+    }
     if (G && p === '/api/lit/topics') { json(res, 200, { items: reader.topics() }); return true; }
     if (G && p === '/api/lit/topic/state') { json(res, 200, { job: reader.topicState(qs('path')) }); return true; }
     if (G && p === '/api/lit/proposals') { json(res, 200, { items: kb.proposals().map((x) => ({ ...x, title: (kb.read(x.path) || { meta: {} }).meta.title || x.path })) }); return true; }
@@ -431,7 +496,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     return true;
   }
 
-  return { handle, morning, mirror, feed, cards, notes, kb, profile, intake, reader, api, vision, survey, review, history, pdfq, downloads,
+  return { handle, morning, mirror, feed, cards, notes, kb, kbStruct, evidence, paradigm, benchmark, profile, intake, reader, api, vision, survey, review, history, pdfq, downloads,
     stop: () => { mirror.stop(); intake.stop(); feed.stop(); review.stop(); pdfq.stop(); absjob.stop(); downloads.stop(); if (agentSock) agentSock.stop(); if (kbStruct) kbStruct.close(); } };
 }
 

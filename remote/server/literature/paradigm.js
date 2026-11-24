@@ -296,6 +296,46 @@ function createParadigm({ kbStruct, embed = null, mirror = null, ask = null, log
     return kbStruct.updateContradictionStatus(id, st);
   }
 
+  function canonicalizeBucket(fieldKey, rawVal) {
+    const raw = normalizeLabel(rawVal);
+    if (raw === '未提及') return raw;
+    const s = raw.toLowerCase();
+    const fk = String(fieldKey || '').toLowerCase();
+    if (fk === 'em_method') {
+      if (/\bplrc\b/.test(s)) return 'PLRC-FDTD';
+      if (/\btrc\b|trapezoidal recursive/.test(s)) return 'TRC-FDTD';
+      if (/\bade\b|auxiliary differential/.test(s)) return 'ADE-FDTD';
+      if (/\badi\b|alternating direction/.test(s)) return 'ADI-FDTD';
+      if (/\bz[-\s]?transform|z-fdtd|zfdtd/.test(s)) return 'Z-FDTD';
+      if (/\bjec\b|current density convolution/.test(s)) return 'JEC-FDTD';
+      if (/\brc[-\s]?fdtd|recursive convolution/.test(s)) return 'RC-FDTD';
+      if (/\bfdtd\b/.test(s)) return 'FDTD';
+      if (/\bwkb\b/.test(s)) return 'WKB';
+      if (/\btmm\b|transfer matrix|传输矩阵/.test(s)) return 'TMM';
+      if (/\bmlfma\b|\bfmm\b|\bmom\b|method of moments|矩量法/.test(s)) return 'MoM / MLFMA';
+      if (/\bpo\b|\bptd\b|\bsbr\b|\bgo\b|physical optics|物理光学|弹跳射线/.test(s)) return 'PO / PTD / SBR';
+      if (/\bfem\b|finite element|有限元/.test(s)) return 'FEM';
+      if (/\bmie\b|解析解|analytical/.test(s)) return 'Analytical / Mie';
+    } else if (fk === 'flow_chem_model' || fk === 'aero_solver') {
+      if (/park.*11|11[-\s]?species|11组分/.test(s)) return 'Park 11-species';
+      if (/park.*7|7[-\s]?species|7组分/.test(s)) return 'Park 7-species';
+      if (/park|two-temperature|双温|化学非平衡|non-?equilibrium/.test(s)) return 'Non-eq CFD (Park/2T)';
+      if (/\bdsmc\b/.test(s)) return 'DSMC';
+      if (/\brans\b|sst|spalart|k-omega|k-epsilon/.test(s)) return 'RANS';
+      if (/\beuler\b/.test(s)) return 'Euler';
+      if (/navier|n-s|cfd/.test(s)) return 'Navier-Stokes / CFD';
+      if (/epstein|uniform|slab|分层|均匀|drude/.test(s)) return 'Analytic / Slab Plasma';
+    } else if (fk === 'surrogate_opt') {
+      if (/kriging|gaussian process|\bgpr\b|co-kriging/.test(s)) return 'Kriging / GP';
+      if (/nsga|genetic|\bga\b|evolutionary|遗传/.test(s)) return 'NSGA-II / GA';
+      if (/adjoint|伴随/.test(s)) return 'Adjoint';
+      if (/neural|\bann\b|\bdnn\b|\bcnn\b|\bpinn\b|mlp|deep learning|神经/.test(s)) return 'Neural Network / DL';
+      if (/\bpod\b|reduced[-\s]?order|降阶/.test(s)) return 'POD / ROM';
+      if (/\bpso\b|particle swarm|粒子群/.test(s)) return 'PSO';
+    }
+    return raw;
+  }
+
   function buildMatrix(schemaId, { rowField = 'flow_chem_model', colField = 'em_method' } = {}) {
     const list = kbStruct.listEvidence(schemaId) || [];
     const rowCounts = new Map();
@@ -306,8 +346,8 @@ function createParadigm({ kbStruct, embed = null, mirror = null, ask = null, log
       const fields = ev && ev.fields && typeof ev.fields === 'object' ? ev.fields : {};
       const rCell = fields[rowField];
       const cCell = fields[colField];
-      const rLabel = normalizeLabel(rCell && typeof rCell === 'object' ? rCell.value : rCell);
-      const cLabel = normalizeLabel(cCell && typeof cCell === 'object' ? cCell.value : cCell);
+      const rLabel = canonicalizeBucket(rowField, rCell && typeof rCell === 'object' ? rCell.value : rCell);
+      const cLabel = canonicalizeBucket(colField, cCell && typeof cCell === 'object' ? cCell.value : cCell);
 
       rowCounts.set(rLabel, (rowCounts.get(rLabel) || 0) + 1);
       colCounts.set(cLabel, (colCounts.get(cLabel) || 0) + 1);
