@@ -301,19 +301,54 @@ async function runBgMcp(args = {}, opts = {}) {
   const cmdStr = args.command;
   if (!cmdStr || typeof cmdStr !== 'string') return { ok: false, msg: '缺少 command 参数' };
   const cwd = args.cwd || opts.cwd || process.cwd();
-  const logFile = args.logFile || path.join(cwd, '.ame-run-' + Date.now() + '.log');
   const label = args.label || cmdStr.slice(0, 60);
   const sessionId = args.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
   const projectId = args.projectId || process.env.AME_PROJECT_ID || '';
-
+  const nodeId = args.targetNodeId || args.nodeId || process.env.AME_NODE_ID || '';
   const resource = args.resource === 'gpu' || args.resource === 'cpu' ? args.resource : 'none';
+  const priority = ['urgent', 'normal', 'low'].includes(args.priority) ? args.priority : 'normal';
+
+  // Remote headless submission via NAS Mini-Slurm central queue (zero Worker needed on compute node!)
+  if (typeof args.machine === 'string' && args.machine.trim()) {
+    const r = await rpc('queue', {
+      action: 'submit',
+      machine: args.machine.trim(),
+      resource: resource === 'none' ? 'gpu' : resource,
+      ...(args.gpus !== undefined ? { gpus: args.gpus } : {}),
+      ...(args.numa !== undefined ? { numa: args.numa } : {}),
+      priority,
+      cwd,
+      label,
+      projectId,
+      nodeId,
+      command: cmdStr,
+    }, { ...opts, cwd });
+    if (!r || !r.ok) return r || { ok: false, msg: '远程算例入队失败' };
+    const j = r.job || {};
+    return {
+      ok: true,
+      remote: true,
+      jobId: j.id,
+      machine: j.machine,
+      status: j.status,
+      granted: !!r.granted,
+      position: r.position || 0,
+      assignedGpus: j.assignedGpus || [],
+      assignedNuma: j.assignedNuma || [],
+      msg: r.granted
+        ? `远程算例「${label}」已在 ${j.machine} 直接开跑（${j.id}，分配 GPU=${(j.assignedGpus || []).join(',') || '—'}）。完成后结果与日志将自动回传项目看板并唤醒主控。`
+        : `远程算例「${label}」已进入 ${j.machine} 排队（${j.id}，队位 #${r.position || 1}，${j.waitReason || '等待资源空闲'}）。空出资源后自动开跑并回传结果。`,
+    };
+  }
+
+  const logFile = args.logFile || path.join(cwd, '.ame-run-' + Date.now() + '.log');
   const workerPayload = {
     commandArgs: [cmdStr],
     label,
     logFile,
     cwd,
     projectId,
-    nodeId: args.targetNodeId || args.nodeId || process.env.AME_NODE_ID || '',
+    nodeId,
     sessionId,
     resource,
     ...(args.gpus !== undefined ? { gpus: args.gpus } : {}),
@@ -334,8 +369,15 @@ async function runBgMcp(args = {}, opts = {}) {
   };
 }
 
+function defaultEnvSessionId() {
+  if (process.env.AME_SESSION_ID) return process.env.AME_SESSION_ID;
+  if (process.env.CLAUDE_SESSION_ID) return process.env.CLAUDE_SESSION_ID;
+  if (process.env.CODEX_THREAD_ID) return process.env.CODEX_THREAD_ID.startsWith('codex:') ? process.env.CODEX_THREAD_ID : `codex:${process.env.CODEX_THREAD_ID}`;
+  return '';
+}
+
 function rpc(op, params = {}, opts = {}) {
-  const sessionId = params.sessionId || process.env.AME_SESSION_ID || process.env.CLAUDE_SESSION_ID || '';
+  const sessionId = params.sessionId || defaultEnvSessionId();
   const projectId = params.projectId || process.env.AME_PROJECT_ID || process.env.AME_MESH_PROJECT_ID || '';
   const envNodeId = process.env.AME_NODE_ID || process.env.AME_MESH_NODE_ID || '';
   const fromNodeId = params.fromNodeId || envNodeId;
@@ -403,6 +445,7 @@ const MCP_TOOLS = [
       properties: {
         projectId: { type: 'string', description: '可选，所属项目 ID' },
         projectName: { type: 'string', description: '若尚未创建项目，自动新建的项目名' },
+        sessionId: { type: 'string', description: '可选，当前主控会话自身 ID（如 agy:<Conversation ID>）；手动开启的 Master 首次派活时传入，服务端会精准将你绑定为 Master（绝不盲猜）' },
         machine: { type: 'string', description: '目标电脑名称' },
         cwd: { type: 'string', description: '目标电脑上的工作目录绝对路径（需在项目允许访问范围内）' },
         tool: { type: 'string', enum: ['claude', 'codex', 'opencode', 'agy', 'kiro'], description: '启动的 Coding Agent 类型' },
@@ -500,6 +543,8 @@ const MCP_TOOLS = [
         logFile: { type: 'string', description: '可选，输出日志文件路径' },
         projectId: { type: 'string', description: '可选，所属项目 ID' },
         targetNodeId: { type: 'string', description: '可选，完成后唤醒的目标节点 ID' },
+        machine: { type: 'string', description: '可选目标算力机名（如 dell97 / dell211）；传入后直接通过 NAS 中心队列远程无头执行，无需在目标机拉起 Worker 会话，跑完自动回传项目看板' },
+        priority: { type: 'string', enum: ['urgent', 'normal', 'low'], default: 'normal', description: '可选排队优先级（urgent 紧急插队 / normal 普通 / low 低优）' },
         resource: { type: 'string', enum: ['none', 'gpu', 'cpu'], default: 'none', description: '可选算力排队锁：gpu 或 cpu 时自动按机排队（若外部进程正占硬件自动等待空闲再跑，默认 none 直接执行）' },
         gpus: { description: '可选（resource="gpu" 时生效）：申请的 GPU 卡数，支持正整数（如 1、2）或 "all"（整机合并），默认 1；拿到槽位后自动注入 CUDA_VISIBLE_DEVICES / AME_ASSIGNED_GPUS / AME_ASSIGNED_NUMA' },
         numa: { description: '可选（resource="cpu" 时生效）：申请的 NUMA 节点槽位数，支持正整数（如 1、2）或 "all"，默认 1；拿到槽位后自动注入 AME_ASSIGNED_NUMA / AME_ASSIGNED_CPUS / OMP_NUM_THREADS' },
@@ -607,6 +652,7 @@ const MCP_TOOLS = [
       properties: {
         projectId: { type: 'string', description: '可选，项目 ID（不填且提供 projectName 时自动建项目）' },
         projectName: { type: 'string', description: '可选，新建项目的名称' },
+        sessionId: { type: 'string', description: '可选，当前主控会话自身 ID（如 agy:<Conversation ID>）；手动开启的 Master 首次建项目时传入，服务端精准将你绑定为 Master' },
         workspaces: {
           type: 'array',
           description: '允许访问的跨机器文件夹列表',

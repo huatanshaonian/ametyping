@@ -46,6 +46,7 @@ const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
 const { probeCompute } = require('./compute-probe');
+const { findColabBin, probeColabUsage, runColabJob } = require('./colab-runner');
 const { readCodexRateLimits } = require('./codex-quota');
 const { createCollector, stateSignature } = require('./infra-probe');
 const infraCollector = createCollector({ isNas: false });
@@ -351,6 +352,27 @@ function maybeReportComputeProbe() {
     }
   } catch {}
   pushLocalQuota(now);
+  maybeReportColabStatus(now);
+}
+
+const COLAB_PROBE_INTERVAL_MS = 5 * 60 * 1000;
+let lastColabProbeAt = 0;
+let colabProbeBusy = false;
+function maybeReportColabStatus(now = Date.now(), force = false) {
+  if (!ws || ws.readyState !== 1 || colabProbeBusy) return;
+  if (!force && lastColabProbeAt && now - lastColabProbeAt < COLAB_PROBE_INTERVAL_MS) return;
+  const bin = findColabBin();
+  if (!bin) return;
+  colabProbeBusy = true;
+  lastColabProbeAt = now;
+  probeColabUsage(null, { bin })
+    .then((status) => {
+      if (ws && ws.readyState === 1 && status) {
+        sendJSON({ t: 'colab-status', status });
+      }
+    })
+    .catch(() => {})
+    .finally(() => { colabProbeBusy = false; });
 }
 
 let lastLocalQuotaAt = 0, lastLocalQuotaSig = '';
@@ -765,6 +787,18 @@ function connect() {
         sendJSON({ t: 'infra-ctl-res', rid: d.rid, ...r, report: rep || undefined });
       });
     }
+    else if (d.t === 'compute-exec' && typeof d.jobId === 'string') {
+      runRemoteCompute(d);
+    }
+    else if (d.t === 'compute-kill' && typeof d.jobId === 'string') {
+      killRemoteCompute(d.jobId);
+    }
+    else if (d.t === 'colab-exec' && typeof d.jobId === 'string') {
+      runRemoteColab(d);
+    }
+    else if (d.t === 'colab-kill' && typeof d.jobId === 'string') {
+      killRemoteColab(d.jobId);
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume' || d.t === 'worktree-check' || d.t === 'worktree-remove') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
@@ -772,6 +806,135 @@ function connect() {
   socket.on('close', () => { if (socket !== ws) return; ws = null; for (const p of [...mcpPending.values()]) p.done({ ok: false, msg: '和看板服务器的连接断了' }); nativeArchive.reset();memorySync.reset();fsServe.stopAll(); setTimeout(connect, retry); retry = Math.min(30000, retry * 1.5); });
   socket.on('error', () => { try { socket.close(); } catch {} });
 }
+const remoteComputeProcs = new Map(); // jobId -> { child, hbTimer, startMs }
+function runRemoteCompute(d) {
+  if (!controlOn()) {
+    sendJSON({ t: 'compute-done', jobId: d.jobId, exitCode: 1, durationMs: 0, error: '这台电脑没开远程控制（agent.json "control": true）' });
+    return;
+  }
+  const jobId = String(d.jobId || '').trim();
+  const cmdStr = String(d.command || '').trim();
+  if (!jobId || !cmdStr) return;
+  const cwd = (typeof d.cwd === 'string' && d.cwd.trim() && fs.existsSync(d.cwd.trim())) ? d.cwd.trim() : os.homedir();
+  const extraEnv = (d.env && typeof d.env === 'object' && !Array.isArray(d.env)) ? d.env : {};
+  const startMs = Date.now();
+  const rolling = [];
+  const child = child_process.spawn(cmdStr, {
+    cwd,
+    shell: true,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ...extraEnv },
+  });
+  const onChunk = (buf) => {
+    for (const l of buf.toString('utf8').split(/\r?\n/)) {
+      if (l.trim()) {
+        rolling.push(l);
+        if (rolling.length > 40) rolling.shift();
+      }
+    }
+  };
+  if (child.stdout) child.stdout.on('data', onChunk);
+  if (child.stderr) child.stderr.on('data', onChunk);
+  const hbTimer = setInterval(() => {
+    sendJSON({ t: 'compute-heartbeat', jobId });
+  }, 60000);
+  if (hbTimer.unref) hbTimer.unref();
+  remoteComputeProcs.set(jobId, { child, hbTimer, startMs });
+
+  let finished = false;
+  const finish = (code, errMsg = '') => {
+    if (finished) return;
+    finished = true;
+    clearInterval(hbTimer);
+    remoteComputeProcs.delete(jobId);
+    sendJSON({
+      t: 'compute-done',
+      jobId,
+      exitCode: code,
+      durationMs: Date.now() - startMs,
+      tail: rolling.join('\n'),
+      ...(errMsg ? { error: errMsg } : {}),
+    });
+  };
+  child.on('close', (code) => finish(code !== null ? code : 1));
+  child.on('error', (err) => finish(1, err && err.message ? err.message : '启动进程失败'));
+}
+
+function killRemoteCompute(jobId) {
+  const entry = remoteComputeProcs.get(String(jobId || ''));
+  if (!entry || !entry.child) return;
+  try {
+    if (process.platform === 'win32' && entry.child.pid) {
+      child_process.spawn('taskkill', ['/PID', String(entry.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } else {
+      entry.child.kill('SIGTERM');
+    }
+  } catch {}
+}
+
+const activeColabJobs = new Map(); // jobId -> AbortController
+function runRemoteColab(d) {
+  if (!controlOn()) {
+    sendJSON({ t: 'compute-done', jobId: d.jobId, exitCode: 1, durationMs: 0, error: '这台电脑没开远程控制（agent.json "control": true）' });
+    return;
+  }
+  const jobId = String(d.jobId || '').trim();
+  const cmdStr = String(d.command || '').trim();
+  if (!jobId || !cmdStr) return;
+  const ac = new AbortController();
+  activeColabJobs.set(jobId, ac);
+  runColabJob({
+    jobId,
+    gpu: d.gpu || 'A100',
+    fallbackGpus: Array.isArray(d.fallbackGpus) ? d.fallbackGpus : ['L4', 'T4'],
+    command: cmdStr,
+    cwd: typeof d.cwd === 'string' ? d.cwd : '',
+    uploadPaths: Array.isArray(d.uploadPaths) ? d.uploadPaths : [],
+    downloadPath: typeof d.downloadPath === 'string' ? d.downloadPath : '',
+    outputDir: typeof d.outputDir === 'string' ? d.outputDir : '',
+    maxDurationMin: Number(d.maxDurationMin) || 120,
+    minBalanceCcu: d.minBalanceCcu != null ? Number(d.minBalanceCcu) : 15,
+    signal: ac.signal,
+    onHeartbeat: () => sendJSON({ t: 'compute-heartbeat', jobId }),
+  })
+    .then((res) => {
+      activeColabJobs.delete(jobId);
+      sendJSON({
+        t: 'compute-done',
+        jobId,
+        exitCode: res && typeof res.exitCode === 'number' ? res.exitCode : 1,
+        durationMs: (res && res.durationMs) || 0,
+        tail: (res && res.tail) || '',
+        ...(res && res.error ? { error: res.error } : {}),
+        colab: res ? {
+          gpu: res.gpu || '',
+          sessionId: res.sessionId || '',
+          stopped: Boolean(res.stopped),
+          timedOut: Boolean(res.timedOut),
+          cancelled: Boolean(res.cancelled),
+        } : undefined,
+      });
+      maybeReportColabStatus(Date.now(), true);
+    })
+    .catch((err) => {
+      activeColabJobs.delete(jobId);
+      sendJSON({
+        t: 'compute-done',
+        jobId,
+        exitCode: 1,
+        durationMs: 0,
+        error: (err && err.message) || 'Colab 作业运行异常',
+      });
+    });
+}
+
+function killRemoteColab(jobId) {
+  const ac = activeColabJobs.get(String(jobId || ''));
+  if (!ac) return;
+  try { ac.abort(); } catch {}
+}
+
 function sendJSON(o) { try { ws && ws.readyState === 1 && ws.send(JSON.stringify(o)); } catch {} }
 
 // new transcript lines of every tracked session, as slim records (a few batches per session per tick)

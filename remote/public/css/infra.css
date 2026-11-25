@@ -104,3 +104,35 @@
   .inf-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 1.25fr) minmax(220px, 1fr); }
   .inf-topo-pane { border-right: none; border-bottom: 1px solid var(--edge); }
 }
+
+
+/* ---- Mini-Slurm 算力与作业视图 ---- */
+.inf-comp { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; background:var(--win-bg, #c0c0c0); }
+.inf-comp-head { display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid #808080; flex-wrap:wrap; }
+.inf-comp-grid { display:grid; grid-template-columns:1.1fr 1fr; gap:8px; padding:8px; flex:1; min-height:0; overflow:hidden; }
+.inf-comp-left, .inf-comp-right { overflow:auto; background:#fff; border:2px inset #dfdfdf; padding:8px; display:flex; flex-direction:column; gap:6px; }
+.inf-comp-sec-hd { font-weight:700; font-size:12px; color:#000080; border-bottom:1px solid #d0d0d0; padding-bottom:3px; }
+.inf-comp-card { border:1px solid #b0b0b0; background:#f7f7f7; padding:6px 8px; display:flex; flex-direction:column; gap:4px; }
+.inf-comp-card.off { opacity:0.65; }
+.inf-comp-card-hd { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.inf-comp-tag { font-size:10px; padding:1px 5px; background:#e0e8ff; border:1px solid #8aa0d8; color:#102050; }
+.inf-comp-gpu { display:grid; grid-template-columns:76px 1fr auto; align-items:center; gap:6px; font-size:11px; }
+.inf-comp-glbl { font-family:Consolas, monospace; font-weight:700; }
+.inf-comp-gval { font-family:Consolas, monospace; font-size:10px; color:#333; white-space:nowrap; }
+.inf-comp-meta { display:flex; flex-direction:column; gap:2px; font-size:11px; color:#333; margin-top:2px; }
+.inf-comp-sw { color:#0b5394; }
+.inf-comp-dirs { display:flex; flex-wrap:wrap; gap:4px; margin-top:2px; }
+.inf-comp-dir { font-size:10px; font-family:Consolas, monospace; background:#eef; border:1px solid #ccd; padding:1px 4px; }
+.inf-comp-provider { border:1px dashed #808080; background:#fafafa; padding:6px 8px; display:flex; flex-direction:column; gap:3px; }
+.inf-comp-job { border:1px solid #b0b0b0; background:#fbfbfb; padding:6px 8px; display:flex; flex-direction:column; gap:3px; }
+.inf-comp-job.running { border-left:3px solid #1e7e34; }
+.inf-comp-job.queued { border-left:3px solid #b8860b; }
+.inf-comp-job.failed { border-left:3px solid #b22222; }
+.inf-comp-job-hd { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11.5px; }
+.inf-comp-badge { font-size:9.5px; font-weight:700; padding:1px 4px; border:1px solid #808080; background:#e8e8e8; }
+.inf-comp-badge.running { background:#d4edda; color:#155724; border-color:#28a745; }
+.inf-comp-badge.queued { background:#fff3cd; color:#856404; border-color:#d39e00; }
+.inf-comp-badge.failed, .inf-comp-badge.err { background:#f8d7da; color:#721c24; border-color:#dc3545; }
+.inf-comp-cmd { font-family:Consolas, monospace; font-size:10.5px; color:#222; word-break:break-all; }
+.inf-comp-tail { margin:2px 0 0; padding:4px 6px; background:#111; color:#e0e0e0; font-family:Consolas, monospace; font-size:10px; max-height:90px; overflow:auto; white-space:pre-wrap; }
+.inf-comp-muted { font-size:11px; color:#666; }

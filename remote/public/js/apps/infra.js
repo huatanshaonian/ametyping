@@ -9,6 +9,7 @@ import * as wm from '../wm.js';
 import { confirmBox, askText } from '../dialog.js';
 import * as ctxmenu from '../ctxmenu.js';
 import * as computers from './computers.js';
+import { createComputeView } from './infra-compute.js';
 
 let inst = null;
 
@@ -111,6 +112,7 @@ function mount(initialNodeId) {
   let state = { nodes: [], links: [], events: [], fast: false, intervalSec: 60 };
   let selId = initialNodeId || 'nas';
   let showEvents = false;
+  let activeTab = 'topo'; // 'topo' | 'compute'
 
   const topBar = h('div', { class: 'inf-bar' });
   const svgEl = svgNode('svg', { class: 'inf-svg' });
@@ -131,7 +133,9 @@ function mount(initialNodeId) {
   const detailPane = h('div', { class: 'inf-detail-pane' });
   const body = h('div', { class: 'inf-body' }, topoPane, detailPane);
   const statusLine = h('div', { class: 'inf-status' });
-  const root = h('div', { class: 'inf-app' }, topBar, body, statusLine);
+  const computeView = createComputeView({ say });
+  computeView.root.style.display = 'none';
+  const root = h('div', { class: 'inf-app' }, topBar, body, computeView.root, statusLine);
 
   function say(msg) {
     statusLine.replaceChildren(
@@ -173,6 +177,18 @@ function mount(initialNodeId) {
     const totalAlerts = state.nodes.reduce((s, n) => s + (n.alertCount || 0), 0);
 
     topBar.replaceChildren(
+      h('button', {
+        class: `btn ${activeTab === 'topo' ? 'go' : ''}`,
+        type: 'button',
+        text: '拓扑与服务',
+        onclick: () => { activeTab = 'topo'; render(); scheduleDraw(); },
+      }),
+      h('button', {
+        class: `btn ${activeTab === 'compute' ? 'go' : ''}`,
+        type: 'button',
+        text: '算力与作业 (Mini-Slurm)',
+        onclick: () => { activeTab = 'compute'; render(); computeView.refresh(); },
+      }),
       h('span', { class: `inf-stat-pill ${onlineCnt > 0 ? 'ok' : ''}`, text: `在线设备 ${onlineCnt} / ${state.nodes.length}` }),
       h('span', { class: 'inf-stat-pill', text: `运行服务 ${totalSvcs}` }),
       h('span', { class: 'inf-stat-pill', text: `Docker 容器 ${totalCnts}` }),
@@ -1026,8 +1042,12 @@ function mount(initialNodeId) {
 
   function render() {
     renderTopBar();
-    renderTopology();
-    renderDetail();
+    body.style.display = activeTab === 'topo' ? '' : 'none';
+    computeView.root.style.display = activeTab === 'compute' ? '' : 'none';
+    if (activeTab === 'topo') {
+      renderTopology();
+      renderDetail();
+    }
     say();
   }
 
@@ -1047,6 +1067,7 @@ function mount(initialNodeId) {
 
   const offInfra = net.on('infra', fetchState);
   const offSess = net.on('sessions', fetchState);
+  const offMesh = net.on('mesh', () => { if (activeTab === 'compute') computeView.refresh(); });
   fetchState();
 
   return {
@@ -1058,6 +1079,7 @@ function mount(initialNodeId) {
       removeEventListener('resize', scheduleDraw);
       offInfra();
       offSess();
+      offMesh();
       fetch('/api/infra/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"on":false}' }).catch(() => {});
     },
   };

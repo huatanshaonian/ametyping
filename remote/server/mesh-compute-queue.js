@@ -7,10 +7,21 @@ const path = require('path');
 const crypto = require('crypto');
 
 const RESOURCES = ['gpu', 'cpu'];
+const PRIORITIES = { urgent: 0, normal: 1, low: 2 };
 const DEFAULT_SLOTS = { gpu: 1, cpu: 1 };
 const DEFAULT_LEASE_MS = 10 * 60 * 1000; // 10 min without heartbeat -> auto-reclaim
 const PROBE_FRESH_MS = 5 * 60 * 1000;    // ignore probes older than 5 min
 const MAX_HISTORY = 120;
+
+function priorityRank(p) {
+  const k = String(p || 'normal').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PRIORITIES, k) ? PRIORITIES[k] : 1;
+}
+
+function cleanPriority(p) {
+  const k = String(p || 'normal').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PRIORITIES, k) ? k : 'normal';
+}
 
 function cleanStr(v, max = 200) {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
@@ -24,9 +35,43 @@ function parseSlotRequest(val, fallback, maxLimit) {
   return null;
 }
 
-function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () => Date.now(), leaseMs = DEFAULT_LEASE_MS }) {
+function createComputeQueue({
+  dataDir,
+  getMachineProbe = () => null,
+  onDispatchRemote = null,
+  onCancelRemote = null,
+  onChange = () => {},
+  now = () => Date.now(),
+  leaseMs = DEFAULT_LEASE_MS,
+}) {
   const file = path.join(dataDir, 'mesh-compute-queue.json');
   let state = { jobs: [], slots: {} }; // slots[machine] = { gpu: n, cpu: m }
+  const providers = new Map([
+    ['local-agent', { id: 'local-agent', name: '局域网/Tailscale 算力机', status: 'active', note: '通过 AmeTyping Agent 实时探针与无头作业执行' }],
+    ['colab', { id: 'colab', name: 'Google Colab (WSL CLI)', status: 'planned', note: '已预留云算力接入槽位（支持 A100/L4/T4/G4，后续按需接通 colab exec）' }],
+    ['cloud-vm', { id: 'cloud-vm', name: '云服务器 / 弹性 GPU', status: 'planned', note: '已预留 AWS/GCP/租用 GPU 云主机接入接口' }],
+  ]);
+
+  function registerProvider(p) {
+    if (!p || typeof p !== 'object' || !p.id) return { ok: false, msg: '缺少 provider.id' };
+    const id = cleanStr(p.id, 40);
+    providers.set(id, {
+      id,
+      name: cleanStr(p.name, 80) || id,
+      status: cleanStr(p.status, 24) || 'planned',
+      note: cleanStr(p.note, 300),
+      meta: (p.meta && typeof p.meta === 'object') ? p.meta : undefined,
+    });
+    return { ok: true, provider: providers.get(id) };
+  }
+
+  function getProvider(id) {
+    return providers.get(cleanStr(id, 40)) || null;
+  }
+
+  function listProviders() {
+    return [...providers.values()];
+  }
 
   function load() {
     try {
@@ -181,13 +226,50 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
 
   function reconcile() {
     let changed = reclaimStale();
+    const newlyDispatched = [];
     const queuedWithIdx = state.jobs
       .map((job, idx) => ({ job, idx }))
       .filter((x) => x.job.status === 'queued')
-      .sort((a, b) => ((a.job.createdAt || 0) - (b.job.createdAt || 0)) || (a.idx - b.idx));
+      .sort((a, b) =>
+        (priorityRank(a.job.priority) - priorityRank(b.job.priority)) ||
+        ((a.job.createdAt || 0) - (b.job.createdAt || 0)) ||
+        (a.idx - b.idx)
+      );
 
-    // Group queued jobs by machine
-    const machinesSet = new Set(queuedWithIdx.map((x) => x.job.machine));
+    // ---- 0) Cloud provider ('colab') independent concurrency pool ----
+    const queuedColab = queuedWithIdx.filter((x) => x.job.providerType === 'colab').map((x) => x.job);
+    if (queuedColab.length) {
+      const colabProv = providers.get('colab');
+      const colabMeta = (colabProv && colabProv.meta) || {};
+      const maxColabConcurrent = Number.isFinite(Number(colabMeta.maxConcurrent)) && Number(colabMeta.maxConcurrent) >= 1
+        ? Math.trunc(Number(colabMeta.maxConcurrent))
+        : 1;
+      let runningColab = state.jobs.filter((j) => j.providerType === 'colab' && j.status === 'running').length;
+      for (const job of queuedColab) {
+        if (!job.machine && colabMeta.machine) {
+          job.machine = colabMeta.machine;
+        }
+        if (!job.machine) {
+          job.waitReason = '等待 Google Colab 网关机上线（尚未检测到上报 colab-status 的节点）';
+          continue;
+        }
+        if (runningColab < maxColabConcurrent) {
+          job.status = 'running';
+          job.startedAt = now();
+          job.heartbeatAt = job.startedAt;
+          job.waitReason = '';
+          runningColab++;
+          if (job.mode === 'remote') newlyDispatched.push(job);
+          changed = true;
+        } else {
+          job.waitReason = `Google Colab 并发槽位已满（运行中 ${runningColab}/${maxColabConcurrent}），排队等待释放`;
+        }
+      }
+    }
+
+    // Group local-agent queued jobs by machine
+    const localQueued = queuedWithIdx.filter((x) => x.job.providerType !== 'colab');
+    const machinesSet = new Set(localQueued.map((x) => x.job.machine));
 
     for (const machine of machinesSet) {
       const topo = topologyFor(machine);
@@ -195,14 +277,14 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
       // ---- 1) GPU per-card scheduling with atomic multi-GPU + HoL anti-starvation ----
       const managedGpus = new Set();
       for (const j of state.jobs) {
-        if (j.machine === machine && j.resource === 'gpu' && j.status === 'running') {
+        if (j.providerType !== 'colab' && j.machine === machine && j.resource === 'gpu' && j.status === 'running') {
           const ids = Array.isArray(j.assignedGpus) && j.assignedGpus.length ? j.assignedGpus : [0];
           for (const id of ids) managedGpus.add(id);
         }
       }
 
       let gpuHolReserved = null;
-      const queuedGpu = queuedWithIdx.filter((x) => x.job.machine === machine && x.job.resource === 'gpu').map((x) => x.job);
+      const queuedGpu = localQueued.filter((x) => x.job.machine === machine && x.job.resource === 'gpu').map((x) => x.job);
       for (const job of queuedGpu) {
         const totalGpus = topo.gpus.length;
         const reqCount = job.gpus === 'all' ? totalGpus : Math.max(1, Number(job.gpus) || 1);
@@ -244,6 +326,7 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
           job.heartbeatAt = job.startedAt;
           job.waitReason = '';
           for (const id of job.assignedGpus) managedGpus.add(id);
+          if (job.mode === 'remote') newlyDispatched.push(job);
           changed = true;
         } else {
           if (extBusyGpus.length > 0 && managedGpus.size === 0) {
@@ -263,14 +346,14 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
       // ---- 2) CPU / NUMA slot scheduling with dual-socket concurrency + HoL anti-starvation ----
       const managedNuma = new Set();
       for (const j of state.jobs) {
-        if (j.machine === machine && j.resource === 'cpu' && j.status === 'running') {
+        if (j.providerType !== 'colab' && j.machine === machine && j.resource === 'cpu' && j.status === 'running') {
           const ids = Array.isArray(j.assignedNuma) && j.assignedNuma.length ? j.assignedNuma : [0];
           for (const id of ids) managedNuma.add(id);
         }
       }
 
       let cpuHolReserved = null;
-      const queuedCpu = queuedWithIdx.filter((x) => x.job.machine === machine && x.job.resource === 'cpu').map((x) => x.job);
+      const queuedCpu = localQueued.filter((x) => x.job.machine === machine && x.job.resource === 'cpu').map((x) => x.job);
       for (const job of queuedCpu) {
         const totalNuma = topo.numaNodes.length;
         const reqNuma = job.numa === 'all' ? totalNuma : Math.max(1, Number(job.numa) || 1);
@@ -300,6 +383,7 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
           job.heartbeatAt = job.startedAt;
           job.waitReason = '';
           for (const id of job.assignedNuma) managedNuma.add(id);
+          if (job.mode === 'remote') newlyDispatched.push(job);
           changed = true;
         } else {
           if (extBusyNumas.length > 0 && managedNuma.size === 0) {
@@ -313,11 +397,48 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
         }
       }
     }
+    if (newlyDispatched.length && typeof onDispatchRemote === 'function') {
+      for (const job of newlyDispatched) {
+        try { Promise.resolve(onDispatchRemote(job)).catch(() => {}); } catch {}
+      }
+    }
+    if (changed && typeof onChange === 'function') {
+      try { onChange(); } catch {}
+    }
     return changed;
   }
 
-  function enqueue({ machine, resource = 'gpu', gpus, numa, label = '', projectId = '', nodeId = '', command = '' } = {}) {
-    const m = cleanStr(machine, 60);
+  function enqueue({
+    machine,
+    resource = 'gpu',
+    gpus,
+    numa,
+    priority = 'normal',
+    mode = 'local',
+    providerType = 'local-agent',
+    colabGpu = '',
+    gpu = '',
+    fallbackGpus,
+    maxDurationMin,
+    minBalanceCcu,
+    uploadPaths,
+    downloadPath = '',
+    outputDir = '',
+    cwd = '',
+    label = '',
+    projectId = '',
+    nodeId = '',
+    command = '',
+  } = {}) {
+    const provType = cleanStr(providerType, 32) || 'local-agent';
+    let m = cleanStr(machine, 60);
+    if (provType === 'colab' && !m) {
+      const colabProv = providers.get('colab');
+      if (colabProv && colabProv.meta && colabProv.meta.machine) {
+        m = cleanStr(colabProv.meta.machine, 60);
+      }
+      if (!m) return { ok: false, msg: '当前无已激活的 Google Colab 网关机，请先在安装 colab CLI 的节点启动 Agent' };
+    }
     const r = String(resource || 'gpu').trim().toLowerCase();
     if (!m) return { ok: false, msg: '缺少 machine 参数' };
     if (!RESOURCES.includes(r)) return { ok: false, msg: 'resource 仅支持 gpu 或 cpu' };
@@ -336,6 +457,24 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
       if (reqNuma === null) return { ok: false, msg: 'numa 仅支持 1~32 的正整数或 "all"' };
     }
 
+    const colabOpts = provType === 'colab' ? {
+      colabGpu: cleanStr(colabGpu || gpu || 'A100', 24).toUpperCase() || 'A100',
+      fallbackGpus: Array.isArray(fallbackGpus)
+        ? fallbackGpus.map((x) => cleanStr(String(x || ''), 24).toUpperCase()).filter(Boolean).slice(0, 6)
+        : ['L4', 'T4'],
+      maxDurationMin: Number.isFinite(Number(maxDurationMin)) && Number(maxDurationMin) > 0
+        ? Math.min(720, Math.max(1, Math.trunc(Number(maxDurationMin))))
+        : 120,
+      minBalanceCcu: Number.isFinite(Number(minBalanceCcu)) && Number(minBalanceCcu) >= 0
+        ? Number(minBalanceCcu)
+        : 15,
+      uploadPaths: Array.isArray(uploadPaths)
+        ? uploadPaths.map((x) => cleanStr(String(x || ''), 500)).filter(Boolean).slice(0, 20)
+        : [],
+      downloadPath: cleanStr(downloadPath, 300),
+      outputDir: cleanStr(outputDir, 500),
+    } : {};
+
     const t = now();
     const job = {
       id: 'qjob_' + crypto.randomBytes(5).toString('hex'),
@@ -343,6 +482,11 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
       resource: r,
       gpus: reqGpus,
       numa: reqNuma,
+      priority: cleanPriority(priority),
+      mode: mode === 'remote' ? 'remote' : 'local',
+      providerType: provType,
+      ...colabOpts,
+      cwd: cleanStr(cwd, 500),
       assignedGpus: [],
       assignedNuma: [],
       assignedCpus: '',
@@ -350,9 +494,12 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
       label: cleanStr(label, 120) || `${r.toUpperCase()} 计算作业`,
       projectId: cleanStr(projectId, 40),
       nodeId: cleanStr(nodeId, 40),
-      command: cleanStr(command, 500),
+      command: cleanStr(command, 1000),
       status: 'queued',
       waitReason: '',
+      exitCode: null,
+      durationMs: 0,
+      tail: '',
       createdAt: t,
       startedAt: 0,
       heartbeatAt: 0,
@@ -391,35 +538,56 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
     return { ok: true, job };
   }
 
-  function complete(jobId, { ok = true, reason = '' } = {}) {
+  function complete(jobId, { ok = true, reason = '', exitCode = null, durationMs = 0, tail = '' } = {}) {
     const job = state.jobs.find((j) => j.id === jobId);
     if (!job) return { ok: false, msg: '找不到作业' };
     if (job.status === 'queued' || job.status === 'running') {
       job.status = ok ? 'done' : 'failed';
       job.reason = cleanStr(reason, 200);
+      if (exitCode !== null && exitCode !== undefined) job.exitCode = Number(exitCode);
+      if (durationMs) job.durationMs = Math.max(0, Number(durationMs) || 0);
+      if (tail) job.tail = String(tail).slice(-2000);
       job.endedAt = now();
     }
     reconcile();
     save();
+    if (typeof onChange === 'function') { try { onChange(); } catch {} }
+    return { ok: true, job };
+  }
+
+  function setPriority(jobId, priority = 'urgent') {
+    const job = state.jobs.find((j) => j.id === jobId);
+    if (!job) return { ok: false, msg: '找不到作业' };
+    if (job.status !== 'queued') return { ok: false, msg: '仅排队中的作业可调整优先级' };
+    job.priority = cleanPriority(priority);
+    reconcile();
+    save();
+    if (typeof onChange === 'function') { try { onChange(); } catch {} }
     return { ok: true, job };
   }
 
   function cancel(jobId) {
     const job = state.jobs.find((j) => j.id === jobId);
     if (!job) return { ok: false, msg: '找不到作业' };
+    const wasRunningRemote = job.status === 'running' && job.mode === 'remote';
     if (job.status === 'queued' || job.status === 'running') {
       job.status = 'cancelled';
       job.reason = '已取消';
       job.endedAt = now();
     }
+    if (wasRunningRemote && typeof onCancelRemote === 'function') {
+      try { Promise.resolve(onCancelRemote(job)).catch(() => {}); } catch {}
+    }
     reconcile();
     save();
+    if (typeof onChange === 'function') { try { onChange(); } catch {} }
     return { ok: true, job };
   }
 
   function clearDone() {
     state.jobs = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
     save();
+    if (typeof onChange === 'function') { try { onChange(); } catch {} }
     return { ok: true, jobs: state.jobs };
   }
 
@@ -428,12 +596,28 @@ function createComputeQueue({ dataDir, getMachineProbe = () => null, now = () =>
     const m = cleanStr(machine, 60);
     const r = cleanStr(resource, 20).toLowerCase();
     const jobs = state.jobs.filter((j) => (!m || j.machine === m) && (!r || j.resource === r));
-    const result = { ok: true, jobs, slots: { ...state.slots } };
+    const result = { ok: true, jobs, slots: { ...state.slots }, providers: listProviders() };
     if (m) result.topology = topologyFor(m);
     return result;
   }
 
-  return { enqueue, poll, heartbeat, complete, cancel, clearDone, setSlots, list, reconcile, slotsFor, topologyFor };
+  return {
+    enqueue,
+    poll,
+    heartbeat,
+    complete,
+    cancel,
+    setPriority,
+    clearDone,
+    setSlots,
+    list,
+    reconcile,
+    slotsFor,
+    topologyFor,
+    registerProvider,
+    getProvider,
+    listProviders,
+  };
 }
 
-module.exports = { createComputeQueue, RESOURCES, DEFAULT_SLOTS };
+module.exports = { createComputeQueue, RESOURCES, PRIORITIES, DEFAULT_SLOTS };

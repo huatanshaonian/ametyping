@@ -134,9 +134,171 @@ function createMesh({
       return Array.isArray(cfg.expiringFirstHarnesses) ? cfg.expiringFirstHarnesses : ['codex'];
     },
   });
+  function resolveColabGateway(preferredMachine = '') {
+    const prov = computeQueue.getProvider('colab');
+    const gw = (prov && prov.meta && prov.meta.machine) || '';
+    const candidates = [preferredMachine, gw].filter(Boolean);
+    for (const name of candidates) {
+      const m = machines && machines.get(name);
+      const sock = m && m.sockets && [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+      if (sock) return { machine: name, sock };
+    }
+    return { machine: candidates[0] || '', sock: null };
+  }
+
+  function onColabStatus(machineName, status = {}) {
+    const mName = cleanStr(machineName, 60);
+    if (!mName || !status || typeof status !== 'object') return;
+    const available = Boolean(status.available);
+    const balanceCcu = Number.isFinite(Number(status.balanceCcu)) ? Number(status.balanceCcu) : null;
+    const burnRatePerHour = Number.isFinite(Number(status.burnRatePerHour)) ? Number(status.burnRatePerHour) : null;
+    const activeRuntimes = Number.isFinite(Number(status.activeRuntimes)) ? Math.max(0, Math.trunc(Number(status.activeRuntimes))) : 0;
+    const at = Number(status.at) || Date.now();
+    const errTxt = cleanStr(status.error || '', 160);
+    const note = available
+      ? `网关机 ${mName} · 剩余 ${balanceCcu != null ? balanceCcu.toFixed(2) : '—'} CCU · 消耗 ${burnRatePerHour != null ? burnRatePerHour.toFixed(2) : '0.00'}/h · 活动运行时 ${activeRuntimes}`
+      : `网关机 ${mName} · Colab CLI 不可用${errTxt ? `（${errTxt}）` : ''}`;
+    computeQueue.registerProvider({
+      id: 'colab',
+      name: 'Google Colab (WSL CLI)',
+      status: available ? 'active' : 'offline',
+      note,
+      meta: {
+        machine: mName,
+        available,
+        balanceCcu,
+        burnRatePerHour,
+        activeRuntimes,
+        error: errTxt,
+        at,
+      },
+    });
+    computeQueue.reconcile();
+    onChange();
+  }
+
+  function dispatchRemoteComputeJob(job) {
+    if (!job || !job.command) return;
+    if (job.providerType === 'colab') {
+      const { machine: gwMachine, sock } = resolveColabGateway(job.machine);
+      if (!sock) {
+        computeQueue.complete(job.id, {
+          ok: false,
+          reason: `Google Colab 网关机 ${gwMachine || '(未就绪)'} 不在线或未开启远程控制，无法执行 Colab 作业`,
+        });
+        return;
+      }
+      if (gwMachine && job.machine !== gwMachine) job.machine = gwMachine;
+      try {
+        sock.send(JSON.stringify({
+          t: 'colab-exec',
+          jobId: job.id,
+          gpu: job.colabGpu || 'A100',
+          fallbackGpus: Array.isArray(job.fallbackGpus) ? job.fallbackGpus : ['L4', 'T4'],
+          command: job.command,
+          cwd: job.cwd || '',
+          label: job.label || '',
+          uploadPaths: Array.isArray(job.uploadPaths) ? job.uploadPaths : [],
+          downloadPath: job.downloadPath || '',
+          outputDir: job.outputDir || '',
+          maxDurationMin: job.maxDurationMin || 120,
+          minBalanceCcu: job.minBalanceCcu != null ? job.minBalanceCcu : 15,
+        }));
+      } catch (e) {
+        computeQueue.complete(job.id, { ok: false, reason: '下发 Colab 作业失败：' + (e && e.message) });
+      }
+      return;
+    }
+    if (!job.machine) return;
+    const m = machines && machines.get(job.machine);
+    const sock = m && m.sockets && [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+    if (!sock) {
+      computeQueue.complete(job.id, { ok: false, reason: `机器 ${job.machine} 不在线或未开启远程控制，无法执行远程算例` });
+      return;
+    }
+    const env = {};
+    if (Array.isArray(job.assignedGpus) && job.assignedGpus.length) {
+      const gpuStr = job.assignedGpus.join(',');
+      env.CUDA_VISIBLE_DEVICES = gpuStr;
+      env.AME_ASSIGNED_GPUS = gpuStr;
+    }
+    if (Array.isArray(job.assignedNuma) && job.assignedNuma.length) {
+      env.AME_ASSIGNED_NUMA = job.assignedNuma.join(',');
+    }
+    if (job.assignedCpus) env.AME_ASSIGNED_CPUS = job.assignedCpus;
+    if (job.resource === 'cpu' && job.assignedCpuCount > 0 && Array.isArray(job.assignedNuma) && job.assignedNuma.length === 1) {
+      env.OMP_NUM_THREADS = String(Math.max(1, Math.min(32, Math.floor(job.assignedCpuCount / 2) || job.assignedCpuCount)));
+    }
+    try {
+      sock.send(JSON.stringify({
+        t: 'compute-exec',
+        jobId: job.id,
+        command: job.command,
+        cwd: job.cwd || '',
+        label: job.label || '',
+        env,
+      }));
+    } catch (e) {
+      computeQueue.complete(job.id, { ok: false, reason: '下发远程作业失败：' + (e && e.message) });
+    }
+  }
+
+  function cancelRemoteComputeJob(job) {
+    if (!job) return;
+    if (job.providerType === 'colab') {
+      const { sock } = resolveColabGateway(job.machine);
+      if (sock) {
+        try { sock.send(JSON.stringify({ t: 'colab-kill', jobId: job.id })); } catch {}
+      }
+      return;
+    }
+    if (!job.machine) return;
+    const m = machines && machines.get(job.machine);
+    const sock = m && m.sockets && [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+    if (sock) {
+      try { sock.send(JSON.stringify({ t: 'compute-kill', jobId: job.id })); } catch {}
+    }
+  }
+
+  async function onComputeDone(machineName, d = {}) {
+    const jobId = cleanStr(d.jobId, 60);
+    if (!jobId) return;
+    const exitCode = Number.isFinite(Number(d.exitCode)) ? Number(d.exitCode) : 1;
+    const ok = exitCode === 0;
+    const durationMs = Math.max(0, Number(d.durationMs) || 0);
+    const tail = typeof d.tail === 'string' ? d.tail.slice(-2000) : '';
+    const r = computeQueue.complete(jobId, {
+      ok,
+      reason: ok ? '' : (cleanStr(d.error, 160) || `exit ${exitCode}`),
+      exitCode,
+      durationMs,
+      tail,
+    });
+    const job = r && r.job;
+    if (job && job.projectId) {
+      try {
+        await emitEvent({
+          source: 'run',
+          kind: ok ? 'exit_ok' : 'exit_err',
+          machine: machineName || job.machine,
+          projectId: job.projectId,
+          nodeId: job.nodeId || '',
+          label: job.label || job.command.slice(0, 60),
+          exitCode,
+          durationMs,
+          tail,
+          cwd: job.cwd || '',
+        });
+      } catch {}
+    }
+  }
+
   const computeQueue = createComputeQueue({
     dataDir,
     getMachineProbe: (mName) => (machines && machines.get(mName) && machines.get(mName).computeProbe) || null,
+    onDispatchRemote: dispatchRemoteComputeJob,
+    onCancelRemote: cancelRemoteComputeJob,
+    onChange: () => onChange(),
   });
   let data = { projects: [] };
   try {
@@ -674,17 +836,87 @@ function createMesh({
     } catch {}
   }
 
-  function saveMachineProfile({ machine, role = '', hardware = '', note = '' } = {}) {
+  function saveMachineProfile({ machine, role = '', hardware = '', software = '', note = '' } = {}) {
     const mName = cleanStr(machine, 60);
     if (!mName) return { ok: false, msg: '缺少机器名' };
     machineProfiles[mName] = {
       role: cleanStr(role, 120),
       hardware: cleanStr(hardware, 240),
+      software: cleanStr(software, 400),
       note: cleanStr(note, 1000),
       updatedAt: Date.now(),
     };
     persistMachineProfiles();
     return { ok: true, profile: machineProfiles[mName], machines: machinesSummary() };
+  }
+
+  function computeSummaryForMachine(mName, liveMachine) {
+    const probe = (liveMachine && liveMachine.computeProbe) || null;
+    const topo = computeQueue.topologyFor(mName);
+    const qList = computeQueue.list({ machine: mName });
+    const allJobs = (qList && Array.isArray(qList.jobs)) ? qList.jobs : [];
+    const runningJobs = allJobs.filter((j) => j.status === 'running');
+    const queuedJobs = allJobs.filter((j) => j.status === 'queued');
+    const occupiedGpus = [];
+    for (const j of runningJobs) {
+      if (j.resource === 'gpu' && Array.isArray(j.assignedGpus)) {
+        for (const idx of j.assignedGpus) if (!occupiedGpus.includes(idx)) occupiedGpus.push(idx);
+      }
+    }
+    const probeGpus = Array.isArray(probe && probe.gpus) ? probe.gpus : [];
+    const gpus = probeGpus.length
+      ? probeGpus.map((g) => ({
+          index: g.index,
+          name: g.name || '',
+          memUsedMiB: g.memUsedMiB || 0,
+          memTotalMiB: g.memTotalMiB || 0,
+          utilPct: g.utilPct || 0,
+          busy: Boolean(g.busy),
+          numaNode: Number.isInteger(g.numaNode) ? g.numaNode : null,
+          managedBy: (runningJobs.find((j) => j.resource === 'gpu' && Array.isArray(j.assignedGpus) && j.assignedGpus.includes(g.index)) || {}).id || '',
+        }))
+      : topo.gpus.map((g) => ({
+          index: g.index,
+          name: g.name || '',
+          memUsedMiB: 0,
+          memTotalMiB: 0,
+          utilPct: 0,
+          busy: Boolean(g.busy),
+          numaNode: g.numaNode,
+          managedBy: (runningJobs.find((j) => j.resource === 'gpu' && Array.isArray(j.assignedGpus) && j.assignedGpus.includes(g.index)) || {}).id || '',
+        }));
+    return {
+      hasGpu: Boolean((probe && probe.hasGpu) || probeGpus.length > 0),
+      gpus,
+      cpuCount: (probe && probe.cpuCount) || (probe && probe.cores) || 0,
+      cpuBusy: Boolean(probe && probe.cpuBusy),
+      load1: (probe && probe.load1) || 0,
+      numaCount: topo.numaNodes.length,
+      runningCount: runningJobs.length,
+      queuedCount: queuedJobs.length,
+      occupiedGpus,
+      probeAt: (probe && probe.at) || 0,
+    };
+  }
+
+  function computeDirsForMachine(mName) {
+    const out = [];
+    const seen = new Set();
+    if (fsCatalog && typeof fsCatalog.list === 'function') {
+      for (const f of fsCatalog.list()) {
+        if (!f || f.machine !== mName || !f.path) continue;
+        const k = normFolderPath(f.path);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({
+          path: f.path,
+          tag: f.tag || '',
+          gitBranch: (f.snapshot && f.snapshot.gitBranch) || '',
+        });
+        if (out.length >= 12) break;
+      }
+    }
+    return out;
   }
 
   function machinesSummary() {
@@ -708,7 +940,10 @@ function createMesh({
           meshReadyHarnesses,
           role: prof.role || '',
           hardware: prof.hardware || '',
+          software: prof.software || '',
           note: prof.note || '',
+          compute: computeSummaryForMachine(m.name, m),
+          computeDirs: computeDirsForMachine(m.name),
           updatedAt: prof.updatedAt || 0,
         });
       }
@@ -724,7 +959,10 @@ function createMesh({
         meshReadyHarnesses: [],
         role: (prof && prof.role) || '',
         hardware: (prof && prof.hardware) || '',
+        software: (prof && prof.software) || '',
         note: (prof && prof.note) || '',
+        compute: computeSummaryForMachine(mName, null),
+        computeDirs: computeDirsForMachine(mName),
         updatedAt: (prof && prof.updatedAt) || 0,
       });
     }
@@ -3253,7 +3491,8 @@ function createMesh({
     if (req.method === 'GET' && p === '/api/mesh/queue') {
       const mach = url.searchParams.get('machine') || '';
       const resource = url.searchParams.get('resource') || '';
-      json(res, 200, computeQueue.list({ machine: mach, resource }));
+      const q = computeQueue.list({ machine: mach, resource });
+      json(res, 200, { ...q, machines: machinesSummary() });
       return true;
     }
     if (req.method === 'GET' && p === '/api/mesh/local-quotas') {
@@ -3294,7 +3533,7 @@ function createMesh({
     let d = {};
     try { d = JSON.parse(await readBody(req, 32768)); } catch {}
     // Operations that act on remote machines require a fresh TOTP session
-    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/fable-advice/launch', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm', '/api/mesh/board/post', '/api/mesh/worktree-remove'].includes(p);
+    const needsStepUp = ['/api/mesh/spawn', '/api/mesh/fable-advice/launch', '/api/mesh/send', '/api/mesh/report', '/api/mesh/flush', '/api/mesh/transfer-confirm', '/api/mesh/board/post', '/api/mesh/worktree-remove', '/api/mesh/queue'].includes(p);
     if (needsStepUp && typeof isFresh === 'function' && !isFresh()) {
       json(res, 200, { ok: false, need: 'totp', msg: '远程操作前请再输一次验证码' });
       return true;
@@ -3456,7 +3695,36 @@ function createMesh({
     }
     if (p === '/api/mesh/queue') {
       let r;
-      if (d.op === 'cancel') r = computeQueue.cancel(d.jobId);
+      if (d.op === 'submit') {
+        const provType = cleanStr(d.providerType, 32) || 'local-agent';
+        const needMachine = provType !== 'colab';
+        if ((needMachine && !cleanStr(d.machine, 60)) || !cleanStr(d.command, 1000)) {
+          r = { ok: false, msg: needMachine ? '提交远程作业需要提供 machine 与 command' : '提交 Colab 作业需要提供 command' };
+        } else {
+          r = computeQueue.enqueue({
+            machine: d.machine || '',
+            resource: d.resource || 'gpu',
+            gpus: d.gpus,
+            numa: d.numa,
+            priority: d.priority || 'normal',
+            mode: 'remote',
+            providerType: provType,
+            colabGpu: d.colabGpu || d.gpu || '',
+            fallbackGpus: d.fallbackGpus,
+            maxDurationMin: d.maxDurationMin,
+            minBalanceCcu: d.minBalanceCcu,
+            uploadPaths: d.uploadPaths,
+            downloadPath: d.downloadPath || '',
+            outputDir: d.outputDir || '',
+            cwd: d.cwd || '',
+            label: d.label || '',
+            projectId: d.projectId || '',
+            nodeId: d.nodeId || '',
+            command: d.command,
+          });
+        }
+      } else if (d.op === 'cancel') r = computeQueue.cancel(d.jobId);
+      else if (d.op === 'prioritize') r = computeQueue.setPriority(d.jobId, d.priority || 'urgent');
       else if (d.op === 'clear_done') r = computeQueue.clearDone();
       else if (d.op === 'set_slots') r = computeQueue.setSlots(d);
       else r = { ok: false, msg: '未知的 queue 操作' };
@@ -3614,6 +3882,20 @@ function createMesh({
       }
       if (op === 'queue') {
         const act = String(d.action || 'list').trim().toLowerCase();
+        if (act === 'submit') {
+          const provType = cleanStr(d.providerType, 32) || 'local-agent';
+          return reply(computeQueue.enqueue({
+            ...d,
+            providerType: provType,
+            machine: d.machine || (provType === 'colab' ? '' : machineName),
+            nodeId: d.nodeId || callerNodeId,
+            mode: 'remote',
+            priority: d.priority || 'normal',
+            gpus: d.gpus,
+            numa: d.numa,
+          }));
+        }
+        if (act === 'prioritize') return reply(computeQueue.setPriority(d.jobId, d.priority || 'urgent'));
         if (act === 'enqueue') {
           return reply(computeQueue.enqueue({
             ...d,
@@ -3688,6 +3970,8 @@ function createMesh({
     clearCliUpdate,
     onLocalQuota,
     listLocalQuotas,
+    onColabStatus,
+    onComputeDone,
     fromAgentResult,
     fromAgentRpc,
     fromAgentFs,
