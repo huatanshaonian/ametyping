@@ -493,6 +493,7 @@ function onAgentMessage(m, raw, ws) {
   if (d.t === 'cli-update' && typeof d.tool === 'string') return mesh.onCliUpdate(m.name, d);
   if (d.t === 'compute-probe' && d.probe && typeof d.probe === 'object') { m.computeProbe = d.probe; mesh.computeQueue.reconcile(); return; }
   if (d.t === 'colab-status' && d.status && typeof d.status === 'object') { mesh.onColabStatus(m.name, d.status); return; }
+  if (d.t === 'sugon-status' && d.status && typeof d.status === 'object') { mesh.onSugonStatus(m.name, d.status); return; }
   if (d.t === 'compute-heartbeat' && typeof d.jobId === 'string') { mesh.computeQueue.heartbeat(d.jobId); return; }
   if (d.t === 'compute-done' && typeof d.jobId === 'string') { mesh.onComputeDone(m.name, d); return; }
   if (d.t === 'local-quota' && d.quota && typeof d.quota === 'object') { mesh.onLocalQuota(m.name, d.quota); return; }

@@ -48,6 +48,7 @@ const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
 const { probeCompute } = require('./compute-probe');
 const { findColabBin, probeColabUsage, runColabJob } = require('./colab-runner');
+const { loadSugonConfig, probeSugonStatus, runSugonJob } = require('./sugon-runner');
 const { readCodexRateLimits } = require('./codex-quota');
 const { createCollector, stateSignature } = require('./infra-probe');
 const infraCollector = createCollector({ isNas: false });
@@ -389,6 +390,7 @@ function maybeReportComputeProbe() {
   } catch {}
   pushLocalQuota(now);
   maybeReportColabStatus(now);
+  maybeReportSugonStatus(now);
 }
 
 const COLAB_PROBE_INTERVAL_MS = 5 * 60 * 1000;
@@ -835,6 +837,12 @@ function connect() {
     else if (d.t === 'colab-kill' && typeof d.jobId === 'string') {
       killRemoteColab(d.jobId);
     }
+    else if (d.t === 'sugon-exec' && typeof d.jobId === 'string') {
+      runRemoteSugon(d);
+    }
+    else if (d.t === 'sugon-kill' && typeof d.jobId === 'string') {
+      killRemoteSugon(d.jobId);
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume' || d.t === 'worktree-check' || d.t === 'worktree-remove') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
@@ -967,6 +975,72 @@ function runRemoteColab(d) {
 
 function killRemoteColab(jobId) {
   const ac = activeColabJobs.get(String(jobId || ''));
+  if (!ac) return;
+  try { ac.abort(); } catch {}
+}
+
+let lastSugonAt = 0, sugonBusy = false;
+function maybeReportSugonStatus(now = Date.now(), force = false) {
+  if (!ws || ws.readyState !== 1 || sugonBusy) return;
+  if (!force && now - lastSugonAt < 5 * 60000) return;
+  if (!loadSugonConfig()) return;
+  sugonBusy = true;
+  lastSugonAt = now;
+  probeSugonStatus()
+    .then((st) => {
+      if (st) sendJSON({ t: 'sugon-status', status: st });
+    })
+    .catch(() => {})
+    .finally(() => { sugonBusy = false; });
+}
+
+const activeSugonJobs = new Map(); // jobId -> AbortController
+function runRemoteSugon(d) {
+  if (!controlOn()) {
+    sendJSON({ t: 'compute-done', jobId: d.jobId, exitCode: 1, durationMs: 0, error: '这台电脑没开远程控制（agent.json "control": true）' });
+    return;
+  }
+  const jobId = String(d.jobId || '').trim();
+  const cmdStr = String(d.command || '').trim();
+  if (!jobId || !cmdStr) return;
+  const ac = new AbortController();
+  activeSugonJobs.set(jobId, ac);
+  runSugonJob({
+    jobId,
+    label: d.label || '',
+    partition: d.partition || '',
+    nodes: Number(d.nodes) || 1,
+    ntasks: Number(d.ntasks) || 1,
+    gpus: Number(d.gpus) || 0,
+    walltime: d.walltime || '',
+    remoteWorkDir: d.remoteWorkDir || '',
+    command: cmdStr,
+    uploadPaths: Array.isArray(d.uploadPaths) ? d.uploadPaths : [],
+    downloadPath: typeof d.downloadPath === 'string' ? d.downloadPath : '',
+    outputDir: typeof d.outputDir === 'string' ? d.outputDir : '',
+    signal: ac.signal,
+    onHeartbeat: () => sendJSON({ t: 'compute-heartbeat', jobId }),
+  })
+    .then((res) => {
+      activeSugonJobs.delete(jobId);
+      sendJSON({
+        t: 'compute-done',
+        jobId,
+        exitCode: res && typeof res.exitCode === 'number' ? res.exitCode : 1,
+        durationMs: (res && res.durationMs) || 0,
+        tail: (res && res.tail) || '',
+        ...(res && res.error ? { error: res.error } : {}),
+      });
+      maybeReportSugonStatus(Date.now(), true);
+    })
+    .catch((err) => {
+      activeSugonJobs.delete(jobId);
+      sendJSON({ t: 'compute-done', jobId, exitCode: 1, durationMs: 0, error: (err && err.message) || '曙光作业运行异常' });
+    });
+}
+
+function killRemoteSugon(jobId) {
+  const ac = activeSugonJobs.get(String(jobId || ''));
   if (!ac) return;
   try { ac.abort(); } catch {}
 }

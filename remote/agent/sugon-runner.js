@@ -1,0 +1,381 @@
+// Sugon / SCNet (中科曙光 / 国家超算互联网) HPC Provider Runner (deterministic, zero-token).
+// Supports dual modes via ~/.config/ame-hpc/sugon.json (mode 0600, never stored in Git):
+//   1. `mode: "ssh"`     — Standard SSH + Slurm CLI (sbatch / squeue / sacct / scancel / scp)
+//   2. `mode: "openapi"` — Sugon AC / SCNet OpenAPI v2 (POST /ac/openapi/v2/tokens + REST job API)
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const child_process = require('child_process');
+
+const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.config', 'ame-hpc', 'sugon.json');
+
+function cleanStr(v, max = 200) {
+  return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
+
+function loadSugonConfig(configPath = DEFAULT_CONFIG_PATH) {
+  try {
+    if (!fs.existsSync(configPath)) return null;
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const mode = String(raw.mode || (raw.sshHost ? 'ssh' : raw.baseUrl ? 'openapi' : '')).trim().toLowerCase();
+    if (mode !== 'ssh' && mode !== 'openapi') return null;
+    return {
+      mode,
+      sshHost: cleanStr(raw.sshHost, 120),
+      baseUrl: cleanStr(raw.baseUrl, 240).replace(/\/+$/, ''),
+      user: cleanStr(raw.user, 120),
+      password: typeof raw.password === 'string' ? raw.password : '',
+      orgid: cleanStr(raw.orgid, 120),
+      clusterId: cleanStr(raw.clusterId, 120),
+      defaultPartition: cleanStr(raw.defaultPartition, 80) || 'normal',
+      remoteWorkDir: cleanStr(raw.remoteWorkDir, 300) || '~/ame-hpc-jobs',
+      maxWalltime: cleanStr(raw.maxWalltime, 32) || '04:00:00',
+      submitPath: cleanStr(raw.submitPath, 160) || '/hpc/openapi/v2/jobs',
+      statusPath: cleanStr(raw.statusPath, 160) || '/hpc/openapi/v2/jobs',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function defaultExec(cmd, args = [], opts = {}) {
+  return new Promise((resolve) => {
+    child_process.execFile(cmd, args, {
+      timeout: opts.timeoutMs || 60000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+      env: process.env,
+    }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        code: err && typeof err.code === 'number' ? err.code : (err ? 1 : 0),
+        stdout: String(stdout || ''),
+        stderr: String(stderr || ''),
+        error: err ? err.message : '',
+      });
+    });
+  });
+}
+
+function parseSinfoPartitions(stdout) {
+  const parts = [];
+  const seen = new Set();
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || !t.includes('|')) continue;
+    const [rawName, avail, nodes] = t.split('|').map((s) => s.trim());
+    const name = rawName.replace(/\*$/, '');
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    parts.push({ name, avail: avail || 'up', nodes: Number(nodes) || 0 });
+  }
+  return parts;
+}
+
+function parseSqueueJobs(stdout) {
+  const jobs = [];
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || !t.includes('|')) continue;
+    const [id, state, partition, name] = t.split('|').map((s) => s.trim());
+    if (!id) continue;
+    jobs.push({ id, state: (state || '').toUpperCase(), partition: partition || '', name: name || '' });
+  }
+  return jobs;
+}
+
+function buildSbatchScript({
+  jobName = 'ame_job',
+  partition = 'normal',
+  nodes = 1,
+  ntasks = 1,
+  gpus = 0,
+  walltime = '04:00:00',
+  remoteWorkDir = '~/ame-hpc-jobs',
+  command = '',
+} = {}) {
+  const safeName = String(jobName || 'ame_job').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 60) || 'ame_job';
+  const lines = [
+    '#!/bin/bash',
+    `#SBATCH -J ${safeName}`,
+    `#SBATCH -p ${cleanStr(partition, 80) || 'normal'}`,
+    `#SBATCH -N ${Math.max(1, Math.trunc(Number(nodes) || 1))}`,
+    `#SBATCH -n ${Math.max(1, Math.trunc(Number(ntasks) || 1))}`,
+    gpus > 0 ? `#SBATCH --gres=gpu:${Math.trunc(Number(gpus))}` : null,
+    walltime ? `#SBATCH -t ${cleanStr(walltime, 32)}` : null,
+    `#SBATCH -o ${remoteWorkDir}/slurm-%j.out`,
+    `#SBATCH -e ${remoteWorkDir}/slurm-%j.err`,
+    '',
+    'set -eo pipefail',
+    `cd ${remoteWorkDir}`,
+    String(command || ''),
+    '',
+  ].filter((x) => x !== null);
+  return lines.join('\n');
+}
+
+function parseSbatchJobId(stdout) {
+  const m = /Submitted\s+batch\s+job\s+(\d+)/i.exec(String(stdout || ''));
+  return m ? m[1] : '';
+}
+
+async function fetchOpenApiToken(cfg, fetchFn = global.fetch) {
+  const res = await fetchFn(`${cfg.baseUrl}/ac/openapi/v2/tokens`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      user: cfg.user,
+      password: cfg.password,
+      ...(cfg.orgid ? { orgid: cfg.orgid } : {}),
+    },
+    body: JSON.stringify({}),
+  });
+  const data = await res.json();
+  if (!res.ok || !data || (data.code && String(data.code) !== '0' && String(data.code) !== '200')) {
+    throw new Error((data && (data.msg || data.message)) || `HTTP ${res.status}`);
+  }
+  const list = Array.isArray(data.data) ? data.data : (data.data ? [data.data] : []);
+  const picked = (cfg.clusterId && list.find((x) => String(x.clusterId) === cfg.clusterId)) || list[0] || data;
+  const token = picked.token || data.token || '';
+  if (!token) throw new Error('曙光 OpenAPI 未返回有效 token');
+  return { token, clusterId: String(picked.clusterId || cfg.clusterId || ''), clusterName: String(picked.clusterName || '') };
+}
+
+async function probeSugonStatus({ configPath = DEFAULT_CONFIG_PATH, execFn = defaultExec, fetchFn = global.fetch } = {}) {
+  const cfg = loadSugonConfig(configPath);
+  if (!cfg) return null;
+  const at = Date.now();
+
+  if (cfg.mode === 'ssh') {
+    if (!cfg.sshHost) return { available: false, mode: 'ssh', error: '缺少 sshHost 配置', at };
+    const r = await execFn('ssh', [
+      '-o', 'ConnectTimeout=8',
+      '-o', 'BatchMode=yes',
+      cfg.sshHost,
+      "sinfo -h -o '%P|%a|%D' 2>/dev/null | head -n 12; echo '---JOBS---'; squeue -u $USER -h -o '%i|%T|%P|%j' 2>/dev/null | head -n 30",
+    ], { timeoutMs: 12000 });
+    if (!r.ok) {
+      return { available: false, mode: 'ssh', host: cfg.sshHost, error: cleanStr(r.stderr || r.error || 'SSH 探测失败', 160), at };
+    }
+    const [partRaw, jobRaw] = r.stdout.split('---JOBS---');
+    const partitions = parseSinfoPartitions(partRaw);
+    const jobs = parseSqueueJobs(jobRaw);
+    const runningJobs = jobs.filter((j) => j.state === 'RUNNING' || j.state === 'R').length;
+    const queuedJobs = jobs.filter((j) => j.state === 'PENDING' || j.state === 'PD').length;
+    return {
+      available: true,
+      mode: 'ssh',
+      host: cfg.sshHost,
+      defaultPartition: cfg.defaultPartition,
+      partitions: partitions.map((p) => p.name),
+      activeJobs: jobs.length,
+      runningJobs,
+      queuedJobs,
+      at,
+    };
+  }
+
+  // OpenAPI v2 mode
+  if (!cfg.baseUrl || !cfg.user || !cfg.password) {
+    return { available: false, mode: 'openapi', error: '缺少 baseUrl/user/password 配置', at };
+  }
+  try {
+    const auth = await fetchOpenApiToken(cfg, fetchFn);
+    return {
+      available: true,
+      mode: 'openapi',
+      host: cfg.baseUrl,
+      clusterId: auth.clusterId,
+      clusterName: auth.clusterName,
+      defaultPartition: cfg.defaultPartition,
+      partitions: [cfg.defaultPartition],
+      activeJobs: 0,
+      runningJobs: 0,
+      queuedJobs: 0,
+      at,
+    };
+  } catch (e) {
+    return { available: false, mode: 'openapi', host: cfg.baseUrl, error: cleanStr(e && e.message, 160), at };
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function runSugonJob({
+  jobId = '',
+  label = '',
+  partition = '',
+  nodes = 1,
+  ntasks = 1,
+  gpus = 0,
+  walltime = '',
+  command = '',
+  remoteWorkDir = '',
+  uploadPaths = [],
+  downloadPath = '',
+  outputDir = '',
+  pollIntervalMs = 15000,
+  onHeartbeat = () => {},
+  signal = null,
+  configPath = DEFAULT_CONFIG_PATH,
+  execFn = defaultExec,
+  fetchFn = global.fetch,
+} = {}) {
+  const startMs = Date.now();
+  const cfg = loadSugonConfig(configPath);
+  if (!cfg) {
+    return { ok: false, exitCode: 1, durationMs: 0, error: `未找到曙光超算配置文件 ${configPath}` };
+  }
+  const part = cleanStr(partition, 80) || cfg.defaultPartition || 'normal';
+  const workDir = cleanStr(remoteWorkDir, 300) || `${cfg.remoteWorkDir}/${jobId || ('job_' + Date.now())}`;
+  const wt = cleanStr(walltime, 32) || cfg.maxWalltime || '04:00:00';
+
+  if (cfg.mode === 'ssh') {
+    const host = cfg.sshHost;
+    // 1. Ensure remote working directory
+    const mk = await execFn('ssh', ['-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', host, `mkdir -p ${workDir}`]);
+    if (!mk.ok) return { ok: false, exitCode: 1, durationMs: Date.now() - startMs, error: `创建远端目录失败: ${mk.stderr || mk.error}` };
+
+    // 2. Upload local files if specified
+    for (const lp of (Array.isArray(uploadPaths) ? uploadPaths : [])) {
+      const p = cleanStr(lp, 500);
+      if (!p) continue;
+      const up = await execFn('scp', ['-r', '-o', 'BatchMode=yes', p, `${host}:${workDir}/`], { timeoutMs: 300000 });
+      if (!up.ok) return { ok: false, exitCode: 1, durationMs: Date.now() - startMs, error: `上传 ${p} 失败: ${up.stderr || up.error}` };
+    }
+
+    // 3. Submit sbatch script
+    const script = buildSbatchScript({
+      jobName: label || jobId || 'ame_hpc',
+      partition: part,
+      nodes,
+      ntasks,
+      gpus,
+      walltime: wt,
+      remoteWorkDir: workDir,
+      command,
+    });
+    const b64 = Buffer.from(script, 'utf8').toString('base64');
+    const sub = await execFn('ssh', [
+      '-o', 'ConnectTimeout=10',
+      '-o', 'BatchMode=yes',
+      host,
+      `echo '${b64}' | base64 -d > ${workDir}/run.sbatch && sbatch ${workDir}/run.sbatch`,
+    ]);
+    const slurmJobId = parseSbatchJobId(sub.stdout);
+    if (!sub.ok || !slurmJobId) {
+      return { ok: false, exitCode: 1, durationMs: Date.now() - startMs, error: `sbatch 提交失败: ${sub.stderr || sub.stdout || sub.error}` };
+    }
+
+    // 4. Poll Slurm until completion or cancellation
+    let cancelled = false;
+    while (true) {
+      if (signal && signal.aborted) {
+        cancelled = true;
+        await execFn('ssh', ['-o', 'BatchMode=yes', host, `scancel ${slurmJobId}`]);
+        return { ok: false, exitCode: 130, slurmJobId, durationMs: Date.now() - startMs, error: '已通过 scancel 中止曙光作业' };
+      }
+      try { onHeartbeat({ slurmJobId }); } catch {}
+      const sq = await execFn('ssh', ['-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', host, `squeue -j ${slurmJobId} -h -o '%T'`]);
+      const st = cleanStr(sq.stdout, 40).toUpperCase();
+      if (!st || ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY'].includes(st)) break;
+      await sleep(Math.max(10, pollIntervalMs));
+    }
+
+    // 5. Inspect final exit status & log tail
+    const ac = await execFn('ssh', ['-o', 'BatchMode=yes', host, `sacct -j ${slurmJobId} -n -P -o State,ExitCode 2>/dev/null | head -n 1`]);
+    const logRes = await execFn('ssh', ['-o', 'BatchMode=yes', host, `tail -n 40 ${workDir}/slurm-${slurmJobId}.out ${workDir}/slurm-${slurmJobId}.err 2>/dev/null || true`]);
+    const sacctLine = cleanStr(ac.stdout, 120);
+    const failed = !cancelled && /FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY|NODE_FAIL/i.test(sacctLine);
+    const exitM = /\|(\d+):\d+/.exec(sacctLine);
+    const exitCode = exitM ? Number(exitM[1]) : (failed ? 1 : 0);
+
+    // 6. Download artifacts directly into outputDir (e.g. /mnt/nas/...)
+    if (!failed && downloadPath && outputDir) {
+      try { fs.mkdirSync(outputDir, { recursive: true }); } catch {}
+      const remoteSrc = downloadPath.startsWith('/') ? downloadPath : `${workDir}/${downloadPath}`;
+      await execFn('scp', ['-r', '-o', 'BatchMode=yes', `${host}:${remoteSrc}`, outputDir], { timeoutMs: 600000 });
+    }
+
+    return {
+      ok: exitCode === 0,
+      exitCode,
+      slurmJobId,
+      durationMs: Date.now() - startMs,
+      tail: String(logRes.stdout || '').slice(-2000),
+      ...(exitCode !== 0 ? { error: sacctLine || `Slurm exit ${exitCode}` } : {}),
+    };
+  }
+
+  // OpenAPI v2 mode
+  try {
+    const auth = await fetchOpenApiToken(cfg, fetchFn);
+    const subRes = await fetchFn(`${cfg.baseUrl}${cfg.submitPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: auth.token },
+      body: JSON.stringify({
+        clusterId: auth.clusterId,
+        jobName: label || jobId || 'ame_hpc',
+        queue: part,
+        nodes: Math.max(1, Number(nodes) || 1),
+        ntasks: Math.max(1, Number(ntasks) || 1),
+        gpus: Math.max(0, Number(gpus) || 0),
+        walltime: wt,
+        workDir,
+        command,
+      }),
+    });
+    const subJson = await subRes.json();
+    const slurmJobId = String((subJson && subJson.data && (subJson.data.jobId || subJson.data.id)) || subJson.jobId || '');
+    if (!subRes.ok || !slurmJobId) {
+      return { ok: false, exitCode: 1, durationMs: Date.now() - startMs, error: (subJson && (subJson.msg || subJson.message)) || 'OpenAPI 提交作业失败' };
+    }
+
+    let finalState = 'COMPLETED';
+    while (true) {
+      if (signal && signal.aborted) {
+        await fetchFn(`${cfg.baseUrl}${cfg.statusPath}/${encodeURIComponent(slurmJobId)}`, {
+          method: 'DELETE',
+          headers: { token: auth.token },
+        }).catch(() => {});
+        return { ok: false, exitCode: 130, slurmJobId, durationMs: Date.now() - startMs, error: '已通过 OpenAPI 中止曙光作业' };
+      }
+      try { onHeartbeat({ slurmJobId }); } catch {}
+      const stRes = await fetchFn(`${cfg.baseUrl}${cfg.statusPath}/${encodeURIComponent(slurmJobId)}`, {
+        method: 'GET',
+        headers: { token: auth.token },
+      });
+      const stJson = await stRes.json();
+      const st = String((stJson && stJson.data && (stJson.data.jobStatus || stJson.data.state)) || stJson.state || '').toUpperCase();
+      if (['COMPLETED', 'DONE', 'SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT', 'ERROR'].includes(st)) {
+        finalState = st;
+        break;
+      }
+      await sleep(Math.max(10, pollIntervalMs));
+    }
+    const ok = ['COMPLETED', 'DONE', 'SUCCESS'].includes(finalState);
+    return {
+      ok,
+      exitCode: ok ? 0 : 1,
+      slurmJobId,
+      durationMs: Date.now() - startMs,
+      tail: `Sugon OpenAPI Job ${slurmJobId}: ${finalState}`,
+      ...(!ok ? { error: `Sugon OpenAPI ${finalState}` } : {}),
+    };
+  } catch (e) {
+    return { ok: false, exitCode: 1, durationMs: Date.now() - startMs, error: cleanStr(e && e.message, 200) };
+  }
+}
+
+module.exports = {
+  DEFAULT_CONFIG_PATH,
+  loadSugonConfig,
+  parseSinfoPartitions,
+  parseSqueueJobs,
+  parseSbatchJobId,
+  buildSbatchScript,
+  probeSugonStatus,
+  runSugonJob,
+};

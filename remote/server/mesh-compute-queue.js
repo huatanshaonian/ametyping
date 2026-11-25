@@ -48,7 +48,8 @@ function createComputeQueue({
   let state = { jobs: [], slots: {} }; // slots[machine] = { gpu: n, cpu: m }
   const providers = new Map([
     ['local-agent', { id: 'local-agent', name: '局域网/Tailscale 算力机', status: 'active', note: '通过 AmeTyping Agent 实时探针与无头作业执行' }],
-    ['colab', { id: 'colab', name: 'Google Colab (WSL CLI)', status: 'planned', note: '已预留云算力接入槽位（支持 A100/L4/T4/G4，后续按需接通 colab exec）' }],
+    ['colab', { id: 'colab', name: 'Google Colab (CLI)', status: 'planned', note: '已预留云算力接入槽位（支持 A100/L4/T4/G4）' }],
+    ['sugon', { id: 'sugon', name: '曙光超算 (Sugon / SCNet)', status: 'planned', note: '支持 SSH+Slurm 与 OpenAPI v2；在网关机配置 ~/.config/ame-hpc/sugon.json 自动激活' }],
     ['cloud-vm', { id: 'cloud-vm', name: '云服务器 / 弹性 GPU', status: 'planned', note: '已预留 AWS/GCP/租用 GPU 云主机接入接口' }],
   ]);
 
@@ -267,8 +268,37 @@ function createComputeQueue({
       }
     }
 
+    // ---- 0b) External HPC provider ('sugon') independent concurrency pool ----
+    const queuedSugon = queuedWithIdx.filter((x) => x.job.providerType === 'sugon').map((x) => x.job);
+    if (queuedSugon.length) {
+      const sugonProv = providers.get('sugon');
+      const sugonMeta = (sugonProv && sugonProv.meta) || {};
+      const maxSugonConcurrent = Number.isFinite(Number(sugonMeta.maxConcurrent)) && Number(sugonMeta.maxConcurrent) >= 1
+        ? Math.trunc(Number(sugonMeta.maxConcurrent))
+        : 4;
+      let runningSugon = state.jobs.filter((j) => j.providerType === 'sugon' && j.status === 'running').length;
+      for (const job of queuedSugon) {
+        if (!job.machine && sugonMeta.machine) job.machine = sugonMeta.machine;
+        if (!job.machine) {
+          job.waitReason = '等待曙光超算网关机上线（请在 ubuntu_hpc 配置 ~/.config/ame-hpc/sugon.json）';
+          continue;
+        }
+        if (runningSugon < maxSugonConcurrent) {
+          job.status = 'running';
+          job.startedAt = now();
+          job.heartbeatAt = job.startedAt;
+          job.waitReason = '';
+          runningSugon++;
+          if (job.mode === 'remote') newlyDispatched.push(job);
+          changed = true;
+        } else {
+          job.waitReason = `曙光超算并发槽位已满（运行中 ${runningSugon}/${maxSugonConcurrent}），排队等待释放`;
+        }
+      }
+    }
+
     // Group local-agent queued jobs by machine
-    const localQueued = queuedWithIdx.filter((x) => x.job.providerType !== 'colab');
+    const localQueued = queuedWithIdx.filter((x) => x.job.providerType !== 'colab' && x.job.providerType !== 'sugon');
     const machinesSet = new Set(localQueued.map((x) => x.job.machine));
 
     for (const machine of machinesSet) {
@@ -277,7 +307,7 @@ function createComputeQueue({
       // ---- 1) GPU per-card scheduling with atomic multi-GPU + HoL anti-starvation ----
       const managedGpus = new Set();
       for (const j of state.jobs) {
-        if (j.providerType !== 'colab' && j.machine === machine && j.resource === 'gpu' && j.status === 'running') {
+        if (j.providerType !== 'colab' && j.providerType !== 'sugon' && j.machine === machine && j.resource === 'gpu' && j.status === 'running') {
           const ids = Array.isArray(j.assignedGpus) && j.assignedGpus.length ? j.assignedGpus : [0];
           for (const id of ids) managedGpus.add(id);
         }
@@ -424,6 +454,11 @@ function createComputeQueue({
     uploadPaths,
     downloadPath = '',
     outputDir = '',
+    partition = '',
+    nodes,
+    ntasks,
+    walltime = '',
+    remoteWorkDir = '',
     cwd = '',
     label = '',
     projectId = '',
@@ -438,6 +473,13 @@ function createComputeQueue({
         m = cleanStr(colabProv.meta.machine, 60);
       }
       if (!m) return { ok: false, msg: '当前无已激活的 Google Colab 网关机，请先在安装 colab CLI 的节点启动 Agent' };
+    }
+    if (provType === 'sugon' && !m) {
+      const sugonProv = providers.get('sugon');
+      if (sugonProv && sugonProv.meta && sugonProv.meta.machine) {
+        m = cleanStr(sugonProv.meta.machine, 60);
+      }
+      if (!m) return { ok: false, msg: '当前无已激活的曙光超算网关机，请先在 ubuntu_hpc 配置 ~/.config/ame-hpc/sugon.json' };
     }
     const r = String(resource || 'gpu').trim().toLowerCase();
     if (!m) return { ok: false, msg: '缺少 machine 参数' };
@@ -468,6 +510,17 @@ function createComputeQueue({
       minBalanceCcu: Number.isFinite(Number(minBalanceCcu)) && Number(minBalanceCcu) >= 0
         ? Number(minBalanceCcu)
         : 15,
+      uploadPaths: Array.isArray(uploadPaths)
+        ? uploadPaths.map((x) => cleanStr(String(x || ''), 500)).filter(Boolean).slice(0, 20)
+        : [],
+      downloadPath: cleanStr(downloadPath, 300),
+      outputDir: cleanStr(outputDir, 500),
+    } : provType === 'sugon' ? {
+      partition: cleanStr(partition, 80),
+      nodes: Number.isFinite(Number(nodes)) && Number(nodes) >= 1 ? Math.trunc(Number(nodes)) : 1,
+      ntasks: Number.isFinite(Number(ntasks)) && Number(ntasks) >= 1 ? Math.trunc(Number(ntasks)) : 1,
+      walltime: cleanStr(walltime, 32),
+      remoteWorkDir: cleanStr(remoteWorkDir, 300),
       uploadPaths: Array.isArray(uploadPaths)
         ? uploadPaths.map((x) => cleanStr(String(x || ''), 500)).filter(Boolean).slice(0, 20)
         : [],

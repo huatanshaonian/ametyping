@@ -22,6 +22,8 @@ function gpuPct(g) {
 export function createComputeView({ say = () => {} } = {}) {
   let data = { jobs: [], machines: [], providers: [] };
   let projects = [];
+  let fableAdvice = null;
+  let fableForce = false;
   let loading = false;
 
   const root = h('div', { class: 'inf-comp' });
@@ -35,12 +37,14 @@ export function createComputeView({ say = () => {} } = {}) {
     if (loading) return;
     loading = true;
     try {
-      const [qRes, pRes] = await Promise.all([
+      const [qRes, pRes, fRes] = await Promise.all([
         fetch('/api/mesh/queue').then((r) => r.json()).catch(() => null),
         fetch('/api/mesh/projects').then((r) => r.json()).catch(() => null),
+        fetch(`/api/mesh/fable-advice${fableForce ? '?force=1' : ''}`).then((r) => r.json()).catch(() => null),
       ]);
       if (qRes && qRes.ok) data = qRes;
       if (pRes && pRes.ok && Array.isArray(pRes.projects)) projects = pRes.projects;
+      if (fRes && fRes.ok) fableAdvice = fRes;
       render();
     } finally {
       loading = false;
@@ -108,12 +112,18 @@ export function createComputeView({ say = () => {} } = {}) {
     const colabBalTxt = colabProv && colabProv.status === 'active' && colabMeta.balanceCcu != null
       ? ` [余 ${Number(colabMeta.balanceCcu).toFixed(1)} CCU]`
       : '';
+    const sugonProv = (data.providers || []).find((p) => p.id === 'sugon') || null;
+    const sugonMeta = (sugonProv && sugonProv.meta) || {};
+    const sugonModeTxt = sugonProv && sugonProv.status === 'active'
+      ? ` [${sugonMeta.mode === 'openapi' ? 'OpenAPI' : 'SSH+Slurm'}${sugonMeta.defaultPartition ? `/${sugonMeta.defaultPartition}` : ''}]`
+      : '';
 
     const provSel = h('select', { class: 'field' },
       h('option', { value: 'local-agent', text: '本地算力机 (Agent)' }),
-      h('option', { value: 'colab', text: `Google Colab (A100/L4/T4)${colabBalTxt}` })
+      h('option', { value: 'colab', text: `Google Colab (A100/L4/T4)${colabBalTxt}` }),
+      h('option', { value: 'sugon', text: `曙光超算 / SCNet${sugonModeTxt}` })
     );
-    if (opts && opts.providerType === 'colab') provSel.value = 'colab';
+    if (opts && (opts.providerType === 'colab' || opts.providerType === 'sugon')) provSel.value = opts.providerType;
 
     const machSel = h('select', { class: 'field' },
       ...machList.map((m) => h('option', { value: m.machine, text: `${m.machine}${m.online ? '' : ' (离线)'}` }))
@@ -142,8 +152,17 @@ export function createComputeView({ say = () => {} } = {}) {
     );
     const maxDurIn = h('input', { class: 'field', type: 'number', min: '1', max: '720', value: '120', placeholder: '120' });
     const minCcuIn = h('input', { class: 'field', type: 'number', min: '0', step: '1', value: '15', placeholder: '15' });
-    const dlPathIn = h('input', { class: 'field', type: 'text', placeholder: 'Colab 远端产物路径（留空则不下载）' });
+    const dlPathIn = h('input', { class: 'field', type: 'text', placeholder: '远端产物路径（留空则不下载）' });
     const outDirIn = h('input', { class: 'field', type: 'text', placeholder: '网关机本地保存目录，如：/mnt/nas/colab-out' });
+
+    const sugonPartIn = h('input', { class: 'field', type: 'text', value: sugonMeta.defaultPartition || '', placeholder: '分区名，如：kshdnormal / gpu' });
+    const sugonNodesIn = h('input', { class: 'field', type: 'number', min: '1', max: '128', value: '1', placeholder: '1' });
+    const sugonTasksIn = h('input', { class: 'field', type: 'number', min: '1', max: '4096', value: '1', placeholder: '1' });
+    const sugonGpusIn = h('input', { class: 'field', type: 'number', min: '0', max: '16', value: '0', placeholder: '0' });
+    const sugonWallIn = h('input', { class: 'field', type: 'text', value: '02:00:00', placeholder: 'HH:MM:SS，如 04:00:00' });
+    const sugonWorkIn = h('input', { class: 'field', type: 'text', value: sugonMeta.remoteWorkDir || '', placeholder: '超算远端工作目录（留空用配置默认）' });
+    const sugonDlIn = h('input', { class: 'field', type: 'text', placeholder: '超算远端产物路径（留空则不回传）' });
+    const sugonOutIn = h('input', { class: 'field', type: 'text', value: '/mnt/nas/sugon-out', placeholder: '网关机保存目录，如：/mnt/nas/sugon-out' });
 
     const labelIn = h('input', { class: 'field', type: 'text', placeholder: '作业名称，如：CEM 扫频验证' });
     const cwdIn = h('input', { class: 'field', type: 'text', placeholder: '工作目录绝对路径（留空则用目标机主目录）' });
@@ -172,12 +191,37 @@ export function createComputeView({ say = () => {} } = {}) {
           : '提示：尚未检测到上报 colab-status 的网关机，提交后需等待网关机上线。',
       })
     );
+    const sugonSection = h('div', {},
+      h('div', { style: 'display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px' },
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '队列分区 (Partition)：' }), sugonPartIn),
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '节点数：' }), sugonNodesIn),
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '核数 (ntasks)：' }), sugonTasksIn),
+        h('div', {}, h('label', { class: 'xnote-lbl', text: 'GPU/DCU 卡数：' }), sugonGpusIn)
+      ),
+      h('div', { style: 'display:grid;grid-template-columns:1fr 2fr;gap:8px' },
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '最大墙钟时长 (Walltime)：' }), sugonWallIn),
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '超算远端工作目录 (可选)：' }), sugonWorkIn)
+      ),
+      h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px' },
+        h('div', {}, h('label', { class: 'xnote-lbl', text: '远端回传路径 (可选)：' }), sugonDlIn),
+        h('div', {}, h('label', { class: 'xnote-lbl', text: 'NAS 保存目录 (如 /mnt/nas/...)：' }), sugonOutIn)
+      ),
+      h('div', {
+        class: 'inf-comp-muted',
+        style: 'margin:4px 0',
+        text: sugonMeta.machine
+          ? `曙光网关机：${sugonMeta.machine}（模式：${sugonMeta.mode === 'openapi' ? 'OpenAPI v2' : 'SSH + Slurm'}）`
+          : '提示：尚未检测到配置 ~/.config/ame-hpc/sugon.json 的网关机，详见 docs/sugon-hpc-guide.md。',
+      })
+    );
 
     const syncProviderMode = () => {
-      const isColab = provSel.value === 'colab';
-      localMachWrap.style.display = isColab ? 'none' : '';
-      localResRow.style.display = isColab ? 'none' : 'grid';
-      colabSection.style.display = isColab ? '' : 'none';
+      const mode = provSel.value;
+      const isLocal = mode === 'local-agent';
+      localMachWrap.style.display = isLocal ? '' : 'none';
+      localResRow.style.display = isLocal ? 'grid' : 'none';
+      colabSection.style.display = mode === 'colab' ? '' : 'none';
+      sugonSection.style.display = mode === 'sugon' ? '' : 'none';
     };
     provSel.addEventListener('change', syncProviderMode);
     syncProviderMode();
@@ -196,6 +240,7 @@ export function createComputeView({ say = () => {} } = {}) {
         ),
         localResRow,
         colabSection,
+        sugonSection,
         h('label', { class: 'xnote-lbl', text: '作业名称（Label）：' }), labelIn,
         h('label', { class: 'xnote-lbl', text: '工作目录（cwd）：' }), cwdIn,
         h('label', { class: 'xnote-lbl', text: '执行命令（Command）：' }), cmdIn,
@@ -208,11 +253,11 @@ export function createComputeView({ say = () => {} } = {}) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const command = cmdIn.value.trim();
-      const isColab = provSel.value === 'colab';
+      const mode = provSel.value;
       if (!command) return;
-      if (!isColab && !machSel.value) return;
+      if (mode === 'local-agent' && !machSel.value) return;
       done();
-      if (isColab) {
+      if (mode === 'colab') {
         const gpu = colabGpuSel.value || 'A100';
         const fallbackGpus = gpu === 'A100' ? ['L4', 'T4'] : gpu === 'L4' ? ['T4'] : [];
         await postQueue({
@@ -232,6 +277,27 @@ export function createComputeView({ say = () => {} } = {}) {
           cwd: cwdIn.value.trim(),
           command,
         }, `已提交 Google Colab (${gpu}) 作业`);
+      } else if (mode === 'sugon') {
+        const gpus = Math.max(0, Number(sugonGpusIn.value) || 0);
+        await postQueue({
+          op: 'submit',
+          providerType: 'sugon',
+          machine: sugonMeta.machine || '',
+          projectId: projSel.value,
+          resource: gpus > 0 ? 'gpu' : 'cpu',
+          gpus,
+          partition: sugonPartIn.value.trim(),
+          nodes: Math.max(1, Number(sugonNodesIn.value) || 1),
+          ntasks: Math.max(1, Number(sugonTasksIn.value) || 1),
+          walltime: sugonWallIn.value.trim() || '02:00:00',
+          remoteWorkDir: sugonWorkIn.value.trim(),
+          downloadPath: sugonDlIn.value.trim(),
+          outputDir: sugonOutIn.value.trim(),
+          priority: prioSel.value,
+          label: labelIn.value.trim() || command.slice(0, 50),
+          cwd: cwdIn.value.trim(),
+          command,
+        }, `已提交曙光超算作业 (${sugonPartIn.value.trim() || '默认分区'})`);
       } else {
         const rawCnt = countIn.value.trim();
         const cntVal = rawCnt.toLowerCase() === 'all' ? 'all' : (Number(rawCnt) || 1);
@@ -299,9 +365,11 @@ export function createComputeView({ say = () => {} } = {}) {
   function renderJobRow(j, isActive) {
     const slotTxt = j.providerType === 'colab'
       ? `Colab ${j.colabGpu || 'A100'}`
-      : (j.resource === 'gpu'
-        ? `GPU[${(j.assignedGpus || []).length ? j.assignedGpus.join(',') : (j.gpus || 1)}]`
-        : `NUMA[${(j.assignedNuma || []).length ? j.assignedNuma.join(',') : (j.numa || 1)}]`);
+      : j.providerType === 'sugon'
+        ? `Sugon ${j.partition || '默认'} (${j.nodes || 1}N/${j.ntasks || 1}T${j.gpus ? `/${j.gpus}G` : ''})`
+        : (j.resource === 'gpu'
+          ? `GPU[${(j.assignedGpus || []).length ? j.assignedGpus.join(',') : (j.gpus || 1)}]`
+          : `NUMA[${(j.assignedNuma || []).length ? j.assignedNuma.join(',') : (j.numa || 1)}]`);
     const prioCls = j.priority === 'urgent' ? ' err' : '';
     const dur = j.status === 'running' && j.startedAt
       ? fmtDur(Date.now() - j.startedAt)
@@ -335,6 +403,135 @@ export function createComputeView({ say = () => {} } = {}) {
       j.waitReason ? h('div', { class: 'inf-comp-muted', text: `等待原因: ${j.waitReason}` }) : null,
       j.reason ? h('div', { class: 'inf-comp-muted', text: `结果说明: ${j.reason}${j.exitCode != null ? ` (exit ${j.exitCode})` : ''}` }) : null,
       j.tail ? h('pre', { class: 'inf-comp-tail', text: j.tail.slice(-400) }) : null
+    );
+  }
+
+  function openFableLaunchDialog(s, sortedMachines) {
+    const onlineCtrl = (sortedMachines || []).filter((m) => m.online && m.control);
+    const machList = onlineCtrl.length ? onlineCtrl : (sortedMachines || []);
+    const defaultMach = s.machine || (machList[0] ? machList[0].machine : '');
+    const defaultDir = s.cwd || ((machList.find((m) => m.machine === defaultMach)?.computeDirs || [])[0]?.path) || '';
+
+    const machSel = h('select', { class: 'field' },
+      ...machList.map((m) => h('option', { value: m.machine, text: `${m.machine}${m.online ? '' : ' (离线)'}` }))
+    );
+    if (defaultMach) machSel.value = defaultMach;
+    const cwdIn = h('input', { class: 'field', type: 'text', value: defaultDir, placeholder: '目标机器上的项目/工作目录绝对路径' });
+
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '派发 Fable 5.2 只读顾问会话' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        h('div', { class: 'inf-comp-muted', style: 'margin-bottom:6px', text: `难题：${s.title}` }),
+        h('label', { class: 'xnote-lbl', text: '运行 OpenCode 顾问的机器：' }), machSel,
+        h('label', { class: 'xnote-lbl', text: '工作目录（cwd）：' }), cwdIn,
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '启动只读顾问' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const mach = machSel.value;
+      const cwd = cwdIn.value.trim();
+      if (!mach || !cwd) { say('请指定目标机器与工作目录'); return; }
+      done();
+      const r = await net.post('/api/mesh/fable-advice/launch', {
+        projectId: s.projectId || '',
+        machine: mach,
+        cwd,
+        title: s.title,
+        advisorPrompt: s.advisorPrompt,
+      });
+      if (r && r.ok) say(`已在 ${mach} 启动 Fable 5.2 只读顾问：${s.title.slice(0, 32)}`);
+      else say((r && r.msg) || '启动 Fable 顾问失败');
+    });
+    const wrap = h('div', { class: 'dlg' }, form);
+    document.body.append(wrap);
+  }
+
+  function renderFableAdvisorCard(sortedMachines) {
+    const adv = fableAdvice;
+    const win = adv && adv.window;
+    const sugs = (adv && Array.isArray(adv.suggestions)) ? adv.suggestions : [];
+    const statusBadge = !adv
+      ? '检测中'
+      : adv.due
+        ? '临近到期 · 建议消化'
+        : adv.preview
+          ? '预览模式'
+          : adv.exhausted
+            ? '额度已耗尽'
+            : adv.found
+              ? '未达到期阈值'
+              : '未接入 Devin';
+
+    const winTxt = win
+      ? `${win.name || '窗口'} 余 ${win.remainingPct != null ? `${win.remainingPct}%` : '—'}${win.hoursLeft != null ? ` · ${win.hoursLeft}h 后重置` : ''}`
+      : (adv && adv.reason ? adv.reason : '等待 Magpie 上报 Devin 窗口数据');
+
+    return h('div', {},
+      h('div', { class: 'inf-comp-sec-hd', style: 'margin-top:10px;display:flex;align-items:center;gap:6px' },
+        h('span', { text: 'Devin / Fable 5.2 难题顾问（只读拍板）' }),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          style: 'margin-left:auto;padding:1px 6px;font-size:10px',
+          text: fableForce ? '切回自动触发' : '预览推荐难题',
+          onclick: () => { fableForce = !fableForce; refresh(); },
+        })
+      ),
+      h('div', { class: 'inf-comp-provider' },
+        h('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' },
+          h('span', { class: `inf-dot ${adv && adv.due ? 'on' : ''}` }),
+          h('b', { text: 'Fable 5.2 临近到期顾问' }),
+          h('span', { class: 'inf-comp-tag', text: statusBadge })
+        ),
+        h('div', { class: 'inf-comp-meta', style: 'margin-top:4px' },
+          h('span', { text: winTxt })
+        ),
+        sugs.length
+          ? h('div', { style: 'margin-top:6px;display:flex;flex-direction:column;gap:5px' },
+              ...sugs.map((s) => h('div', { style: 'border:1px solid var(--border);padding:4px 6px;background:var(--bg2,transparent)' },
+                h('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' },
+                  h('span', { class: 'inf-comp-tag', text: s.source || '难题' }),
+                  s.projectName ? h('span', { class: 'inf-comp-muted', text: s.projectName }) : null,
+                  h('button', {
+                    class: 'btn go',
+                    type: 'button',
+                    style: 'margin-left:auto;padding:1px 6px;font-size:10px',
+                    text: '派 Fable 顾问',
+                    onclick: async () => {
+                      if (s.machine && s.cwd) {
+                        if (!(await confirmBox(`确定在 ${s.machine} (${s.cwd}) 启动只读 Fable 5.2 顾问分析「${s.title}」吗？`))) return;
+                        const r = await net.post('/api/mesh/fable-advice/launch', {
+                          projectId: s.projectId || '',
+                          machine: s.machine,
+                          cwd: s.cwd,
+                          title: s.title,
+                          advisorPrompt: s.advisorPrompt,
+                        });
+                        if (r && r.ok) say(`已在 ${s.machine} 启动 Fable 5.2 顾问`);
+                        else say((r && r.msg) || '启动失败');
+                      } else {
+                        openFableLaunchDialog(s, sortedMachines);
+                      }
+                    },
+                  })
+                ),
+                h('div', { style: 'margin-top:3px;font-weight:bold;font-size:11px', text: s.title }),
+                s.detail ? h('div', { class: 'inf-comp-muted', style: 'margin-top:2px', text: s.detail.slice(0, 140) }) : null
+              ))
+            )
+          : h('div', {
+              class: 'inf-comp-muted',
+              style: 'margin-top:4px',
+              text: adv && (adv.due || adv.preview)
+                ? '当前未从项目阻塞项或重要计划中筛出高难度待攻克难题。'
+                : '当 Devin 7天/1天额度余量 >= 50% 且临近重置时自动推荐 Top 3 难题；也可点右上角“预览推荐难题”手动查看。',
+            })
+      )
     );
   }
 
@@ -402,12 +599,43 @@ export function createComputeView({ say = () => {} } = {}) {
             meta.error ? h('div', { class: 'inf-comp-muted', text: `状态异常: ${meta.error}` }) : null
           );
         }
+        if (p.id === 'sugon' && meta) {
+          const modeLabel = meta.mode === 'openapi' ? 'OpenAPI v2' : 'SSH + Slurm';
+          const parts = Array.isArray(meta.partitions) ? meta.partitions : [];
+          const partTxt = parts.length
+            ? parts.slice(0, 4).map((pt) => `${pt.name}(${pt.idleNodes || 0}/${pt.totalNodes || 0})`).join(', ')
+            : (meta.defaultPartition || '—');
+          return h('div', { class: 'inf-comp-provider' },
+            h('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' },
+              h('span', { class: `inf-dot ${p.status === 'active' ? 'on' : ''}` }),
+              h('b', { text: p.name }),
+              h('span', { class: 'inf-comp-tag', text: `${statusTxt} · ${modeLabel}` }),
+              p.status === 'active'
+                ? h('button', {
+                    class: 'btn',
+                    type: 'button',
+                    style: 'margin-left:auto;padding:1px 6px;font-size:10px',
+                    text: '投曙光',
+                    onclick: () => openSubmitDialog('', { providerType: 'sugon' }),
+                  })
+                : null
+            ),
+            h('div', { class: 'inf-comp-meta', style: 'margin-top:4px' },
+              h('span', { text: `网关机: ${meta.machine || '—'}` }),
+              h('span', { text: `分区: ${partTxt}` }),
+              h('span', { text: `在途作业: ${meta.runningJobs || 0} 运行 / ${meta.pendingJobs || 0} 排队` }),
+              meta.at ? h('span', { class: 'inf-comp-muted', text: `更新于 ${ago(meta.at)}` }) : null
+            ),
+            meta.error ? h('div', { class: 'inf-comp-muted', text: `状态异常: ${meta.error}` }) : null
+          );
+        }
         return h('div', { class: 'inf-comp-provider' },
           h('b', { text: p.name }),
           h('span', { class: 'inf-comp-tag', text: statusTxt }),
           h('div', { class: 'inf-comp-muted', text: p.note || '' })
         );
-      })
+      }),
+      renderFableAdvisorCard(sortedMachines)
     );
 
     rightCol.replaceChildren(

@@ -177,8 +177,89 @@ function createMesh({
     onChange();
   }
 
+  function resolveSugonGateway(preferredMachine = '') {
+    const prov = computeQueue.getProvider('sugon');
+    const gw = (prov && prov.meta && prov.meta.machine) || '';
+    const candidates = [preferredMachine, gw].filter(Boolean);
+    for (const name of candidates) {
+      const m = machines && machines.get(name);
+      const sock = m && m.sockets && [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+      if (sock) return { machine: name, sock };
+    }
+    return { machine: candidates[0] || '', sock: null };
+  }
+
+  function onSugonStatus(machineName, status = {}) {
+    const mName = cleanStr(machineName, 60);
+    if (!mName || !status || typeof status !== 'object') return;
+    const available = Boolean(status.available);
+    const mode = cleanStr(status.mode || '', 24);
+    const host = cleanStr(status.host || '', 160);
+    const partitions = Array.isArray(status.partitions) ? status.partitions.map((x) => cleanStr(x, 60)).filter(Boolean).slice(0, 12) : [];
+    const activeJobs = Number.isFinite(Number(status.activeJobs)) ? Math.max(0, Math.trunc(Number(status.activeJobs))) : 0;
+    const runningJobs = Number.isFinite(Number(status.runningJobs)) ? Math.max(0, Math.trunc(Number(status.runningJobs))) : 0;
+    const queuedJobs = Number.isFinite(Number(status.queuedJobs)) ? Math.max(0, Math.trunc(Number(status.queuedJobs))) : 0;
+    const at = Number(status.at) || Date.now();
+    const errTxt = cleanStr(status.error || '', 160);
+    const note = available
+      ? `网关机 ${mName} (${mode || 'ssh'}) · 分区 ${partitions.slice(0, 4).join(', ') || status.defaultPartition || 'normal'} · 运行 ${runningJobs} / 排队 ${queuedJobs}`
+      : `网关机 ${mName} · 曙光超算暂不可用${errTxt ? `（${errTxt}）` : ''}`;
+    computeQueue.registerProvider({
+      id: 'sugon',
+      name: '曙光超算 (Sugon / SCNet)',
+      status: available ? 'active' : 'offline',
+      note,
+      meta: {
+        machine: mName,
+        available,
+        mode,
+        host,
+        defaultPartition: cleanStr(status.defaultPartition || '', 60),
+        partitions,
+        activeJobs,
+        runningJobs,
+        queuedJobs,
+        error: errTxt,
+        at,
+      },
+    });
+    computeQueue.reconcile();
+    onChange();
+  }
+
   function dispatchRemoteComputeJob(job) {
     if (!job || !job.command) return;
+    if (job.providerType === 'sugon') {
+      const { machine: gwMachine, sock } = resolveSugonGateway(job.machine);
+      if (!sock) {
+        computeQueue.complete(job.id, {
+          ok: false,
+          reason: `曙光超算网关机 ${gwMachine || '(未就绪)'} 不在线或未开启远程控制，无法提交曙光作业`,
+        });
+        return;
+      }
+      if (gwMachine && job.machine !== gwMachine) job.machine = gwMachine;
+      try {
+        sock.send(JSON.stringify({
+          t: 'sugon-exec',
+          jobId: job.id,
+          label: job.label || '',
+          partition: job.partition || '',
+          nodes: job.nodes || 1,
+          ntasks: job.ntasks || 1,
+          gpus: job.resource === 'gpu' ? (Number(job.gpus) || 0) : 0,
+          walltime: job.walltime || '',
+          remoteWorkDir: job.remoteWorkDir || '',
+          command: job.command,
+          uploadPaths: Array.isArray(job.uploadPaths) ? job.uploadPaths : [],
+          downloadPath: job.downloadPath || '',
+          outputDir: job.outputDir || '',
+        }));
+      } catch (e) {
+        computeQueue.complete(job.id, { ok: false, reason: '下发曙光作业失败：' + (e && e.message) });
+      }
+      return;
+    }
     if (job.providerType === 'colab') {
       const { machine: gwMachine, sock } = resolveColabGateway(job.machine);
       if (!sock) {
@@ -249,6 +330,13 @@ function createMesh({
       const { sock } = resolveColabGateway(job.machine);
       if (sock) {
         try { sock.send(JSON.stringify({ t: 'colab-kill', jobId: job.id })); } catch {}
+      }
+      return;
+    }
+    if (job.providerType === 'sugon') {
+      const { sock } = resolveSugonGateway(job.machine);
+      if (sock) {
+        try { sock.send(JSON.stringify({ t: 'sugon-kill', jobId: job.id })); } catch {}
       }
       return;
     }
@@ -3697,9 +3785,9 @@ function createMesh({
       let r;
       if (d.op === 'submit') {
         const provType = cleanStr(d.providerType, 32) || 'local-agent';
-        const needMachine = provType !== 'colab';
+        const needMachine = provType !== 'colab' && provType !== 'sugon';
         if ((needMachine && !cleanStr(d.machine, 60)) || !cleanStr(d.command, 1000)) {
-          r = { ok: false, msg: needMachine ? '提交远程作业需要提供 machine 与 command' : '提交 Colab 作业需要提供 command' };
+          r = { ok: false, msg: needMachine ? '提交远程作业需要提供 machine 与 command' : `提交 ${provType} 作业需要提供 command` };
         } else {
           r = computeQueue.enqueue({
             machine: d.machine || '',
@@ -3713,6 +3801,11 @@ function createMesh({
             fallbackGpus: d.fallbackGpus,
             maxDurationMin: d.maxDurationMin,
             minBalanceCcu: d.minBalanceCcu,
+            partition: d.partition || '',
+            nodes: d.nodes,
+            ntasks: d.ntasks,
+            walltime: d.walltime || '',
+            remoteWorkDir: d.remoteWorkDir || '',
             uploadPaths: d.uploadPaths,
             downloadPath: d.downloadPath || '',
             outputDir: d.outputDir || '',
@@ -3971,6 +4064,7 @@ function createMesh({
     onLocalQuota,
     listLocalQuotas,
     onColabStatus,
+    onSugonStatus,
     onComputeDone,
     fromAgentResult,
     fromAgentRpc,
