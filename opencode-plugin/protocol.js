@@ -81,9 +81,19 @@ function toolRecord(msg, part, cwd) {
   };
 }
 
+// Best-effort context window size for a model when OpenCode does not report one explicitly.
+export function contextWindowOf(model) {
+  const id = String((model && (model.id || model.modelID)) || model || '').toLowerCase();
+  if (/gemini/.test(id)) return 1000000;
+  if (/gpt-[56]|codex/.test(id)) return 272000;
+  if (/deepseek/.test(id)) return 128000;
+  if (/claude|opus|sonnet|haiku/.test(id)) return 200000;
+  return 200000;
+}
+
 // One session's messages (ctx.session.context) -> the appending JSONL records the panel and the agent read.
 // Only finished text is returned: a message still streaming is written by its next event.
-export function recordsForMessages(msgs, cwd, now = Date.now()) {
+export function recordsForMessages(msgs, cwd, now = Date.now(), model = null) {
   const out = [];
   for (const m of Array.isArray(msgs) ? msgs : []) {
     if (!m || !m.id || !m.type) continue;
@@ -99,6 +109,18 @@ export function recordsForMessages(msgs, cwd, now = Date.now()) {
         if (!p || p.type !== 'tool') continue;
         const rec = toolRecord(m, p, cwd);
         if (rec) out.push(rec);
+      }
+      const tk = (m.tokens && typeof m.tokens === 'object') ? m.tokens : (m.usage && typeof m.usage === 'object' ? m.usage : null);
+      if (tk && (m.time && (m.time.completed || m.finish))) {
+        const cache = tk.cache && typeof tk.cache === 'object' ? tk.cache : {};
+        const used = (Number(tk.input || tk.inputTokens || tk.prompt_tokens) || 0)
+          + (Number(tk.output || tk.outputTokens || tk.completion_tokens) || 0)
+          + (Number(cache.read || tk.cacheRead) || 0)
+          + (Number(cache.write || tk.cacheWrite) || 0);
+        const win = Number(tk.contextWindow || tk.limit || (m.model && m.model.contextWindow)) || contextWindowOf(m.model || model);
+        if (used > 0 && win > 0 && used <= win * 1.2) {
+          out.push({ v: 1, uuid: `${m.id}:ctx`, timestamp: at, cwd, role: 'ctx', text: `${Math.round(used)}/${Math.round(win)}`, mid: m.id });
+        }
       }
     } else if (m.type === 'compaction' && m.status === 'completed') {
       out.push({ v: 1, uuid: `${m.id}:compaction`, timestamp: at, cwd, role: 'sys', text: '（上下文已压缩）', mid: m.id });

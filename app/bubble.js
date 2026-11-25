@@ -146,8 +146,12 @@ function renderPermissions() {
     const details = document.createElement('pre');
     const i = p.input || {};
     // Show complete parameters (including edits), never interpret tool input as HTML.
-    details.textContent = [p.cwd && `工作目录：${p.cwd}`, i.description,
-      i.command && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command}`, (i.file_path || i.notebook_path) && `文件：${i.file_path || i.notebook_path}`,
+    details.textContent = [p.cwd && `工作目录：${p.cwd}`,
+      p.provider === 'opencode' && i.message && `说明：${i.message}`,
+      p.provider === 'opencode' && Array.isArray(i.resources) && i.resources.length && `对象：${i.resources.join(' · ')}`,
+      (i.description || i.toolSummary),
+      (i.command || i.CommandLine) && `${p.tool === 'apply_patch' ? '修改补丁' : '命令'}：${i.command || i.CommandLine}`,
+      (i.file_path || i.notebook_path || i.Path || i.TargetFile) && `文件：${i.file_path || i.notebook_path || i.Path || i.TargetFile}`,
       JSON.stringify(i, null, 2)].filter(Boolean).join('\n');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
     const choices = [['allow', '允许'], ['deny', '拒绝']];
@@ -253,11 +257,22 @@ $('permissions').addEventListener('click', (e) => {
   if (e.detail === 0 && e.target.matches('button')) decidePermission(e.target);
 });
 
+const WAIT_SOUND_GRACE_MS = 1500;
+const waitSoundTimers = new Map();       // session id -> timer (avoids chiming on auto-approved prompts)
+function cancelWaitSound(id) {
+  const t = waitSoundTimers.get(id);
+  if (t) { clearTimeout(t); waitSoundTimers.delete(id); }
+}
+
 window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
   const prev = data.find((s) => s.id === changedId);
   const prevSel = data.find((s) => s.id === selected);
   const prevSelState = prevSel && prevSel.state;
   data = sessions;
+  for (const id of [...waitSoundTimers.keys()]) {
+    const s = data.find((x) => x.id === id);
+    if (!s || s.state !== 'waiting') cancelWaitSound(id);
+  }
   setMode(mode);
   if (!data.find((s) => s.id === selected)) { selected = null; pinned = false; }
   // stay on the current session while it is still working (others just get a red dot);
@@ -269,8 +284,19 @@ window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
   const sel = data.find((s) => s.id === selected);
   if (sel && !collapsed) seen[sel.id] = sel.last;
   renderAll(changedId === selected);
-  if (changed && (!prev || prev.state !== changed.state) && ['message', 'done', 'waiting'].includes(changed.state)) {
-    if (sound) { try { se.currentTime = 0; se.play(); } catch {} }   // tray: 提示音
+  if (changed && (!prev || prev.state !== changed.state)) {
+    if (changed.state === 'waiting') {
+      if (sound && !waitSoundTimers.has(changed.id)) {
+        const sid = changed.id;
+        waitSoundTimers.set(sid, setTimeout(() => {
+          waitSoundTimers.delete(sid);
+          const now = data.find((x) => x.id === sid);
+          if (now && now.state === 'waiting') { try { se.currentTime = 0; se.play(); } catch {} }
+        }, WAIT_SOUND_GRACE_MS));
+      }
+    } else if (['message', 'done'].includes(changed.state)) {
+      if (sound) { try { se.currentTime = 0; se.play(); } catch {} }   // tray: 提示音
+    }
   }
   if (chatOn) { selectChat(); composeState(); }
 });

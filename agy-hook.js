@@ -141,7 +141,7 @@ function ret(endpoint, payload, stdout = '{}') {
   };
 }
 
-function handleEvent(d, argEvent) {
+function handleEvent(d, argEvent, eventAt = Date.now()) {
   if (!d || typeof d !== 'object') return null;
   const ev = resolveEvent(d, argEvent);
 
@@ -207,6 +207,8 @@ function handleEvent(d, argEvent) {
     session,
     cwd,
     project,
+    hookEvent: ev,
+    eventAt,
     transcript: isSub ? undefined : transcript,
     ...(agentId ? { agentId } : {}),
     ...(subagent ? { subagent } : {}),
@@ -373,7 +375,9 @@ function decisionFor(r, perm) {
 
 function run() {
   const argEvent = process.argv[2] || '';
-  let finished = false, guard;
+  const eventAt = Date.now();
+  const deadline = eventAt + 2000;
+  let finished = false, handled = false, guard;
   const finish = (outputVal = {}) => {
     if (finished) return;
     finished = true;
@@ -384,12 +388,20 @@ function run() {
   guard = setTimeout(finish, 2000);
   let raw = '';
   process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (c) => { raw += c; if (raw.length > 2e6) finish(); });
+  process.stdin.on('data', (c) => {
+    if (handled || finished) return;
+    raw += c;
+    if (raw.length > 2e6) return finish();
+    consume(false);
+  });
   process.stdin.on('error', () => finish());
-  process.stdin.on('end', () => {
+  process.stdin.on('end', () => consume(true));
+  function consume(ended) {
+    if (handled || finished) return;
     let d;
-    try { d = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch { return finish(); }
-    const mapped = handleEvent(d, argEvent);
+    try { d = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch { if (ended) finish(); return; }
+    handled = true;
+    const mapped = handleEvent(d, argEvent, eventAt);
     if (!mapped) return finish();
 
     if (mapped.permission) {
@@ -420,8 +432,10 @@ function run() {
     }
 
     if (mapped.endpoint) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return finish(mapped.stdout || '{}');
       clearTimeout(guard);
-      guard = setTimeout(finish, 700);
+      guard = setTimeout(() => finish(mapped.stdout || '{}'), Math.min(700, remaining));
       const body = JSON.stringify(mapped.payload);
       const req = http.request({
         host: '127.0.0.1',
@@ -439,7 +453,7 @@ function run() {
     }
 
     finish();
-  });
+  }
 }
 
 if (require.main === module) run();

@@ -480,7 +480,7 @@ function onAgentMessage(m, raw, ws) {
   }
   // the machine's own slash commands (agent/commands.js), for the reply box's suggestions (/api/commands)
   if (d.t === 'cmds' && Array.isArray(d.list)) {
-    const key = d.provider === 'codex' ? 'codexCmds' : d.provider === 'agy' ? 'agyCmds' : d.provider === 'kiro' ? 'kiroCmds' : 'cmds';
+    const key = d.provider === 'codex' ? 'codexCmds' : d.provider === 'agy' ? 'agyCmds' : d.provider === 'kiro' ? 'kiroCmds' : d.provider === 'opencode' ? 'opencodeCmds' : 'cmds';
     m[key] = d.list.slice(0, 300).filter((c) => c && /^[\w.:-]{1,80}$/.test(String(c.name)))
       .map((c) => ({ name: String(c.name), desc: str(c.desc, 120), src: str(c.src, 10) }));
     return;
@@ -787,8 +787,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p === '/api/commands') {             // a machine's own slash commands (agent/commands.js)
     const m = machines.get(String(url.searchParams.get('machine') || ''));
     const provider = url.searchParams.get('provider');
-    const key = provider === 'codex' ? 'codexCmds' : provider === 'agy' ? 'agyCmds' : provider === 'kiro' ? 'kiroCmds' : 'cmds';
-    return json(res, 200, { list: provider === 'opencode' ? [] : (m && m[key]) || [] });
+    const key = provider === 'codex' ? 'codexCmds' : provider === 'agy' ? 'agyCmds' : provider === 'kiro' ? 'kiroCmds' : provider === 'opencode' ? 'opencodeCmds' : 'cmds';
+    return json(res, 200, { list: (m && m[key]) || [] });
   }
   if (req.method === 'GET' && p === '/api/session/export') {
     const machine = String(url.searchParams.get('machine') || ''), id = String(url.searchParams.get('id') || '');

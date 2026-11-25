@@ -9,11 +9,9 @@ const EVENTS = [
   'PreToolUse',
   'PostToolUse',
   'PostInvocation',
-  'SubagentStart',
-  'SubagentStop',
   'Stop',
-  'SessionEnd',
 ];
+const GROUPED_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
 
 function nodeOnPath(node) {
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -42,10 +40,15 @@ function removeHooks(existing, script = path.join(__dirname, 'agy-hook.js')) {
       for (const ev of Object.keys(val)) {
         const list = val[ev];
         if (Array.isArray(list)) {
-          const kept = list.map((g) => ({
-            ...g,
-            hooks: (g.hooks || []).filter((h) => !isOurs(h.command) && !isOurs(h.command_windows)),
-          })).filter((g) => g.hooks && g.hooks.length);
+          const kept = [];
+          for (const g of list) {
+            if (g && Array.isArray(g.hooks)) {
+              const hs = g.hooks.filter((h) => !isOurs(h.command) && !isOurs(h.command_windows));
+              if (hs.length) kept.push({ ...g, hooks: hs });
+            } else if (g && typeof g === 'object') {
+              if (!isOurs(g.command) && !isOurs(g.command_windows)) kept.push(g);
+            }
+          }
           if (kept.length) val[ev] = kept;
           else delete val[ev];
         }
@@ -61,10 +64,11 @@ function mergeHooks(existing, node = process.execPath, script = path.join(__dirn
   const group = {};
   for (const event of EVENTS) {
     const command = commandFor(node, script, event, onPath);
-    if (event === 'PreToolUse' || event === 'PostToolUse') {
+    if (GROUPED_EVENTS.has(event)) {
       group[event] = [{ matcher: '*', hooks: [{ type: 'command', command, timeout: event === 'PreToolUse' ? 120 : 3 }] }];
     } else {
-      group[event] = [{ hooks: [{ type: 'command', command, timeout: 3 }] }];
+      // AGY hooks.json requires flat handler arrays for non-tool events (SessionStart/PreInvocation/PostInvocation/Stop)
+      group[event] = [{ type: 'command', command, timeout: 3 }];
     }
   }
   out.ametyping = group;

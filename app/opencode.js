@@ -29,6 +29,18 @@ function metaOf(id) {
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
+function listLive() {
+  let ents = [];
+  try { ents = fs.readdirSync(SESSIONS, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const e of ents) {
+    if (!e.isFile() || !e.name.endsWith('.json')) continue;
+    const raw = e.name.slice(0, -5);
+    const m = metaOf(raw);
+    if (m) out.push(m);
+  }
+  return out;
+}
 function transcriptOf(id) {
   const raw = rawId(id);
   if (!/^[A-Za-z0-9_-]+$/.test(raw)) return null;
@@ -135,4 +147,4 @@ function resume(id, cwd, text, env) {
   return p;
 }
 
-module.exports = { ROOT, SESSIONS, PREFIX, rawId, nsId, isId, metaOf, alive, transcriptOf, prompt, interrupt, screen, title, command, launchSpec, resume };
+module.exports = { ROOT, SESSIONS, PREFIX, rawId, nsId, isId, metaOf, alive, listLive, transcriptOf, prompt, interrupt, screen, title, command, launchSpec, resume };

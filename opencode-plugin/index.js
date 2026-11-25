@@ -23,6 +23,7 @@ const HOME = os.homedir();
 const ROOT = process.env.OPENCODE_AME_HOME || path.join(HOME, '.ametyping', 'opencode');
 const SESSIONS = path.join(ROOT, 'sessions');
 const BRIDGES = path.join(ROOT, 'bridges');
+const SUBAGENTS = path.join(ROOT, 'subagents');
 const PERMISSION_WAIT = 3610e3;   // Ame's card waits an hour; outlive it a little
 // the stream carries a delta for every token: only these say something Ame acts on (the mirror is refreshed after them)
 const WATCH = new Set([
@@ -30,7 +31,7 @@ const WATCH = new Set([
   'session.execution.failed', 'session.execution.interrupted', 'session.compaction.started', 'session.compaction.ended',
   'session.retry.scheduled', 'session.status', 'session.text.ended', 'session.tool.called', 'session.tool.success',
   'session.tool.failed', 'session.renamed', 'session.deleted', 'session.idle', 'session.model.selected',
-  'permission.asked', 'permission.replied',
+  'session.usage.updated', 'permission.asked', 'permission.replied',
 ]);
 const norm = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -65,9 +66,16 @@ export default {
     const bridgeId = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
     const state = new Map();          // sessionID -> per-session bookkeeping
     const ownerCache = new Map();     // sessionID -> this instance's location owns it (events without a location)
-    const childSessions = new Set();  // child sessions (subagents): their tool calls are the parent's progress
+    const childSessions = new Map();  // childSessionID -> { id, parentID, type, name, desc, state, act, t0, last, end }
     const eventsSeen = new Set();     // de-duplicated event ids (a plugin can be loaded more than once per location)
     const eventOrder = [];
+
+    function writeSubagents(parentID) {
+      if (!/^ses_[A-Za-z0-9]{6,100}$/.test(String(parentID || ''))) return;
+      const agents = [...childSessions.values()].filter((c) => c.parentID === parentID)
+        .map(({ id, type, name, desc, state: st, act, t0, last, end }) => ({ id, type, name, desc, state: st, act, t0, last, end }));
+      writeJson(path.join(SUBAGENTS, `${parentID}.json`), { v: 1, parentID, updated: Date.now(), agents });
+    }
 
     // ---------- one session's local files and cached messages ----------
     const mirrorOf = (id) => path.join(SESSIONS, `${id}.jsonl`);
@@ -163,7 +171,7 @@ export default {
         try { msgs = await ctx.session.context({ sessionID: s.id }); } catch { return; }
         s.msgs = msgs;
         const file = mirrorOf(s.id);
-        const recs = recordsForMessages(msgs, s.cwd || directory).filter((r) => r.uuid && !s.seen.has(r.uuid));
+        const recs = recordsForMessages(msgs, s.cwd || directory, Date.now(), s.model).filter((r) => r.uuid && !s.seen.has(r.uuid));
         const titleKey = s.title && s.title !== s.lastSent ? `title:${s.title}` : '';
         s.lastSent = s.title || '';
         let empty = true;
@@ -276,9 +284,31 @@ export default {
       // Foreign tool events are evidence, never a replay queue.
       if(/^ses_[A-Za-z0-9]{6,100}$/.test(sid))append(path.join(ROOT,'events',sid+'.jsonl'),ev);
       if(!WATCH.has(ev.type))return;
-      // a child session (the subagent tool): its work shows as the parent's tool line; not a session of its own
-      if (ev.type === 'session.created' && d.parentID) { childSessions.add(sid); return; }
-      if (childSessions.has(sid)) { if (ev.type === 'session.deleted') childSessions.delete(sid); return; }
+      // a child session (the subagent tool): track its lifecycle under its parent for the dashboard's subagents bar
+      if (ev.type === 'session.created' && d.parentID) {
+        const now = Date.now();
+        childSessions.set(sid, {
+          id: sid, parentID: d.parentID, type: cut(d.agent || d.type || 'subagent', 40) || 'subagent',
+          name: d.title ? cut(d.title, 40) : undefined, desc: cut(d.title || d.description || '', 120),
+          state: 'run', act: '启动中', t0: now, last: now,
+        });
+        writeSubagents(d.parentID);
+        return;
+      }
+      if (childSessions.has(sid)) {
+        const c = childSessions.get(sid);
+        const now = Date.now();
+        c.last = now;
+        if (ev.type === 'session.renamed' && d.title) { c.name = cut(d.title, 40); if (!c.desc) c.desc = cut(d.title, 120); }
+        else if (ev.type === 'session.execution.started') { c.state = 'run'; c.act = '思考中'; c.end = undefined; }
+        else if (ev.type === 'session.tool.called') { c.state = 'run'; c.act = cut(toolLine(d.name || 'tool', d.input || {}), 120); }
+        else if (ev.type === 'session.execution.succeeded') { c.state = 'done'; c.act = ''; c.end = now; }
+        else if (ev.type === 'session.execution.failed') { c.state = 'stop'; c.act = '出错了'; c.end = now; }
+        else if (ev.type === 'session.execution.interrupted') { c.state = 'stop'; c.act = '已中断'; c.end = now; }
+        else if (ev.type === 'session.deleted') { c.state = c.state === 'done' ? 'done' : 'stop'; c.end = c.end || now; writeSubagents(c.parentID); childSessions.delete(sid); return; }
+        writeSubagents(c.parentID);
+        return;
+      }
       const s = sessionState(sid);
       writeSessionFile(s);
       if (!s.metaLoaded) { s.metaLoaded = true; refreshMeta(s).catch(() => {}); }
@@ -313,7 +343,7 @@ export default {
         refreshMeta(s).catch(() => {});
       }
       if (['session.created', 'session.inbox.delivered', 'session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
-        'session.compaction.ended', 'session.text.ended', 'session.tool.called', 'session.tool.success', 'session.tool.failed', 'session.renamed'].includes(ev.type)) scheduleSync(s);
+        'session.compaction.ended', 'session.text.ended', 'session.tool.called', 'session.tool.success', 'session.tool.failed', 'session.renamed', 'session.usage.updated'].includes(ev.type)) scheduleSync(s);
 
       // tool events name only the call id: the tool's name (for the progress line) is in the message that holds it
       let mapped;
@@ -414,7 +444,19 @@ export default {
       try { page = await ctx.session.list({ directory, limit: 10 }); } catch { return; }
       for (const info of (page && page.data) || []) {
         try {
-          if (!info || !info.id || info.parentID) { if (info && info.id && info.parentID) childSessions.add(info.id); continue; }
+          if (!info || !info.id || info.parentID) {
+            if (info && info.id && info.parentID) {
+              const t0 = (info.time && info.time.created) || Date.now();
+              const last = (info.time && info.time.updated) || t0;
+              childSessions.set(info.id, {
+                id: info.id, parentID: info.parentID, type: 'subagent',
+                name: info.title ? cut(info.title, 40) : undefined, desc: cut(info.title || '', 120),
+                state: 'done', act: '', t0, last, end: last,
+              });
+              writeSubagents(info.parentID);
+            }
+            continue;
+          }
           if (info.location && info.location.directory && norm(info.location.directory) !== location) continue;
           const updated = (info.time && info.time.updated) || 0;
           if (updated && updated < Date.now() - 7 * 86400e3) continue;      // older sessions: only when they speak again

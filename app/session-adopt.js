@@ -11,6 +11,9 @@ const codexRecords = require('./codex-records');
 const agySessions = require('./agy-sessions');
 const agyCli = require('./agy-cli');
 const agyRecords = require('./agy-records');
+const opencode = require('./opencode');
+const opencodeRecords = require('./opencode-records');
+const { aiOf } = require('./ai-providers');
 
 // deps: sessions (the pet's Map), bridge (ancestors, screen), home, isClaude(name), isTerminal(name), onChange()
 async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onChange }) {
@@ -70,6 +73,22 @@ async function adoptRunning({ sessions, bridge, home, isClaude, isTerminal, onCh
       model: (meta && meta.model) || undefined, ai: (meta && meta.ai) || undefined,
       state: 'idle', lines: [], steps: 0, t0: t, last: t, born: t,
       claudePid: c.pid, processIdentity: identity, fromPid: null, headless: c.own, terminal: !c.own && !!c.parent && isTerminal(c.parent.name),
+    });
+    n++;
+  }
+  for (const m of opencode.listLive()) {
+    const id = 'opencode:' + m.id;
+    if (sessions.has(id)) continue;
+    const t = Date.now();
+    const cwd = m.cwd || m.directory || '';
+    const model = m.modelProvider ? { providerID: m.modelProvider, id: m.modelID || '' } : undefined;
+    sessions.set(id, {
+      id, provider: 'opencode', rawSession: m.id, project: projectOf(cwd), cwd,
+      title: opencodeRecords.titleOf(m.id) || m.title || undefined,
+      transcript: m.transcript || opencodeRecords.fileOf(m.id) || undefined,
+      model, ai: model ? aiOf(model) : undefined,
+      state: 'idle', lines: [], steps: 0, t0: t, last: m.updated || t, born: t,
+      claudePid: m.pid, fromPid: null, headless: false, terminal: true,
     });
     n++;
   }

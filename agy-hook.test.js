@@ -260,7 +260,7 @@ describe('Antigravity (agy) Hook & Installer', () => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     });
 
-    it('install(dir) creates hooks.json with top-level "ametyping" and all 9 lifecycle events', () => {
+    it('install(dir) creates hooks.json with top-level "ametyping" and all 6 AGY lifecycle events (flat for non-tool, grouped for tool)', () => {
       install(tmpDir);
       const target = path.join(tmpDir, 'hooks.json');
       assert.ok(fs.existsSync(target));
@@ -273,15 +273,20 @@ describe('Antigravity (agy) Hook & Installer', () => {
         'PreToolUse',
         'PostToolUse',
         'PostInvocation',
-        'SubagentStart',
-        'SubagentStop',
         'Stop',
-        'SessionEnd',
       ];
-      assert.equal(EVENTS.length, 9);
+      assert.equal(EVENTS.length, 6);
       for (const ev of expectedEvents) {
         assert.ok(content.ametyping[ev], `Missing hook event ${ev}`);
         assert.ok(Array.isArray(content.ametyping[ev]));
+        if (ev === 'PreToolUse' || ev === 'PostToolUse') {
+          assert.equal(content.ametyping[ev][0].matcher, '*');
+          assert.ok(Array.isArray(content.ametyping[ev][0].hooks));
+        } else {
+          assert.equal(content.ametyping[ev][0].type, 'command');
+          assert.equal(typeof content.ametyping[ev][0].command, 'string');
+          assert.equal(content.ametyping[ev][0].hooks, undefined);
+        }
       }
     });
 
@@ -446,6 +451,8 @@ describe('Antigravity (agy) Hook & Installer', () => {
       assert.equal(stopRes.code, 0);
       assert.equal(received.route, '/event/done');
       assert.equal(received.body.last_assistant_message, '执行完成');
+      assert.equal(received.body.hookEvent, 'Stop');
+      assert.equal(typeof received.body.eventAt, 'number');
 
       // 5. Malformed stdin handles gracefully
       const malformedRes = await runChild(port, '{ bad json');

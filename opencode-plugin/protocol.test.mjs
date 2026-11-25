@@ -66,6 +66,18 @@ test('events: progress maps onto the pet/dashboard vocabulary', () => {
   assert.deepEqual(perm, { type: 'permission', action: 'bash', resources: ['npm test'], save: ['npm *'], message: undefined, metadata: undefined });
 });
 
+test('records: single-step assistant tokens emit ctx record; cumulative overflow is ignored', () => {
+  const withTokens = { ...assistant, id: 'm3', tokens: { input: 40000, output: 2000, cache: { read: 8000, write: 0 } } };
+  const recs = recordsForMessages([withTokens], '/p', 1700000005000, { providerID: 'anthropic', id: 'claude-opus' });
+  const ctx = recs.find((r) => r.role === 'ctx');
+  assert.ok(ctx);
+  assert.equal(ctx.text, '50000/200000');
+
+  const cumulative = { ...assistant, id: 'm4', tokens: { input: 3375477, output: 31502, cache: { read: 11911936, write: 0 } } };
+  const recs2 = recordsForMessages([cumulative], '/p', 1700000005000, { providerID: 'anthropic', id: 'claude-opus' });
+  assert.equal(recs2.find((r) => r.role === 'ctx'), undefined);
+});
+
 test('screen: a readable rendering of the conversation', () => {
   const text = screenText([user, assistant]);
   assert.ok(/> 把字体改一下/.test(text) && /改好了。/.test(text) && /\[ 运行 npm test \]/.test(text));

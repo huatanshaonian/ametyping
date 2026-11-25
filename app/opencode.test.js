@@ -78,6 +78,12 @@ test('a session whose host is gone says so instead of hanging', async () => {
   assert.equal(opencode.transcriptOf('opencode:ses_dead'), null);
 });
 
+test('listLive returns only sessions whose host pid is alive', () => {
+  const live = opencode.listLive();
+  assert.ok(live.some((m) => m.id === SID));
+  assert.ok(!live.some((m) => m.id === 'ses_dead'));
+});
+
 test('mirror files are found and titled', () => {
   assert.equal(opencode.transcriptOf('opencode:' + SID), path.join(SESS, `${SID}.jsonl`));
   assert.equal(records.fileOf(SID), path.join(SESS, `${SID}.jsonl`));

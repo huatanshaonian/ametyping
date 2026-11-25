@@ -46,6 +46,7 @@ const { createHarness } = require('./harness');
 const { agentsOf } = require('./subagents');
 const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
+const opencodeAgents = require('./opencode-subagents');
 const { probeCompute } = require('./compute-probe');
 const { findColabBin, probeColabUsage, runColabJob } = require('./colab-runner');
 const { loadSugonConfig, probeSugonStatus, runSugonJob } = require('./sugon-runner');
@@ -261,6 +262,7 @@ function scan() {
     opencodeSess.set(id, { file, project: m.cwd ? path.basename(m.cwd) : '', cwd: m.cwd, title: opencode.titleOf(id) || m.title, model: m.model || null, ai: aiOf(m.model), mtime: Date.now() });
   }
   for (const id of [...opencodeSess.keys()]) if (!oseen.has(id)) opencodeSess.delete(id);
+  opencodeAgentRows = opencodeAgents.scan();
   // Antigravity (agy) sessions: brain/<id>/.system_generated/logs/transcript.jsonl
   const aseen = new Set();
   for (const f of agy.recentFiles(Math.max(IDLE_DROP_MS, 6 * 3600e3))) {
@@ -308,6 +310,7 @@ const agySess = new Map();                           // "agy:<conversation id>" 
 const kiroSess = new Map();                          // "kiro:<session id>" -> { file, project, cwd, title, model, ai }
 let codexAgentRows = new Map();
 let agyAgentRows = new Map();
+let opencodeAgentRows = new Map();
 // older sessions (agent.json "archiveDays", default 30; 0 = off) still streamed until the server has them whole
 const archive = createArchive({ days: cfg.archiveDays != null ? +cfg.archiveDays : 30, claudeFiles: newestFiles, codex, opencode, agy, kiro, projectOf,
   live: (id) => sess.has(id) || codexSess.has(id) || opencodeSess.has(id) || agySess.has(id) || kiroSess.has(id), stored: (id) => serverOff && serverOff[id] });
@@ -668,6 +671,41 @@ async function control(d) {
 
 // ---------- shape for the server ----------
 const lineOf = (m) => ({ text: m.role === 'tool' ? '⚙ ' + (m.items || []).slice(-1)[0] : (m.text || '').slice(0, 200), t: m.t, type: m.role });
+const tailCache = new Map();                         // file -> { sig, state, lines, last }
+const TAIL_WORK_STALE_MS = 10 * 60e3;
+function tailState(file, parseFn, fallbackMtime) {
+  let st;
+  try { st = fs.statSync(file); } catch { return { state: 'idle', lines: [], last: fallbackMtime }; }
+  const stale = Date.now() - st.mtimeMs > TAIL_WORK_STALE_MS;
+  const sig = `${st.size}|${st.mtimeMs}|${stale ? 1 : 0}`;
+  const hit = tailCache.get(file);
+  if (hit && hit.sig === sig) return hit;
+  const msgs = [];
+  try {
+    const from = Math.max(0, st.size - 131072);
+    const buf = Buffer.alloc(st.size - from);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, buf.length, from); } finally { fs.closeSync(fd); }
+    const rawLines = buf.toString('utf8').split('\n');
+    if (from > 0) rawLines.shift();
+    for (const l of rawLines) {
+      if (!l.trim()) continue;
+      let o; try { o = JSON.parse(l); } catch { continue; }
+      for (const r of parseFn(o) || []) {
+        if (!r || r.role === 'title' || r.role === 'mode' || r.role === 'ctx') continue;
+        msgs.push(r);
+      }
+    }
+  } catch {}
+  let state = deriveState({ msgs });
+  if (state === 'working' && stale) state = 'idle';
+  const lines = msgs.slice(-8).map(lineOf).filter((l) => l.text);
+  const last = msgs.length && Number.isFinite(msgs[msgs.length - 1].t) ? Math.max(st.mtimeMs, msgs[msgs.length - 1].t) : st.mtimeMs;
+  const out = { sig, state, lines, last };
+  tailCache.set(file, out);
+  if (tailCache.size > 200) tailCache.delete(tailCache.keys().next().value);
+  return out;
+}
 function stateList() {
   const out = [...sess.entries()].map(([id, c]) => {
     const msgs = c.msgs || [];
@@ -683,19 +721,21 @@ function stateList() {
     if (sess.has(id) || line.parked.has(id)) continue;
     const oc = opencodeSess.get(id), ag = agySess.get(id), ki = kiroSess.get(id);
     out.push({ id, label: codexSess.get(id)?.title || ag?.title || ki?.title || p.label || (id.startsWith('codex:') ? 'Codex' : id.startsWith('opencode:') ? 'OpenCode' : id.startsWith('agy:') ? 'Antigravity' : id.startsWith('kiro:') ? 'Kiro' : 'Claude'), project: p.project || (ag && ag.project) || (ki && ki.project) || '', state: p.state, steps: 0, t0: p.t0, last: p.last,
-      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || agyAgentRows.get(id) || [],
+      lines: (p.lines || []).map((l) => ({ text: l.text, t: l.t, type: l.type })), via: p.via, perms: p.perms || [], agents: codexAgentRows.get(id) || agyAgentRows.get(id) || opencodeAgentRows.get(id) || [],
       api: typeof p.api === 'string' ? p.api : undefined, model: p.model || (oc && oc.model) || (ag && ag.model) || (ki && ki.model) || undefined, ai: p.ai || (oc && oc.ai) || (ag && ag.ai) || (ki && ki.ai) || undefined });
   }
   // OpenCode / Antigravity sessions the pet has not reported (the pet restarted, IDE session, or idle): still list their transcript
   for (const [id, c] of opencodeSess) {
     if (pet.has(id) || line.parked.has(id)) continue;
-    out.push({ id, label: c.title || c.project || 'OpenCode', project: c.project || '', state: 'idle', steps: 0,
-      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: [], model: c.model || undefined, ai: c.ai || undefined });
+    const ts = tailState(c.file, opencode.recordsOf, c.mtime);
+    out.push({ id, label: c.title || c.project || 'OpenCode', project: c.project || '', state: ts.state, steps: 0,
+      t0: c.mtime, last: ts.last, lines: ts.lines, via: 'off', perms: [], agents: opencodeAgentRows.get(id) || [], model: c.model || undefined, ai: c.ai || undefined });
   }
   for (const [id, c] of agySess) {
     if (pet.has(id) || line.parked.has(id)) continue;
-    out.push({ id, label: c.title || c.project || 'Antigravity', project: c.project || '', state: 'idle', steps: 0,
-      t0: c.mtime, last: c.mtime, lines: [], via: 'off', perms: [], agents: agyAgentRows.get(id) || [], model: c.model || undefined, ai: c.ai || undefined });
+    const ts = tailState(c.file, agy.recordsOf, c.mtime);
+    out.push({ id, label: c.title || c.project || 'Antigravity', project: c.project || '', state: ts.state, steps: 0,
+      t0: c.mtime, last: ts.last, lines: ts.lines, via: 'off', perms: [], agents: agyAgentRows.get(id) || [], model: c.model || undefined, ai: c.ai || undefined });
   }
   for (const [id, c] of kiroSess) {
     if (pet.has(id) || line.parked.has(id)) continue;
@@ -1109,15 +1149,16 @@ function forwardBtw() {
 // on connecting, then whenever a look every 10 minutes finds them changed
 let cmdsSig = '';
 function sendCommands(force) {
-  let list = [], codexList = [], agyList = [], kiroList = [];
-  try { list = commands.scan(os.homedir()); codexList = commands.scanCodex(os.homedir()); agyList = commands.scanAgy(os.homedir()); kiroList = commands.scanKiro(os.homedir()); } catch {}
-  const sig = JSON.stringify([list, codexList, agyList, kiroList]);
+  let list = [], codexList = [], agyList = [], kiroList = [], opencodeList = [];
+  try { list = commands.scan(os.homedir()); codexList = commands.scanCodex(os.homedir()); agyList = commands.scanAgy(os.homedir()); kiroList = commands.scanKiro(os.homedir()); opencodeList = commands.scanOpenCode(os.homedir()); } catch {}
+  const sig = JSON.stringify([list, codexList, agyList, kiroList, opencodeList]);
   if (!force && sig === cmdsSig) return;
   cmdsSig = sig;
   sendJSON({ t: 'cmds', list });
   sendJSON({ t: 'cmds', provider: 'codex', list: codexList });
   sendJSON({ t: 'cmds', provider: 'agy', list: agyList });
   sendJSON({ t: 'cmds', provider: 'kiro', list: kiroList });
+  sendJSON({ t: 'cmds', provider: 'opencode', list: opencodeList });
 }
 setInterval(() => sendCommands(false), 10 * 60e3).unref();
 

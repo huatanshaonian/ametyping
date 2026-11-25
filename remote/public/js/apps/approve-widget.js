@@ -11,12 +11,19 @@ function permBrief(p) {
   if (p && p.input) {
     try {
       const obj = typeof p.input === 'string' ? JSON.parse(p.input) : p.input;
-      detail = obj.command || obj.file_path || obj.path || obj.description || obj.pattern || '';
+      if (p.ask && Array.isArray(obj.questions) && obj.questions[0] && obj.questions[0].question) {
+        detail = obj.questions[0].question;
+      } else {
+        detail = obj.command || obj.CommandLine || obj.file_path || obj.notebook_path || obj.Path || obj.TargetFile
+          || obj.path || obj.description || obj.toolSummary || obj.message || obj.pattern
+          || (Array.isArray(obj.resources) ? obj.resources.join(' · ') : '') || '';
+      }
     } catch {
       detail = String(p.input || '');
     }
   }
   const clean = String(detail || '').replace(/\s+/g, ' ').trim();
+  if (p && p.ask) return clean ? `提问: ${clean.slice(0, 72)}${clean.length > 72 ? '…' : ''}` : '向你提问';
   return clean ? `${tool}: ${clean.slice(0, 72)}${clean.length > 72 ? '…' : ''}` : tool;
 }
 
@@ -141,20 +148,25 @@ export function initWidget(desktop) {
     const els = items.map((it) => {
       if (it.kind === 'perm') {
         const busy = busyPerms.has(it.sig);
-        const canAlways = Boolean(it.perm && it.perm.always);
+        const isAsk = Boolean(it.perm && it.perm.ask);
+        const canAlways = !isAsk && Boolean(it.perm && it.perm.always);
+        const canDefer = !isAsk && (it.perm.provider === 'codex' || it.perm.provider === 'agy');
         return h('div', { class: 'apw-card perm' },
           h('div', { class: 'apw-meta' },
-            h('span', { class: 'apw-tag perm', text: '权限' }),
+            h('span', { class: 'apw-tag perm', text: isAsk ? '提问' : '权限' }),
             h('b', { class: 'apw-name', text: it.label }),
             h('small', { text: it.machine }),
             h('button', { class: 'mpw-fold', type: 'button', title: '强制消除此条提示', text: '×', onclick: () => forceClear(it) })
           ),
           h('div', { class: 'apw-desc', text: permBrief(it.perm) }),
           h('div', { class: 'apw-acts' },
-            h('button', { class: 'btn go', type: 'button', disabled: busy, text: '允许', onclick: () => decide(it, 'allow') }),
+            isAsk
+              ? h('button', { class: 'btn go', type: 'button', text: '去看板回答', onclick: () => dashboard.openSession(it.machine, it.sessionId) })
+              : h('button', { class: 'btn go', type: 'button', disabled: busy, text: '允许', onclick: () => decide(it, 'allow') }),
             canAlways ? h('button', { class: 'btn', type: 'button', disabled: busy, text: '总是', onclick: () => decide(it, 'always') }) : null,
-            h('button', { class: 'btn no', type: 'button', disabled: busy, text: '拒绝', onclick: () => decide(it, 'deny') }),
-            h('button', { class: 'btn apw-jump', type: 'button', text: '看板', onclick: () => dashboard.openSession(it.machine, it.sessionId) })
+            canDefer ? h('button', { class: 'btn', type: 'button', disabled: busy, text: '交回终端', onclick: () => decide(it, 'defer') }) : null,
+            h('button', { class: 'btn no', type: 'button', disabled: busy, text: isAsk ? '不回答' : '拒绝', onclick: () => decide(it, 'deny') }),
+            !isAsk ? h('button', { class: 'btn apw-jump', type: 'button', text: '看板', onclick: () => dashboard.openSession(it.machine, it.sessionId) }) : null
           )
         );
       }

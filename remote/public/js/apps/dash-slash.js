@@ -35,6 +35,13 @@ const AGY = [
   ['boost', '深度思考与多视角验证'], ['btw', '顺带一问'], ['help', '帮助和命令列表'], ['exit', '退出 Antigravity'], ['quit', '退出 Antigravity'],
 ].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
 
+const OPENCODE = [
+  ['new', '开始新会话'], ['sessions', '切换或查看会话'], ['models', '切换模型'], ['compact', '压缩上下文'],
+  ['undo', '撤销上一轮改动'], ['redo', '重做已撤销的改动'], ['share', '分享当前会话'], ['unshare', '取消分享'],
+  ['init', '初始化项目 AGENTS.md'], ['reload', '重载配置和插件'], ['status', '查看当前状态'], ['export', '导出对话'],
+  ['editor', '外部编辑器输入'], ['themes', '切换主题'], ['connect', '配置模型供应商'], ['help', '帮助和命令列表'],
+].map(([name, desc]) => ({ name, desc, src: 'builtin' }));
+
 export function createSlash({ say, machine, provider = () => 'claude', onFill }) {
   const el = h('div', { class: 'slash', hidden: true });
   const cache = new Map();                           // machine -> { at, list }
@@ -59,7 +66,7 @@ export function createSlash({ say, machine, provider = () => 'claude', onFill })
     if (t == null) return close();
     const m = machine();
     const p = provider(), leader = say.value[0];
-    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : p === 'agy' ? AGY : p === 'opencode' ? [] : BUILTIN)];
+    const all = [...(m ? await own(m, p) : []), ...(leader === '$' ? [] : p === 'codex' ? CODEX : p === 'agy' ? AGY : p === 'opencode' ? OPENCODE : BUILTIN)];
     if (say.disabled || token() !== t || provider() !== p || machine() !== m || say.value[0] !== leader) return;
     const low = t.toLowerCase();
     const starts = all.filter((c) => c.name.toLowerCase().startsWith(low));

@@ -44,7 +44,10 @@ export const prefs = {
 export function ctxLeft(s) {
   const c = s && s.ctx;
   if (!c || !(c.win > 0)) return null;
-  const left = s.id.startsWith('codex:') ? (c.win - c.used) / (c.win - 12000) : (c.win - 33000 - c.used) / (c.win - 33000);
+  const id = String(s.id || '');
+  const left = id.startsWith('codex:') ? (c.win - c.used) / Math.max(1, c.win - 12000)
+    : /^(opencode|agy|kiro):/.test(id) ? (c.win - c.used) / c.win
+    : (c.win - 33000 - c.used) / Math.max(1, c.win - 33000);
   return Math.max(0, Math.min(100, Math.round(left * 100)));
 }
 export const CTX_LOW = 20;                // the dashboard warns from here down

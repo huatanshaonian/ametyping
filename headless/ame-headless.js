@@ -29,6 +29,7 @@ const kiroSessions = require('../app/kiro-sessions');
 const kiroRecords = require('../app/kiro-records');
 const opencode = require('../app/opencode');
 const opencodeRecords = require('../app/opencode-records');
+const { aiOf } = require('../app/ai-providers');
 const { resume } = require('./resume');
 const claudeApi = require('../app/claude-api');
 const { launch } = require('./launch');
@@ -36,7 +37,12 @@ const btwPanel = require('../app/btw-panel');
 
 const PORT = +process.env.AME_PORT || 3940;
 const sessions = createSessions();
-const permissions = createPermissions(() => {});
+const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : e.choice === 'always' ? '已总是允许' : e.choice === 'answer' ? '已回答' : e.choice === 'chat' ? '先聊聊' : '已拒绝'),
+  closed: () => '已在终端处理', advanced: () => '已在终端处理' };
+const permissions = createPermissions((sid, end) => {
+  const s = sessions.map.get(sid), say = end && PERM_END[end.why];
+  if (say && s && s.state === 'waiting' && !permissions.list(sid).length) sessions.event('thinking', { session: sid, text: `${say(end)}：${end.tool}` });
+});
 // /btw answers read off the pane (app/btw-panel.js); the agent takes them with /control/state
 const btw = btwPanel.createBtw();
 const paneIo = (s) => ({ screen: () => tmux.screen(s.target), key: (k) => tmux.key(s.target, k === 'f' ? 'c:f' : k) });
@@ -294,6 +300,21 @@ function adoptRunning() {
     locate(s, r.pid);
     n++;
   }
-  if (n) console.log(`接回了 ${n} 个已在运行的 Claude / Codex / Antigravity / Kiro 会话`);
+  for (const m of opencode.listLive()) {
+    const id = 'opencode:' + m.id;
+    if (sessions.map.has(id)) continue;
+    const cwd = m.cwd || m.directory || '';
+    const model = m.modelProvider ? { providerID: m.modelProvider, id: m.modelID || '' } : undefined;
+    const s = sessions.ensure(id, { provider: 'opencode', rawSession: m.id });
+    Object.assign(s, {
+      project: projectOf(cwd), cwd, title: opencodeRecords.titleOf(m.id) || m.title || undefined,
+      transcript: m.transcript || opencodeRecords.fileOf(m.id) || undefined,
+      model, ai: model ? aiOf(model) : undefined,
+      claudePid: m.pid, claudeComm: null, fromPid: null, target: null, headless: false, terminal: true,
+      last: m.updated || Date.now(),
+    });
+    n++;
+  }
+  if (n) console.log(`接回了 ${n} 个已在运行的 Claude / Codex / OpenCode / Antigravity / Kiro 会话`);
 }
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { permissions.clear(); removeToken(); process.exit(0); });

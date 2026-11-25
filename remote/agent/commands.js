@@ -90,4 +90,14 @@ function scanKiro(home) {
   const seen = new Set();
   return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
 }
-module.exports = { scan, scanCodex, scanAgy, scanKiro };
+function scanOpenCode(home) {
+  const out = [];
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const cfgDir = path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(home, '.config'), 'opencode');
+  commandsIn(path.join(cfgDir, 'commands'), '', out);
+  skillsIn(path.join(cfgDir, 'skills'), '', out);
+  skillsIn(path.join(home, '.agents', 'skills'), '', out);
+  const seen = new Set();
+  return out.filter((c) => /^[\w.:-]{1,80}$/.test(c.name) && !seen.has(c.name) && seen.add(c.name)).slice(0, MAX);
+}
+module.exports = { scan, scanCodex, scanAgy, scanKiro, scanOpenCode };

@@ -331,11 +331,21 @@ function mount(current) {
     // a card open: the (disabled) reply box folds to one line so the card has the room; afterwards it grows back
     if (root.classList.contains('asking') !== asking) { root.classList.toggle('asking', asking); if (!asking) fitSay(); }
     sendBtn.disabled = say.disabled || !say.value.trim();
-    termOk = !!(s && s.online && via === 'terminal' && provOf(s.id) !== 'opencode');
-    keys.hidden = !(termOk && showKeys);
-    for (const b of keys.querySelectorAll('button[data-key]')) if (COMBOS.some(([k]) => k === b.dataset.key)) b.hidden = provOf(s && s.id) !== 'claude';
-    term.target(termOk ? sel : null);
-    kbdBtn.hidden = !termOk;
+    const isOc = provOf(s && s.id) === 'opencode';
+    const ocLive = !!(s && s.online && via === 'terminal' && isOc);
+    termOk = !!(s && s.online && via === 'terminal' && !isOc);
+    keys.hidden = !((termOk || ocLive) && showKeys);
+    for (const b of keys.querySelectorAll('button[data-key]')) {
+      const k = b.dataset.key;
+      if (ocLive) b.hidden = k !== 'esc';
+      else if (COMBOS.some(([ck]) => ck === k)) b.hidden = provOf(s && s.id) !== 'claude';
+      else b.hidden = false;
+    }
+    for (const sep of keys.querySelectorAll('.ksep')) sep.hidden = ocLive;
+    const kh = $('.kh', keys);
+    if (kh) kh.textContent = ocLive ? 'OpenCode 控制：Esc 中断当前执行，「画面」查看实时会话文本' : '操作终端里的菜单（如 /model、/resume）；「画面」看终端现在显示什么';
+    term.target(termOk || ocLive ? sel : null);
+    kbdBtn.hidden = !(termOk || ocLive);
     renderMode(s);
     renderPerms(s);
   }
