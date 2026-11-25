@@ -68,7 +68,7 @@ function start(file, extra = {}) {
 
     start(R + '/server/server.js');
     await until(async () => { try { return (await request('GET', '/login')).status === 200; } catch { return false; } });
-    start(R + '/agent/agent.js', { HOME, USERPROFILE: HOME, AME_AGENT_CONFIG: ACFG });
+    start(R + '/agent/agent.js', { HOME, USERPROFILE: HOME, AME_AGENT_CONFIG: ACFG, AME_HARNESS_DELAY_MS: '1500', AME_NO_NET_PROBE: '1' });
     const login = await request('POST', '/api/login', { user: 'u', password: 'fleet-e2e-password', code: auth.totpAt(cfg.totpSecret, Math.floor(Date.now() / 30000)) });
     const cookie = login.cookie;
     const view = async () => (await request('GET', '/api/fleet', null, cookie)).value;
@@ -83,16 +83,33 @@ function start(file, extra = {}) {
     await sleep(3500);                                                // (past the automatic check after hello)
     ok('nothing was started for it on its own', !(await box()).run);
 
-    const saved = (await request('POST', '/api/fleet/settings', { auto: true, gateway: 'https://gw.e2e.example/v1', models: { opus: 'e2e/opus', codex: 'e2e/gpt' } }, cookie)).value;
-    ok('settings saved, the gateway without /v1', saved.ok && saved.settings.gateway === 'https://gw.e2e.example', saved);
+    const saved = (await request('POST', '/api/fleet/settings', { auto: true, gateway: 'https://gw.e2e.example/v1', proxy: 'http://127.0.0.1:10808', models: { opus: 'e2e/opus' } }, cookie)).value;
+    ok('settings saved, the gateway without /v1, the default proxy', saved.ok && saved.settings.gateway === 'https://gw.e2e.example' && saved.settings.proxy === 'http://127.0.0.1:10808', saved);
     ok('the panel says Magpie keys can be made', (await view()).magpie.ok === true);
-    const c = (await request('POST', '/api/fleet/configure', { machine: 'box', targets: ['claude', 'codex', 'opencode'] }, cookie)).value;
+    await until(async () => !!(await box()).version.harnesses);       // (looked up a while after the agent starts)
+    const hs = (await box()).version.harnesses;
+    ok('the agent reports the four harnesses it looked for', Array.isArray(hs) && hs.map((x) => x.id).join() === 'claude,codex,opencode,agy' && hs.every((x) => typeof x.installed === 'boolean'), hs);
+    const bad = (await request('POST', '/api/fleet/harness', { machine: 'box', id: '*', action: 'install' }, cookie)).value;
+    ok('installing everything at once is refused (only updates go together)', bad.ok === false && /一起更新/.test(bad.msg), bad);
+    ok('each harness says how it was installed', hs.filter((x) => x.installed).every((x) => x.method === 'npm' || x.method === 'self'), hs);
+    const v0 = await view();
+    ok('the daily harness check is on by default at 03:40, before the 04:30 report', v0.settings.daily.on === true && v0.settings.daily.at === '03:40' && !!v0.releases, v0.settings);
+    const dset = (await request('POST', '/api/fleet/settings', { daily: { on: true, at: '03:15' }, harnessOff: { machine: 'box', off: true } }, cookie)).value;
+    ok('the daily check time and a computer set off are saved', dset.ok && dset.settings.daily.at === '03:15' && dset.settings.harnessOff.box === true, dset);
+    const badTime = (await request('POST', '/api/fleet/settings', { daily: { at: '25:99' } }, cookie)).value;
+    ok('a wrong time keeps the old one', badTime.ok && badTime.settings.daily.at === '03:15', badTime);
+    ok('the computer shows as set off', (await box()).harnessOff === true);
+    await request('POST', '/api/fleet/settings', { harnessOff: { machine: 'box', off: false } }, cookie);
+    ok('and on again', (await box()).harnessOff === false);
+    const c = (await request('POST', '/api/fleet/configure', { machine: 'box', targets: ['claude', 'codex', 'opencode'], proxy: 'http://127.0.0.1:7890' }, cookie)).value;
     ok('一键配置 succeeds with a key made for this computer', c.ok === true && c.key && c.key.issued && c.key.name === 'windose-box', c);
     ok('the key was made through the management API with no browser headers', magpieKeys.length === 1 && magpieKeys[0].name === 'windose-box' && magpieSeen.filter((s) => s.url.startsWith('/v1/magpie/admin/')).every((s) => !s.origin && !s.fetchMode), magpieSeen);
     const s = JSON.parse(fs.readFileSync(path.join(HOME, '.claude/settings.json'), 'utf8'));
     ok('Claude Code settings point at the gateway with the key, the rest kept', s.env.ANTHROPIC_AUTH_TOKEN === 'sk-e2e-machine-key' && s.env.ANTHROPIC_BASE_URL === 'https://gw.e2e.example' && s.env.HTTP_PROXY === 'http://127.0.0.1:9' && s.model === 'opus' && s.env.ANTHROPIC_DEFAULT_OPUS_MODEL === 'e2e/opus', s);
-    const toml = fs.readFileSync(path.join(HOME, '.codex/config.toml'), 'utf8');
-    ok('Codex config has the provider and model', /model_provider = "magpie"/.test(toml) && /model = "e2e\/gpt"/.test(toml) && /sk-e2e-machine-key/.test(toml), toml);
+    ok('Claude Code reaches the gateway directly though the file has a proxy (NO_PROXY)', /gw\.e2e\.example/.test(s.env.NO_PROXY || ''), s.env);
+    const net = JSON.parse(fs.readFileSync(path.join(HOME, '.ametyping/harness-net.json'), 'utf8'));
+    ok('Codex keeps its own sign-in: no config.toml written, the computer\'s proxy recorded for it', !fs.existsSync(path.join(HOME, '.codex/config.toml')) && net.proxy === 'http://127.0.0.1:7890' && net.tools.includes('codex'), net);
+    ok('the computer\'s own proxy is kept on the server and reported back by the agent', (await box()).proxy === 'http://127.0.0.1:7890' && await until(async () => (await box()).version.proxy === 'http://127.0.0.1:7890'));
     ok('OpenCode has the key file', fs.readFileSync(path.join(HOME, '.config/opencode/.secrets/magpie-nas.key'), 'utf8').trim() === 'sk-e2e-machine-key');
     const page = JSON.stringify(await view()), state = fs.readFileSync(path.join(path.dirname(CFG), 'data', 'fleet', 'state.json'), 'utf8');
     ok('neither the panel nor the server state holds the secret', !/sk-e2e-machine-key/.test(page) && !/sk-e2e-machine-key/.test(state));

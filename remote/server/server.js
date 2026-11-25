@@ -301,9 +301,11 @@ magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(C
 // 设备更新 & 一键配置 (fleet/): agent versions, the update after a deploy over the agents' own connections, Magpie keys
 const fleet = createFleet({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, control: CONTROL,
   audit: (...a) => audit(...a), onChange: () => broadcast({ t: 'fleet' }), log: console.error, magpieConfig: cfg.magpie || {},
-  models: () => magpie.status().models || [] });
+  models: () => magpie.status().models || [],
+  // the daily harness check: newest versions and release notes through the NAS's way out, condensed by the model
+  egressProxies: (cfg.summary || {}).proxies || [], aiAsk: (prompt, schema, task) => { if (!summary) throw new Error('AI 功能未启用'); return summary.ask(prompt, schema, task); } });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
-  resumeCmd, artifacts, todos, notes, searchIndex, embed, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to),
+  resumeCmd, artifacts, todos, notes, searchIndex, embed, claudeApis, mail: () => { try { return mail.store; } catch { return null; } }, audit: (...a) => audit(...a), calendar: (from, to) => google.forReport(from, to), harness: (from, to) => fleet.digest(from, to),
   onNote: (n) => {
     withAgenda(n).then((x) => { for (const m of machines.values()) if (m.online && m.sockets) for (const s of m.sockets) sendNote(s, x); });
     google.onReport(summary.reports.get(n.date));                             // the day's diary event in Google Calendar

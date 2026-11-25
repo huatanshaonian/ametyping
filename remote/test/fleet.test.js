@@ -8,7 +8,9 @@ const fs = require('fs'), os = require('os'), path = require('path'), http = req
 const { execFileSync } = require('child_process');
 const { createFleet: createAgentFleet, blobId } = require('../agent/fleet');
 const { guard } = require('../agent/update-guard');
-const { createAgentConfig, codexToml } = require('../agent/agent-config');
+const { createAgentConfig, withBypass } = require('../agent/agent-config');
+const { createHarness, readNet, writeNet, proxyFor, proxyUrlOf } = require('../agent/harness');
+const { createReleases } = require('../server/fleet/releases');
 const { createFleet: createServerFleet } = require('../server/fleet');
 const { createMagpieKeys } = require('../server/fleet/magpie-keys');
 
@@ -128,18 +130,191 @@ test('Claude Code settings: only the gateway keys change; ANTHROPIC_API_KEY goes
   assert.equal(bad.ok, false); assert.equal(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'), '{ broken');
 });
 
-test('Codex config.toml: provider table replaced, top-level keys set, other tables kept, idempotent', () => {
-  const old = '# mine\nmodel = "o3"\napproval_policy = "never"\n\n[model_providers.magpie]\nname = "old"\nbase_url = "http://x"\n\n[mcp_servers.ame-mesh]\ncommand = "node"\nargs = ["a", "b"]\n';
-  const once = codexToml(old, { gateway: 'https://gw.example', key: 'sk-abc', model: 'magpie/gpt' });
-  assert.match(once, /^model_provider = "magpie"$/m); assert.match(once, /^model = "magpie\/gpt"$/m);
-  assert.match(once, /approval_policy = "never"/); assert.match(once, /\[mcp_servers\.ame-mesh\]\ncommand = "node"\nargs = \["a", "b"\]/);
-  assert.equal((once.match(/\[model_providers\.magpie\]/g) || []).length, 1); assert.doesNotMatch(once, /name = "old"/);
-  assert.match(once, /base_url = "https:\/\/gw\.example\/v1"/); assert.match(once, /experimental_bearer_token = "sk-abc"/);
-  // the top-level keys stay before the first table (TOML would put them into it otherwise)
-  assert.ok(once.indexOf('model_provider') < once.indexOf('[mcp_servers'));
-  assert.equal(codexToml(once, { gateway: 'https://gw.example', key: 'sk-abc', model: 'magpie/gpt' }), once);
-  const fresh = codexToml('', { gateway: 'https://gw.example', key: 'sk-abc' });
-  assert.match(fresh, /^model_provider = "magpie"\n/); assert.doesNotMatch(fresh, /^model =/m);
+test('Claude Code with a proxy of its own: the gateway goes into NO_PROXY; none is added where there is no proxy', () => {
+  assert.equal(withBypass('localhost,127.0.0.1', 'gw.example'), 'localhost,127.0.0.1,gw.example');
+  assert.equal(withBypass('localhost,GW.example', 'gw.example'), 'localhost,GW.example');
+  assert.equal(withBypass('*', 'gw.example'), '*');
+  assert.equal(withBypass('', 'gw.example'), 'localhost,127.0.0.1,gw.example');
+  const home = tmp('home'), c = createAgentConfig({ home, env: {} });
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({ env: { HTTPS_PROXY: 'http://p:1', NO_PROXY: 'localhost', no_proxy: 'localhost' } }));
+  const key = { id: 'k', name: 'n', secret: 'sk-new-secret-1' };
+  const r = c.apply({ gateway: 'https://gw.example', key, targets: ['claude'] });
+  const e = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'))).env;
+  assert.equal(e.NO_PROXY, 'localhost,gw.example'); assert.equal(e.no_proxy, 'localhost,gw.example'); assert.match(r.results[0].msg, /NO_PROXY/);
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({ env: {} }));
+  c.apply({ gateway: 'https://gw.example', targets: ['claude'] });
+  const e2 = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'))).env;
+  assert.ok(!('NO_PROXY' in e2) && !Object.keys(e2).some((k) => /proxy/i.test(k)), JSON.stringify(e2));
+});
+
+test('Codex: its config.toml is left alone; the proxy is recorded for it; no Magpie key needed', () => {
+  const home = tmp('home'), c = createAgentConfig({ home, env: {} });
+  const toml = '# mine\nmodel = "gpt-6.2-sol"\n[mcp_servers.ame-mesh]\ncommand = "node"\n';
+  write(path.join(home, '.codex', 'config.toml'), toml);
+  const none = c.apply({ targets: ['codex'] });
+  assert.equal(none.ok, false); assert.match(none.results[0].msg, /代理/);
+  assert.equal(c.apply({ targets: ['codex'], proxy: 'socks5://x' }).ok, false);
+  const r = c.apply({ targets: ['codex'], proxy: 'http://127.0.0.1:10808' });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.key, null);
+  assert.equal(fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8'), toml);
+  assert.equal(readNet(home).proxy, 'http://127.0.0.1:10808'); assert.deepEqual(readNet(home).tools, ['codex']);
+  assert.equal(proxyFor('codex', home), 'http://127.0.0.1:10808'); assert.equal(proxyFor('claude', home), '');
+  // a proxy sent along with another target is kept for this computer (installs, and Codex: always through a proxy)
+  const home2 = tmp('home'), c2 = createAgentConfig({ home: home2, env: {} });
+  c2.apply({ gateway: 'https://gw.example', key: { id: 'k', name: 'n', secret: 'sk-new-secret-1' }, targets: ['claude'], proxy: 'http://10.0.0.1:3128' });
+  assert.equal(readNet(home2).proxy, 'http://10.0.0.1:3128');
+  // none set: the proxy the agent found is used and not frozen as the computer's own; the default only when none was found
+  const home3 = tmp('home'), c3 = createAgentConfig({ home: home3, env: {} });
+  writeNet({ detected: 'http://192.168.114.1:7890', detectedAt: 1 }, home3);
+  const d3 = c3.apply({ targets: ['codex'], fallback: 'http://127.0.0.1:10808' });
+  assert.equal(d3.ok, true, JSON.stringify(d3)); assert.match(d3.results[0].msg, /192\.168\.114\.1:7890（自动检测到的）/);
+  assert.equal(readNet(home3).proxy, ''); assert.equal(proxyFor('codex', home3), 'http://192.168.114.1:7890');
+  const home4 = tmp('home'), c4 = createAgentConfig({ home: home4, env: {} });
+  assert.match(c4.apply({ targets: ['codex'], fallback: 'http://127.0.0.1:10808' }).results[0].msg, /默认代理/);
+  assert.equal(proxyFor('codex', home4), 'http://127.0.0.1:10808');
+});
+
+// ---------- agent: harnesses ----------
+function fakeHarnessHost({ installed = {} } = {}) {
+  const home = tmp('home'), bin = path.join(home, 'bin'), root = tmp('root'), calls = [];
+  fs.mkdirSync(bin, { recursive: true });
+  for (const [n, v] of Object.entries(installed)) write(path.join(bin, n), v);
+  for (const f of ['install-codex-hooks.js', 'install-mesh-mcp.js']) write(path.join(root, f), '');
+  const exec = async (cmd, args, o = {}) => {
+    calls.push({ cmd, args, proxy: o.env && o.env.HTTPS_PROXY });
+    if (args[0] === '--version') { try { return { ok: true, out: fs.readFileSync(cmd, 'utf8') + '\n', err: '' }; } catch { return { ok: false, out: '', err: 'x' }; } }
+    if (args[0] === 'install' && args[1] === '-g') { write(path.join(bin, 'codex'), 'codex-cli 0.171.0'); return { ok: true, out: 'added 2 packages', err: '' }; }
+    if (args[0] === 'update' || args[0] === 'upgrade') { write(cmd, String(fs.readFileSync(cmd, 'utf8')).replace(/\d+$/, (n) => +n + 1)); return { ok: true, out: 'updated', err: '' }; }
+    return { ok: true, out: '', err: '' };
+  };
+  const hz = createHarness({ home, root, platform: 'linux', env: { PATH: bin, HOME: home }, exec });
+  return { home, bin, root, calls, hz };
+}
+
+test('harness inventory: found by the program, with its version', async () => {
+  const { hz } = fakeHarnessHost({ installed: { claude: '2.1.330 (Claude Code)', agy: '1.5.14' } });
+  const inv = await hz.inventory();
+  assert.deepEqual(inv.map((x) => x.id), ['claude', 'codex', 'opencode', 'agy']);
+  const by = Object.fromEntries(inv.map((x) => [x.id, x]));
+  assert.equal(by.claude.installed, true); assert.equal(by.claude.version, '2.1.330 (Claude Code)');
+  assert.equal(by.codex.installed, false); assert.equal(by.agy.version, '1.5.14');
+});
+
+test('harness install: the fixed command, through the recorded proxy, then the AmeTyping hooks and MCP', async () => {
+  const { home, root, calls, hz } = fakeHarnessHost();
+  writeNet({ proxy: 'http://127.0.0.1:10808', tools: ['codex'] }, home);
+  assert.equal((await hz.run('rm', 'install')).ok, false);
+  assert.equal((await hz.run('codex', 'uninstall')).ok, false);
+  assert.match((await hz.run('codex', 'update')).msg, /先安装/);
+  const r = await hz.run('codex', 'install');
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.after, 'codex-cli 0.171.0');
+  const npm = calls.find((c) => c.args[0] === 'install');
+  assert.deepEqual(npm.args.slice(0, 3), ['install', '-g', '@openai/codex@latest']); assert.equal(npm.proxy, 'http://127.0.0.1:10808');
+  const after = calls.filter((c) => c.cmd === process.execPath).map((c) => path.basename(c.args[0]));
+  assert.deepEqual(after, ['install-codex-hooks.js', 'install-mesh-mcp.js']);
+  assert.ok(calls.filter((c) => c.cmd === process.execPath).every((c) => c.args[0].startsWith(root)));
+  assert.match(r.notes.join(' '), /codex login/);
+  assert.match((await hz.run('codex', 'install')).msg, /已经装了/);
+  // the proxy can be given for one run; a malformed one is refused
+  assert.match((await hz.run('codex', 'update', { proxy: 'http://a b' })).msg, /代理/);
+});
+
+test('harness update: its own updater (claude update, opencode upgrade)', async () => {
+  const { bin, calls, hz } = fakeHarnessHost({ installed: { claude: '2.1.330', opencode: '1.19.6' } });
+  const r = await hz.run('claude', 'update');
+  assert.equal(r.ok, true); assert.equal(r.before, '2.1.330'); assert.equal(r.after, '2.1.331');
+  assert.deepEqual(calls.find((c) => c.args[0] === 'update'), { cmd: path.join(bin, 'claude'), args: ['update'], proxy: undefined });
+  assert.equal((await hz.run('opencode', 'update')).after, '1.19.7');
+});
+
+test('harness update by how it was installed: npm package, Codex standalone, OpenCode 1.x moved to 2.x by name', () => {
+  const home = tmp('home'), npmPkg = path.join(home, 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'), bin = path.join(home, 'bin');
+  write(npmPkg, ''); fs.mkdirSync(bin, { recursive: true });
+  let linked = true; try { fs.symlinkSync(npmPkg, path.join(bin, 'codex')); } catch { linked = false; }      // (Windows without the right: skipped)
+  write(path.join(home, 'standalone', 'codex'), '');
+  const hz = createHarness({ home, platform: 'linux', env: { PATH: bin }, exec: async () => ({ ok: true, out: '', err: '' }) });
+  if (linked) {
+    assert.equal(hz.methodOf('codex', path.join(bin, 'codex')), 'npm');
+    assert.deepEqual(hz.commandFor('codex', 'update', { path: path.join(bin, 'codex'), method: 'npm' }).slice(1)[0].slice(0, 3), ['install', '-g', '@openai/codex@latest']);
+  }
+  assert.equal(hz.methodOf('codex', path.join(home, 'standalone', 'codex')), 'self');
+  assert.deepEqual(hz.commandFor('codex', 'update', { path: '/x/codex', method: 'self' }), ['/x/codex', ['update']]);
+  assert.deepEqual(hz.commandFor('opencode', 'update', { path: '/x/opencode', method: 'self', line: 'legacy' }, { target: '2.4.1' }), ['/x/opencode', ['upgrade', '2.4.1']]);
+  assert.deepEqual(hz.commandFor('opencode', 'update', { path: '/x/opencode', method: 'self' }, { target: '2.4.1' }), ['/x/opencode', ['upgrade']]);
+  // Windows: the install script's own web requests are given the proxy (PowerShell 5.1 does not read HTTPS_PROXY)
+  const wz = createHarness({ home, platform: 'win32', env: {}, exec: async () => ({ ok: true, out: '', err: '' }) });
+  const ps = wz.commandFor('agy', 'install', {}, { proxy: 'http://192.168.114.1:7890' });
+  assert.equal(ps[0], 'powershell.exe'); assert.match(ps[1].pop(), /WebProxy\('http:\/\/192\.168\.114\.1:7890', \$true\).*irm https:\/\/antigravity\.google\/cli\/install\.ps1 \| iex/);
+});
+
+test('harness update against the newest version: nothing to do, or a version that did not move is not "the newest"', async () => {
+  const { hz, calls } = fakeHarnessHost({ installed: { claude: '2.1.331 (Claude Code)', agy: '1.5.14' } });
+  const same = await hz.run('claude', 'update', { target: '2.1.331' });
+  assert.equal(same.ok, true); assert.match(same.msg, /已经是最新版/); assert.equal(calls.filter((c) => c.args[0] === 'update').length, 0);
+  // agy's updater moves it on by one patch only: 1.5.15, not the newest 1.5.16
+  const stuck = await hz.run('agy', 'update', { target: '1.5.16' });
+  assert.equal(stuck.ok, false); assert.equal(stuck.behind, true); assert.match(stuck.msg, /版本还是 1\.5\.15（最新是 1\.5\.16）/);
+  const caught = await hz.run('agy', 'update', { target: '1.5.16' });
+  assert.equal(caught.ok, true); assert.match(caught.msg, /1\.5\.15 → 1\.5\.16/);
+});
+
+test('the way out: candidates from the interactive shell and local ports, each tried; the first that reaches everything', async () => {
+  const home = tmp('home');
+  const exec = async (cmd, args) => (cmd === 'bash' && args[0] === '-ic' ? { ok: true, out: 'http://192.168.114.1:7890|http://192.168.114.1:7890', err: '' } : { ok: true, out: '', err: '' });
+  // direct: OpenAI refuses this region; the router reaches all; the local port answers nothing abroad
+  const probe = async (url, { proxy }) => {
+    if (!proxy) return /openai|claude\.ai|github/.test(url) ? 403 : 200;
+    if (proxy.includes('192.168.114.1')) return /openai/.test(url) ? 401 : 200;
+    return 0;
+  };
+  const hz = createHarness({ home, platform: 'linux', env: { HTTPS_PROXY: 'http://127.0.0.1:9' }, exec, probe, ports: [] });
+  const n = await hz.detectNet();
+  assert.equal(n.needProxy, true); assert.equal(n.recommended, 'http://192.168.114.1:7890'); assert.match(n.recommendedSource, /交互 shell/);
+  assert.deepEqual(n.routes.map((r) => r.url), ['http://192.168.114.1:7890', 'http://127.0.0.1:9']);
+  assert.equal(n.direct.reach.openai, false); assert.equal(n.direct.reach.npm, true);
+  assert.equal(readNet(home).detected, 'http://192.168.114.1:7890'); assert.equal(proxyFor('codex', home), 'http://192.168.114.1:7890');
+  // set for the computer: it comes first, and is what Codex uses
+  writeNet({ proxy: 'http://10.0.0.5:3128' }, home);
+  assert.equal(proxyFor('codex', home), 'http://10.0.0.5:3128');
+  // direct reaches everything: no proxy needed
+  const hz2 = createHarness({ home: tmp('home'), platform: 'linux', env: {}, exec: async () => ({ ok: true, out: '', err: '' }), probe: async (u) => (/openai/.test(u) ? 401 : 200), ports: [] });
+  const d = await hz2.detectNet();
+  assert.equal(d.needProxy, false); assert.equal(d.recommended, '');
+  // Windows' ProxyServer forms
+  assert.equal(proxyUrlOf('192.168.114.1:7890'), 'http://192.168.114.1:7890');
+  assert.equal(proxyUrlOf('http=a:1;https=b:2'), 'http://b:2');
+  assert.equal(proxyUrlOf('socks=x:1'), '');
+});
+
+test('reaching out: a real request through a local CONNECT proxy, and a dead proxy answers 0', async () => {
+  // a TLS server standing in for the outside, and an HTTP proxy that tunnels to it
+  const tls = require('tls'), net = require('net');
+  const { execFileSync } = require('child_process');
+  const dir = tmp('tls');
+  let key, cert;
+  try {
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
+    key = fs.readFileSync(path.join(dir, 'k.pem')); cert = fs.readFileSync(path.join(dir, 'c.pem'));
+  } catch { return; }                                                       // (no openssl here: skipped)
+  const site = tls.createServer({ key, cert }, (s) => { s.on('data', () => s.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')); });
+  await new Promise((r) => site.listen(0, '127.0.0.1', r));
+  let tunnels = 0;
+  const proxy = http.createServer().on('connect', (req, sock) => {
+    tunnels++;
+    const up = net.connect(site.address().port, '127.0.0.1', () => { sock.write('HTTP/1.1 200 OK\r\n\r\n'); up.pipe(sock); sock.pipe(up); });
+    up.on('error', () => sock.destroy());
+  });
+  await new Promise((r) => proxy.listen(0, '127.0.0.1', r));
+  const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED; process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  try {
+    const { get } = require('../agent/harness');
+    assert.equal(await get('https://localhost:443/v1/models', { proxy: `http://127.0.0.1:${proxy.address().port}` }), 401);
+    assert.equal(tunnels, 1, 'the request went through the proxy, not around it');
+    assert.equal(await get('https://localhost/x', { proxy: 'http://127.0.0.1:1', timeout: 2000 }), 0);
+  } finally {
+    if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED; else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+    site.close(); proxy.close();
+  }
 });
 
 test('OpenCode: the key file, the gateway in providers.magpie; the template for a computer without opencode.json', () => {
@@ -234,14 +409,17 @@ function setup({ agentCfg = {}, edited = false, platform = 'linux', env = { INVO
     else if (d.t === 'fleet-files') { try { reply('fleet-ack', { n: agent.stage(d.run, d.items) }); } catch (e) { reply('fleet-result', { ok: false, msg: e.message }); } }
     else if (d.t === 'fleet-apply') agent.apply(d).then((r) => reply('fleet-result', r));
     else if (d.t === 'agent-config') reply('agent-config-result', conf.apply(d));
+    else if (d.t === 'harness-run') setTimeout(() => reply('harness-result', { ok: true, id: d.id, before: '1.0', after: '1.1', msg: '已更新：1.1', notes: [] }), 20);
   } };
   const m = { name: 'dell97', online: true, sockets: new Set([ws]) };
   machines.set('dell97', m);
   const changes = [];
   fleet = createServerFleet({ dataDir, machines, control: true, onChange: () => changes.push(1), tickMs: 3600e3, magpieKeys,
     templateFile: path.join(dataDir, 'none.json') });
-  const hello = async () => fleet.fromAgent(m, { t: 'fleet-version', ...(await agent.version()), control: true, magpieKey: conf.keyInfo() }, ws);
-  return { fleet, agent, root, home, ws, hello, guards: () => guards, dataDir };
+  const harnesses = [{ id: 'claude', installed: true, version: '1.0' }, { id: 'codex', installed: true, version: '1.0' },
+    { id: 'opencode', installed: false }, { id: 'agy', installed: false }];
+  const hello = async () => fleet.fromAgent(m, { t: 'fleet-version', ...(await agent.version()), control: true, magpieKey: conf.keyInfo(), harnesses }, ws);
+  return { fleet, agent, root, home, ws, hello, guards: () => guards, dataDir, mach: m };
 }
 const until = async (f, ms = 5000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await new Promise((r) => setTimeout(r, 20)); } return false; };
 
@@ -288,11 +466,15 @@ test('一键配置: a key made for the computer goes to its agent once; the serv
   const s = setup({ magpieKeys: { available: () => ({ ok: true }), usable: async (id) => id === 'k-1', issue: async (name) => { issued.push(name); return { id: 'k-1', name, secret: 'sk-machine-secret', rotated: false }; } } });
   s.agent.apply = async () => ({ ok: false, msg: 'not in this test' });
   await s.hello();
-  const r = await s.fleet.configure('dell97', { targets: ['claude', 'codex'] });
+  assert.match((await s.fleet.configure('dell97', { targets: ['codex'] })).msg, /代理/);
+  assert.deepEqual(issued, []);                                        // (Codex alone needs no key)
+  const r = await s.fleet.configure('dell97', { targets: ['claude', 'codex'], proxy: 'http://127.0.0.1:10808' });
   assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(issued, ['windose-dell97']);
   assert.equal(r.key.issued, true); assert.equal(r.key.id, 'k-1');
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.home, '.claude', 'settings.json'))).env.ANTHROPIC_AUTH_TOKEN, 'sk-machine-secret');
-  assert.match(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8'), /experimental_bearer_token = "sk-machine-secret"/);
+  assert.equal(fs.existsSync(path.join(s.home, '.codex', 'config.toml')), false);
+  assert.equal(proxyFor('codex', s.home), 'http://127.0.0.1:10808');
+  assert.equal(s.fleet.view().machines[0].proxy, 'http://127.0.0.1:10808');
   const state = fs.readFileSync(path.join(s.dataDir, 'fleet', 'state.json'), 'utf8');
   assert.doesNotMatch(state, /sk-machine-secret/); assert.match(state, /k-1/);
   assert.doesNotMatch(JSON.stringify(s.fleet.view()), /sk-machine-secret/);
@@ -300,4 +482,167 @@ test('一键配置: a key made for the computer goes to its agent once; the serv
   await s.hello();
   const again = await s.fleet.configure('dell97', { targets: ['claude'] });
   assert.equal(again.ok, true); assert.equal(again.key.issued, false); assert.deepEqual(issued, ['windose-dell97']);
+});
+
+test('harnesses: one machine updates its installed ones one after another, with its proxy; all machines at once', async () => {
+  const s = setup();
+  s.agent.apply = async () => ({ ok: false, msg: 'not in this test' });
+  await s.hello();
+  s.fleet.configure('dell97', { targets: ['codex'], proxy: 'http://127.0.0.1:10808' });
+  assert.ok(await until(() => s.fleet.view().machines[0].proxy));
+  assert.match(s.fleet.harnessRun('dell97', '*', 'install').msg, /只能一起更新/);
+  assert.match(s.fleet.harnessRun('dell97', 'rm', 'update').msg, /不认识/);
+  const r = s.fleet.harnessRun('dell97', '*', 'update');
+  assert.equal(r.ok, true, r.msg); assert.match(r.msg, /claude、codex/);
+  assert.match(s.fleet.harnessRun('dell97', 'claude', 'update').msg, /正在/);       // (one run at a time on a machine)
+  assert.ok(await until(() => !s.fleet.view().machines[0].harnessBusy));
+  const runs = s.ws.sent.filter((d) => d.t === 'harness-run');
+  assert.deepEqual(runs.map((d) => d.id), ['claude', 'codex']);
+  assert.ok(runs.every((d) => d.action === 'update' && d.proxy === 'http://127.0.0.1:10808'));
+  const h = s.fleet.view().machines[0].harness;
+  assert.equal(h.claude.status, 'ok'); assert.equal(h.codex.after, '1.1');
+  const all = s.fleet.harnessAll();
+  assert.equal(all.ok, true, all.msg); assert.match(all.msg, /dell97/);
+  assert.ok(await until(() => !s.fleet.view().machines[0].harnessBusy));
+  assert.equal(s.ws.sent.filter((d) => d.t === 'harness-run').length, 4);
+});
+
+// ---------- server: the daily harness check ----------
+function fakeReleases({ claude = '2.1.331', codex = '0.172.0', opencode = '2.4.1', agy = '1.5.16' } = {}) {
+  const seen = [];
+  const md = '# Changelog\n\n## 2.1.331\n- Added /goal command\n- Fixed a crash\n\n## 2.1.330\n- Faster startup\n\n## 2.1.329\n- Old thing\n';
+  const request = async (url) => {
+    seen.push(url);
+    const ok = (s) => ({ status: 200, body: Buffer.from(typeof s === 'string' ? s : JSON.stringify(s)) });
+    if (url.includes('claude-code-releases/latest')) return ok(claude + '\n');
+    if (url.includes('@openai/codex/latest')) return ok({ version: codex });
+    if (url.includes('@opencode/cli/latest')) return ok({ version: opencode });
+    if (url.includes('manifests/linux_amd64.json')) return ok({ version: agy });
+    if (url.includes('CHANGELOG.md')) return ok(md);
+    if (url.includes('openai/codex/releases')) return ok([{ tag_name: 'rust-v0.172.0', body: '- New: codex exec --json' }, { tag_name: 'rust-v0.171.0', body: '- fixes' }, { tag_name: 'rust-v0.170.0', body: '- older' }]);
+    if (url.includes('anomalyco/opencode/releases')) return ok([{ tag_name: 'v2.4.1', body: 'fix' }, { tag_name: 'v1.19.6', body: 'legacy' }]);
+    return { status: 404, body: Buffer.from('') };
+  };
+  return { request, seen };
+}
+
+test('releases: the newest of each, the notes since the oldest installed, condensed; nothing asked the second time', async () => {
+  const dataDir = tmp('data'), { request } = fakeReleases(), asked = [];
+  const ask = async (prompt) => { asked.push(prompt); return { items: [{ id: 'claude', major: ['新增 /goal 命令'], highlights: ['启动更快'], other: '另有 1 项修复' }, { id: 'codex', major: [], highlights: ['exec 支持 --json'], other: '' }] }; };
+  let t = 1000;
+  const rel = createReleases({ dataDir, request, ask, now: () => t });
+  const r = await rel.check({ since: { claude: '2.1.329 (Claude Code)', codex: 'codex-cli 0.170.0' } });
+  assert.deepEqual(r.errors, {});
+  assert.equal(rel.latestOf('claude'), '2.1.331'); assert.equal(rel.latestOf('agy'), '1.5.16');
+  // the notes given: 2.1.330 and 2.1.331 (after the oldest installed 2.1.329), Codex 0.171 and 0.172, OpenCode only 2.4.1
+  assert.match(asked[0], /## 2\.1\.331[\s\S]*## 2\.1\.330/); assert.doesNotMatch(asked[0], /## 2\.1\.329|Old thing/);
+  assert.match(asked[0], /0\.172\.0[\s\S]*0\.171\.0/); assert.doesNotMatch(asked[0], /#### 0\.170\.0|- older/); assert.doesNotMatch(asked[0], /v1\.19\.6|legacy/);
+  const claude = r.fresh.find((x) => x.id === 'claude');
+  assert.deepEqual(claude.major, ['新增 /goal 命令']); assert.equal(claude.from, '2.1.329');
+  assert.equal(r.fresh.find((x) => x.id === 'agy').noNotes, true);
+  // the next day, nothing new: nothing asked, nothing added
+  t = 2000; const again = await rel.check({ since: {} });
+  assert.equal(again.fresh.length, 0); assert.equal(asked.length, 1);
+  assert.equal(rel.historyBetween(0, 1500).length, 4); assert.equal(rel.historyBetween(1500, 3000).length, 0);
+  // the model failing: the notes' first lines instead
+  const rel2 = createReleases({ dataDir: tmp('data'), request, ask: async () => { throw new Error('quota'); }, now: () => 5 });
+  const r2 = await rel2.check({});
+  assert.match(r2.errors.summary, /quota/); assert.deepEqual(r2.fresh.find((x) => x.id === 'claude').highlights, ['Added /goal command', 'Fixed a crash']);
+});
+
+test('daily check: computers behind update only what is behind; on Windows not what has a session open; the report digest', async () => {
+  const { request } = fakeReleases();
+  let t = Date.parse('2026-11-25T03:50:00');
+  const dataDir = tmp('data');
+  const rel = createReleases({ dataDir, request, ask: async () => ({ items: [{ id: 'claude', major: ['新增 /goal 命令'], highlights: [], other: '' }] }), now: () => t });
+  const machines = new Map();
+  let fleet;
+  const mk = (name, platform, harnesses, sessions = []) => {
+    const m = { name, online: true, sessions: new Map(sessions.map((id) => [id, { id }])) };
+    const ws = { readyState: 1, sent: [], send(text) { const d = JSON.parse(text); this.sent.push(d);
+      if (d.t === 'harness-run') setTimeout(() => fleet.fromAgent(m, { t: 'harness-result', rid: d.rid, ok: true, id: d.id, before: '1', after: d.target, msg: '已更新' }, ws), 5); } };
+    m.sockets = new Set([ws]);
+    machines.set(name, m);
+    return { m, ws, hello: () => fleet.fromAgent(m, { t: 'fleet-version', mode: 'git', commit: C1, auto: false, why: 'x', control: true, platform, harnesses }, ws) };
+  };
+  // (a fresh server waits 15 minutes before its first daily check)
+  const early = createServerFleet({ dataDir: tmp('data'), machines: new Map(), control: true, tickMs: 3600e3, releases: rel, now: () => t });
+  assert.equal(early.dailyDue(), false); early.close();
+  fleet = createServerFleet({ dataDir, machines, control: true, tickMs: 3600e3, releases: rel, now: () => t, dailyGraceMs: 0,
+    magpieKeys: { available: () => ({ ok: true }), usable: async () => true, issue: async () => ({}) } });
+  const lin = mk('dell97', 'linux', [{ id: 'claude', installed: true, version: '2.1.323 (Claude Code)' }, { id: 'codex', installed: true, version: 'codex-cli 0.172.0' },
+    { id: 'opencode', installed: true, version: 'opencode v1.19.6', line: 'legacy' }, { id: 'agy', installed: false }]);
+  const win = mk('dell211', 'win32', [{ id: 'claude', installed: true, version: '2.1.311' }, { id: 'codex', installed: true, version: 'codex-cli 0.171.0' }],
+    ['11111111-2222-3333-4444-555555555555']);
+  const off = mk('samsung_blue', 'win32', [{ id: 'claude', installed: true, version: '2.1.300' }]);
+  lin.hello(); win.hello(); off.hello();
+  const answer = {};
+  await fleet.handle({ method: 'POST' }, null, new URL('http://x/api/fleet/settings'), '', (_r, _c, v) => Object.assign(answer, v),
+    async () => JSON.stringify({ harnessOff: { machine: 'samsung_blue', off: true } }), () => true);
+  assert.equal(answer.ok, true, JSON.stringify(answer)); assert.equal(fleet.view().machines.find((x) => x.name === 'samsung_blue').harnessOff, true);
+  assert.equal(fleet.dailyDue(), true);
+  const d = await fleet.dailyCheck();
+  assert.match(d.msg, /新版本 .*Claude Code 2\.1\.331/);
+  await until(() => !fleet.view().machines.some((m) => m.harnessBusy));
+  const runs = (x) => x.ws.sent.filter((m) => m.t === 'harness-run').map((m) => `${m.id}@${m.target}`);
+  // dell97: Claude behind, OpenCode on the old line (moved to 2.4.1); Codex already newest -- not touched
+  assert.deepEqual(runs(lin), ['claude@2.1.331', 'opencode@2.4.1']);
+  // dell211: Claude has a session open there (Windows) -- only Codex
+  assert.deepEqual(runs(win), ['codex@0.172.0']);
+  assert.deepEqual(runs(off), []);
+  assert.equal(fleet.dailyDue(), false, 'once a day');
+  // what the report of that night gets
+  const hx = fleet.digest(t - 3600e3, t + 3600e3);
+  assert.deepEqual(hx.releases.find((r) => r.id === 'claude').major, ['新增 /goal 命令']);
+  assert.ok(hx.updates.some((u) => u.machine === 'dell97' && u.id === 'claude' && u.ok && u.by === 'daily'), JSON.stringify(hx.updates));
+  assert.ok(hx.updates.some((u) => u.machine === 'dell211' && u.id === 'claude' && u.skipped));
+  assert.ok(hx.behind.some((b) => b.machine === 'samsung_blue' && b.id === 'claude'));
+  assert.equal(fleet.digest(0, 1), null);
+  // the next day after 03:40 it is due again
+  t = Date.parse('2026-11-26T03:45:00'); assert.equal(fleet.dailyDue(), true);
+  fleet.close();
+});
+
+test('a computer\'s proxy: set for it, else what its agent found, else the default -- and what a harness run carries', async () => {
+  const s = setup();
+  s.agent.apply = async () => ({ ok: false, msg: 'not in this test' });
+  const net = { at: 1, needProxy: true, recommended: 'http://192.168.114.1:7890', recommendedSource: '交互 shell（~/.bashrc）',
+    direct: { reach: { npm: true } }, routes: [{ url: 'http://192.168.114.1:7890', source: '交互 shell（~/.bashrc）', ms: 900, reach: { openai: true, npm: true } }] };
+  const ver = await s.agent.version();
+  const send = (n) => s.fleet.fromAgent(s.mach, { t: 'fleet-version', ...ver, control: true, harnesses: [{ id: 'claude', installed: true, version: '2.1.300' }], net: n }, s.ws);
+  send(null);
+  const eff = () => s.fleet.view().machines[0].effective;
+  assert.deepEqual(eff(), { proxy: '', source: '' });
+  send(net);
+  assert.deepEqual(eff(), { proxy: 'http://192.168.114.1:7890', source: '自动检测：交互 shell（~/.bashrc）' });
+  assert.equal(s.fleet.view().machines[0].version.net.routes[0].reach.openai, true);
+  assert.equal(s.fleet.view().machines[0].version.net.routes[0].reach.github, false);
+  await s.fleet.configure('dell97', { targets: ['codex'], proxy: 'http://10.1.1.1:3128' });
+  assert.deepEqual(eff(), { proxy: 'http://10.1.1.1:3128', source: '为这台电脑设置的' });
+  // a harness run: the proxy set for it, the default as fallback, the newest version known
+  s.fleet.harnessRun('dell97', 'claude', 'update');
+  await until(() => s.ws.sent.some((d) => d.t === 'harness-run'));
+  const run = s.ws.sent.find((d) => d.t === 'harness-run');
+  assert.equal(run.proxy, 'http://10.1.1.1:3128'); assert.equal(run.fallback, ''); assert.equal(typeof run.target, 'string');
+  s.fleet.close();
+});
+
+test('git mode: git pull goes through the way out found for this computer (the agent has no proxy of its own)', async () => {
+  const root = tmp('git'), home = tmp('home');
+  git(root, 'init', '-q', '-b', 'main'); git(root, 'config', 'user.email', 't@t'); git(root, 'config', 'user.name', 't');
+  write(path.join(root, 'a.js'), '1\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'one');
+  writeNet({ detected: 'http://192.168.114.1:7890', detectedAt: 1 }, home);
+  const calls = [];
+  const gitRun = async (cmd, args, cwd, t, env) => { calls.push({ args, proxy: env && env.HTTPS_PROXY, noProxy: env && env.NO_PROXY });
+    return args.includes('pull') ? { ok: false, out: '', err: 'stop here' } : { ok: true, out: args.includes('rev-parse') ? (args.includes('--abbrev-ref') ? 'main' : 'c'.repeat(40)) : '', err: '' }; };
+  const f = createAgentFleet({ root, home, platform: 'linux', gitRun });
+  await f.apply({ rid: 'r', mode: 'git', commit: 'd'.repeat(40) });
+  const pull = calls.find((c) => c.args.includes('pull'));
+  assert.ok(pull, 'git pull was run'); assert.equal(pull.proxy, 'http://192.168.114.1:7890'); assert.match(pull.noProxy, /192\.168\.0\.0\/16/);
+  // other git commands (status, rev-parse) without it
+  assert.ok(calls.filter((c) => !c.args.includes('pull')).every((c) => !c.proxy));
+  // set for the computer: that one
+  writeNet({ proxy: 'http://10.0.0.5:3128' }, home);
+  calls.length = 0; await f.apply({ rid: 'r2', mode: 'git', commit: 'd'.repeat(40) });
+  assert.equal(calls.find((c) => c.args.includes('pull')).proxy, 'http://10.0.0.5:3128');
 });

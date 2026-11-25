@@ -18,8 +18,19 @@ const { execFile, spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 // a bundle path: relative, no .., nothing inside a .git folder
 const SAFE = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!(?:.*\/)?\.git(?:\/|$))[A-Za-z0-9._\-/]{1,200}$/;
-const run = (cmd, args, cwd, timeout = 120e3) => new Promise((res) => execFile(cmd, args, { cwd, timeout, windowsHide: true, maxBuffer: 8e6 },
+const run = (cmd, args, cwd, timeout = 120e3, env = undefined) => new Promise((res) => execFile(cmd, args, { cwd, timeout, windowsHide: true, maxBuffer: 8e6, ...(env ? { env } : {}) },
   (e, out, err) => res({ ok: !e, out: String(out || '').trim(), err: String(err || '').trim() || (e ? e.message : '') })));
+// the way out this computer uses (set for it, else found by the agent: harness.js) -- git pull reaches GitHub through it;
+// the agent's own environment has no proxy (2026-11-25: panasonic and dell211 could not pull direct)
+function netEnv(home, env) {
+  let n = {}; try { n = require('./harness').readNet(home); } catch {}
+  const p = n.proxy || n.detected;
+  if (!p) return env;
+  const out = { ...env };
+  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) out[k] = p;
+  try { out.NO_PROXY = out.no_proxy = require('./harness').NO_PROXY; } catch {}
+  return out;
+}
 // git's id of a file's content, text taken with LF line ends as git stores it (as deploy-lib.js does)
 function blobId(buf) {
   if (!buf.includes(0)) buf = Buffer.from(buf.toString('binary').replace(/\r\n/g, '\n'), 'binary');
@@ -37,7 +48,7 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
   const dir = path.join(home, '.ametyping', 'fleet');
   const pendingFile = path.join(dir, 'pending.json'), lastFile = path.join(dir, 'last.json');
   const versionFile = path.join(root, '.ame-version.json');
-  const git = (args, t) => gitRun('git', ['-C', root, ...args], root, t);
+  const git = (args, t) => gitRun('git', ['-C', root, ...args], root, t, args[0] === 'pull' || args[0] === 'fetch' ? netEnv(home, env) : undefined);
   let staging = null;                                     // { rid, dir, files: Map(path -> blob) }
 
   async function version() {
@@ -120,8 +131,8 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       const notes = [];
       for (const [sub, args] of [['app', ['install', '--no-audit', '--no-fund']], ['remote', ['install', '--omit=dev', '--no-audit', '--no-fund']]]) {
         if (!changed.some((f) => f === `${sub}/package.json` || f === `${sub}/package-lock.json`)) continue;
-        const r = platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'npm', ...args], path.join(root, sub), 600e3)
-          : await run('npm', args, path.join(root, sub), 600e3);
+        const r = platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'npm', ...args], path.join(root, sub), 600e3, netEnv(home, env))
+          : await run('npm', args, path.join(root, sub), 600e3, netEnv(home, env));
         if (!r.ok) notes.push(`${sub}/ 的依赖没装成：${r.err.slice(-160)}`);
       }
       await hooks(changed, notes);
@@ -172,9 +183,11 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     }
   }
 
-  function startGuard() {
+  // waitSec: how long the guard waits for the new agent (tests: short)
+  function startGuard({ waitSec = 0 } = {}) {
     const guard = path.join(__dirname, 'update-guard.js');
-    const args = [guard, '--dir', dir, '--root', root, '--task', cfg.task || 'AmeTyping Agent', '--unit', cfg.unit || 'ame-agent'];
+    const args = [guard, '--dir', dir, '--root', root, '--task', cfg.task || 'AmeTyping Agent', '--unit', cfg.unit || 'ame-agent',
+      ...(waitSec ? ['--wait', String(waitSec)] : [])];
     if (platform === 'linux') {
       // a transient unit of its own: restarting ame-agent stops every process in ame-agent's group, this one not
       const child = spawn('systemd-run', ['--user', '--collect', '--quiet', '--unit', 'ame-update-guard-' + Date.now(), process.execPath, ...args],
@@ -185,8 +198,12 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       // through WMI: a process that is not the agent's child, so not in the scheduled task's job that ends with it
       const cmd = [process.execPath, ...args].map((a) => '"' + a.replace(/"/g, '') + '"').join(' ');
       const ps = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${cmd.replace(/'/g, "''")}' }; if ($r.ReturnValue -ne 0) { exit 1 }`;
-      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true, detached: true });
+      // (not detached: under the agent's scheduled task (conhost --headless) a detached PowerShell gets no console and
+      // exits at once with 0 having run nothing -- found on dell211 2026-11-25, every Windows update then waited for a
+      // guard that never started. The process WMI makes is outside the task's job either way.)
+      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true });
       child.on('error', (e) => log('更新守护没启动：' + e.message));
+      child.on('close', (code) => { if (code) log('更新守护没启动：PowerShell 退出码 ' + code); });
       child.unref();
     } else throw new Error('这个系统不支持自动重启');
   }
@@ -198,7 +215,7 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     try { writeJSON(pendingFile, { ...p, healthy: Date.now(), healthyPid: process.pid }); } catch {}
   }
 
-  return { version, have, stage, apply, markHealthy, dir };
+  return { version, have, stage, apply, markHealthy, dir, _startGuard: startGuard };
 }
 
 module.exports = { createFleet, blobId, SAFE };

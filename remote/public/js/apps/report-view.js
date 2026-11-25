@@ -26,6 +26,38 @@ export function weekNo(date) {
 }
 const md = (d) => d.slice(5).replace('-', '/');
 
+// the coding agents (harnesses): their new versions with the major changes first, what each computer updated, what is
+// still behind (remote/server/fleet: the daily harness check before the report)
+const HN = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', agy: 'Antigravity' };
+const vs = (v) => (String(v || '').match(/\d+\.\d+\.\d+/) || [v || '?'])[0];
+function harnessBox(x) {
+  if (!x) return null;
+  const rels = x.releases || [], ups = x.updates || [], ins = x.installs || [], behind = x.behind || [];
+  const rel = rels.map((r) => h('li', { class: 'rp-hx' + ((r.major || []).length ? ' rp-hx-major' : '') },
+    h('div', {}, h('b', { text: `${r.label || HN[r.id] || r.id} ${r.to}` }), h('small', { text: r.from ? `（上次 ${r.from}）` : '' }), ' ',
+      r.link ? h('a', { href: r.link, target: '_blank', rel: 'noopener', text: '更新日志' }) : null),
+    (r.major || []).length ? h('ul', { class: 'rp-hx-m' }, ...r.major.map((t) => h('li', {}, h('span', { class: 'rp-mark', text: '★' }), h('span', { text: t })))) : null,
+    (r.highlights || []).length ? h('ul', {}, ...r.highlights.map((t) => h('li', { text: t }))) : null,
+    r.other ? h('div', { class: 'rp-hx-o', text: r.other }) : null,
+    r.noNotes ? h('div', { class: 'rp-hx-o', text: '没有可读的更新日志，详情看链接' }) : null));
+  const byMachine = new Map();
+  for (const u of [...ups.map((u) => ({ ...u, kind: 'update' })), ...ins.map((u) => ({ ...u, kind: 'install' }))]) {
+    if (!byMachine.has(u.machine)) byMachine.set(u.machine, []);
+    byMachine.get(u.machine).push(u);
+  }
+  const done = [...byMachine].map(([m, list]) => h('li', {}, h('b', { text: m + '：' }), h('span', { text: list.map((u) =>
+    u.skipped ? `${HN[u.id] || u.id} 有会话开着，没更新`
+      : !u.ok ? `${HN[u.id] || u.id} ${u.kind === 'install' ? '安装' : '更新'}失败（${u.msg || ''}）`
+      : u.kind === 'install' ? `装了 ${HN[u.id] || u.id} ${vs(u.after)}` : `${HN[u.id] || u.id} ${vs(u.before)} → ${vs(u.after)}`).join('；') })));
+  const left = behind.length ? h('div', { class: 'rp-hx-o', text: '还落后：' + behind.map((b) => `${b.machine} 的 ${HN[b.id] || b.id} ${vs(b.version)}（最新 ${b.latest}）`).join('；') }) : null;
+  if (!rel.length && !done.length) return null;
+  const major = rels.some((r) => (r.major || []).length);
+  return h('section', { class: 'rp-sec rp-harness' + (major ? ' rp-hx-has-major' : '') },
+    h('h3', { text: major ? '编程工具更新（有重大变化）' : '编程工具更新' }),
+    rel.length ? h('ul', { class: 'rp-hx-l' }, ...rel) : null,
+    done.length ? h('div', { class: 'rp-lt', text: '各电脑' }) : null, done.length ? h('ul', {}, ...done) : null, left);
+}
+
 // the weekly report (remote/server/summary/weekly.js); openReport(date) opens one of its days
 export function renderWeek(w, { openReport }) {
   const s = w.stats || {}, c = s.byCat || {};
@@ -119,11 +151,14 @@ export function render(r) {
   const kw = (r.keywords || []).length ? h('div', { class: 'rp-kw' }, ...r.keywords.map((k) => h('span', { text: k }))) : null;
 
   const st = r.stats || {};
+  const hxBox = harnessBox(r.harness), hxMajor = !!(r.harness && (r.harness.releases || []).some((x) => (x.major || []).length));
   return h('article', { class: 'rp' },
     h('div', { class: 'rp-top' },
       h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) + (r.brief ? '（补录，简略）' : '') }),
       h('div', { class: 'rp-meta', text: `${when(r.from)} – ${when(r.to)} · ${minutes(st.minutes || 0)} · ${st.sessions || 0} 个会话 · ${st.machines || 0} 台电脑` })),
     h('p', { class: 'rp-head', text: r.headline || '' }),
-    ...sections, doneBox, openBox, plans, artBox, kw,
+    // a harness with major changes is shown right under the headline, otherwise after the day's work
+    hxMajor ? hxBox : null,
+    ...sections, doneBox, openBox, plans, artBox, hxMajor ? null : hxBox, kw,
     !sections.length && !openBox ? h('p', { class: 'rp-empty', text: '这段时间没有记录。' }) : null);
 }

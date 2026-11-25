@@ -1,10 +1,13 @@
-// 一键配置 (server/fleet): this computer's coding agents pointed at the Magpie gateway with this computer's own gateway
-// key -- what the server sends as "agent-config" { gateway, key?, models, targets } is written here:
+// 一键配置 (server/fleet): this computer's coding agents set up for the NAS's Magpie gateway -- what the server sends as
+// "agent-config" { gateway, key?, models, targets, proxy, template } is written here:
 //   claude    ~/.claude/settings.json      env ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN (+ the opus/sonnet/haiku/fable
-//                                          model names when given); ANTHROPIC_API_KEY taken out (it would win)
-//   codex     $CODEX_HOME/config.toml       model_provider = "magpie" and a [model_providers.magpie] table
+//                                          model names when given); ANTHROPIC_API_KEY taken out (it would win). No proxy:
+//                                          the gateway is on the LAN / Tailscale -- when the file has proxy variables of
+//                                          its own, the gateway's host is added to NO_PROXY so it is reached directly
 //   opencode  ~/.config/opencode            the key in .secrets/magpie-nas.key (what the template's apiKey reads), the
 //                                          gateway in providers.magpie; a missing opencode.json gets the template
+//   codex     ~/.ametyping/harness-net.json Codex keeps its own ChatGPT sign-in and goes abroad through this computer's
+//                                          proxy: the proxy is recorded for it (harness.js), its config.toml untouched
 // Only these keys are changed; everything else in the files stays. Each file is copied to
 // ~/.ametyping/config-backups first. The key itself is kept in ~/.ametyping/magpie-key.json (0600): the server keeps
 // only its id, so a later "agent-config" without a key uses this one.
@@ -13,6 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { readNet, writeNet, PROXY_URL } = require('./harness');
 
 const object = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 function atomic(file, text) {
@@ -20,42 +24,15 @@ function atomic(file, text) {
   const tmp = file + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
   try { fs.writeFileSync(tmp, text, { mode: 0o600 }); fs.renameSync(tmp, file); } finally { try { fs.unlinkSync(tmp); } catch {} }
 }
-const tomlStr = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-const HEADER = /^\s*\[\[?\s*([A-Za-z0-9_."' -]+?)\s*\]\]?\s*(#.*)?$/;
-
-// config.toml with magpie as the provider: the top-level model_provider / model lines set (or added before the first
-// table), any [model_providers.magpie...] table replaced by ours at the end. Comments and other tables stay as they are.
-function codexToml(text, { gateway, key, model }) {
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
-  const out = [];
-  let skipping = false, firstTable = -1;
-  for (const l of lines) {
-    const h = HEADER.exec(l);
-    if (h) {
-      const name = h[1].replace(/["' ]/g, '');
-      skipping = name === 'model_providers.magpie' || name.startsWith('model_providers.magpie.');
-      if (skipping) { while (out.length && /^\s*#\s*AmeTyping/.test(out[out.length - 1])) out.pop(); continue; }
-      if (firstTable < 0) firstTable = out.length;
-    }
-    if (!skipping) out.push(l);
-  }
-  if (firstTable < 0) firstTable = out.length;
-  const top = out.slice(0, firstTable), rest = out.slice(firstTable);
-  const set = (k, v) => {
-    const i = top.findIndex((l) => new RegExp('^\\s*' + k + '\\s*=').test(l));
-    const line = `${k} = ${tomlStr(v)}`;
-    if (i >= 0) top[i] = line; else { let j = top.length; while (j > 0 && !top[j - 1].trim()) j--; top.splice(j, 0, line); }
-  };
-  set('model_provider', 'magpie');
-  if (model) set('model', model);
-  const base = gateway.replace(/\/+$/, '');
-  const table = ['# AmeTyping 一键配置：Magpie 网关（这台电脑自己的网关密钥）', '[model_providers.magpie]', 'name = "magpie"',
-    `base_url = ${tomlStr(base + '/v1')}`, `model_catalog_url = ${tomlStr(base + '/v1/codex/models')}`,
-    `experimental_bearer_token = ${tomlStr(key)}`, 'wire_api = "responses"', 'supports_websockets = false'];
-  while (rest.length && !rest[rest.length - 1].trim()) rest.pop();
-  const body = [...top, ...(top.length && top[top.length - 1].trim() ? [''] : []), ...rest, ...(rest.length ? [''] : []), ...table].join('\n');
-  return body.replace(/^\n+/, '') + '\n';
+const PROXY_VARS = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+// NO_PROXY with host in it (a comma list; '*' already covers it)
+function withBypass(list, host) {
+  const items = String(list || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (items.includes('*') || items.some((s) => s.toLowerCase() === host.toLowerCase())) return items.join(',');
+  return [...(items.length ? items : ['localhost', '127.0.0.1']), host].join(',');
 }
+// the targets that use the Magpie key
+const KEYED = ['claude', 'opencode'];
 
 function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
   const keyFile = path.join(home, '.ametyping', 'magpie-key.json');
@@ -70,6 +47,7 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
   const storedKey = () => { try { const k = JSON.parse(fs.readFileSync(keyFile, 'utf8')); return k && typeof k.secret === 'string' ? k : null; } catch { return null; } };
   // what the server may know: the id and name, never the secret
   const keyInfo = () => { const k = storedKey(); return k ? { id: k.id || '', name: k.name || '' } : null; };
+  const net = () => readNet(home);
 
   function claude({ gateway, secret, models = {} }) {
     const file = path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'settings.json');
@@ -79,21 +57,21 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
       if (!object(j)) throw new Error('settings.json 的格式不对，没有改动');
     }
     const e = object(j.env) ? { ...j.env } : {};
-    e.ANTHROPIC_BASE_URL = gateway.replace(/\/+$/, '').replace(/\/v1$/, '');
+    const base = gateway.replace(/\/+$/, '').replace(/\/v1$/, '');
+    e.ANTHROPIC_BASE_URL = base;
     e.ANTHROPIC_AUTH_TOKEN = secret;
     delete e.ANTHROPIC_API_KEY;
     for (const [k, name] of [['opus', 'OPUS'], ['sonnet', 'SONNET'], ['haiku', 'HAIKU'], ['fable', 'FABLE']])
       if (typeof models[k] === 'string' && models[k]) e[`ANTHROPIC_DEFAULT_${name}_MODEL`] = models[k];
+    let msg = '';
+    if (PROXY_VARS.some((k) => e[k])) {
+      const host = new URL(base).hostname;
+      for (const k of ['NO_PROXY', 'no_proxy']) if (k === 'NO_PROXY' || e[k] !== undefined) e[k] = withBypass(e[k] || e.NO_PROXY, host);
+      msg = `这里配了代理，网关 ${host} 已加进 NO_PROXY，直连`;
+    }
     const b = backup(file, 'claude-settings');
     atomic(file, JSON.stringify({ ...j, env: e }, null, 2) + '\n');
-    return { file, backup: b };
-  }
-  function codex({ gateway, secret, models = {} }) {
-    const dir = env.CODEX_HOME || path.join(home, '.codex'), file = path.join(dir, 'config.toml');
-    const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-    const b = backup(file, 'codex-config');
-    atomic(file, codexToml(old, { gateway, key: secret, model: models.codex }));
-    return { file, backup: b };
+    return { file, backup: b, msg };
   }
   function opencode({ gateway, secret, template }) {
     const dir = env.OPENCODE_CONFIG_DIR || path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode');
@@ -117,30 +95,50 @@ function createAgentConfig({ home = os.homedir(), env = process.env } = {}) {
     atomic(file, JSON.stringify(j, null, 2) + '\n');
     return { file, backup: b };
   }
-  const WRITERS = { claude, codex, opencode };
+  // Codex: its own sign-in, this computer's proxy (config.toml is not touched)
+  // (proxy: set for this computer; else the one the agent found works here; else the panel's default)
+  function codex({ proxy, fallback }) {
+    const n = net(), via = proxy || n.detected || fallback;
+    if (!via) throw new Error('这台电脑没有可用的代理（没设置，自动检测也没找到），Codex 没有改动');
+    writeNet({ tools: [...new Set([...n.tools, 'codex'])], ...(proxy || (!n.detected && fallback) ? { proxy: proxy || fallback } : {}) }, home);
+    return { file: path.join(home, '.ametyping', 'harness-net.json'),
+      msg: `看板启动的 Codex 会话和安装、更新走 ${via}${proxy ? '' : n.detected && via === n.detected ? '（自动检测到的）' : '（默认代理）'}；自己在终端里开的 Codex 用终端的代理设置` };
+  }
+  const WRITERS = { claude, opencode, codex };
 
-  // d: { gateway, key?: { id, name, secret }, models, targets: [...], template?: opencode.json for a computer without one } -> { ok, key: { id, name }, results: [...] }
+  // d: { gateway, key?: { id, name, secret }, models, targets: [...], proxy?, template?: opencode.json for a computer
+  // without one } -> { ok, key: { id, name }, results: [...] }
   function apply(d) {
-    let gateway;
-    try { const u = new URL(String(d.gateway || '')); if (!/^https?:$/.test(u.protocol) || u.username || u.password) throw 0; gateway = u.href.replace(/\/+$/, ''); }
-    catch { return { ok: false, msg: '网关地址不对' }; }
+    const targets = (Array.isArray(d.targets) ? d.targets : []).map(String);
+    let gateway = '';
+    if (targets.some((t) => KEYED.includes(t))) {
+      try { const u = new URL(String(d.gateway || '')); if (!/^https?:$/.test(u.protocol) || u.username || u.password) throw 0; gateway = u.href.replace(/\/+$/, ''); }
+      catch { return { ok: false, msg: '网关地址不对' }; }
+    }
+    const proxy = typeof d.proxy === 'string' ? d.proxy.trim() : '';
+    const fallback = typeof d.fallback === 'string' && PROXY_URL.test(d.fallback.trim()) ? d.fallback.trim() : '';
+    if (proxy && !PROXY_URL.test(proxy)) return { ok: false, msg: '代理地址格式不对' };
+    // the proxy is this computer's: kept for installs and updates even when Codex is not among the targets
+    if (proxy && proxy !== net().proxy) writeNet({ ...net(), proxy }, home);
     let key = storedKey();
     if (d.key) {
       if (typeof d.key.secret !== 'string' || d.key.secret.length < 8 || d.key.secret.length > 400 || /[\s"'\\]/.test(d.key.secret)) return { ok: false, msg: '服务器发来的密钥格式不对' };
       key = { id: String(d.key.id || '').slice(0, 80), name: String(d.key.name || '').slice(0, 120), secret: d.key.secret, at: new Date().toISOString() };
       atomic(keyFile, JSON.stringify(key, null, 2));
     }
-    if (!key) return { ok: false, msg: '这台电脑还没有 Magpie 密钥', needKey: true };
+    if (!key && targets.some((t) => KEYED.includes(t))) return { ok: false, msg: '这台电脑还没有 Magpie 密钥', needKey: true };
     const results = [];
-    for (const t of Array.isArray(d.targets) ? d.targets : []) {
+    for (const t of targets) {
       if (!WRITERS[t]) { results.push({ target: t, ok: false, msg: '不支持' }); continue; }
-      try { results.push({ target: t, ok: true, ...WRITERS[t]({ gateway, secret: key.secret, models: object(d.models) ? d.models : {}, template: object(d.template) ? d.template : null }) }); }
-      catch (e) { results.push({ target: t, ok: false, msg: e.message }); }
+      try {
+        results.push({ target: t, ok: true, ...WRITERS[t]({ gateway, secret: key && key.secret, proxy: proxy || net().proxy, fallback,
+          models: object(d.models) ? d.models : {}, template: object(d.template) ? d.template : null }) });
+      } catch (e) { results.push({ target: t, ok: false, msg: e.message }); }
     }
-    return { ok: results.every((r) => r.ok), key: { id: key.id, name: key.name }, results };
+    return { ok: results.every((r) => r.ok), key: key ? { id: key.id, name: key.name } : null, results };
   }
 
-  return { apply, keyInfo };
+  return { apply, keyInfo, net };
 }
 
-module.exports = { createAgentConfig, codexToml };
+module.exports = { createAgentConfig, withBypass, KEYED };

@@ -247,6 +247,11 @@
 .fleet-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0; }
 .fleet-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; } .fleet-row > span { width: 110px; color: var(--muted); }
 .fleet-row input { flex: 1; min-width: 0; max-width: 360px; }
+.fleet .fleet-checks { flex-direction: column; } .fleet-checks small { color: var(--muted); }
+.fleet-hs { display: flex; flex-direction: column; gap: 2px; min-width: 190px; }
+.fleet-h { white-space: nowrap; } .fleet-h.off b { color: var(--muted); font-weight: normal; } .fleet-h small { color: var(--muted); }
+.fleet-h > div { white-space: normal; padding-left: 1em; }
+.fleet .btn.fleet-sm { padding: 0 6px; min-height: 0; font-size: 11.5px; margin-left: 4px; }
 
 /* Skill 与协同 (apps/skills-panel.js) */
 .skp { display: flex; flex-direction: column; gap: 8px; }
@@ -321,3 +326,6 @@ html[data-theme="win98"] .skp-list { border: 0; box-shadow: var(--sunken); paddi
   .skp-split { grid-template-columns: 1fr; }
   .skp-list { max-height: 200px; }
 }
+.fleet-off { display: block; margin-top: 2px; } .fleet .fleet-major { color: var(--border); font-weight: bold; }
+.fleet-rel { margin: 4px 0 0 1em; padding: 0; } .fleet-rel li { margin-bottom: 3px; }
+.fleet td code { font: 11.5px Consolas, monospace; }

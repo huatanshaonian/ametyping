@@ -25,7 +25,14 @@ const RDIR = path.join(T, 'srv', 'data', 'reports'); fs.mkdirSync(RDIR, { recurs
 fs.writeFileSync(path.join(RDIR, '2026-09-28.json'), JSON.stringify({ date: '2026-09-28', headline: '整理论文图表，顺手修了糖糖的提示音', from: now - 2 * 86400e3, to: now - 86400e3, stats: { minutes: 185, sessions: 4, machines: 2 }, sessions: [],
   projects: [{ name: 'RCS 论文', category: 'research', summary: '重画了第三章的 RCS 对比图', done: ['图 3-4 改成双对数坐标'], decisions: [], unfinished: [], sessions: [], minutes: 120, files: [] },
     { name: '配置 git 代理', category: 'chore', summary: '给 git 配了 HTTP 代理', done: [], decisions: [], unfinished: [], sessions: [], minutes: 5, files: [] }],
-  open: [{ text: '整理参考文献', project: 'RCS 论文', status: 'open', since: '2026-09-27' }], plans: [], keywords: ['RCS', 'matplotlib'] }));
+  open: [{ text: '整理参考文献', project: 'RCS 论文', status: 'open', since: '2026-09-27' }], plans: [], keywords: ['RCS', 'matplotlib'],
+  // the daily harness check (server/fleet digest): a major change, an update, one skipped, one still behind
+  harness: { checkedAt: now - 86400e3, releases: [
+    { id: 'claude', label: 'Claude Code', from: '2.1.323', to: '2.1.331', at: now - 86400e3, link: 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md', major: ['新增 /goal 命令：给会话设一个持续目标'], highlights: ['启动更快'], other: '另有 6 项修复' },
+    { id: 'agy', label: 'Antigravity', from: '1.5.14', to: '1.5.16', at: now - 86400e3, link: 'https://antigravity.google/docs/changelog', major: [], highlights: [], other: '', noNotes: true }],
+    updates: [{ machine: 'dell97', id: 'claude', before: '2.1.323 (Claude Code)', after: '2.1.331 (Claude Code)', ok: true, by: 'daily' },
+      { machine: 'dell211', id: 'claude', ok: false, skipped: true, by: 'daily', msg: '有会话开着' }], installs: [],
+    behind: [{ machine: 'dell211', id: 'claude', version: '2.1.311', latest: '2.1.331' }] } }));
 fs.writeFileSync(path.join(RDIR, 'week-2026-09-22.json'), JSON.stringify({ start: '2026-09-22', end: '2026-09-28', headline: '这周主要在重画论文的 RCS 图', highlights: ['第三章图表全部改成双对数坐标'],
   projects: [{ name: 'RCS 论文', category: 'research', summary: '第三章图表重画完成', progress: ['图 3-4 双对数', '图 3-5 加误差棒'] }], days: [{ date: '2026-09-28', headline: '整理论文图表', minutes: 185 }],
   open: [{ text: '整理参考文献', project: 'RCS 论文' }], artifacts: [], stats: { minutes: 600, byCat: { research: 480, personal: 60, chore: 60 }, days: 4, sessions: 9, chores: 3, artifacts: 0 } }));
@@ -155,6 +162,12 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await call('Page.navigate', { url: 'about:blank' }); await sleep(300);
     await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/#report=2026-09-28` }); await sleep(3500);
     chk('#report= link opens that report (and the link is forgotten)', (await evalJs("(document.querySelector('.rv')||{}).textContent||''")).includes('9月28日') && (await evalJs("location.hash")) === '', await evalJs("[location.hash, (document.querySelector('.rv')||{}).textContent]"));
+    // the harness check in that day's report: a major change right under the headline, what each computer did, what is behind
+    const hx = await evalJs("(() => { const s = document.querySelector('.rv .rp-harness'); const head = document.querySelector('.rv .rp-head'); return s ? { text: s.textContent, first: !!head && head.nextElementSibling === s } : null; })()");
+    chk('report: harness updates with the major change first, under the headline', !!hx && hx.first && /编程工具更新（有重大变化）/.test(hx.text) && /新增 \/goal 命令/.test(hx.text) &&
+      /dell97：Claude Code 2\.1\.323 → 2\.1\.331/.test(hx.text) && /dell211：Claude Code 有会话开着，没更新/.test(hx.text) && /还落后：dell211 的 Claude Code 2\.1\.311（最新 2\.1\.331）/.test(hx.text) &&
+      /没有可读的更新日志/.test(hx.text), hx);
+    await shot('30b-reports-harness.png');
     await evalJs("localStorage.setItem('ame.theme', JSON.stringify('win98')); localStorage.setItem('ame.wall', JSON.stringify('teal'))");
     await call('Page.reload'); await sleep(3000);
     await evalJs("[...document.querySelectorAll('.dicon')].find(b => b.textContent.includes('工作日报')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"); await sleep(1500);
