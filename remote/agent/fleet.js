@@ -171,15 +171,46 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     return { ok: true, msg: '已写入，agent 马上重启', restart: true, notes: pending.notes };
   }
 
-  // the installers of what Claude Code / Codex / Antigravity run here, when those files changed (as deploy.js does)
+  // the installers of what Claude Code / Codex / OpenCode / Antigravity run here, when those files changed (as deploy.js does)
   async function hooks(changed, notes) {
-    if (changed.some((p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js')) {
-      const r = await run(process.execPath, [path.join(root, 'install-agy-hooks.js')], root, 30e3);
-      if (!r.ok) notes.push('Antigravity hooks 没装成：' + r.err.slice(-160));
-    }
-    if (changed.some((p) => p === 'install-mesh-mcp.js' || p === 'tools/ame-mesh.js' || p === 'remote/mcp/client.js')) {
-      const r = await run(process.execPath, [path.join(root, 'install-mesh-mcp.js')], root, 30e3);
-      if (!r.ok) notes.push('MCP 登记没做成：' + r.err.slice(-160));
+    const hasDir = (p) => { try { return fs.existsSync(p); } catch { return false; } };
+    const xdg = env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, '.config');
+    const tasks = [
+      {
+        label: 'Claude Code hooks',
+        script: path.join(root, 'headless', 'install-hooks.js'),
+        match: (p) => p === 'headless/install-hooks.js' || p === 'hook-relay.js' || p === 'permission-hook.js',
+        present: () => hasDir(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')),
+      },
+      {
+        label: 'Codex hooks',
+        script: path.join(root, 'install-codex-hooks.js'),
+        match: (p) => p === 'install-codex-hooks.js' || p === 'codex-hook.js',
+        present: () => hasDir(env.CODEX_HOME || path.join(home, '.codex')),
+      },
+      {
+        label: 'OpenCode plugin',
+        script: path.join(root, 'install-opencode-plugin.js'),
+        match: (p) => p === 'install-opencode-plugin.js' || p.startsWith('opencode-plugin/'),
+        present: () => hasDir(env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode')),
+      },
+      {
+        label: 'Antigravity hooks',
+        script: path.join(root, 'install-agy-hooks.js'),
+        match: (p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js',
+        present: () => hasDir(env.AGY_CONFIG_DIR || path.join(home, '.gemini')),
+      },
+      {
+        label: 'MCP 登记',
+        script: path.join(root, 'install-mesh-mcp.js'),
+        match: (p) => p === 'install-mesh-mcp.js' || p === 'tools/ame-mesh.js' || p === 'remote/mcp/client.js',
+        present: () => true,
+      },
+    ];
+    for (const t of tasks) {
+      if (!changed.some(t.match) || !t.present() || !hasDir(t.script)) continue;
+      const r = await run(process.execPath, [t.script], root, 30e3);
+      if (!r.ok) notes.push(`${t.label} 没装成：` + r.err.slice(-160));
     }
   }
 

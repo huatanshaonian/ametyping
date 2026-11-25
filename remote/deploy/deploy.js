@@ -194,8 +194,18 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
         const head = git(['rev-parse', 'HEAD']);
         if (head !== commit) { say(`  这个工作目录在 ${head.slice(0, 7)}，不是 ${commit.slice(0, 7)}：本机 agent 用的是工作目录里的代码，先切到 ${REF} 再重启它`); continue; }
         if (DRY) { say('  （--dry-run：会重启本机 agent）'); continue; }
-        try { run(process.execPath, [path.resolve(__dirname, '..', '..', 'install-agy-hooks.js')]); } catch {}
-        try { run(process.execPath, [path.resolve(__dirname, '..', '..', 'install-mesh-mcp.js')]); } catch {}
+        const rootDir = path.resolve(__dirname, '..', '..');
+        const homeDir = require('os').homedir();
+        const xdgDir = process.env.XDG_CONFIG_HOME && path.isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : path.join(homeDir, '.config');
+        for (const [script, present] of [
+          [path.join(rootDir, 'headless', 'install-hooks.js'), fs.existsSync(process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude'))],
+          [path.join(rootDir, 'install-codex-hooks.js'), fs.existsSync(process.env.CODEX_HOME || path.join(homeDir, '.codex'))],
+          [path.join(rootDir, 'install-opencode-plugin.js'), fs.existsSync(process.env.OPENCODE_CONFIG_DIR || path.join(xdgDir, 'opencode'))],
+          [path.join(rootDir, 'install-agy-hooks.js'), fs.existsSync(process.env.AGY_CONFIG_DIR || path.join(homeDir, '.gemini'))],
+          [path.join(rootDir, 'install-mesh-mcp.js'), true],
+        ]) {
+          if (present && fs.existsSync(script)) { try { run(process.execPath, [script]); } catch {} }
+        }
         const result = run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
           path.join(__dirname, 'restart-local-agent.ps1'), '-Root', path.resolve(__dirname, '..', '..'), '-TaskName', a.task]);
         say('  已确认新 agent 进程：' + String(result).trim());

@@ -279,7 +279,10 @@ describe('Antigravity (agy) Hook & Installer', () => {
       for (const ev of expectedEvents) {
         assert.ok(content.ametyping[ev], `Missing hook event ${ev}`);
         assert.ok(Array.isArray(content.ametyping[ev]));
-        if (ev === 'PreToolUse' || ev === 'PostToolUse') {
+        if (ev === 'PreToolUse') {
+          assert.equal(content.ametyping[ev][0].matcher, 'ask_question|AskUserQuestion');
+          assert.ok(Array.isArray(content.ametyping[ev][0].hooks));
+        } else if (ev === 'PostToolUse') {
           assert.equal(content.ametyping[ev][0].matcher, '*');
           assert.ok(Array.isArray(content.ametyping[ev][0].hooks));
         } else {
@@ -454,10 +457,18 @@ describe('Antigravity (agy) Hook & Installer', () => {
       assert.equal(received.body.hookEvent, 'Stop');
       assert.equal(typeof received.body.eventAt, 'number');
 
-      // 5. Malformed stdin handles gracefully
+      // 5. Malformed stdin handles gracefully (PreToolUse fails open to allow)
       const malformedRes = await runChild(port, '{ bad json');
       assert.equal(malformedRes.code, 0);
       assert.deepEqual(JSON.parse(malformedRes.stdout), {});
+      const preToolFallback = await runChild(port, {
+        conversationId: rootId,
+        hook_event_name: 'PreToolUse',
+        tool_name: 'read_file',
+        tool_input: { Path: 'a.js' },
+      }, 'PreToolUse');
+      assert.equal(preToolFallback.code, 0);
+      assert.equal(JSON.parse(preToolFallback.stdout).decision, 'allow');
     });
   });
 });

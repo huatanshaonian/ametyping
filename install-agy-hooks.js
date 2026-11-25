@@ -65,7 +65,9 @@ function mergeHooks(existing, node = process.execPath, script = path.join(__dirn
   for (const event of EVENTS) {
     const command = commandFor(node, script, event, onPath);
     if (GROUPED_EVENTS.has(event)) {
-      group[event] = [{ matcher: '*', hooks: [{ type: 'command', command, timeout: event === 'PreToolUse' ? 120 : 3 }] }];
+      // Only intercept ask_question on PreToolUse so normal tools keep AGY's native permissions and can never be fail-closed denied.
+      const matcher = event === 'PreToolUse' ? 'ask_question|AskUserQuestion' : '*';
+      group[event] = [{ matcher, hooks: [{ type: 'command', command, timeout: event === 'PreToolUse' ? 120 : 3 }] }];
     } else {
       // AGY hooks.json requires flat handler arrays for non-tool events (SessionStart/PreInvocation/PostInvocation/Stop)
       group[event] = [{ type: 'command', command, timeout: 3 }];

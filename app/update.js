@@ -51,9 +51,19 @@ async function update(root, { task = 'AmeTyping Agent' } = {}) {
     const r = await npm(args, path.join(root, dir));
     if (!r.ok) notes.push(`${dir}/ 的依赖没装成（手动运行 npm install）：${tail(r.err, 200)}`);
   }
-  if (files.some((f) => f === 'install-agy-hooks.js' || f === 'agy-hook.js')) {
-    const r = await run('node', [path.join(root, 'install-agy-hooks.js')], root, 15e3);
-    if (!r.ok) notes.push(`Antigravity hooks 没装成（手动运行 node install-agy-hooks.js）：${tail(r.err, 200)}`);
+  const os = require('os');
+  const home = os.homedir();
+  const xdg = process.env.XDG_CONFIG_HOME && path.isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : path.join(home, '.config');
+  const hookTasks = [
+    ['Claude Code hooks', path.join(root, 'headless', 'install-hooks.js'), (f) => f === 'headless/install-hooks.js' || f === 'hook-relay.js' || f === 'permission-hook.js', process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')],
+    ['Codex hooks', path.join(root, 'install-codex-hooks.js'), (f) => f === 'install-codex-hooks.js' || f === 'codex-hook.js', process.env.CODEX_HOME || path.join(home, '.codex')],
+    ['OpenCode plugin', path.join(root, 'install-opencode-plugin.js'), (f) => f === 'install-opencode-plugin.js' || f.startsWith('opencode-plugin/'), process.env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode')],
+    ['Antigravity hooks', path.join(root, 'install-agy-hooks.js'), (f) => f === 'install-agy-hooks.js' || f === 'agy-hook.js', process.env.AGY_CONFIG_DIR || path.join(home, '.gemini')],
+  ];
+  for (const [label, script, match, dir] of hookTasks) {
+    if (!files.some(match) || !fs.existsSync(dir) || !fs.existsSync(script)) continue;
+    const r = await run('node', [script], root, 15e3);
+    if (!r.ok) notes.push(`${label} 没装成（手动运行 node ${path.relative(root, script)}）：${tail(r.err, 200)}`);
   }
   if (files.some((f) => /^(remote\/agent|headless|app)\//.test(f)) && !(await restartAgent(root, task))) notes.push('看板 agent 没有重启（没找到它的计划任务）：需要的话手动重启');
   return { ok: true, changed: true, msg: `已更新 ${log.length || 1} 项改动`, detail: [...log.slice(0, 8), log.length > 8 ? `…… 共 ${log.length} 项` : '', ...notes].filter(Boolean).join('\n') };

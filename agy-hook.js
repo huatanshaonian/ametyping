@@ -278,7 +278,8 @@ function handleEvent(d, argEvent, eventAt = Date.now()) {
         };
       }
       const isRead = ['read_file', 'view_file', 'view_file_outline', 'view_code_item', 'Read', 'list_dir', 'find_by_name', 'Glob', 'grep_search', 'Grep', 'search_web', 'WebSearch', 'read_url_content', 'WebFetch'].includes(name);
-      return ret(isRead ? '/event/reading' : '/event/thinking', { ...base, tool: name, text: describeTool(name, args) });
+      // AGY PreToolUse requires a "decision" field (empty {} is treated as fail-closed deny).
+      return ret(isRead ? '/event/reading' : '/event/thinking', { ...base, tool: name, text: describeTool(name, args) }, ev === 'PreToolUse' ? { decision: 'allow' } : '{}');
     }
     case 'PostToolUse': {
       const tc = d.toolCall || {};
@@ -377,12 +378,16 @@ function run() {
   const argEvent = process.argv[2] || '';
   const eventAt = Date.now();
   const deadline = eventAt + 2000;
+  // AGY PreToolUse is fail-closed when stdout lacks "decision"; fall back to allow on timeout/error/defer.
+  const fallbackOut = argEvent === 'PreToolUse' ? { decision: 'allow' } : {};
   let finished = false, handled = false, guard;
-  const finish = (outputVal = {}) => {
+  const finish = (outputVal = fallbackOut) => {
     if (finished) return;
     finished = true;
     clearTimeout(guard);
-    const outputStr = typeof outputVal === 'string' ? outputVal : JSON.stringify(outputVal);
+    const out = (argEvent === 'PreToolUse' && outputVal && typeof outputVal === 'object' && !outputVal.decision)
+      ? { decision: 'allow' } : outputVal;
+    const outputStr = typeof out === 'string' ? out : JSON.stringify(out);
     process.stdout.write(outputStr, () => process.exit(0));
   };
   guard = setTimeout(finish, 2000);
