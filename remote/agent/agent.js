@@ -48,7 +48,7 @@ const codexAgents = require('./codex-subagents');
 const agyAgents = require('./agy-subagents');
 const { probeCompute } = require('./compute-probe');
 const { findColabBin, probeColabUsage, runColabJob } = require('./colab-runner');
-const { loadSugonConfig, probeSugonStatus, runSugonJob } = require('./sugon-runner');
+const { loadSugonConfig, probeSugonStatus, scanSugonFailures, runSugonJob } = require('./sugon-runner');
 const { readCodexRateLimits } = require('./codex-quota');
 const { createCollector, stateSignature } = require('./infra-probe');
 const infraCollector = createCollector({ isNas: false });
@@ -391,6 +391,7 @@ function maybeReportComputeProbe() {
   pushLocalQuota(now);
   maybeReportColabStatus(now);
   maybeReportSugonStatus(now);
+  maybeScanSugonFailures(now);
 }
 
 const COLAB_PROBE_INTERVAL_MS = 5 * 60 * 1000;
@@ -994,6 +995,24 @@ function maybeReportSugonStatus(now = Date.now(), force = false) {
     .finally(() => { sugonBusy = false; });
 }
 
+let lastSugonScanAt = 0, sugonScanBusy = false;
+const seenSugonFailures = new Set();
+function maybeScanSugonFailures(now = Date.now()) {
+  if (!ws || ws.readyState !== 1 || sugonScanBusy) return;
+  if (now - lastSugonScanAt < 3 * 60000) return;
+  if (!loadSugonConfig()) return;
+  sugonScanBusy = true;
+  lastSugonScanAt = now;
+  scanSugonFailures({ seenFailedIds: seenSugonFailures, lookbackMinutes: 20 })
+    .then((alerts) => {
+      for (const alert of (Array.isArray(alerts) ? alerts : [])) {
+        sendJSON({ t: 'sugon-alert', alert });
+      }
+    })
+    .catch(() => {})
+    .finally(() => { sugonScanBusy = false; });
+}
+
 const activeSugonJobs = new Map(); // jobId -> AbortController
 function runRemoteSugon(d) {
   if (!controlOn()) {
@@ -1007,6 +1026,7 @@ function runRemoteSugon(d) {
   activeSugonJobs.set(jobId, ac);
   runSugonJob({
     jobId,
+    profile: d.sugonProfile || d.profile || '',
     label: d.label || '',
     partition: d.partition || '',
     nodes: Number(d.nodes) || 1,
@@ -1029,6 +1049,10 @@ function runRemoteSugon(d) {
         exitCode: res && typeof res.exitCode === 'number' ? res.exitCode : 1,
         durationMs: (res && res.durationMs) || 0,
         tail: (res && res.tail) || '',
+        ...(res && res.slurmJobId ? { slurmJobId: res.slurmJobId } : {}),
+        ...(res && res.profileId ? { profileId: res.profileId } : {}),
+        ...(res && res.transferMethod ? { transferMethod: res.transferMethod } : {}),
+        ...(res && res.transferWarning ? { transferWarning: res.transferWarning } : {}),
         ...(res && res.error ? { error: res.error } : {}),
       });
       maybeReportSugonStatus(Date.now(), true);

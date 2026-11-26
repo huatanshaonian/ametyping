@@ -6,14 +6,19 @@ const os = require('os');
 const path = require('path');
 
 const {
+  stripClusterBanner,
+  buildRayfileDownloadPlan,
   parseSinfoPartitions,
   parseSqueueJobs,
+  parseSacctFailures,
   parseSbatchJobId,
   buildSbatchScript,
   probeSugonStatus,
+  scanSugonFailures,
   runSugonJob,
 } = require('../agent/sugon-runner');
 const { createComputeQueue } = require('../server/mesh-compute-queue');
+const { diagnoseSugonFailure, ruleBasedDiagnose } = require('../server/mesh-sugon-advisor');
 
 describe('sugon-runner (Sugon / SCNet HPC provider)', () => {
   it('parses sinfo partitions, squeue jobs, sbatch job id, and generates valid #SBATCH scripts', () => {
@@ -91,14 +96,14 @@ describe('sugon-runner (Sugon / SCNet HPC provider)', () => {
             return { ok: true, stdout: polls < 2 ? 'RUNNING\n' : '' };
           }
           if (joined.includes('sacct -j 778899')) return { ok: true, stdout: 'COMPLETED|0:0\n' };
-          if (joined.includes('tail -n 40')) return { ok: true, stdout: 'RCS converged\n' };
+          if (joined.includes('tail -n')) return { ok: true, stdout: 'RCS converged\n' };
           return { ok: true, stdout: '' };
         },
       });
       assert.equal(res.ok, true);
       assert.equal(res.slurmJobId, '778899');
       assert.match(res.tail, /RCS converged/);
-      assert.ok(calls.some((c) => c[0] === 'scp' && c.join(' ').includes('result.npz')));
+      assert.ok(calls.some((c) => (c[0] === 'rsync' || c[0] === 'scp') && c.join(' ').includes('result.npz')));
 
       // Abort triggers scancel
       const ac = new AbortController();
@@ -192,5 +197,175 @@ describe('sugon-runner (Sugon / SCNet HPC provider)', () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('supports multi-profile probing, banner stripping, rayfile-c 720Mbps download + fallback, and sacct failure scan', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-sugon-multi-'));
+    const cfgFile = path.join(tmp, 'sugon.json');
+    const nowMs = Date.parse('2026-11-26T14:00:00Z');
+    fs.writeFileSync(cfgFile, JSON.stringify({
+      defaultProfile: 'hf-huatan',
+      rayfileBin: '/fake/bin/rayfile-c',
+      profiles: [
+        {
+          id: 'hf-huatan',
+          label: '合肥 (huatan)',
+          region: '合肥',
+          account: 'huatan',
+          mode: 'ssh',
+          sshHost: 'scnet-huatan-hf',
+          defaultPartition: 'hfacnormal04',
+          remoteWorkDir: '/public/home/huatan/workspace/ame-jobs',
+          keyExpireAt: '2027-02-24 20:35:21',
+          rayfile: {
+            host: 'hefei03.nscc-hf.cn',
+            port: 65012,
+            user: 'huatan',
+            token: 'tok_ws',
+            shareRoot: '/workspace',
+            remoteRoot: '/public/home/huatan/workspace',
+          },
+        },
+        {
+          id: 'hf-acc',
+          label: '合肥 (acc143g266)',
+          region: '合肥',
+          account: 'acc143g266',
+          mode: 'ssh',
+          sshHost: 'scnet-acc-hf',
+          defaultPartition: 'hfacnormal04',
+          remoteWorkDir: '/public/home/acc143g266/TangYC/ame-jobs',
+          keyExpireAt: '2026-12-01 16:23:12',
+        },
+      ],
+    }));
+
+    try {
+      const cleaned = stripClusterBanner('Currently Loaded Modulefiles:\n  1) compiler/intel/2017.5.239\nhfacnormal04|up|149\n');
+      assert.equal(cleaned.trim(), 'hfacnormal04|up|149');
+
+      const probe = await probeSugonStatus({
+        configPath: cfgFile,
+        nowMs,
+        execFn: async () => ({
+          ok: true,
+          stdout: 'Currently Loaded Modulefiles:\n  1) compiler/intel/2017.5.239\nhfacnormal04|up|149\n---JOBS---\n',
+        }),
+      });
+      assert.equal(probe.available, true);
+      assert.equal(probe.onlineCount, 2);
+      assert.equal(probe.totalCount, 2);
+      assert.equal(probe.expiringKeys.length, 1);
+      assert.equal(probe.expiringKeys[0].id, 'hf-acc');
+
+      // Rayfile-c download path construction & execution
+      const outDir = path.join(tmp, 'nas-out');
+      const rfCalls = [];
+      const rfRes = await runSugonJob({
+        jobId: 'j_rf',
+        profile: 'hf-huatan',
+        command: 'python3 sim.py',
+        downloadPath: 'result.npz',
+        outputDir: outDir,
+        pollIntervalMs: 10,
+        configPath: cfgFile,
+        fsExists: (p) => p === '/fake/bin/rayfile-c',
+        execFn: async (cmd, args) => {
+          rfCalls.push([cmd, ...args]);
+          const joined = args.join(' ');
+          if (cmd === '/fake/bin/rayfile-c') return { ok: true, stdout: 'Download file completed', stderr: '' };
+          if (joined.includes('sbatch ')) return { ok: true, stdout: 'Submitted batch job 555001\n' };
+          if (joined.includes('squeue -j 555001')) return { ok: true, stdout: '' };
+          if (joined.includes('sacct -j 555001')) return { ok: true, stdout: 'COMPLETED|0:0|12G|00:10:00\n' };
+          return { ok: true, stdout: '' };
+        },
+      });
+      assert.equal(rfRes.ok, true);
+      assert.equal(rfRes.transferMethod, 'rayfile-c');
+      const rfCall = rfCalls.find((c) => c[0] === '/fake/bin/rayfile-c');
+      assert.ok(rfCall);
+      assert.ok(rfCall.includes('/workspace/ame-jobs/j_rf/result.npz'));
+
+      // sacct failure parser & watcher
+      const parsedFails = parseSacctFailures('901|cem_mom|hfacnormal04|OUT_OF_MEMORY|0:125|512G|01:02:03|/public/home/huatan/workspace/j1\n901.batch|batch||OUT_OF_MEMORY|0:125|512G|01:02:03|\n');
+      assert.equal(parsedFails.length, 1);
+      assert.equal(parsedFails[0].state, 'OUT_OF_MEMORY');
+
+      const seen = new Set();
+      const alerts = await scanSugonFailures({
+        configPath: cfgFile,
+        seenFailedIds: seen,
+        execFn: async (cmd, args) => {
+          const joined = args.join(' ');
+          if (joined.includes('sacct -u')) {
+            return { ok: true, stdout: '901|cem_mom|hfacnormal04|OUT_OF_MEMORY|0:125|512G|01:02:03|/public/home/huatan/workspace/j1\n' };
+          }
+          if (joined.includes('tail -n 100')) {
+            return { ok: true, stdout: 'slurmstepd: error: Detected 1 oom-kill event(s)\n' };
+          }
+          return { ok: true, stdout: '' };
+        },
+      });
+      assert.equal(alerts.length, 2);
+      assert.match(alerts[0].logTail, /oom-kill/);
+      // Second scan deduplicates
+      const alerts2 = await scanSugonFailures({ configPath: cfgFile, seenFailedIds: seen, execFn: async () => ({ ok: true, stdout: '901|cem_mom|hfacnormal04|OUT_OF_MEMORY|0:125|512G|01:02:03|/public/home/huatan/workspace/j1\n' }) });
+      assert.equal(alerts2.length, 0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('diagnoses Sugon failures via keyless pure-API Magpie call with deterministic fallback', async () => {
+    const oomRule = ruleBasedDiagnose({ state: 'OUT_OF_MEMORY', maxRss: '512G', logTail: 'oom-kill' });
+    assert.match(oomRule.category, /OOM/);
+
+    const fallbackDiag = await diagnoseSugonFailure({
+      alert: { profileLabel: '合肥 (huatan)', slurmJobId: '901', state: 'TIMEOUT', elapsed: '04:00:00', logTail: 'DUE TO TIME LIMIT' },
+      magpie: null,
+    });
+    assert.equal(fallbackDiag.viaLlm, false);
+    assert.match(fallbackDiag.category, /TIMEOUT/);
+    assert.match(fallbackDiag.summaryText, /超算报错诊断/);
+
+    const llmDiag = await diagnoseSugonFailure({
+      alert: { profileLabel: '昆山 (acc143g266)', slurmJobId: '902', state: 'FAILED', exitCode: '1:0', logTail: 'CUDA out of memory' },
+      magpie: {
+        status: () => ({ enabled: true, models: [{ id: 'google/gemini-2.5-flash' }] }),
+        run: async ({ model }) => ({
+          category: 'GPU 显存不足',
+          rootCause: `RTX 4090 24GB 显存耗尽 (${model})`,
+          suggestion: '减小 batch 或改用单精度 float32',
+        }),
+      },
+    });
+    assert.equal(llmDiag.viaLlm, true);
+    assert.equal(llmDiag.provider, 'Magpie API');
+    assert.equal(llmDiag.model, 'google/gemini-2.5-flash');
+    assert.match(llmDiag.summaryText, /Magpie API/);
+
+    // Google AI Studio takes priority over Magpie when configured in Win98 dataDir
+    let magpieCalled = false;
+    const gDiag = await diagnoseSugonFailure({
+      alert: { profileLabel: '合肥 (huatan)', slurmJobId: '903', state: 'FAILED', exitCode: '139:0', logTail: 'Segmentation fault' },
+      googleAiKey: {
+        get: () => 'AIzaSyFakeTestKey1234567890',
+        models: () => [{ model: 'gemini-2.5-pro' }, { model: 'gemini-2.5-flash' }],
+      },
+      runGoogleAiFn: async ({ key, model }) => {
+        assert.equal(key, 'AIzaSyFakeTestKey1234567890');
+        assert.equal(model, 'gemini-2.5-flash');
+        return { category: '段错误 (SIGSEGV)', rootCause: '内存越界访问', suggestion: '检查网格数组下标与 ulimit -s' };
+      },
+      magpie: {
+        status: () => ({ enabled: true, models: [{ id: 'claude-sonnet' }] }),
+        run: async () => { magpieCalled = true; return {}; },
+      },
+    });
+    assert.equal(gDiag.viaLlm, true);
+    assert.equal(gDiag.provider, 'Google AI Studio');
+    assert.equal(gDiag.model, 'gemini-2.5-flash');
+    assert.equal(magpieCalled, false);
+    assert.match(gDiag.summaryText, /Google AI Studio/);
   });
 });
