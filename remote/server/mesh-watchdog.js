@@ -93,6 +93,8 @@ function createWatchdog({
   save = () => {},
   now = () => Date.now(),
   onQuotaExhausted = null,
+  onL3Idle = null,
+  l3IdleMs = 60e3,
   postBoard = null,
 }) {
   const { getConfig, updateConfig } = loadMeshConfig(dataDir);
@@ -623,6 +625,36 @@ function createWatchdog({
       } else {
         pt.stallSince = 0;
         pt.stallAlerted = false;
+      }
+
+      // L3 Auto-Mode Judge: when deliveryGate==='L3' and Master + all active Workers are idle, invoke pure-API judge
+      if (typeof onL3Idle === 'function' && proj.deliveryGate === 'L3' && proj.autoJudgeDone !== true) {
+        const activeNodes = (proj.nodes || []).filter((n) => n && !n.archived);
+        const masterNode = activeNodes.find((n) => n.role === 'master' && n.sessionId);
+        const masterLive = masterNode ? liveSessionOf(masterNode.machine, masterNode.sessionId) : null;
+        const masterIdle = !!(masterLive && masterLive.online && !masterLive.asking && ['idle', 'done'].includes(masterLive.state));
+        const anyNodeBusyOrAsking = activeNodes.some((n) => {
+          if (!n.sessionId) return false;
+          const live = liveSessionOf(n.machine, n.sessionId);
+          return !!(live && live.online && (live.asking || ['working', 'thinking', 'reading', 'message'].includes(live.state)));
+        });
+        if (masterNode && masterIdle && !anyNodeBusyOrAsking) {
+          if (!pt.l3IdleSince) pt.l3IdleSince = curTime;
+          const cooled = curTime - (proj.lastAutoJudgeAt || 0) >= 90e3;
+          if (!pt.l3Busy && cooled && curTime - pt.l3IdleSince >= l3IdleMs) {
+            pt.l3Busy = true;
+            Promise.resolve(onL3Idle(proj, masterNode))
+              .catch(() => {})
+              .finally(() => {
+                pt.l3Busy = false;
+                pt.l3IdleSince = 0;
+              });
+          }
+        } else {
+          pt.l3IdleSince = 0;
+        }
+      } else {
+        pt.l3IdleSince = 0;
       }
     }
   }
