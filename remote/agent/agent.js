@@ -49,7 +49,7 @@ const agyAgents = require('./agy-subagents');
 const opencodeAgents = require('./opencode-subagents');
 const { probeCompute } = require('./compute-probe');
 const { findColabBin, probeColabUsage, runColabJob } = require('./colab-runner');
-const { loadSugonConfig, probeSugonStatus, scanSugonFailures, runSugonJob } = require('./sugon-runner');
+const { loadSugonConfig, probeSugonStatus, scanSugonFailures, querySugonHistory, readSugonJobLogs, updateSugonProfileKey, runSugonJob } = require('./sugon-runner');
 const { readCodexRateLimits } = require('./codex-quota');
 const { createCollector, stateSignature } = require('./infra-probe');
 const infraCollector = createCollector({ isNas: false });
@@ -884,6 +884,21 @@ function connect() {
     else if (d.t === 'sugon-kill' && typeof d.jobId === 'string') {
       killRemoteSugon(d.jobId);
     }
+    else if (d.t === 'sugon-query' && typeof d.rid === 'string') {
+      const args = (d.args && typeof d.args === 'object') ? d.args : {};
+      const run = d.op === 'history'
+        ? querySugonHistory(args)
+        : d.op === 'logs'
+          ? readSugonJobLogs(args)
+          : d.op === 'update-key'
+            ? (controlOn()
+              ? updateSugonProfileKey(args).then((r) => { maybeReportSugonStatus(Date.now(), true); return r; })
+              : Promise.resolve({ ok: false, msg: '这台网关机没开远程控制（agent.json "control": true）' }))
+            : Promise.resolve({ ok: false, msg: '不支持的 sugon-query 操作：' + d.op });
+      run
+        .then((r) => sendJSON({ t: 'sugon-query-res', rid: d.rid, ...r }))
+        .catch((e) => sendJSON({ t: 'sugon-query-res', rid: d.rid, ok: false, msg: (e && e.message) || '超算查询失败' }));
+    }
     else if ((d.t === 'send' || d.t === 'key' || d.t === 'screen' || d.t === 'decide' || d.t === 'launch' || d.t === 'resume' || d.t === 'worktree-check' || d.t === 'worktree-remove') && typeof d.rid === 'string') {
       control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
     }
@@ -1337,7 +1352,7 @@ function mcpCall(req, res, out) {
   req.on('end', () => {
     let d = {}; try { d = JSON.parse(body || '{}'); } catch { return out(400, { ok: false, msg: 'invalid json' }); }
     if (cfg.mcp === false) return out(200, { ok: false, msg: '这台电脑的 agent 关掉了 MCP 转发（agent.json 里 "mcp": false）' });
-    if (!['literature', 'research'].includes(d.service) || !['info', 'call', 'pdf'].includes(d.op)) return out(400, { ok: false, msg: '不支持的请求' });
+    if (!['literature', 'research', 'hpc'].includes(d.service) || !['info', 'call', 'pdf'].includes(d.op)) return out(400, { ok: false, msg: '不支持的请求' });
     if (!ws || ws.readyState !== 1) return out(200, { ok: false, msg: '本机 agent 还没连上看板服务器' });
     const rid = 'mcp-' + crypto.randomBytes(8).toString('hex');
     const timer = setTimeout(() => { if (mcpPending.delete(rid)) out(200, { ok: false, msg: '看板服务器响应超时' }); }, d.op === 'pdf' ? 600e3 : 120e3);

@@ -427,6 +427,84 @@ export function createComputeView({ say = () => {} } = {}) {
     );
   }
 
+  function openSugonKeyDialog(sugonMeta = {}) {
+    const profs = Array.isArray(sugonMeta.profiles) ? sugonMeta.profiles : [];
+    const profSel = h('select', { class: 'field' },
+      ...(profs.length
+        ? profs.map((pf) => h('option', {
+            value: pf.id,
+            text: `${pf.label || pf.id}${pf.keyExpiringSoon ? ` [剩 ${pf.keyDaysLeft} 天]` : pf.keyExpireAt ? ` (${pf.keyExpireAt.slice(0, 10)})` : ''}`,
+          }))
+        : [h('option', { value: '', text: '默认配置档' })])
+    );
+    const expFirst = profs.find((x) => x.keyExpiringSoon);
+    if (expFirst) profSel.value = expFirst.id;
+
+    let keyText = '';
+    let keyName = '';
+    const fileIn = h('input', { class: 'field', type: 'file', accept: '.txt,.pem,.key,*/*' });
+    const expireIn = h('input', { class: 'field', type: 'text', placeholder: '自动从文件名解析，如 2027-02-24 20:35:21' });
+    const rfTokIn = h('input', { class: 'field', type: 'text', placeholder: '可选：更新 rayfile-c 的 -w 快传令牌（留空不变）' });
+    const fileHint = h('div', { class: 'inf-comp-muted', style: 'margin:4px 0', text: '请选择从 SCNet 控制台 E-Shell 下载的 *_rsa.txt 私钥文件（直传网关机 0600 落盘并自动实测连通性）。' });
+
+    fileIn.addEventListener('change', async () => {
+      const f = fileIn.files && fileIn.files[0];
+      if (!f) { keyText = ''; keyName = ''; return; }
+      keyName = f.name || '';
+      try {
+        keyText = await f.text();
+        const m = /RsaKeyExpireTime_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/i.exec(keyName);
+        if (m) expireIn.value = `${m[1]} ${m[2]}:${m[3]}:${m[4]}`;
+        fileHint.textContent = `已载入：${keyName}（${keyText.length} 字节）`;
+      } catch {
+        keyText = '';
+        fileHint.textContent = '读取文件失败，请重试';
+      }
+    });
+
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '更新曙光超算 SSH 私钥 / 快传令牌' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        h('label', { class: 'xnote-lbl', text: '目标超算入口 (Profile)：' }), profSel,
+        h('label', { class: 'xnote-lbl', text: '选择新的 *_rsa.txt 私钥文件：' }), fileIn,
+        fileHint,
+        h('label', { class: 'xnote-lbl', text: '密钥到期时间（自动解析，可手改）：' }), expireIn,
+        h('label', { class: 'xnote-lbl', text: '更新快传 -w 令牌（可选）：' }), rfTokIn,
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '上传并验证连通' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!keyText.trim() && !rfTokIn.value.trim()) {
+        say('请先选择私钥文件或填写新的快传令牌');
+        return;
+      }
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = '上传并验证中...'; }
+      const r = await net.post('/api/mesh/sugon/update-key', {
+        profileId: profSel.value,
+        keyContent: keyText,
+        keyFileName: keyName,
+        keyExpireAt: expireIn.value.trim(),
+        rayfileToken: rfTokIn.value.trim(),
+      });
+      if (r && r.ok) {
+        done();
+        say(r.msg || '已更新并验证通过');
+        await refresh();
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '上传并验证连通'; }
+        say((r && r.msg) || '更新密钥失败');
+      }
+    });
+    const wrap = h('div', { class: 'dlg' }, form);
+    document.body.append(wrap);
+  }
+
   function render() {
     const jobs = Array.isArray(data.jobs) ? data.jobs : [];
     const running = jobs.filter((j) => j.status === 'running');
@@ -508,15 +586,24 @@ export function createComputeView({ say = () => {} } = {}) {
               h('b', { text: p.name }),
               h('span', { class: 'inf-comp-tag', text: `${statusTxt} · ${modeLabel}${totalCnt > 1 ? ` · ${onlineCnt}/${totalCnt} 入口` : ''}` }),
               rfCnt > 0 ? h('span', { class: 'inf-comp-tag', text: `快传 ${rfCnt}` }) : null,
-              p.status === 'active'
-                ? h('button', {
-                    class: 'btn',
-                    type: 'button',
-                    style: 'margin-left:auto;padding:1px 6px;font-size:10px',
-                    text: '投曙光',
-                    onclick: () => openSubmitDialog('', { providerType: 'sugon' }),
-                  })
-                : null
+              h('div', { style: 'margin-left:auto;display:flex;gap:4px' },
+                h('button', {
+                  class: 'btn',
+                  type: 'button',
+                  style: 'padding:1px 6px;font-size:10px',
+                  text: '更新密钥',
+                  onclick: () => openSugonKeyDialog(meta),
+                }),
+                p.status === 'active'
+                  ? h('button', {
+                      class: 'btn',
+                      type: 'button',
+                      style: 'padding:1px 6px;font-size:10px',
+                      text: '投曙光',
+                      onclick: () => openSubmitDialog('', { providerType: 'sugon' }),
+                    })
+                  : null
+              )
             ),
             h('div', { class: 'inf-comp-meta', style: 'margin-top:4px' },
               h('span', { text: `网关机: ${meta.machine || '—'}` }),

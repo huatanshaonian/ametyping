@@ -95,8 +95,8 @@ function mcp(service, extraEnv = {}) {
     cp.execFileSync(process.execPath, [path.resolve(R, '..', 'install-mesh-mcp.js')], { env: agentEnv });
     const oc = JSON.parse(fs.readFileSync(path.join(HOME, '.config', 'opencode', 'opencode.json'), 'utf8'));
     const cl = JSON.parse(fs.readFileSync(path.join(HOME, '.claude.json'), 'utf8')), cx = fs.readFileSync(path.join(HOME, '.codex', 'config.toml'), 'utf8');
-    ok('install-mesh-mcp.js: the three in Claude Code, OpenCode, Codex; the others\' entries kept', ['ame-mesh', 'windose-literature', 'windose-research'].every((n) => cl.mcpServers[n] && oc.mcp[n] && cx.includes(`[mcp_servers.${n}]`)) &&
-      oc.mcp.other && oc.provider && oc.mcp['windose-literature'].command.slice(-2).join(' ').endsWith('client.js literature'), [cl, oc, cx]);
+    ok('install-mesh-mcp.js: the four in Claude Code, OpenCode, Codex; the others\' entries kept', ['ame-mesh', 'windose-literature', 'windose-research', 'windose-hpc'].every((n) => cl.mcpServers[n] && oc.mcp[n] && cx.includes(`[mcp_servers.${n}]`)) &&
+      oc.mcp.other && oc.provider && oc.mcp['windose-literature'].command.slice(-2).join(' ').endsWith('client.js literature') && oc.mcp['windose-hpc'].command.slice(-2).join(' ').endsWith('client.js hpc'), [cl, oc, cx]);
     startAgent();
     await until(async () => { const r = await G('/api/mcp'); const m = r && r.machines.find((x) => x.name === 'pc-test'); return m && m.online && m.status; }, 15000);
 
@@ -130,8 +130,8 @@ function mcp(service, extraEnv = {}) {
     ok('the agent forwards only the two services, and only with its token', !bad.ok && /不支持/.test(bad.msg) && noTok === 403, [bad, noTok]);
     const mp = await G('/api/mcp'), me = mp.machines.find((x) => x.name === 'pc-test');
     const st = (cid) => me.status.clients.find((c) => c.id === cid);
-    ok('控制面板 › MCP: the three described with their tools; this machine\'s clients and what they have', mp.servers.map((s) => s.name).join() === 'ame-mesh,windose-literature,windose-research' &&
-      mp.servers.every((s) => s.tools.length && s.enabled) && st('claude').servers.length === 3 && st('opencode').servers.length === 3 && st('codex').servers.length === 3 && !st('kiro').present && me.status.forward, mp);
+    ok('控制面板 › MCP: the four described with their tools; this machine\'s clients and what they have', mp.servers.map((s) => s.name).join() === 'ame-mesh,windose-literature,windose-research,windose-hpc' &&
+      mp.servers.every((s) => s.tools.length && s.enabled) && st('claude').servers.length === 4 && st('opencode').servers.length === 4 && st('codex').servers.length === 4 && !st('kiro').present && me.status.forward, mp);
 
     // ---- the agent with "mcp": false ----
     for (const k of kids.slice(1)) k.kill();

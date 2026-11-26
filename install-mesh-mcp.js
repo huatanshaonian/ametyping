@@ -14,14 +14,19 @@ const path = require('path');
 
 const MESH_SCRIPT = path.join(__dirname, 'tools', 'ame-mesh.js');
 const CLIENT_SCRIPT = path.join(__dirname, 'remote', 'mcp', 'client.js');
-const NAMES = ['ame-mesh', 'windose-literature', 'windose-research'];
+const NAMES = ['ame-mesh', 'windose-literature', 'windose-research', 'windose-hpc'];
 
 // the entries to write: [{ name, args }] (command is node); only ame-mesh unless asked (the older callers)
 function entriesOf({ script = MESH_SCRIPT, client = CLIENT_SCRIPT, entries = null } = {}) {
   return entries || [{ name: 'ame-mesh', args: [script, 'mcp'] }];
 }
 function allEntries({ script = MESH_SCRIPT, client = CLIENT_SCRIPT } = {}) {
-  return [{ name: 'ame-mesh', args: [script, 'mcp'] }, { name: 'windose-literature', args: [client, 'literature'] }, { name: 'windose-research', args: [client, 'research'] }];
+  return [
+    { name: 'ame-mesh', args: [script, 'mcp'] },
+    { name: 'windose-literature', args: [client, 'literature'] },
+    { name: 'windose-research', args: [client, 'research'] },
+    { name: 'windose-hpc', args: [client, 'hpc'] },
+  ];
 }
 const isObj = (o) => o && typeof o === 'object' && !Array.isArray(o);
 const clone = (o) => (isObj(o) ? JSON.parse(JSON.stringify(o)) : {});
