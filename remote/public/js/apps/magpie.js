@@ -1,6 +1,7 @@
 import { h, icon, prefs } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import { confirmBox } from '../dialog.js';
 let inst;
 const number = (v, digits = 0) => typeof v === 'number' ? v.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '未知';
 const when = v => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '未知';
@@ -28,8 +29,126 @@ function mount() {
   root.append(tools, body, h('footer', { class: 'mp-statusbar' }, status));
   select.addEventListener('change', () => { period = select.value; load(); });
   search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); if (last) render(last); });
-  let last;
+  let last, fableAdvice = null, fableForce = false, meshMachines = [];
   function stat(label, value) { return h('div', { class: 'mp-stat' }, h('small', { text: label }), h('strong', { text: value })); }
+  function openFableLaunchDialog(s) {
+    const onlineCtrl = (meshMachines || []).filter((m) => m.online && m.control);
+    const machList = onlineCtrl.length ? onlineCtrl : (meshMachines || []);
+    const defaultMach = s.machine || (machList[0] ? machList[0].machine : '');
+    const defaultDir = s.cwd || ((machList.find((m) => m.machine === defaultMach)?.computeDirs || [])[0]?.path) || '';
+    const machSel = h('select', { class: 'field' },
+      ...(machList.length
+        ? machList.map((m) => h('option', { value: m.machine, text: `${m.machine}${m.online ? '' : ' (离线)'}` }))
+        : [h('option', { value: '', text: '暂无在线可控机器' })])
+    );
+    if (defaultMach) machSel.value = defaultMach;
+    const cwdIn = h('input', { class: 'field', type: 'text', value: defaultDir, placeholder: '目标机器上的项目/工作目录绝对路径' });
+    const done = () => wrap.remove();
+    const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
+      h('div', { class: 'dlgt' }, h('span', { text: '派发 Fable 5.2 只读顾问会话' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
+      h('div', { class: 'dlgb' },
+        h('div', { class: 'mp-muted', style: 'margin-bottom:6px', text: `难题：${s.title}` }),
+        h('label', { class: 'xnote-lbl', text: '运行 OpenCode 顾问的机器：' }), machSel,
+        h('label', { class: 'xnote-lbl', text: '工作目录（cwd）：' }), cwdIn,
+        h('div', { class: 'dlga' },
+          h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
+          h('button', { class: 'btn go', type: 'submit', text: '启动只读顾问' })
+        )
+      )
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const mach = machSel.value;
+      const cwd = cwdIn.value.trim();
+      if (!mach || !cwd) { status.textContent = '请指定目标机器与工作目录'; return; }
+      done();
+      const r = await net.post('/api/mesh/fable-advice/launch', {
+        projectId: s.projectId || '',
+        machine: mach,
+        cwd,
+        title: s.title,
+        advisorPrompt: s.advisorPrompt,
+      });
+      status.textContent = (r && r.ok) ? `已在 ${mach} 启动 Fable 5.2 只读顾问` : ((r && r.msg) || '启动 Fable 顾问失败');
+    });
+    const wrap = h('div', { class: 'dlg' }, form);
+    document.body.append(wrap);
+  }
+
+  function renderFableAdvisor() {
+    const adv = fableAdvice;
+    const win = adv && adv.window;
+    const sugs = (adv && Array.isArray(adv.suggestions)) ? adv.suggestions : [];
+    const badgeTxt = !adv
+      ? '检测中'
+      : adv.due
+        ? '临近到期 · 建议消化'
+        : adv.preview
+          ? '预览模式'
+          : adv.exhausted
+            ? '额度已耗尽'
+            : adv.found
+              ? '未达到期阈值'
+              : '未接入 Devin';
+    const winTxt = win
+      ? `${win.name || '窗口'} 余 ${win.remainingPct != null ? `${win.remainingPct}%` : '未知'}${win.hoursLeft != null ? ` · ${win.hoursLeft} 小时后重置` : ''}`
+      : ((adv && adv.reason) || '等待 Magpie 读取 Devin 额度窗口');
+
+    return h('article', { class: 'mp-account', style: 'margin-top:10px' },
+      h('header', {},
+        h('div', {},
+          h('h3', { text: 'Devin / Fable 5.2 难题顾问（临近到期消化）' }),
+          h('span', { text: winTxt })
+        ),
+        h('div', { style: 'display:flex;align-items:center;gap:6px' },
+          h('span', { class: 'mp-badge' + (adv && adv.due ? '' : ' mp-warn'), text: badgeTxt }),
+          h('button', {
+            class: 'btn',
+            type: 'button',
+            text: fableForce ? '切回自动触发' : '预览推荐难题',
+            onclick: () => { fableForce = !fableForce; load(); },
+          })
+        )
+      ),
+      sugs.length
+        ? h('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-top:6px' },
+            ...sugs.map((s) => h('div', { class: 'mp-window', style: 'margin:0' },
+              h('div', { class: 'mp-window-head' },
+                h('b', { text: `${s.source || '难题'}${s.projectName ? ` · ${s.projectName}` : ''}` }),
+                h('button', {
+                  class: 'btn go',
+                  type: 'button',
+                  style: 'padding:1px 8px;font-size:11px',
+                  text: '派 Fable 顾问',
+                  onclick: async () => {
+                    if (s.machine && s.cwd) {
+                      if (!(await confirmBox(`确定在 ${s.machine} (${s.cwd}) 启动只读 Fable 5.2 顾问分析「${s.title}」吗？`))) return;
+                      const r = await net.post('/api/mesh/fable-advice/launch', {
+                        projectId: s.projectId || '',
+                        machine: s.machine,
+                        cwd: s.cwd,
+                        title: s.title,
+                        advisorPrompt: s.advisorPrompt,
+                      });
+                      status.textContent = (r && r.ok) ? `已在 ${s.machine} 启动 Fable 5.2 顾问` : ((r && r.msg) || '启动失败');
+                    } else {
+                      openFableLaunchDialog(s);
+                    }
+                  },
+                })
+              ),
+              h('div', { style: 'font-weight:bold;margin-top:3px', text: s.title }),
+              s.detail ? h('small', { class: 'mp-muted', text: s.detail.slice(0, 160) }) : ''
+            ))
+          )
+        : h('p', {
+            class: 'mp-muted',
+            text: adv && (adv.due || adv.preview)
+              ? '当前未从项目阻塞项或重要计划中筛出高难度待攻克难题。'
+              : '当 Devin 7天/1天额度余量 >= 50% 且临近重置时自动推荐 Top 3 难题；也可点右上角“预览推荐难题”手动查看。',
+          })
+    );
+  }
   function windowRow(w) {
     const known = typeof w.remaining === 'number', pct = known ? Math.min(100, Math.max(0, w.remaining)) : null;
     const meter = h('div', { class: 'mp-meter' + (known && pct <= 15 ? ' mp-low' : '') + (!known ? ' mp-unknown' : ''), role: 'meter', 'aria-label': w.name + '剩余额度', ...(known ? { 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 } : {}) }, h('span', { style: `width:${pct ?? 0}%` }));
@@ -65,11 +184,24 @@ function mount() {
       ...Object.entries(s.errors || {}).map(([k, message]) => h('p', { class: 'mp-error', text: `${k}：${message}` })),
       h('div', { class: 'mp-grid' }, ...rows.map(q => account(q, s.stale))),
       !rows.length ? h('p', { class: 'mp-muted', text: s.enabled ? '没有匹配的账号数据' : '请在群晖服务端启用 Magpie 连接' }) : '',
+      renderFableAdvisor(),
       h('details', {}, h('summary', { text: `可用模型（${s.models.length}）` }), h('div', { class: 'mp-models' }, ...s.models.map(m => h('code', { text: m.id })))));
   }
   async function load() {
     if (loading || dead) return; loading = true; refresh.disabled = true;
-    try { const s = await readStatus(period); if (!dead) { last = s; render(s); } }
+    try {
+      const [s, fRes, qRes] = await Promise.all([
+        readStatus(period),
+        fetch(`/api/mesh/fable-advice${fableForce ? '?force=1' : ''}`).then(r => r.json()).catch(() => null),
+        fetch('/api/mesh/queue').then(r => r.json()).catch(() => null),
+      ]);
+      if (!dead) {
+        if (fRes && fRes.ok) fableAdvice = fRes;
+        if (qRes && qRes.ok && Array.isArray(qRes.machines)) meshMachines = qRes.machines;
+        last = s;
+        render(s);
+      }
+    }
     catch { if (!dead) status.textContent = '状态暂不可读，请稍后刷新'; }
     finally { loading = false; refresh.disabled = false; }
   }
