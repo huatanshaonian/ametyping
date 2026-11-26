@@ -13,6 +13,7 @@ const { createModelRouter } = require('./mesh-model-router');
 const { createComputeQueue } = require('./mesh-compute-queue');
 const { evaluateFableAdvice } = require('./mesh-fable-advisor');
 const { diagnoseSugonFailure } = require('./mesh-sugon-advisor');
+const { judgeL3Stall } = require('./mesh-auto-judge');
 
 const MAX_PROJECTS = 50;
 const MAX_NODES = 60;
@@ -1322,6 +1323,8 @@ function createMesh({
     projectId,
     projectName,
     workspaces,
+    deliveryGate,
+    maxAutoJudge,
     lock = true,
     userApproved = false,
     reason = '',
@@ -1373,6 +1376,15 @@ function createMesh({
     }
 
     const wasLocked = proj.workspacesLocked === true;
+    const normGate = typeof deliveryGate === 'string' ? deliveryGate.trim().toUpperCase() : '';
+    if (['L1', 'L2', 'L3'].includes(normGate)) {
+      proj.deliveryGate = normGate;
+      proj.autoJudgeCount = 0;
+      proj.autoJudgeDone = false;
+    }
+    if (Number.isFinite(Number(maxAutoJudge)) && Number(maxAutoJudge) >= 1) {
+      proj.maxAutoJudge = Math.min(20, Math.trunc(Number(maxAutoJudge)));
+    }
     proj.workspaces = cleaned;
     proj.workspacesLocked = lock !== false;
     proj.updatedAt = Date.now();
@@ -1856,6 +1868,93 @@ function createMesh({
     save();
   }
 
+  async function handleL3Idle(proj, masterNode) {
+    if (!proj || !masterNode || proj.deliveryGate !== 'L3' || proj.autoJudgeDone === true) return null;
+    proj.lastAutoJudgeAt = Date.now();
+    const live = liveSessionOf(masterNode.machine, masterNode.sessionId);
+    const masterLastOutput = [
+      masterNode.lastReport || '',
+      (live && (live.tail || live.lastAct || live.preview)) || '',
+    ].filter(Boolean).join('\n---\n');
+    let boardEntries = [];
+    try {
+      const b = board.read(proj.id, { since: 0, limit: 30 });
+      boardEntries = (b && Array.isArray(b.entries)) ? b.entries.slice(-15) : [];
+    } catch {}
+
+    const count = Number(proj.autoJudgeCount) || 0;
+    const cap = Number(proj.maxAutoJudge) || 5;
+    const verdictRes = await judgeL3Stall({
+      project: proj,
+      masterLastOutput,
+      boardEntries,
+      autoJudgeCount: count,
+      maxAutoJudge: cap,
+      dataDir,
+      egress: typeof getEgress === 'function' ? getEgress() : null,
+      magpie: typeof getMagpie === 'function' ? getMagpie() : null,
+    });
+
+    const tagInfo = `${verdictRes.provider}${verdictRes.model ? ' · ' + verdictRes.model : ''}`;
+    if (verdictRes.verdict === 'CONTINUE' && verdictRes.followupPrompt) {
+      proj.autoJudgeCount = count + 1;
+      recordEvent(proj, {
+        source: 'watchdog',
+        kind: 'L3_AUTO_CONTINUE',
+        machine: masterNode.machine,
+        nodeId: masterNode.id,
+        summary: `L3 裁判续推 (${proj.autoJudgeCount}/${cap})：${verdictRes.reason}`,
+        payload: { provider: verdictRes.provider, model: verdictRes.model },
+      });
+      try {
+        await postBoard({
+          projectId: proj.id,
+          agent: 'L3 裁判',
+          kind: 'control',
+          text: `[L3 自动续推 ${proj.autoJudgeCount}/${cap} · ${tagInfo}] ${verdictRes.reason}`,
+        });
+      } catch {}
+      await sendToAgent(masterNode.machine, {
+        t: 'send',
+        id: masterNode.sessionId,
+        text: `[L3 Auto-Mode 裁判指令 ${proj.autoJudgeCount}/${cap}]\n${verdictRes.followupPrompt}`,
+      });
+      save();
+      return verdictRes;
+    }
+
+    proj.autoJudgeDone = true;
+    const isDone = verdictRes.verdict === 'DONE';
+    recordEvent(proj, {
+      source: 'watchdog',
+      kind: isDone ? 'L3_AUTO_DONE' : 'L3_AUTO_ESCALATE',
+      machine: masterNode.machine,
+      nodeId: masterNode.id,
+      summary: `L3 裁判${isDone ? '确认完成' : '请求人工介入'}：${verdictRes.reason}`,
+      payload: { verdict: verdictRes.verdict, provider: verdictRes.provider, model: verdictRes.model },
+    });
+    try {
+      await postBoard({
+        projectId: proj.id,
+        agent: 'L3 裁判',
+        kind: isDone ? 'control' : 'alert',
+        text: `[L3 裁判 · ${verdictRes.verdict} · ${tagInfo}] ${verdictRes.reason}`,
+      });
+    } catch {}
+    if (typeof notify === 'function') {
+      try {
+        notify({
+          title: isDone ? `L3 项目已完成 · ${proj.name}` : `L3 项目需人工拍板 · ${proj.name}`,
+          body: `${verdictRes.reason}（已自动续推 ${count}/${cap} 轮）`,
+          tag: `l3-judge-${proj.id}`,
+          url: `/#proj=${proj.id}`,
+        });
+      } catch {}
+    }
+    save();
+    return verdictRes;
+  }
+
   watchdog = createWatchdog({
     dataDir,
     getProjects: () => data.projects,
@@ -1868,6 +1967,7 @@ function createMesh({
     save,
     postBoard: (d) => postBoard(d),
     onQuotaExhausted: (proj, node, reason) => handleQuotaExhausted(proj, node, reason),
+    onL3Idle: (proj, masterNode) => handleL3Idle(proj, masterNode),
   });
   watchdog.start(15000);
 
@@ -3958,6 +4058,22 @@ function createMesh({
       }, 25000);
       if (r && r.ok) audit('mesh-sugon-key', ip, cleanStr(d.profileId, 60), cleanStr(d.keyExpireAt, 40));
       json(res, 200, r || { ok: false, msg: '更新密钥失败' });
+      return true;
+    }
+    if (p === '/api/mesh/project/gate') {
+      const proj = data.projects.find((x) => x.id === cleanStr(d.projectId, 40));
+      if (!proj) { json(res, 200, { ok: false, msg: '找不到项目' }); return true; }
+      const gate = String(d.deliveryGate || '').trim().toUpperCase();
+      if (!['L1', 'L2', 'L3'].includes(gate)) { json(res, 200, { ok: false, msg: 'deliveryGate 仅支持 L1 / L2 / L3' }); return true; }
+      proj.deliveryGate = gate;
+      proj.autoJudgeCount = 0;
+      proj.autoJudgeDone = false;
+      if (Number.isFinite(Number(d.maxAutoJudge)) && Number(d.maxAutoJudge) >= 1) {
+        proj.maxAutoJudge = Math.min(20, Math.trunc(Number(d.maxAutoJudge)));
+      }
+      save();
+      audit('mesh-project-gate', ip, proj.id, gate);
+      json(res, 200, { ok: true, projectId: proj.id, deliveryGate: proj.deliveryGate, maxAutoJudge: proj.maxAutoJudge || 5 });
       return true;
     }
     if (p === '/api/mesh/pools') {
