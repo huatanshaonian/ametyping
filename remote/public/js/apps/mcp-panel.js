@@ -3,7 +3,7 @@
 // Read-only: installing happens on that computer (its agent does it when it starts; or install-mesh-mcp.js by hand).
 import { h } from '../util.js';
 
-const CLIENT_NAMES = { 'ame-mesh': '协同', 'windose-literature': '文献', 'windose-research': '档案' };
+const CLIENT_NAMES = { 'ame-mesh': '协同', 'windose-literature': '文献', 'windose-research': '档案', 'windose-hpc': '超算' };
 function code(title, text) {
   const pre = h('pre', { tabindex: '0' }, h('code', { text }));
   const status = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });

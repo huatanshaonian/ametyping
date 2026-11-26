@@ -191,6 +191,7 @@ function createMesh({
     return { machine: candidates[0] || '', sock: null };
   }
 
+  const keyExpiryNotifiedAt = new Map(); // profileId -> last push ts (24h dedupe)
   function onSugonStatus(machineName, status = {}) {
     const mName = cleanStr(machineName, 60);
     if (!mName || !status || typeof status !== 'object') return;
@@ -206,6 +207,8 @@ function createMesh({
     const note = available
       ? `网关机 ${mName} (${mode || 'ssh'}) · 分区 ${partitions.slice(0, 4).join(', ') || status.defaultPartition || 'normal'} · 运行 ${runningJobs} / 排队 ${queuedJobs}`
       : `网关机 ${mName} · 曙光超算暂不可用${errTxt ? `（${errTxt}）` : ''}`;
+    const profiles = Array.isArray(status.profiles) ? status.profiles.slice(0, 32) : [];
+    const expiringKeys = Array.isArray(status.expiringKeys) ? status.expiringKeys.slice(0, 16) : [];
     computeQueue.registerProvider({
       id: 'sugon',
       name: '曙光超算 (Sugon / SCNet)',
@@ -216,8 +219,13 @@ function createMesh({
         available,
         mode,
         host,
+        defaultProfile: cleanStr(status.defaultProfile || '', 60),
         defaultPartition: cleanStr(status.defaultPartition || '', 60),
         partitions,
+        onlineCount: Number.isFinite(Number(status.onlineCount)) ? Number(status.onlineCount) : profiles.filter((x) => x && x.available).length,
+        totalCount: Number.isFinite(Number(status.totalCount)) ? Number(status.totalCount) : profiles.length,
+        profiles,
+        expiringKeys,
         activeJobs,
         runningJobs,
         queuedJobs,
@@ -225,6 +233,24 @@ function createMesh({
         at,
       },
     });
+    if (typeof notify === 'function' && expiringKeys.length) {
+      const nowMs = Date.now();
+      const due = expiringKeys.filter((k) => {
+        if (!k || !k.id) return false;
+        const prev = keyExpiryNotifiedAt.get(k.id) || 0;
+        return nowMs - prev >= 24 * 3600e3;
+      });
+      if (due.length) {
+        for (const k of due) keyExpiryNotifiedAt.set(k.id, nowMs);
+        try {
+          notify({
+            title: '曙光超算 SSH 密钥即将到期',
+            body: due.map((k) => `${k.label || k.id}：${k.keyExpireAt}（剩 ${k.keyDaysLeft != null ? k.keyDaysLeft : '?'} 天）`).join('\n') + '\n请在 Win98「算力与作业」中点「更新密钥」直接上传新文件。',
+            tag: 'sugon-key-expiry',
+          });
+        } catch {}
+      }
+    }
     computeQueue.reconcile();
     onChange();
   }
@@ -441,6 +467,40 @@ function createMesh({
       } catch {}
     }
     return { ok: true, diagnosis: diag };
+  }
+
+  const sugonQueryPending = new Map(); // rid -> { resolve, timer }
+  function onSugonQueryRes(machineName, d = {}) {
+    const rid = cleanStr(d.rid, 80);
+    const p = rid && sugonQueryPending.get(rid);
+    if (!p) return;
+    clearTimeout(p.timer);
+    sugonQueryPending.delete(rid);
+    const { t, rid: _rid, ...rest } = d;
+    p.resolve(rest);
+  }
+
+  function querySugon(op, args = {}, timeoutMs = 25000) {
+    const { machine: gwMachine, sock } = resolveSugonGateway('');
+    if (!sock) {
+      return Promise.resolve({ ok: false, msg: `曙光超算网关机 ${gwMachine || '(未就绪)'} 不在线或未开启远程控制` });
+    }
+    const rid = 'sq_' + crypto.randomBytes(6).toString('hex');
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        sugonQueryPending.delete(rid);
+        resolve({ ok: false, msg: '查询曙光超算超时（网关机未在规定时间内返回）' });
+      }, timeoutMs);
+      if (timer.unref) timer.unref();
+      sugonQueryPending.set(rid, { resolve, timer });
+      try {
+        sock.send(JSON.stringify({ t: 'sugon-query', rid, op, args }));
+      } catch (e) {
+        clearTimeout(timer);
+        sugonQueryPending.delete(rid);
+        resolve({ ok: false, msg: '下发超算查询失败：' + (e && e.message) });
+      }
+    });
   }
 
   const computeQueue = createComputeQueue({
@@ -3888,6 +3948,18 @@ function createMesh({
       json(res, 200, r);
       return true;
     }
+    if (p === '/api/mesh/sugon/update-key') {
+      const r = await querySugon('update-key', {
+        profileId: cleanStr(d.profileId, 60),
+        keyContent: typeof d.keyContent === 'string' ? d.keyContent.slice(0, 16384) : '',
+        keyFileName: cleanStr(d.keyFileName, 160),
+        keyExpireAt: cleanStr(d.keyExpireAt, 40),
+        rayfileToken: cleanStr(d.rayfileToken, 200),
+      }, 25000);
+      if (r && r.ok) audit('mesh-sugon-key', ip, cleanStr(d.profileId, 60), cleanStr(d.keyExpireAt, 40));
+      json(res, 200, r || { ok: false, msg: '更新密钥失败' });
+      return true;
+    }
     if (p === '/api/mesh/pools') {
       if (d.op === 'reset-cooldown') {
         const r = modelRouter.resetCooldown(d.harness, d.model);
@@ -4129,6 +4201,9 @@ function createMesh({
     onColabStatus,
     onSugonStatus,
     onSugonAlert,
+    onSugonQueryRes,
+    querySugon,
+    machinesSummary,
     onComputeDone,
     fromAgentResult,
     fromAgentRpc,

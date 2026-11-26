@@ -374,7 +374,7 @@ if (lit && embed && typeof embed.setLitProvider === 'function') embed.setLitProv
   return { items, notes };
 });
 // MCP 中转 (mcp-hub.js): 文献下载 / 研究档案 MCP calls from the agents' computers, over their agent's connection
-const mcpHub = createMcpHub({ machines, lit, researchDb: () => knowledge.vault && knowledge.vault.db, cfg: cfg.mcp || {}, audit: (...a) => audit(...a), log: console.error });
+const mcpHub = createMcpHub({ machines, lit, mesh, researchDb: () => knowledge.vault && knowledge.vault.db, cfg: cfg.mcp || {}, audit: (...a) => audit(...a), log: console.error });
 // 画板 (board/index.js): boards drawn by hand, read by a model into a clean page; open pages hear of every change
 const boards = createBoards({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ask: summary ? (p, sch, task, o) => summary.ask(p, sch, task, o) : null,
   onChange: () => broadcast({ t: 'boards' }), audit: (...a) => audit(...a), log: console.log });
@@ -495,6 +495,7 @@ function onAgentMessage(m, raw, ws) {
   if (d.t === 'colab-status' && d.status && typeof d.status === 'object') { mesh.onColabStatus(m.name, d.status); return; }
   if (d.t === 'sugon-status' && d.status && typeof d.status === 'object') { mesh.onSugonStatus(m.name, d.status); return; }
   if (d.t === 'sugon-alert' && d.alert && typeof d.alert === 'object') { mesh.onSugonAlert(m.name, d.alert); return; }
+  if (d.t === 'sugon-query-res' && typeof d.rid === 'string') { mesh.onSugonQueryRes(m.name, d); return; }
   if (d.t === 'compute-heartbeat' && typeof d.jobId === 'string') { mesh.computeQueue.heartbeat(d.jobId); return; }
   if (d.t === 'compute-done' && typeof d.jobId === 'string') { mesh.onComputeDone(m.name, d); return; }
   if (d.t === 'local-quota' && d.quota && typeof d.quota === 'object') { mesh.onLocalQuota(m.name, d.quota); return; }

@@ -14,7 +14,7 @@ const path = require('path');
 const http = require('http');
 const readline = require('readline');
 
-const SERVICES = { literature: 'windose-literature', research: 'windose-research' };
+const SERVICES = { literature: 'windose-literature', research: 'windose-research', hpc: 'windose-hpc' };
 const PORT = +process.env.AME_MESH_PORT || +process.env.AME_MESH_BRIDGE_PORT || 3941;
 
 function loadAuth(home = os.homedir()) {

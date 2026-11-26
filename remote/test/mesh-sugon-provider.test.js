@@ -15,10 +15,12 @@ const {
   buildSbatchScript,
   probeSugonStatus,
   scanSugonFailures,
+  updateSugonProfileKey,
   runSugonJob,
 } = require('../agent/sugon-runner');
 const { createComputeQueue } = require('../server/mesh-compute-queue');
 const { diagnoseSugonFailure, ruleBasedDiagnose } = require('../server/mesh-sugon-advisor');
+const { createHpcTools, TOOLS: HPC_MCP_TOOLS } = require('../server/hpc/mcp');
 
 describe('sugon-runner (Sugon / SCNet HPC provider)', () => {
   it('parses sinfo partitions, squeue jobs, sbatch job id, and generates valid #SBATCH scripts', () => {
@@ -367,5 +369,89 @@ describe('sugon-runner (Sugon / SCNet HPC provider)', () => {
     assert.equal(gDiag.model, 'gemini-2.5-flash');
     assert.equal(magpieCalled, false);
     assert.match(gDiag.summaryText, /Google AI Studio/);
+  });
+
+  it('exposes windose-hpc MCP tools for status, submit, jobs, cancel, history, and logs', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-hpc-mcp-'));
+    try {
+      const q = createComputeQueue({ dataDir: tmp, onDispatchRemote: () => {} });
+      q.registerProvider({ id: 'sugon', name: '曙光超算', status: 'active', meta: { machine: 'ubuntu_hpc', mode: 'ssh' } });
+      const fakeMesh = {
+        computeQueue: q,
+        machinesSummary: () => [{ machine: 'ubuntu_hpc', online: true, control: true }],
+        querySugon: async (op, args) => ({ ok: true, op, args, clusters: [{ profileId: 'hf-huatan', count: 1, jobs: [{ jobId: '29317793' }] }] }),
+      };
+      const api = createHpcTools({ mesh: fakeMesh });
+      assert.equal(HPC_MCP_TOOLS.length, 7);
+
+      const st = await api.call('hpc_status', {});
+      assert.equal(st.ok, true);
+      assert.equal(st.machines.length, 1);
+
+      const sub = await api.call('hpc_submit', { providerType: 'sugon', sugonProfile: 'hf-huatan', partition: 'hfacnormal04', command: 'python3 solve.py' });
+      assert.equal(sub.ok, true);
+      const jobs = await api.call('hpc_jobs', { providerType: 'sugon' });
+      assert.equal(jobs.total, 1);
+
+      const hist = await api.call('hpc_history', { profile: 'hf-huatan', days: 60 });
+      assert.equal(hist.ok, true);
+      assert.equal(hist.op, 'history');
+
+      const logRes = await api.call('hpc_logs', { jobId: sub.job.id });
+      assert.equal(logRes.ok, true);
+
+      const can = await api.call('hpc_cancel', { jobId: sub.job.id });
+      assert.equal(can.ok, true);
+
+      await assert.rejects(() => api.call('hpc_status', { badParam: 1 }), /未知参数/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('updates SSH private key & rayfile token atomically and verifies connectivity', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-sugon-key-'));
+    const cfgFile = path.join(tmp, 'sugon.json');
+    const sshDir = path.join(tmp, 'keys');
+    const sshConf = path.join(tmp, 'scnet.conf');
+    fs.writeFileSync(cfgFile, JSON.stringify({
+      defaultProfile: 'hf-acc',
+      profiles: [{
+        id: 'hf-acc',
+        label: '合肥 · acc143g266',
+        mode: 'ssh',
+        sshHost: 'scnet-acc-hf',
+        defaultPartition: 'hfacnormal04',
+        keyExpireAt: '2026-12-01 16:23:12',
+        rayfile: { host: 'hefei03.nscc-hf.cn', port: 65012, user: 'acc143g266', token: 'old_tok', shareRoot: '/TangYC', remoteRoot: '/public/home/acc143g266/TangYC' },
+      }],
+    }));
+    fs.writeFileSync(sshConf, 'Host scnet-acc-hf\n  HostName hfeshell.nscc-hf.cn\n  Port 65062\n  User acc143g266\n  IdentityFile ~/.ssh/scnet/old.txt\n');
+
+    try {
+      const bad = await updateSugonProfileKey({ profileId: 'hf-acc', keyContent: 'not a pem', configPath: cfgFile, sshDir, sshConfPath: sshConf });
+      assert.equal(bad.ok, false);
+      assert.match(bad.msg, /PEM/);
+
+      const fakePem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEKEYDATA\n-----END RSA PRIVATE KEY-----\n';
+      const okRes = await updateSugonProfileKey({
+        profileId: 'hf-acc',
+        keyContent: fakePem,
+        keyFileName: 'acc143g266_hfeshell.nscc-hf.cn_RsaKeyExpireTime_2027-03-01_10-00-00.txt',
+        rayfileToken: 'new_rf_tok',
+        configPath: cfgFile,
+        sshDir,
+        sshConfPath: sshConf,
+        execFn: async () => ({ ok: true, stdout: 'AME_KEY_OK\n', stderr: '' }),
+      });
+      assert.equal(okRes.ok, true);
+      assert.equal(okRes.keyExpireAt, '2027-03-01 10:00:00');
+      assert.match(fs.readFileSync(sshConf, 'utf8'), /RsaKeyExpireTime_2027-03-01_10-00-00\.txt/);
+      const saved = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+      assert.equal(saved.profiles[0].keyExpireAt, '2027-03-01 10:00:00');
+      assert.equal(saved.profiles[0].rayfile.token, 'new_rf_tok');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

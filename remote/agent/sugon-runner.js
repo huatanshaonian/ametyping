@@ -641,6 +641,206 @@ async function runSugonJob({
   }
 }
 
+async function querySugonHistory({
+  profile = '',
+  days = 30,
+  limit = 20,
+  configPath = DEFAULT_CONFIG_PATH,
+  execFn = defaultExec,
+} = {}) {
+  const cfg = loadSugonConfig(configPath);
+  if (!cfg) return { ok: false, msg: `未找到曙光超算配置文件 ${configPath}` };
+  const allSsh = (Array.isArray(cfg.profiles) ? cfg.profiles : [cfg]).filter((p) => p.mode === 'ssh' && p.sshHost);
+  const targets = profile
+    ? allSsh.filter((p) => p.id === profile || p.sshHost === profile || p.label === profile)
+    : allSsh;
+  if (!targets.length) return { ok: false, msg: `未找到匹配的 SSH 超算入口：${profile || '(无)'}` };
+
+  const d = Math.min(180, Math.max(1, Math.trunc(Number(days) || 30)));
+  const lim = Math.min(100, Math.max(1, Math.trunc(Number(limit) || 20)));
+  const sinceDate = new Date(Date.now() - d * 86400e3).toISOString().slice(0, 10);
+
+  const results = await Promise.all(targets.map(async (prof) => {
+    const r = await execFn('ssh', [
+      '-n', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes',
+      prof.sshHost,
+      `sacct -u $USER -S ${sinceDate} -X -n -P -o JobID,JobName,Partition,State,Start,Elapsed,AllocCPUS,MaxRSS 2>/dev/null | tail -n ${lim}`,
+    ], { timeoutMs: 15000 });
+    if (!r.ok) {
+      return { profileId: prof.id, label: prof.label, region: prof.region, account: prof.account, ok: false, error: cleanStr(r.stderr || r.error, 140), jobs: [] };
+    }
+    const jobs = [];
+    for (const line of stripClusterBanner(r.stdout).split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || !t.includes('|')) continue;
+      const [jobId, jobName, partition, state, start, elapsed, allocCpus, maxRss] = t.split('|').map((s) => s.trim());
+      if (!jobId) continue;
+      jobs.push({ jobId, jobName, partition, state, start, elapsed, allocCpus: Number(allocCpus) || 0, maxRss });
+    }
+    return { profileId: prof.id, label: prof.label, region: prof.region, account: prof.account, ok: true, count: jobs.length, jobs: jobs.reverse() };
+  }));
+
+  return { ok: true, since: sinceDate, days: d, clusters: results };
+}
+
+async function readSugonJobLogs({
+  profile = '',
+  slurmJobId = '',
+  workDir = '',
+  lines = 80,
+  configPath = DEFAULT_CONFIG_PATH,
+  execFn = defaultExec,
+} = {}) {
+  const cfg = loadSugonConfig(configPath);
+  if (!cfg) return { ok: false, msg: `未找到曙光超算配置文件 ${configPath}` };
+  const prof = resolveSugonProfile(cfg, profile);
+  if (!prof || prof.mode !== 'ssh' || !prof.sshHost) return { ok: false, msg: '未找到可用的 SSH 超算入口' };
+  const jid = String(slurmJobId || '').trim();
+  if (!/^\d{1,20}$/.test(jid)) return { ok: false, msg: 'slurmJobId 必须是数字' };
+  const nLines = Math.min(300, Math.max(10, Math.trunc(Number(lines) || 80)));
+
+  let dir = cleanStr(workDir, 300);
+  if (!dir) {
+    const wdRes = await execFn('ssh', [
+      '-n', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes',
+      prof.sshHost,
+      `sacct -j ${jid} -X -n -P -o WorkDir 2>/dev/null | head -n 1`,
+    ], { timeoutMs: 12000 });
+    dir = cleanStr(stripClusterBanner(wdRes.stdout), 300).split('|')[0].trim();
+  }
+  if (!dir || !/^\/[A-Za-z0-9._\/-]+$/.test(dir)) {
+    return { ok: false, msg: `无法定位作业 ${jid} 的工作目录，请手动提供 workDir` };
+  }
+  const logRes = await execFn('ssh', [
+    '-n', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes',
+    prof.sshHost,
+    `tail -n ${nLines} "${dir}/slurm-${jid}.err" "${dir}/slurm-${jid}.out" 2>/dev/null || ls -la "${dir}" | head -n 20`,
+  ], { timeoutMs: 12000 });
+  return {
+    ok: true,
+    profileId: prof.id,
+    slurmJobId: jid,
+    workDir: dir,
+    tail: stripClusterBanner(logRes.stdout).slice(-6000),
+  };
+}
+
+function parseKeyExpireFromFilename(filename = '') {
+  const m = /RsaKeyExpireTime_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/i.exec(String(filename || ''));
+  return m ? `${m[1]} ${m[2]}:${m[3]}:${m[4]}` : '';
+}
+
+async function updateSugonProfileKey({
+  profileId = '',
+  keyContent = '',
+  keyFileName = '',
+  keyExpireAt = '',
+  rayfileToken = '',
+  configPath = DEFAULT_CONFIG_PATH,
+  sshDir = path.join(os.homedir(), '.ssh', 'scnet'),
+  sshConfPath = path.join(os.homedir(), '.ssh', 'config.d', 'scnet.conf'),
+  execFn = defaultExec,
+} = {}) {
+  const cfg = loadSugonConfig(configPath);
+  if (!cfg) return { ok: false, msg: `未找到曙光超算配置文件 ${configPath}` };
+  const prof = resolveSugonProfile(cfg, profileId);
+  if (!prof || prof.mode !== 'ssh' || !prof.sshHost) {
+    return { ok: false, msg: `未找到可用的 SSH 超算入口：${profileId || '(空)'}` };
+  }
+
+  const rawJson = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const targetObj = Array.isArray(rawJson.profiles)
+    ? rawJson.profiles.find((p) => p && (p.id === prof.id || p.sshHost === prof.sshHost))
+    : rawJson;
+  if (!targetObj) return { ok: false, msg: `配置中找不到入口 ${prof.id}` };
+
+  let updatedKey = false;
+  let updatedToken = false;
+  let resolvedExpire = cleanStr(keyExpireAt, 40) || parseKeyExpireFromFilename(keyFileName);
+
+  if (typeof keyContent === 'string' && keyContent.trim()) {
+    const cleanPem = keyContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim() + '\n';
+    if (!/^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/m.test(cleanPem) || !/-----END [A-Z0-9 ]*PRIVATE KEY-----/m.test(cleanPem)) {
+      return { ok: false, msg: '上传的内容不是有效的 PEM 私钥文件（缺少 BEGIN/END PRIVATE KEY）' };
+    }
+    const safeName = (path.basename(String(keyFileName || '')).replace(/[^A-Za-z0-9._-]/g, '_') || `${prof.id}_rsa_${Date.now()}.txt`).slice(0, 120);
+    fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
+    const keyPath = path.join(sshDir, safeName);
+    const tmpKey = keyPath + '.tmp-' + process.pid;
+    fs.writeFileSync(tmpKey, cleanPem, { mode: 0o600 });
+    fs.renameSync(tmpKey, keyPath);
+    try { fs.chmodSync(keyPath, 0o600); } catch {}
+
+    // Update IdentityFile in ~/.ssh/config.d/scnet.conf for this Host
+    if (fs.existsSync(sshConfPath)) {
+      const confLines = fs.readFileSync(sshConfPath, 'utf8').split(/\r?\n/);
+      let inHost = false;
+      let replaced = false;
+      const tildePath = keyPath.startsWith(os.homedir() + path.sep)
+        ? '~/' + keyPath.slice(os.homedir().length + 1).replace(/\\/g, '/')
+        : keyPath;
+      for (let i = 0; i < confLines.length; i++) {
+        const mHost = /^\s*Host\s+(.+)$/i.exec(confLines[i]);
+        if (mHost) {
+          inHost = mHost[1].trim().split(/\s+/).includes(prof.sshHost);
+          continue;
+        }
+        if (inHost && /^\s*IdentityFile\s+/i.test(confLines[i])) {
+          confLines[i] = `  IdentityFile ${tildePath}`;
+          replaced = true;
+          break;
+        }
+      }
+      if (replaced) {
+        const tmpConf = sshConfPath + '.tmp-' + process.pid;
+        fs.writeFileSync(tmpConf, confLines.join('\n'), { mode: 0o600 });
+        fs.renameSync(tmpConf, sshConfPath);
+      }
+    }
+    if (resolvedExpire) targetObj.keyExpireAt = resolvedExpire;
+    updatedKey = true;
+  }
+
+  const cleanTok = cleanStr(rayfileToken, 200);
+  if (cleanTok) {
+    if (!targetObj.rayfile || typeof targetObj.rayfile !== 'object') {
+      return { ok: false, msg: `入口 ${prof.id} 尚未配置 rayfile 基础信息，无法仅更新令牌` };
+    }
+    targetObj.rayfile.token = cleanTok;
+    updatedToken = true;
+  }
+
+  if (!updatedKey && !updatedToken) {
+    return { ok: false, msg: '请上传新的私钥文件或填写新的快传令牌' };
+  }
+
+  const tmpCfg = configPath + '.tmp-' + process.pid;
+  fs.writeFileSync(tmpCfg, JSON.stringify(rawJson, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmpCfg, configPath);
+
+  // Immediately verify SSH connectivity if key was updated
+  let verified = true;
+  let verifyMsg = '';
+  if (updatedKey) {
+    const chk = await execFn('ssh', ['-n', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', prof.sshHost, 'echo AME_KEY_OK'], { timeoutMs: 14000 });
+    verified = Boolean(chk.ok && /AME_KEY_OK/.test(chk.stdout));
+    verifyMsg = verified ? 'SSH 免密实测通过' : cleanStr(chk.stderr || chk.error || 'SSH 验证未通过', 160);
+  }
+
+  return {
+    ok: verified,
+    profileId: prof.id,
+    label: prof.label,
+    updatedKey,
+    updatedToken,
+    keyExpireAt: targetObj.keyExpireAt || '',
+    verified,
+    msg: verified
+      ? `已更新 ${prof.label}${updatedKey ? ' SSH 私钥' : ''}${updatedToken ? ' 快传令牌' : ''}${verifyMsg ? '（' + verifyMsg + '）' : ''}`
+      : `密钥已写入，但连接验证失败：${verifyMsg}`,
+  };
+}
+
 module.exports = {
   DEFAULT_CONFIG_PATH,
   DEFAULT_RAYFILE_BIN,
@@ -648,6 +848,7 @@ module.exports = {
   loadSugonConfig,
   resolveSugonProfile,
   computeKeyExpiryDays,
+  parseKeyExpireFromFilename,
   buildRayfileDownloadPlan,
   parseSinfoPartitions,
   parseSqueueJobs,
@@ -656,5 +857,8 @@ module.exports = {
   buildSbatchScript,
   probeSugonStatus,
   scanSugonFailures,
+  querySugonHistory,
+  readSugonJobLogs,
+  updateSugonProfileKey,
   runSugonJob,
 };
