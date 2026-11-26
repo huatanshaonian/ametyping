@@ -47,7 +47,7 @@ const reachOf = (r) => Object.fromEntries(REACH.map((k) => [k, !!(r && r[k] === 
 const toolOf = (id) => (/^(codex|opencode|agy|kiro):/.exec(String(id)) || [, 'claude'])[1];
 
 function createFleet({ dataDir, machines, control = false, audit = () => {}, onChange = () => {}, log = () => {},
-  magpieConfig = {}, magpieKeys = createMagpieKeys({ config: magpieConfig }), models = () => [],
+  magpieConfig = {}, magpieKeys = createMagpieKeys({ config: magpieConfig }), models = () => [], authAgent = null,
   templateFile = path.join(__dirname, '..', '..', 'public', 'downloads', 'opencode-magpie.json'),
   replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, harnessTimeoutMs = 17 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3,
   egressProxies = [], aiAsk = null, releases = null, now = () => Date.now(), dailyGraceMs = 15 * 60e3 }) {
@@ -131,8 +131,10 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       setRun(name, { ...run, status: 'running', msg: '检查文件' });
       let r;
       if (v.mode === 'git') {
-        setRun(name, { ...run, status: 'running', msg: 'git pull' });
-        r = await ask(ws, { t: 'fleet-apply', run: id, mode: 'git', commit: b.commit }, 'fleet-result', applyTimeoutMs);
+        const gb = b.gitBundle && typeof b.gitBundle.file === 'string' && fs.existsSync(path.join(bundleDir, path.basename(b.gitBundle.file)))
+          ? { path: '/api/fleet/bundle', sha256: str(b.gitBundle.sha256, 64), size: +b.gitBundle.size || 0 } : undefined;
+        setRun(name, { ...run, status: 'running', msg: gb ? '从 NAS 拉取更新' : 'git pull' });
+        r = await ask(ws, { t: 'fleet-apply', run: id, mode: 'git', commit: b.commit, ...(gb ? { gitBundle: gb } : {}) }, 'fleet-result', applyTimeoutMs);
       } else {
         const have = await ask(ws, { t: 'fleet-check', files: b.files }, 'fleet-have');
         if (!have.have) { setRun(name, { ...run, status: 'failed', msg: have.msg || '没拿到这台电脑的文件清单' }); return { ok: false, msg: have.msg }; }
@@ -197,7 +199,8 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
   function fromAgent(m, d, ws) {
     if (d.t === 'fleet-version') {
       ws.fleet = { mode: d.mode === 'git' ? 'git' : 'files', commit: /^[0-9a-f]{40}$/.test(d.commit) ? d.commit : '', branch: str(d.branch, 80),
-        dirty: +d.dirty || 0, auto: d.auto === true, why: str(d.why, 200), platform: str(d.platform, 20), node: str(d.node, 20),
+        dirty: +d.dirty || 0, dirtyFiles: Array.isArray(d.dirtyFiles) ? d.dirtyFiles.slice(0, 8).map((f) => str(f, 200)) : undefined,
+        auto: d.auto === true, why: str(d.why, 300), platform: str(d.platform, 20), node: str(d.node, 20),
         control: d.control === true, pending: d.pending === true,
         last: d.last && typeof d.last === 'object' ? { ok: d.last.ok === true, commit: str(d.last.commit, 40), tried: str(d.last.tried, 40), msg: str(d.last.msg, 300), at: str(d.last.at, 40), notes: Array.isArray(d.last.notes) ? d.last.notes.slice(0, 8).map((n) => str(n, 200)) : [] } : null,
         magpieKey: d.magpieKey && typeof d.magpieKey === 'object' ? { id: str(d.magpieKey.id, 80), name: str(d.magpieKey.name, 120) } : null,
@@ -411,9 +414,45 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
         harnessBusy: harnessBusy.has(name), harnessOff: !!state.settings.harnessOff[name], behindHarness: v ? behindOn(v).filter((id) => rel.latestOf(id)) : [] };
     });
     let tpl = false; try { fs.accessSync(templateFile); tpl = true; } catch {}
-    return { control, bundle: b ? { commit: b.commit, at: b.at || '', files: Object.keys(b.files).length } : null,
+    return { control, bundle: b ? { commit: b.commit, at: b.at || '', files: Object.keys(b.files).length, gitBundle: !!(b.gitBundle && b.gitBundle.file) } : null,
       settings: state.settings, magpie: magpieKeys.available(), template: tpl, models: models(), machines: list, targets: TARGETS, harnesses: HARNESSES,
       releases: rel.view(), daily: state.daily, checking: !!checking };
+  }
+
+  // Agent-authenticated HTTP download of the deployed git bundle (no browser cookie; uses agent Bearer token)
+  async function handleAgent(req, res, url, ip) {
+    if (req.method !== 'GET' || url.pathname !== '/api/fleet/bundle') return false;
+    const agent = typeof authAgent === 'function' ? authAgent(req, url) : null;
+    if (!agent) {
+      audit('fleet-bundle-reject', ip);
+      res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
+      return true;
+    }
+    const b = bundle();
+    const gb = b && b.gitBundle && typeof b.gitBundle.file === 'string' ? b.gitBundle : null;
+    const file = gb ? path.join(bundleDir, path.basename(gb.file)) : '';
+    if (!b || !gb || !file || !fs.existsSync(file)) {
+      res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'bundle not found' }));
+      return true;
+    }
+    const want = String(url.searchParams.get('commit') || '');
+    if (want && want !== b.commit) {
+      res.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'commit mismatch', commit: b.commit }));
+      return true;
+    }
+    const st = fs.statSync(file);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': st.size,
+      'Cache-Control': 'no-store',
+      'X-Fleet-Commit': b.commit,
+      ...(gb.sha256 ? { 'X-Fleet-Sha256': gb.sha256 } : {}),
+    });
+    fs.createReadStream(file).pipe(res);
+    return true;
   }
 
   async function handle(req, res, url, ip, json, readBody, fresh) {
@@ -477,7 +516,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     json(res, 200, await configure(name, { targets: d.targets, reissue: d.reissue === true, proxy: typeof d.proxy === 'string' ? d.proxy : undefined }, ip)); return true;
   }
 
-  return { fromAgent, dropSocket, handle, view, update, configure, harnessRun, harnessAll, dailyCheck, dailyDue, digest, netProbe, bundle,
+  return { fromAgent, dropSocket, handle, handleAgent, view, update, configure, harnessRun, harnessAll, dailyCheck, dailyDue, digest, netProbe, bundle,
     close: () => { clearInterval(timer); clearInterval(dailyTimer); } };
 }
 

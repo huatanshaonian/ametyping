@@ -194,8 +194,15 @@ function createHarness({ home = os.homedir(), env = process.env, platform = proc
     if (action === 'update') {
       if (!h.path) return null;
       if (h.method === 'npm' && s.update.npm) return npmCmd(s.update.npm);
-      // OpenCode 1.x updates only along 1.x: moved to the newest 2.x by naming it
-      if (id === 'opencode' && h.line === 'legacy' && plain(target)) return [h.path, ['upgrade', plain(target)]];
+      // OpenCode 1.x requires --major to cross into 2.x (confirmed on panasonic 2026-11-26)
+      if (id === 'opencode' && h.line === 'legacy') return [h.path, ['upgrade', '--major']];
+      // Windows standalone codex.exe invokes PowerShell 5.1 irm without proxy/TLS1.2; run the official script with proxy set
+      if (win && id === 'codex' && h.method === 'self') {
+        const pre = '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; '
+          + (proxy ? `[System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy('${proxy.replace(/'/g, '')}', $true); ` : '');
+        return ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+          pre + '$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex']];
+      }
       return s.update.self ? [h.path, s.update.self] : null;
     }
     if (s.install.npm) return npmCmd(s.install.npm);

@@ -298,10 +298,16 @@ const sendQuota = (sock, notice) => { try { sock.send(JSON.stringify({ t: 'quota
 magpie = createMagpie({ config: cfg.magpie, dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'),
   onChange: () => broadcast({ t: 'magpie' }),
   onNotice: n => { for (const m of machines.values()) if (m.online && m.sockets) for (const sock of m.sockets) sendQuota(sock, n); } });
+function authAgentReq(req, url) {
+  const hdr = String(req.headers['authorization'] || '');
+  const tok = hdr.startsWith('Bearer ') ? hdr.slice(7) : url.searchParams.get('token') || '';
+  reloadAgents();
+  return tok ? auth.matchAgent(cfg.agents, tok) : null;
+}
 // 设备更新 & 一键配置 (fleet/): agent versions, the update after a deploy over the agents' own connections, Magpie keys
 const fleet = createFleet({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, control: CONTROL,
   audit: (...a) => audit(...a), onChange: () => broadcast({ t: 'fleet' }), log: console.error, magpieConfig: cfg.magpie || {},
-  models: () => magpie.status().models || [],
+  models: () => magpie.status().models || [], authAgent: authAgentReq,
   // the daily harness check: newest versions and release notes through the NAS's way out, condensed by the model
   egressProxies: (cfg.summary || {}).proxies || [], aiAsk: (prompt, schema, task) => { if (!summary) throw new Error('AI 功能未启用'); return summary.ask(prompt, schema, task); } });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},
@@ -690,6 +696,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && p === '/api/google/callback') return google.handleCallback(req, res, url, send);
   // lightweight infra probes authenticate with their agent Bearer token (no browser cookie or Origin header)
   if (await infra.handleProbe(req, res, url, ip, json, readBody)) return;
+  if (await fleet.handleAgent(req, res, url, ip)) return;
 
   // --- state-changing API: same-origin only ---
   if (req.method === 'POST' && p.startsWith('/api/') && !sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
@@ -997,6 +1004,7 @@ if (AGENT_SPLIT) {
   const agentServer = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (await infra.handleProbe(req, res, url, clientIp(req), json, readBody)) return;
+    if (await fleet.handleAgent(req, res, url, clientIp(req))) return;
     res.writeHead(404); res.end();
   });
   agentServer.on('upgrade', (req, socket, head) => {

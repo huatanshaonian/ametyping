@@ -114,4 +114,23 @@ function historyBlobs(paths) {
   return out;
 }
 
-module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, depsOf, remoteFiles, compare, historyBlobs };
+// Create an incremental git bundle (last `depth` commits, or full when history is shorter) containing `commit`.
+function createGitBundle(commit, outFile, { depth = 100, cwd = REPO } = {}) {
+  const tmpRef = 'refs/ame-deploy/bundle-' + process.pid;
+  run('git', ['update-ref', tmpRef, commit], { cwd });
+  try {
+    let base = '';
+    if (depth > 0) {
+      const r = cp.spawnSync('git', ['rev-parse', '--verify', '--quiet', `${commit}~${depth}`], { cwd, windowsHide: true });
+      if (r.status === 0) base = String(r.stdout || '').trim();
+    }
+    const range = base ? `${base}..${tmpRef}` : tmpRef;
+    run('git', ['bundle', 'create', outFile, range], { cwd });
+    const buf = fs.readFileSync(outFile);
+    return { sha256: crypto.createHash('sha256').update(buf).digest('hex'), size: buf.length, base };
+  } finally {
+    try { run('git', ['update-ref', '-d', tmpRef], { cwd, allowFail: true }); } catch {}
+  }
+}
+
+module.exports = { REPO, run, git, ssh, upload, blobId, treeOf, depsOf, remoteFiles, compare, historyBlobs, createGitBundle };

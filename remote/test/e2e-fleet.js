@@ -76,10 +76,10 @@ function start(file, extra = {}) {
     ok('the agent reports its version on connecting', await until(async () => { const m = await box(); return m && m.version && m.version.commit; }), childErr);
     const m = await box();
     ok('this checkout is a git copy at its HEAD', m.version.mode === 'git' && m.version.commit === cp.execFileSync('git', ['-C', path.resolve(R, '..'), 'rev-parse', 'HEAD']).toString().trim(), m.version);
-    ok('a development checkout says why it is not updated', m.version.auto === false && /工作树|分支|没提交|autoUpdate/.test(m.version.why), m.version);
+    ok('a development checkout says why it is not updated', m.version.auto === false && /工作树|分支|没提交|本地改了文件|autoUpdate/.test(m.version.why), m.version);
     ok('the bundle and the machine behind it are shown', (await view()).bundle.commit === 'c'.repeat(40) && m.behind === true);
     const up = (await request('POST', '/api/fleet/update', { machine: 'box' }, cookie)).value;
-    ok('updating a development checkout is refused, even when asked', up.ok === false && /工作树|分支|没提交|autoUpdate/.test(up.msg), up);
+    ok('updating a development checkout is refused, even when asked', up.ok === false && /工作树|分支|没提交|本地改了文件|autoUpdate/.test(up.msg), up);
     await sleep(3500);                                                // (past the automatic check after hello)
     ok('nothing was started for it on its own', !(await box()).run);
 

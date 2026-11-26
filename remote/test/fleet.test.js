@@ -39,7 +39,7 @@ test('git mode: a development checkout (worktrees, other branch, linked worktree
   let v = await f.version();
   assert.equal(v.mode, 'git'); assert.equal(v.auto, true, v.why); assert.equal(v.commit.length, 40);
   write(path.join(root, 'a.js'), '2\n');
-  v = await f.version(); assert.equal(v.auto, false); assert.match(v.why, /没提交/);
+  v = await f.version(); assert.equal(v.auto, false); assert.match(v.why, /本地改了文件.*a\.js/); assert.deepEqual(v.dirtyFiles, ['a.js']);
   git(root, 'checkout', '-q', '--', 'a.js');
   const wt = path.join(tmp('wt'), 'w'); git(root, 'worktree', 'add', '-q', wt, '-b', 'feature/x');
   v = await f.version(); assert.equal(v.auto, false); assert.match(v.why, /工作树/);
@@ -239,8 +239,13 @@ test('harness update by how it was installed: npm package, Codex standalone, Ope
   }
   assert.equal(hz.methodOf('codex', path.join(home, 'standalone', 'codex')), 'self');
   assert.deepEqual(hz.commandFor('codex', 'update', { path: '/x/codex', method: 'self' }), ['/x/codex', ['update']]);
-  assert.deepEqual(hz.commandFor('opencode', 'update', { path: '/x/opencode', method: 'self', line: 'legacy' }, { target: '2.4.1' }), ['/x/opencode', ['upgrade', '2.4.1']]);
+  assert.deepEqual(hz.commandFor('opencode', 'update', { path: '/x/opencode', method: 'self', line: 'legacy' }, { target: '2.4.1' }), ['/x/opencode', ['upgrade', '--major']]);
   assert.deepEqual(hz.commandFor('opencode', 'update', { path: '/x/opencode', method: 'self' }, { target: '2.4.1' }), ['/x/opencode', ['upgrade']]);
+  // Windows standalone codex.exe uses PowerShell wrapper with TLS1.2 + DefaultWebProxy
+  const hzWin = createHarness({ home: tmp('home'), env: {}, platform: 'win32' });
+  const winCodex = hzWin.commandFor('codex', 'update', { path: 'C:\\x\\codex.exe', method: 'self' }, { proxy: 'http://127.0.0.1:10808' });
+  assert.equal(winCodex[0], 'powershell.exe');
+  assert.match(winCodex[1].join(' '), /Tls12[\s\S]*DefaultWebProxy[\s\S]*127\.0\.0\.1:10808[\s\S]*chatgpt\.com\/codex\/install\.ps1/);
   // Windows: the install script's own web requests are given the proxy (PowerShell 5.1 does not read HTTPS_PROXY)
   const wz = createHarness({ home, platform: 'win32', env: {}, exec: async () => ({ ok: true, out: '', err: '' }) });
   const ps = wz.commandFor('agy', 'install', {}, { proxy: 'http://192.168.114.1:7890' });
@@ -627,22 +632,86 @@ test('a computer\'s proxy: set for it, else what its agent found, else the defau
   s.fleet.close();
 });
 
-test('git mode: git pull goes through the way out found for this computer (the agent has no proxy of its own)', async () => {
+test('git mode: origin fallback fetch goes through the way out found for this computer (the agent has no proxy of its own)', async () => {
   const root = tmp('git'), home = tmp('home');
   git(root, 'init', '-q', '-b', 'main'); git(root, 'config', 'user.email', 't@t'); git(root, 'config', 'user.name', 't');
   write(path.join(root, 'a.js'), '1\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'one');
   writeNet({ detected: 'http://192.168.114.1:7890', detectedAt: 1 }, home);
   const calls = [];
   const gitRun = async (cmd, args, cwd, t, env) => { calls.push({ args, proxy: env && env.HTTPS_PROXY, noProxy: env && env.NO_PROXY });
-    return args.includes('pull') ? { ok: false, out: '', err: 'stop here' } : { ok: true, out: args.includes('rev-parse') ? (args.includes('--abbrev-ref') ? 'main' : 'c'.repeat(40)) : '', err: '' }; };
+    return args.includes('fetch') ? { ok: false, out: '', err: 'stop here' } : { ok: true, out: args.includes('rev-parse') ? (args.includes('--abbrev-ref') ? 'main' : 'c'.repeat(40)) : '', err: '' }; };
   const f = createAgentFleet({ root, home, platform: 'linux', gitRun });
   await f.apply({ rid: 'r', mode: 'git', commit: 'd'.repeat(40) });
-  const pull = calls.find((c) => c.args.includes('pull'));
-  assert.ok(pull, 'git pull was run'); assert.equal(pull.proxy, 'http://192.168.114.1:7890'); assert.match(pull.noProxy, /192\.168\.0\.0\/16/);
+  const fetch = calls.find((c) => c.args.includes('fetch'));
+  assert.ok(fetch, 'git fetch was run'); assert.equal(fetch.proxy, 'http://192.168.114.1:7890'); assert.match(fetch.noProxy, /192\.168\.0\.0\/16/);
   // other git commands (status, rev-parse) without it
-  assert.ok(calls.filter((c) => !c.args.includes('pull')).every((c) => !c.proxy));
+  assert.ok(calls.filter((c) => !c.args.includes('fetch')).every((c) => !c.proxy));
   // set for the computer: that one
   writeNet({ proxy: 'http://10.0.0.5:3128' }, home);
   calls.length = 0; await f.apply({ rid: 'r2', mode: 'git', commit: 'd'.repeat(40) });
-  assert.equal(calls.find((c) => c.args.includes('pull')).proxy, 'http://10.0.0.5:3128');
+  assert.equal(calls.find((c) => c.args.includes('fetch')).proxy, 'http://10.0.0.5:3128');
+});
+
+test('git mode via NAS HTTP bundle: authenticates, verifies sha256, and fast-forwards to exact deployed commit', async () => {
+  const { createGitBundle } = require('../deploy/deploy-lib');
+  const upstream = tmp('up'), client = tmp('cli'), home = tmp('home'), dataDir = tmp('srv');
+  git(upstream, 'init', '-q', '-b', 'main'); git(upstream, 'config', 'user.email', 't@t'); git(upstream, 'config', 'user.name', 't');
+  write(path.join(upstream, 'a.js'), 'v1\n'); git(upstream, 'add', '.'); git(upstream, 'commit', '-qm', 'v1');
+  const c1 = git(upstream, 'rev-parse', 'HEAD');
+  git(client, 'clone', '-q', upstream, '.');
+  git(client, 'config', 'user.email', 't@t'); git(client, 'config', 'user.name', 't');
+  // Upstream moves ahead to c2 (deployed) and c3 (newer, NOT deployed yet)
+  write(path.join(upstream, 'a.js'), 'v2\n'); git(upstream, 'add', '.'); git(upstream, 'commit', '-qm', 'v2');
+  const c2 = git(upstream, 'rev-parse', 'HEAD');
+  write(path.join(upstream, 'a.js'), 'v3\n'); git(upstream, 'add', '.'); git(upstream, 'commit', '-qm', 'v3');
+
+  const bundleDir = path.join(dataDir, 'fleet', 'bundle');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const bundlePath = path.join(bundleDir, 'repo.bundle');
+  const gb = createGitBundle(c2, bundlePath, { depth: 10, cwd: upstream });
+  write(path.join(bundleDir, 'manifest.json'), JSON.stringify({
+    commit: c2, at: new Date().toISOString(), files: {}, headless: [], known: [],
+    gitBundle: { file: 'repo.bundle', sha256: gb.sha256, size: gb.size, base: gb.base },
+  }));
+
+  const fleetSrv = createServerFleet({
+    dataDir, machines: new Map(), control: true,
+    authAgent: (req) => req.headers.authorization === 'Bearer tok-123' ? { name: 'box' } : null,
+  });
+  const srv = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (await fleetSrv.handleAgent(req, res, url, '127.0.0.1')) return;
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+  try {
+    // Unauthorized request gets 401
+    const unauth = await new Promise((r) => http.get(`http://127.0.0.1:${port}/api/fleet/bundle`, (res) => { res.resume(); r(res.statusCode); }));
+    assert.equal(unauth, 401);
+    // Wrong commit gets 409
+    const mismatch = await new Promise((r) => http.get(`http://127.0.0.1:${port}/api/fleet/bundle?commit=${c1}`, { headers: { Authorization: 'Bearer tok-123' } }, (res) => { res.resume(); r(res.statusCode); }));
+    assert.equal(mismatch, 409);
+
+    let guards = 0;
+    const agentFleet = createAgentFleet({
+      root: client, home, platform: 'linux',
+      cfg: { server: `ws://127.0.0.1:${port}/agent`, token: 'tok-123' },
+      spawnGuard: () => { guards++; },
+    });
+    // Point origin at a broken URL so only the NAS bundle can succeed
+    git(client, 'remote', 'set-url', 'origin', 'http://127.0.0.1:1/nonexistent.git');
+    const r = await agentFleet.apply({
+      rid: 'r-gb', mode: 'git', commit: c2,
+      gitBundle: { path: '/api/fleet/bundle', sha256: gb.sha256, size: gb.size },
+    });
+    assert.equal(r.ok, true, r.msg);
+    assert.equal(r.restart, true);
+    assert.equal(guards, 1);
+    assert.equal(git(client, 'rev-parse', 'HEAD'), c2, 'pinned to deployed commit c2, not c3');
+    assert.equal(fs.readFileSync(path.join(client, 'a.js'), 'utf8').trim(), 'v2');
+  } finally {
+    fleetSrv.close();
+    srv.close();
+  }
 });

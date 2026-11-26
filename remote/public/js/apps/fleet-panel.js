@@ -27,7 +27,7 @@ export function panel() {
   const root = h('div', { class: 'mcp fleet' });
   const msg = h('p', { class: 'gnote', 'aria-live': 'polite' });
   const body = h('div');
-  root.append(h('p', { class: 'ghint', text: '每台电脑的 agent 连着看板服务器。部署（deploy.js）把新版本的 agent 文件放到 NAS 上，服务器经这条连接推给各电脑并让它重启；新版本两分钟内没连回来就自动退回旧版本。开发用的目录（多个工作树、不在 main、有没提交的改动）永远不会被自动更新。编程 agent（harness）也在这里装和更新，同样不经 SSH。' }), msg, body);
+  root.append(h('p', { class: 'ghint', text: '每台电脑的 agent 连着看板服务器。部署（deploy.js）会把新版本更新包与 git bundle 放到 NAS 上，各电脑直接从 NAS 经 HTTP 拉取并精确切到部署版本，重启失败两分钟内自动回滚。标了 autoUpdate: false 或多工作树的开发目录永不自动更新；非开发机若本地改动文件导致无法拉取，会直接在此提示手动处理。编程 agent（harness）也在这里装和更新。' }), msg, body);
   let data = null, busy = false;
   const say = (t) => { msg.textContent = t || ''; };
   const act = async (path, body, doing) => {

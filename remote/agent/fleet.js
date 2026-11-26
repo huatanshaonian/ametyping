@@ -12,6 +12,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 
@@ -43,12 +45,54 @@ function writeJSON(f, v) {
   fs.writeFileSync(tmp, JSON.stringify(v, null, 2), { mode: 0o600 }); fs.renameSync(tmp, f);
 }
 
+// Derive HTTP(S) base URL from agent.json server ("wss://host/agent" -> "https://host")
+function httpBaseOf(serverUrl) {
+  try {
+    const u = new URL(String(serverUrl || ''));
+    u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
+    u.pathname = u.pathname.replace(/\/agent\/?$/, '');
+    u.search = ''; u.hash = '';
+    return u.toString().replace(/\/+$/, '');
+  } catch { return ''; }
+}
+// Download the deployed git bundle directly from the NAS over HTTP(S) (no proxy; LAN/Tailscale) with Bearer token
+function downloadBundle(url, token, dest, { sha256 = '', timeout = 120e3 } = {}) {
+  return new Promise((resolve, reject) => {
+    let u; try { u = new URL(url); } catch (e) { return reject(e); }
+    const mod = u.protocol === 'https:' ? https : http;
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    const req = mod.request(u, { method: 'GET', timeout, headers: token ? { Authorization: 'Bearer ' + token } : {} }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`NAS 返回 HTTP ${res.statusCode}`));
+      }
+      const hash = crypto.createHash('sha256');
+      const out = fs.createWriteStream(dest, { mode: 0o600 });
+      res.on('data', (chunk) => hash.update(chunk));
+      res.pipe(out);
+      out.on('finish', () => {
+        const got = hash.digest('hex');
+        if (sha256 && got !== sha256) {
+          try { fs.rmSync(dest, { force: true }); } catch {}
+          return reject(new Error(`更新包校验不一致（期望 ${sha256.slice(0, 12)}，实际 ${got.slice(0, 12)}）`));
+        }
+        resolve({ file: dest, sha256: got });
+      });
+      out.on('error', (e) => { try { fs.rmSync(dest, { force: true }); } catch {} reject(e); });
+    });
+    req.on('timeout', () => req.destroy(new Error('从 NAS 下载更新包超时')));
+    req.on('error', (e) => { try { fs.rmSync(dest, { force: true }); } catch {} reject(e); });
+    req.end();
+  });
+}
+
 function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {}, platform = process.platform, env = process.env,
-  spawnGuard = null, gitRun = run } = {}) {
+  spawnGuard = null, gitRun = run, fetchBundle = null } = {}) {
   const dir = path.join(home, '.ametyping', 'fleet');
   const pendingFile = path.join(dir, 'pending.json'), lastFile = path.join(dir, 'last.json');
   const versionFile = path.join(root, '.ame-version.json');
-  const git = (args, t) => gitRun('git', ['-C', root, ...args], root, t, args[0] === 'pull' || args[0] === 'fetch' ? netEnv(home, env) : undefined);
+  const git = (args, t, useProxy = true) => gitRun('git', ['-C', root, ...args], root, t,
+    useProxy && (args[0] === 'pull' || args[0] === 'fetch') ? netEnv(home, env) : undefined);
   let staging = null;                                     // { rid, dir, files: Map(path -> blob) }
 
   async function version() {
@@ -59,14 +103,16 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       const head = await git(['rev-parse', 'HEAD']);
       out.commit = head.ok ? head.out : '';
       out.branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).out;
-      const dirty = (await git(['status', '--porcelain', '--untracked-files=no'])).out.split('\n').filter((l) => l && !/package-lock\.json$/.test(l));
-      out.dirty = dirty.length;
+      const dirtyLines = (await git(['status', '--porcelain', '--untracked-files=no'])).out.split('\n').filter((l) => l && !/package-lock\.json$/.test(l));
+      const dirtyFiles = dirtyLines.map((l) => l.replace(/^\s*[MADRCU?!]{1,2}\s+/, '').trim().replace(/^"|"$/g, '')).filter(Boolean);
+      out.dirty = dirtyFiles.length;
+      if (dirtyFiles.length) out.dirtyFiles = dirtyFiles.slice(0, 8);
       const wt = (await git(['worktree', 'list', '--porcelain'])).out.split('\n').filter((l) => l.startsWith('worktree ')).length;
       out.why = cfg.autoUpdate === false ? 'agent.json 里 "autoUpdate": false'
         : fs.statSync(dotgit).isFile() ? '这是一个工作树（开发用），不自动更新'
         : wt > 1 ? `开发目录（${wt} 个工作树），不自动更新`
         : out.branch !== 'main' ? `在分支 ${out.branch} 上，不是 main，不自动更新`
-        : dirty.length ? `有 ${dirty.length} 个文件改了没提交，不自动更新` : '';
+        : dirtyFiles.length ? `本地改了文件，无法自动更新（请手动处理）：${dirtyFiles.slice(0, 5).join('、')}${dirtyFiles.length > 5 ? ' …' : ''}` : '';
     } else {
       out.mode = 'files';
       const v = readJSON(versionFile);
@@ -123,12 +169,40 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     let pending;
     if (v.mode === 'git') {
       const before = v.commit;
-      const pull = await git(['pull', '--ff-only'], 180e3);
-      if (!pull.ok) return { ok: false, msg: '拉取最新代码失败：' + (pull.err || pull.out).slice(-300) };
-      const after = (await git(['rev-parse', 'HEAD'])).out;
-      if (after === before) return { ok: true, msg: '已经是最新的（GitHub 上的 main 还没到这个版本？）', restart: false };
-      const changed = (await git(['diff', '--name-only', before, after])).out.split('\n').filter(Boolean);
       const notes = [];
+      let fetched = false;
+      const gb = d.gitBundle && typeof d.gitBundle === 'object' ? d.gitBundle : null;
+      if (gb && (fetchBundle || (cfg.server && cfg.token))) {
+        const tmpBundle = path.join(dir, `repo-${d.commit.slice(0, 7)}-${Date.now()}.bundle`);
+        try {
+          if (fetchBundle) {
+            await fetchBundle(gb, tmpBundle, d.commit);
+          } else {
+            const base = httpBaseOf(cfg.server);
+            if (!base) throw new Error('agent.json 的 server 地址格式不对');
+            const dlUrl = `${base}${gb.path || '/api/fleet/bundle'}?commit=${d.commit}`;
+            await downloadBundle(dlUrl, cfg.token, tmpBundle, { sha256: gb.sha256 || '' });
+          }
+          const f = await git(['fetch', '--no-tags', tmpBundle, '+refs/*:refs/ame-fleet/*'], 180e3, false);
+          if (f.ok) fetched = true;
+          else notes.push('NAS 增量包缺少基线，改从 origin 拉取：' + (f.err || f.out).slice(-160));
+        } catch (e) {
+          notes.push('从 NAS 下载更新包失败，改从 origin 拉取：' + e.message);
+        } finally {
+          try { fs.rmSync(tmpBundle, { force: true }); } catch {}
+        }
+      }
+      if (!fetched) {
+        const f = await git(['fetch', 'origin', 'main'], 180e3, true);
+        if (!f.ok) return { ok: false, msg: '拉取最新代码失败：' + (f.err || f.out).slice(-300), notes };
+      }
+      const hasCommit = await git(['cat-file', '-e', `${d.commit}^{commit}`], 15e3, false);
+      if (!hasCommit.ok) return { ok: false, msg: `找不到目标版本 ${d.commit.slice(0, 7)}（GitHub 上的 main 可能还没同步？）`, notes };
+      const merge = await git(['merge', '--ff-only', d.commit], 60e3, false);
+      if (!merge.ok) return { ok: false, msg: '无法快进到目标版本（请手动处理本地改动或分叉）：' + (merge.err || merge.out).slice(-300), notes };
+      const after = (await git(['rev-parse', 'HEAD'])).out;
+      if (after === before) return { ok: true, msg: '已经是这个版本', restart: false, notes };
+      const changed = (await git(['diff', '--name-only', before, after])).out.split('\n').filter(Boolean);
       for (const [sub, args] of [['app', ['install', '--no-audit', '--no-fund']], ['remote', ['install', '--omit=dev', '--no-audit', '--no-fund']]]) {
         if (!changed.some((f) => f === `${sub}/package.json` || f === `${sub}/package-lock.json`)) continue;
         const r = platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'npm', ...args], path.join(root, sub), 600e3, netEnv(home, env))
@@ -249,4 +323,4 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
   return { version, have, stage, apply, markHealthy, dir, _startGuard: startGuard };
 }
 
-module.exports = { createFleet, blobId, SAFE };
+module.exports = { createFleet, blobId, SAFE, httpBaseOf, downloadBundle };

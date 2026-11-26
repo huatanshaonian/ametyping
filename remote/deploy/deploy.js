@@ -19,7 +19,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { git, ssh, run, upload, treeOf, depsOf, remoteFiles, compare, historyBlobs } = require('./deploy-lib');
+const { git, ssh, run, upload, treeOf, depsOf, remoteFiles, compare, historyBlobs, createGitBundle } = require('./deploy-lib');
 
 const argv = process.argv.slice(2);
 const flag = (f) => argv.includes(f);
@@ -177,14 +177,24 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
       headless: [...agentTree.keys()].filter((p) => hdeps.has(p)), known: [...historyBlobs([...agentTree.keys()])] };
     say(`  ${agentTree.size} 个文件（其中 ${manifest.headless.length} 个是无头服务的代码），历史版本 ${manifest.known.length} 个`);
     let current = null; try { current = JSON.parse(String(ssh(NAS.ssh, `cat ${NAS.dir}/${BUNDLE}/manifest.json 2>/dev/null || true`))); } catch {}
-    if (current && current.commit === commit) say('  群晖上已经是这个版本的更新包');
-    else if (DRY) say('  （--dry-run：会上传更新包，看板随后自动更新各电脑上的 agent）');
+    if (current && current.commit === commit && current.gitBundle) say('  群晖上已经是这个版本的更新包');
+    else if (DRY) say('  （--dry-run：会上传更新包及 git bundle，看板随后自动更新各电脑上的 agent）');
     else {
-      ssh(NAS.ssh, `rm -rf ${NAS.dir}/${BUNDLE}.new && mkdir -p ${NAS.dir}/${BUNDLE}.new/files`);
-      await upload(commit, [...agentTree.keys()], NAS.ssh, `${NAS.dir}/${BUNDLE}.new/files`);
-      ssh(NAS.ssh, `cat > ${NAS.dir}/${BUNDLE}.new/manifest.json`, { input: JSON.stringify(manifest) });
-      ssh(NAS.ssh, `cd ${NAS.dir}/${path.posix.dirname(BUNDLE)} && rm -rf bundle.old && { [ ! -d bundle ] || mv bundle bundle.old; } && mv bundle.new bundle && rm -rf bundle.old`);
-      say('  已上传：看板服务器一分钟内发现新版本，自动推给开了远程控制、不是开发目录的电脑（控制面板 › 设备更新）');
+      const os = require('os');
+      const tmpBundle = path.join(os.tmpdir(), `ame-fleet-${commit.slice(0, 7)}-${process.pid}.bundle`);
+      try {
+        const gb = createGitBundle(commit, tmpBundle);
+        manifest.gitBundle = { file: 'repo.bundle', sha256: gb.sha256, size: gb.size, base: gb.base || '' };
+        say(`  git bundle：${(gb.size / 1024 / 1024).toFixed(2)} MB（sha256 ${gb.sha256.slice(0, 12)}…）`);
+        ssh(NAS.ssh, `rm -rf ${NAS.dir}/${BUNDLE}.new && mkdir -p ${NAS.dir}/${BUNDLE}.new/files`);
+        await upload(commit, [...agentTree.keys()], NAS.ssh, `${NAS.dir}/${BUNDLE}.new/files`);
+        ssh(NAS.ssh, `cat > ${NAS.dir}/${BUNDLE}.new/repo.bundle`, { input: fs.readFileSync(tmpBundle) });
+        ssh(NAS.ssh, `cat > ${NAS.dir}/${BUNDLE}.new/manifest.json`, { input: JSON.stringify(manifest) });
+        ssh(NAS.ssh, `cd ${NAS.dir}/${path.posix.dirname(BUNDLE)} && rm -rf bundle.old && { [ ! -d bundle ] || mv bundle bundle.old; } && mv bundle.new bundle && rm -rf bundle.old`);
+        say('  已上传：看板服务器一分钟内发现新版本，自动推给开了远程控制、不是开发目录的电脑（控制面板 › 设备更新）');
+      } finally {
+        try { fs.rmSync(tmpBundle, { force: true }); } catch {}
+      }
     }
   }
   if (!flag('--no-agents')) {
