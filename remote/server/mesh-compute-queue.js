@@ -454,6 +454,8 @@ function createComputeQueue({
     uploadPaths,
     downloadPath = '',
     outputDir = '',
+    sugonProfile = '',
+    profile = '',
     partition = '',
     nodes,
     ntasks,
@@ -516,6 +518,7 @@ function createComputeQueue({
       downloadPath: cleanStr(downloadPath, 300),
       outputDir: cleanStr(outputDir, 500),
     } : provType === 'sugon' ? {
+      sugonProfile: cleanStr(sugonProfile || profile, 60),
       partition: cleanStr(partition, 80),
       nodes: Number.isFinite(Number(nodes)) && Number(nodes) >= 1 ? Math.trunc(Number(nodes)) : 1,
       ntasks: Number.isFinite(Number(ntasks)) && Number(ntasks) >= 1 ? Math.trunc(Number(ntasks)) : 1,

@@ -12,6 +12,7 @@ const { createRoleStore } = require('./mesh-roles');
 const { createModelRouter } = require('./mesh-model-router');
 const { createComputeQueue } = require('./mesh-compute-queue');
 const { evaluateFableAdvice } = require('./mesh-fable-advisor');
+const { diagnoseSugonFailure } = require('./mesh-sugon-advisor');
 
 const MAX_PROJECTS = 50;
 const MAX_NODES = 60;
@@ -95,6 +96,7 @@ function createMesh({
   marks,
   fsCatalog,
   getMagpie = () => null,
+  getEgress = () => null,
   getTodos = () => [],
   dispatchControl = null, // async (machineName, payload) => { ok, msg }
   onChange = () => {},
@@ -243,6 +245,7 @@ function createMesh({
         sock.send(JSON.stringify({
           t: 'sugon-exec',
           jobId: job.id,
+          sugonProfile: job.sugonProfile || '',
           label: job.label || '',
           partition: job.partition || '',
           nodes: job.nodes || 1,
@@ -363,6 +366,21 @@ function createMesh({
       tail,
     });
     const job = r && r.job;
+    if (job && job.providerType === 'sugon' && !ok) {
+      onSugonAlert(machineName || job.machine, {
+        profileId: d.profileId || job.sugonProfile || '',
+        profileLabel: d.profileId || job.sugonProfile || '曙光超算',
+        slurmJobId: d.slurmJobId || job.id,
+        jobName: job.label || job.id,
+        partition: job.partition || '',
+        state: cleanStr(d.error, 80) || 'FAILED',
+        exitCode: String(exitCode),
+        elapsed: durationMs ? `${Math.round(durationMs / 1000)}s` : '',
+        command: job.command || '',
+        logTail: tail,
+        projectId: job.projectId || '',
+      }).catch(() => {});
+    }
     if (job && job.projectId) {
       try {
         await emitEvent({
@@ -379,6 +397,50 @@ function createMesh({
         });
       } catch {}
     }
+  }
+
+  const recentSugonAlerts = new Map(); // key -> ts (dedupe 30 min)
+  async function onSugonAlert(machineName, alert = {}) {
+    if (!alert || typeof alert !== 'object') return { ok: false };
+    const key = `${alert.profileId || ''}:${alert.slurmJobId || alert.jobId || ''}`;
+    const nowMs = Date.now();
+    if (key !== ':' && recentSugonAlerts.has(key) && nowMs - recentSugonAlerts.get(key) < 30 * 60000) {
+      return { ok: true, deduped: true };
+    }
+    if (key !== ':') recentSugonAlerts.set(key, nowMs);
+    if (recentSugonAlerts.size > 200) {
+      for (const [k, ts] of recentSugonAlerts) {
+        if (nowMs - ts > 60 * 60000) recentSugonAlerts.delete(k);
+      }
+    }
+
+    const diag = await diagnoseSugonFailure({
+      alert,
+      dataDir,
+      egress: typeof getEgress === 'function' ? getEgress() : null,
+      magpie: typeof getMagpie === 'function' ? getMagpie() : null,
+    });
+    if (typeof notify === 'function') {
+      try {
+        notify({
+          title: diag.header,
+          body: `${diag.category}：${diag.rootCause}\n建议：${diag.suggestion}`,
+          tag: `sugon-alert-${alert.slurmJobId || nowMs}`,
+        });
+      } catch {}
+    }
+    const targetPid = cleanStr(alert.projectId, 40);
+    if (targetPid && data.projects.some((p) => p.id === targetPid)) {
+      try {
+        await postBoard({
+          projectId: targetPid,
+          agent: '超算巡检',
+          kind: 'alert',
+          text: `@master ${diag.summaryText}`,
+        });
+      } catch {}
+    }
+    return { ok: true, diagnosis: diag };
   }
 
   const computeQueue = createComputeQueue({
@@ -3801,6 +3863,7 @@ function createMesh({
             fallbackGpus: d.fallbackGpus,
             maxDurationMin: d.maxDurationMin,
             minBalanceCcu: d.minBalanceCcu,
+            sugonProfile: d.sugonProfile || d.profile || '',
             partition: d.partition || '',
             nodes: d.nodes,
             ntasks: d.ntasks,
@@ -4065,6 +4128,7 @@ function createMesh({
     listLocalQuotas,
     onColabStatus,
     onSugonStatus,
+    onSugonAlert,
     onComputeDone,
     fromAgentResult,
     fromAgentRpc,

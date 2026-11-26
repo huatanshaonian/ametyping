@@ -155,14 +155,35 @@ export function createComputeView({ say = () => {} } = {}) {
     const dlPathIn = h('input', { class: 'field', type: 'text', placeholder: '远端产物路径（留空则不下载）' });
     const outDirIn = h('input', { class: 'field', type: 'text', placeholder: '网关机本地保存目录，如：/mnt/nas/colab-out' });
 
-    const sugonPartIn = h('input', { class: 'field', type: 'text', value: sugonMeta.defaultPartition || '', placeholder: '分区名，如：kshdnormal / gpu' });
+    const sugonProfiles = Array.isArray(sugonMeta.profiles) ? sugonMeta.profiles : [];
+    const sugonProfSel = h('select', { class: 'field' },
+      ...(sugonProfiles.length
+        ? sugonProfiles.map((pf) => h('option', {
+            value: pf.id,
+            text: `${pf.label || pf.id}${pf.hasRayfile ? ' [快传]' : ''}${pf.available ? '' : ' (离线)'}`,
+          }))
+        : [h('option', { value: '', text: '默认配置档' })])
+    );
+    if (sugonMeta.defaultProfile && sugonProfiles.some((pf) => pf.id === sugonMeta.defaultProfile)) {
+      sugonProfSel.value = sugonMeta.defaultProfile;
+    }
+    const sugonPartIn = h('input', { class: 'field', type: 'text', value: sugonMeta.defaultPartition || '', placeholder: '分区名，如：hfacnormal04 / ksagnormal01' });
     const sugonNodesIn = h('input', { class: 'field', type: 'number', min: '1', max: '128', value: '1', placeholder: '1' });
     const sugonTasksIn = h('input', { class: 'field', type: 'number', min: '1', max: '4096', value: '1', placeholder: '1' });
     const sugonGpusIn = h('input', { class: 'field', type: 'number', min: '0', max: '16', value: '0', placeholder: '0' });
-    const sugonWallIn = h('input', { class: 'field', type: 'text', value: '02:00:00', placeholder: 'HH:MM:SS，如 04:00:00' });
+    const sugonWallIn = h('input', { class: 'field', type: 'text', value: '04:00:00', placeholder: 'HH:MM:SS，如 04:00:00' });
     const sugonWorkIn = h('input', { class: 'field', type: 'text', value: sugonMeta.remoteWorkDir || '', placeholder: '超算远端工作目录（留空用配置默认）' });
     const sugonDlIn = h('input', { class: 'field', type: 'text', placeholder: '超算远端产物路径（留空则不回传）' });
     const sugonOutIn = h('input', { class: 'field', type: 'text', value: '/mnt/nas/sugon-out', placeholder: '网关机保存目录，如：/mnt/nas/sugon-out' });
+
+    const syncSugonProfileDefaults = () => {
+      const pf = sugonProfiles.find((x) => x.id === sugonProfSel.value);
+      if (!pf) return;
+      if (pf.defaultPartition) sugonPartIn.value = pf.defaultPartition;
+      if (pf.remoteWorkDir) sugonWorkIn.value = pf.remoteWorkDir;
+    };
+    sugonProfSel.addEventListener('change', syncSugonProfileDefaults);
+    syncSugonProfileDefaults();
 
     const labelIn = h('input', { class: 'field', type: 'text', placeholder: '作业名称，如：CEM 扫频验证' });
     const cwdIn = h('input', { class: 'field', type: 'text', placeholder: '工作目录绝对路径（留空则用目标机主目录）' });
@@ -192,6 +213,9 @@ export function createComputeView({ say = () => {} } = {}) {
       })
     );
     const sugonSection = h('div', {},
+      h('div', { style: 'margin-bottom:4px' },
+        h('label', { class: 'xnote-lbl', text: '超算中心与账号 (Profile)：' }), sugonProfSel
+      ),
       h('div', { style: 'display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px' },
         h('div', {}, h('label', { class: 'xnote-lbl', text: '队列分区 (Partition)：' }), sugonPartIn),
         h('div', {}, h('label', { class: 'xnote-lbl', text: '节点数：' }), sugonNodesIn),
@@ -282,6 +306,7 @@ export function createComputeView({ say = () => {} } = {}) {
         await postQueue({
           op: 'submit',
           providerType: 'sugon',
+          sugonProfile: sugonProfSel.value || '',
           machine: sugonMeta.machine || '',
           projectId: projSel.value,
           resource: gpus > 0 ? 'gpu' : 'cpu',
@@ -601,15 +626,21 @@ export function createComputeView({ say = () => {} } = {}) {
         }
         if (p.id === 'sugon' && meta) {
           const modeLabel = meta.mode === 'openapi' ? 'OpenAPI v2' : 'SSH + Slurm';
+          const profs = Array.isArray(meta.profiles) ? meta.profiles : [];
+          const onlineCnt = meta.onlineCount != null ? meta.onlineCount : profs.filter((x) => x.available).length;
+          const totalCnt = meta.totalCount != null ? meta.totalCount : profs.length;
+          const rfCnt = profs.filter((x) => x.hasRayfile).length;
+          const expKeys = Array.isArray(meta.expiringKeys) ? meta.expiringKeys : [];
           const parts = Array.isArray(meta.partitions) ? meta.partitions : [];
           const partTxt = parts.length
-            ? parts.slice(0, 4).map((pt) => `${pt.name}(${pt.idleNodes || 0}/${pt.totalNodes || 0})`).join(', ')
+            ? parts.slice(0, 4).map((pt) => (typeof pt === 'string' ? pt : `${pt.name}(${pt.idleNodes || 0}/${pt.totalNodes || 0})`)).join(', ')
             : (meta.defaultPartition || '—');
           return h('div', { class: 'inf-comp-provider' },
             h('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' },
               h('span', { class: `inf-dot ${p.status === 'active' ? 'on' : ''}` }),
               h('b', { text: p.name }),
-              h('span', { class: 'inf-comp-tag', text: `${statusTxt} · ${modeLabel}` }),
+              h('span', { class: 'inf-comp-tag', text: `${statusTxt} · ${modeLabel}${totalCnt > 1 ? ` · ${onlineCnt}/${totalCnt} 入口` : ''}` }),
+              rfCnt > 0 ? h('span', { class: 'inf-comp-tag', text: `快传 ${rfCnt}` }) : null,
               p.status === 'active'
                 ? h('button', {
                     class: 'btn',
@@ -622,10 +653,17 @@ export function createComputeView({ say = () => {} } = {}) {
             ),
             h('div', { class: 'inf-comp-meta', style: 'margin-top:4px' },
               h('span', { text: `网关机: ${meta.machine || '—'}` }),
-              h('span', { text: `分区: ${partTxt}` }),
-              h('span', { text: `在途作业: ${meta.runningJobs || 0} 运行 / ${meta.pendingJobs || 0} 排队` }),
+              h('span', { text: `默认分区: ${partTxt}` }),
+              h('span', { text: `在途作业: ${meta.runningJobs || 0} 运行 / ${meta.queuedJobs || 0} 排队` }),
               meta.at ? h('span', { class: 'inf-comp-muted', text: `更新于 ${ago(meta.at)}` }) : null
             ),
+            expKeys.length
+              ? h('div', {
+                  class: 'inf-comp-muted',
+                  style: 'color:#b45309;margin-top:3px',
+                  text: `密钥临近到期: ${expKeys.map((k) => `${k.label || k.id} (${k.keyExpireAt})`).join(', ')}`,
+                })
+              : null,
             meta.error ? h('div', { class: 'inf-comp-muted', text: `状态异常: ${meta.error}` }) : null
           );
         }
