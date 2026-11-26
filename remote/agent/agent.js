@@ -113,7 +113,7 @@ function lookForWayOut() {
 function sendFleetVersion() {
   fleet.version()
     .then((v) => sendJSON({ t: 'fleet-version', ...v, control: CONTROL, magpieKey: agentConfig.keyInfo() || undefined,
-      harnesses: harnessList || undefined, proxy: agentConfig.net().proxy || undefined, net: netView(netFound) || undefined }))
+      harnesses: harnessList || undefined, hooks: fleet.hookStatus(), proxy: agentConfig.net().proxy || undefined, net: netView(netFound) || undefined }))
     .catch((e) => console.error('版本信息读取失败：' + e.message));
   if (!harnessList && !harnessTimer) {
     harnessTimer = setTimeout(() => harness.inventory().then((l) => { harnessList = l; sendFleetVersion(); }, () => {})
@@ -126,7 +126,25 @@ function sendFleetVersion() {
 function refreshHarnesses() { harness.inventory({ fresh: true }).then((l) => { harnessList = l; }, () => {}).finally(sendFleetVersion); }
 function onFleetMessage(d) {
   const reply = (t, o) => sendJSON({ t, rid: d.rid, ...o });
-  if (!CONTROL) return reply(d.t === 'agent-config' ? 'agent-config-result' : d.t === 'harness-run' ? 'harness-result' : d.t === 'harness-net-probe' ? 'harness-net-result' : 'fleet-result', { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' });
+  const failType = d.t === 'agent-config' ? 'agent-config-result'
+    : d.t === 'harness-run' ? 'harness-result'
+    : d.t === 'harness-net-probe' ? 'harness-net-result'
+    : d.t === 'fleet-sync-hooks' ? 'fleet-sync-hooks-result'
+    : d.t === 'fleet-sync-skills' ? 'fleet-sync-skills-result'
+    : 'fleet-result';
+  if (!CONTROL) return reply(failType, { ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' });
+  if (d.t === 'fleet-sync-hooks') {
+    fleet.syncHooksAndMcp()
+      .then((r) => reply('fleet-sync-hooks-result', r), (e) => reply('fleet-sync-hooks-result', { ok: false, msg: '同步出错：' + e.message }))
+      .finally(() => { sendFleetVersion(); sendMcpStatus(); });
+    return;
+  }
+  if (d.t === 'fleet-sync-skills') {
+    let r; try { r = fleet.syncSkills(d.skills); } catch (e) { r = { ok: false, msg: '下发出错：' + e.message }; }
+    reply('fleet-sync-skills-result', r);
+    sendCommands(true);
+    return;
+  }
   if (d.t === 'harness-run') {
     const s = (v) => (typeof v === 'string' ? v : '');
     harness.run(String(d.id || ''), String(d.action || ''), { proxy: s(d.proxy), fallback: s(d.fallback), target: s(d.target) })
@@ -789,7 +807,7 @@ function connect() {
     if(nativeArchive.handle(d))return;
     if(d.t==='memory-bundle'){memorySync.handle(d).catch(e=>console.error('记忆同步失败：'+e.message));return;}
     if (d.t === 'want-conv' && typeof d.id === 'string') sendConv(d.id);
-    else if ((d.t === 'fleet-check' || d.t === 'fleet-files' || d.t === 'fleet-apply' || d.t === 'agent-config' || d.t === 'harness-run' || d.t === 'harness-net-probe') && typeof d.rid === 'string') onFleetMessage(d);
+    else if ((d.t === 'fleet-check' || d.t === 'fleet-files' || d.t === 'fleet-apply' || d.t === 'agent-config' || d.t === 'harness-run' || d.t === 'harness-net-probe' || d.t === 'fleet-sync-hooks' || d.t === 'fleet-sync-skills') && typeof d.rid === 'string') onFleetMessage(d);
     else if (d.t === 'sync' && d.offsets && typeof d.offsets === 'object') {
       fleet.markHealthy();                             // (this agent reached the server: an update's guard stops waiting)
       // where the server stands per session: (re)start streaming there

@@ -43,7 +43,7 @@ const plain = (s) => { const m = VERSION.exec(String(s || '')); return m ? m[0] 
 const SPEC = {
   claude: { label: 'Claude Code', names: ['claude'], dirs: (h) => [path.join(h, '.local', 'bin'), path.join(h, '.claude', 'local')],
     install: { linux: 'curl -fsSL https://claude.ai/install.sh | bash', win32: 'irm https://claude.ai/install.ps1 | iex' },
-    update: { npm: '@anthropic-ai/claude-code@latest', self: ['update'] }, after: ['install-mesh-mcp.js'] },
+    update: { npm: '@anthropic-ai/claude-code@latest', self: ['update'] }, after: ['headless/install-hooks.js', 'install-mesh-mcp.js'] },
   codex: { label: 'Codex', names: ['codex'], dirs: (h) => [path.join(h, '.local', 'bin')],
     install: { npm: '@openai/codex@latest' }, update: { npm: '@openai/codex@latest', self: ['update'] }, after: ['install-codex-hooks.js', 'install-mesh-mcp.js'] },
   opencode: { label: 'OpenCode', names: ['opencode'], dirs: (h) => [path.join(h, '.opencode', 'bin')],

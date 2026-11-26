@@ -1,6 +1,7 @@
 // 控制面板 › Skill 与协同 (Skill 文档、角色提示词 .md、全局模型池、机器角色备忘)
 import { h, ago } from '../util.js';
 import * as net from '../net.js';
+import { askCode } from '../gate.js';
 import { panel as fleetPanel } from './fleet-panel.js';
 
 const TABS = [
@@ -96,18 +97,20 @@ function createMdLibraryView(cfg) {
   const saveBtn = h('button', { class: 'btn go', type: 'button', text: '保存' });
   const resetBtn = h('button', { class: 'btn no', type: 'button', text: '还原默认' });
   const copyBtn = h('button', { class: 'btn', type: 'button', text: '复制正文' });
+  const syncOneBtn = cfg.canSync ? h('button', { class: 'btn', type: 'button', text: '下发到所有电脑' }) : null;
   const newBtn = h('button', { class: 'btn', type: 'button', text: cfg.newBtnText });
   const refreshBtn = h('button', { class: 'btn', type: 'button', text: '刷新' });
+  const syncAllBtn = cfg.canSync ? h('button', { class: 'btn', type: 'button', text: '同步全部' }) : null;
 
   const side = h('div', { class: 'skp-side' },
-    h('div', { class: 'skp-side-bar' }, newBtn, refreshBtn),
+    h('div', { class: 'skp-side-bar' }, newBtn, refreshBtn, syncAllBtn),
     listEl);
 
   const main = h('div', { class: 'skp-main' },
     editorHead,
     metaLine,
     textarea,
-    h('div', { class: 'skp-actions' }, saveBtn, resetBtn, copyBtn, statusEl));
+    h('div', { class: 'skp-actions' }, saveBtn, resetBtn, copyBtn, syncOneBtn, statusEl));
 
   root.append(h('p', { class: 'ghint', text: cfg.hint }), msg, h('div', { class: 'skp-split' }, side, main));
 
@@ -147,6 +150,7 @@ function createMdLibraryView(cfg) {
       resetBtn.disabled = false;
       copyBtn.disabled = false;
       saveBtn.disabled = busy;
+      if (syncOneBtn) syncOneBtn.disabled = true;
       return;
     }
 
@@ -160,12 +164,14 @@ function createMdLibraryView(cfg) {
       resetBtn.disabled = true;
       resetBtn.textContent = '还原默认';
       copyBtn.disabled = true;
+      if (syncOneBtn) syncOneBtn.disabled = true;
       return;
     }
 
     textarea.disabled = false;
     saveBtn.disabled = busy;
     copyBtn.disabled = false;
+    if (syncOneBtn) syncOneBtn.disabled = busy;
     editorHead.replaceChildren(
       h('b', { class: 'skp-ed-title', text: cur.name }),
       h('span', { class: 'skp-tags' }, originTag(cur), ...cfg.extraTags(cur)));
@@ -222,6 +228,29 @@ function createMdLibraryView(cfg) {
   copyBtn.addEventListener('click', () => {
     copyText(textarea.value || '', textarea, statusEl);
   });
+
+  async function syncSkills(names) {
+    if (busy) return;
+    busy = true;
+    if (syncOneBtn) syncOneBtn.disabled = true;
+    if (syncAllBtn) syncAllBtn.disabled = true;
+    const label = names && names.length ? `下发「${names.join('、')}」` : '同步全部 Skill ';
+    statusEl.textContent = `正在${label}…`;
+    say(`正在向所有在线电脑${label}…`);
+    let r = await net.post('/api/fleet/sync-skills', { machine: '*', ...(names ? { names } : {}) });
+    if (r && !r.ok && r.need === 'totp') {
+      if (await askCode()) r = await net.post('/api/fleet/sync-skills', { machine: '*', ...(names ? { names } : {}) });
+      else r = { ok: false, msg: '已取消' };
+    }
+    busy = false;
+    if (syncAllBtn) syncAllBtn.disabled = false;
+    if (syncOneBtn) syncOneBtn.disabled = creating || !selectedName;
+    const text = (r && r.msg) || (r && r.ok ? '已下发' : '下发失败');
+    statusEl.textContent = r && r.ok ? '已下发' : '下发失败';
+    say(text, !(r && r.ok));
+  }
+  if (syncOneBtn) syncOneBtn.addEventListener('click', () => { if (selectedName) syncSkills([selectedName]); });
+  if (syncAllBtn) syncAllBtn.addEventListener('click', () => syncSkills(null));
 
   saveBtn.addEventListener('click', async () => {
     const name = creating ? nameInput.value.trim() : selectedName;
@@ -676,7 +705,8 @@ export function panel(initialTab) {
       itemLabel: 'Skill',
       newBtnText: '+ 新建 Skill',
       namePlaceholder: '例如：fem-meshing',
-      hint: '管理可复用的 Skill 文档（Markdown）。内置 Skill 修改后标记为「已修改」，可随时还原默认。',
+      hint: '管理可复用的 Skill 文档（Markdown）。内置 Skill 修改后标记为「已修改」，可随时还原默认；点击「同步全部」或「下发到所有电脑」可将托管 Skill 推送到各在线设备的 Claude / Codex / OpenCode / Antigravity 目录。',
+      canSync: true,
       summaryOf: (it) => it.description || '',
       extraTags: () => [],
       makeTemplate: (name) => `---\nname: ${name}\ndescription: 在此填写 Skill 适用场景与简介\n---\n\n# ${name}\n\n## 目标\n\n## 执行步骤\n1. \n`,

@@ -60,6 +60,13 @@ export function panel() {
     if (!list) return h('small', { text: v ? 'agent 版本旧，不上报' : '' });
     const can = data.control && m.online && v.control && !m.harnessBusy;
     const behind = new Set(m.behindHarness || []);
+    const hookRow = Array.isArray(v.hooks) && v.hooks.length
+      ? h('div', { class: 'fleet-h' }, h('b', { text: 'Hook' }),
+        ...v.hooks.filter((x) => x.present || x.installed).map((x) => h('small', {
+          class: x.installed ? '' : 'bad',
+          text: ` ${x.installed ? '✓' : '✗'}${x.label || NAMES[x.id] || x.id}`,
+        })))
+      : '';
     return h('div', { class: 'fleet-hs' }, ...list.map((x) => {
       const r = m.harness[x.id];
       const btn = can ? h('button', { class: 'btn fleet-sm', type: 'button', text: x.installed ? (x.line === 'legacy' ? '迁移到 2.x' : '更新') : '安装', disabled: busy, onclick: () =>
@@ -72,7 +79,7 @@ export function panel() {
         behind.has(x.id) ? h('small', { class: 'bad', text: x.line === 'legacy' ? ' 旧的 1.x 线' : ` → ${newest(x.id)}` }) : '',
         btn, last,
         ...(r && r.status !== 'running' && r.notes && r.notes.length ? r.notes.map((n) => h('div', {}, h('small', { text: '· ' + n }))) : []));
-    }), can && list.some((x) => x.installed) ? h('button', { class: 'btn fleet-sm', type: 'button', text: '全部更新', disabled: busy,
+    }), hookRow, can && list.some((x) => x.installed) ? h('button', { class: 'btn fleet-sm', type: 'button', text: '全部更新', disabled: busy,
       onclick: () => act('harness', { machine: m.name, id: '*', action: 'update' }, `${m.name}：更新全部 harness…`) }) : '',
     data.control && v.control ? h('label', { class: 'fleet-off' }, h('input', { type: 'checkbox', checked: !m.harnessOff, disabled: busy,
       onchange: (e) => act('settings', { harnessOff: { machine: m.name, off: !e.target.checked } }, '保存中…') }), h('small', { text: ' 每天自动更新' })) : '',
@@ -121,7 +128,11 @@ export function panel() {
         act('update', { machine: m.name, force: blocked }, `正在更新 ${m.name}…`);
       } }));
     }
-    if (data.control && m.online && m.version && m.version.control) out.push(h('button', { class: 'btn', type: 'button', text: '配置 agent', onclick: () => configure(m) }));
+    if (data.control && m.online && m.version && m.version.control) {
+      out.push(h('button', { class: 'btn', type: 'button', text: '配置 agent', onclick: () => configure(m) }));
+      out.push(h('button', { class: 'btn', type: 'button', text: '同步 Hook/MCP', disabled: busy,
+        onclick: () => act('sync-hooks', { machine: m.name }, `${m.name}：正在同步 Hook 与 MCP…`) }));
+    }
     return h('div', { class: 'fleet-act' }, ...out);
   }
 
@@ -193,12 +204,16 @@ export function panel() {
       h('td', {}, h('b', { text: m.name }), h('small', { text: m.online ? ' 在线' : ' 离线' })),
       h('td', {}, versionCell(m)), h('td', {}, runCell(m)), h('td', {}, harnessCell(m)), h('td', {}, netCell(m)), h('td', {}, actions(m))));
     const anyHarness = data.machines.some((m) => m.online && m.version && m.version.control && (m.version.harnesses || []).some((x) => x.installed));
+    const anyControllable = data.machines.some((m) => m.online && m.version && m.version.control);
     body.replaceChildren(
       h('p', {}, h('b', { text: 'NAS 上的更新包：' }), b ? h('span', {}, h('code', { text: short(b.commit) }), h('small', { text: ` ${b.files} 个文件 · ${ago(b.at)}` }))
         : h('small', { text: '还没有（运行一次 node remote/deploy/deploy.js 就会放上去）' })),
-      data.control && anyHarness ? h('p', {}, h('button', { class: 'btn', type: 'button', text: '所有电脑：更新全部 harness', disabled: busy,
-        onclick: () => act('harness', { machine: '*', id: '*', action: 'update' }, '正在让所有电脑更新 harness…') }),
-      h('small', { text: ' 每台电脑一个接一个地更新它装了的 Claude Code / Codex / OpenCode / Antigravity，电脑之间同时进行' })) : '',
+      data.control && (anyHarness || anyControllable) ? h('p', { class: 'fleet-row' },
+        anyHarness ? h('button', { class: 'btn', type: 'button', text: '所有电脑：更新全部 harness', disabled: busy,
+          onclick: () => act('harness', { machine: '*', id: '*', action: 'update' }, '正在让所有电脑更新 harness…') }) : '',
+        anyControllable ? h('button', { class: 'btn', type: 'button', text: '所有电脑：同步 Hook & MCP', disabled: busy,
+          onclick: () => act('sync-hooks', { machine: '*' }, '正在同步所有电脑的 Hook 与 MCP…') }) : '',
+        h('small', { text: ' 电脑之间同时进行' })) : '',
       rows.length ? h('table', { class: 'mcp-t' }, h('thead', {}, h('tr', {}, h('th', { text: '电脑' }), h('th', { text: 'agent 版本' }), h('th', { text: '状态' }), h('th', { text: 'Harness' }), h('th', { text: '网络' }), h('th', { text: '' }))), h('tbody', {}, ...rows))
         : h('p', { class: 'ghint', text: '还没有电脑连上来。' }),
       cfgBox, dailyBox(), settingsBox());

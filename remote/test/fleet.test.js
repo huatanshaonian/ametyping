@@ -715,3 +715,117 @@ test('git mode via NAS HTTP bundle: authenticates, verifies sha256, and fast-for
     srv.close();
   }
 });
+
+test('agent hookStatus detects installed hooks and syncSkills writes, skips unchanged, and backs up overwritten files', () => {
+  const root = tmp('root-sk'), home = tmp('home-sk');
+  // Prepare Claude and AGY directories; only Claude has our hook configured
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({
+    hooks: {
+      Stop: [{ hooks: [{ type: 'command', command: 'node /x/hook-relay.js' }] }],
+      PermissionRequest: [{ hooks: [{ type: 'command', command: 'node /x/permission-hook.js' }] }],
+    },
+  }));
+  fs.mkdirSync(path.join(home, '.gemini', 'config'), { recursive: true });
+  write(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify({ hooks: {} }));
+
+  const agent = createAgentFleet({ root, home, platform: 'linux', env: {} });
+  const hs = agent.hookStatus();
+  const byId = Object.fromEntries(hs.map((x) => [x.id, x]));
+  assert.equal(byId.claude.present, true);
+  assert.equal(byId.claude.installed, true);
+  assert.equal(byId.agy.present, true);
+  assert.equal(byId.agy.installed, false);
+  assert.equal(byId.codex.present, false);
+
+  // First sync writes to Claude, shared ~/.agents, and AGY skill dirs
+  const r1 = agent.syncSkills([{ name: 'demo-skill', raw: '---\nname: demo-skill\n---\n# v1\n' }]);
+  assert.equal(r1.ok, true, r1.msg);
+  assert.equal(r1.written, 3);
+  assert.equal(r1.unchanged, 0);
+  const claudeSkill = path.join(home, '.claude', 'skills', 'demo-skill', 'SKILL.md');
+  const agentsSkill = path.join(home, '.agents', 'skills', 'demo-skill', 'SKILL.md');
+  const agySkill = path.join(home, '.gemini', 'config', 'skills', 'demo-skill', 'SKILL.md');
+  assert.equal(fs.readFileSync(claudeSkill, 'utf8'), '---\nname: demo-skill\n---\n# v1\n');
+  assert.equal(fs.readFileSync(agentsSkill, 'utf8'), '---\nname: demo-skill\n---\n# v1\n');
+  assert.equal(fs.readFileSync(agySkill, 'utf8'), '---\nname: demo-skill\n---\n# v1\n');
+
+  // Second sync with identical content is idempotent
+  const r2 = agent.syncSkills([{ name: 'demo-skill', raw: '---\nname: demo-skill\n---\n# v1\n' }]);
+  assert.equal(r2.ok, true);
+  assert.equal(r2.written, 0);
+  assert.equal(r2.unchanged, 3);
+
+  // Third sync with updated content overwrites and creates backups
+  const r3 = agent.syncSkills([{ name: 'demo-skill', raw: '---\nname: demo-skill\n---\n# v2\n' }]);
+  assert.equal(r3.ok, true);
+  assert.equal(r3.written, 3);
+  assert.equal(fs.readFileSync(claudeSkill, 'utf8'), '---\nname: demo-skill\n---\n# v2\n');
+  const backups = fs.readdirSync(path.join(home, '.ametyping', 'config-backups', 'skills'));
+  assert.ok(backups.length >= 3, 'backups created before overwriting existing SKILL.md');
+
+  // Invalid skill name is rejected
+  const bad = agent.syncSkills([{ name: '../escape', raw: 'x' }]);
+  assert.equal(bad.ok, false);
+});
+
+test('server fleet syncHooks and syncSkills fan out over agent RPC and expose hook status in view()', async () => {
+  const dataDir = tmp('data-sync'), root = tmp('root-sync'), home = tmp('home-sync');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const agent = createAgentFleet({ root, home, platform: 'linux' });
+  const machines = new Map();
+  let fleet;
+  const ws = {
+    readyState: 1,
+    sent: [],
+    send(text) {
+      const d = JSON.parse(text);
+      this.sent.push(d);
+      const reply = (t, o) => setImmediate(() => fleet.fromAgent(m, { t, rid: d.rid, ...o }, ws));
+      if (d.t === 'fleet-sync-hooks') {
+        reply('fleet-sync-hooks-result', {
+          ok: true,
+          msg: '已同步：Claude Hook、MCP',
+          results: [{ name: 'Claude Hook', ok: true, msg: '完成' }, { name: 'MCP', ok: true, msg: '完成' }],
+          hooks: [{ id: 'claude', label: 'Claude Code', present: true, installed: true }],
+        });
+      } else if (d.t === 'fleet-sync-skills') {
+        reply('fleet-sync-skills-result', agent.syncSkills(d.skills));
+      }
+    },
+  };
+  const m = { name: 'pc1', online: true, sockets: new Set([ws]) };
+  machines.set('pc1', m);
+  fleet = createServerFleet({
+    dataDir,
+    machines,
+    control: true,
+    tickMs: 3600e3,
+    getSkills: () => [
+      { name: 'alpha-skill', raw: '# alpha\n' },
+      { name: 'beta-skill', raw: '# beta\n' },
+    ],
+  });
+  try {
+    fleet.fromAgent(m, {
+      t: 'fleet-version',
+      mode: 'git',
+      commit: C1,
+      auto: true,
+      control: true,
+      hooks: [{ id: 'claude', label: 'Claude Code', present: true, installed: false }],
+    }, ws);
+    assert.equal(fleet.view().machines[0].version.hooks[0].installed, false);
+
+    const hr = await fleet.syncHooks('*', '127.0.0.1');
+    assert.equal(hr.ok, true, hr.msg);
+    assert.equal(fleet.view().machines[0].version.hooks[0].installed, true);
+
+    const sr = await fleet.syncSkills('*', ['alpha-skill'], '127.0.0.1');
+    assert.equal(sr.ok, true, sr.msg);
+    assert.equal(sr.count, 1);
+    assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'alpha-skill', 'SKILL.md'), 'utf8'), '# alpha\n');
+    assert.equal(fs.existsSync(path.join(home, '.claude', 'skills', 'beta-skill', 'SKILL.md')), false);
+  } finally {
+    fleet.close();
+  }
+});

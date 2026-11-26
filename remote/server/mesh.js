@@ -4334,6 +4334,7 @@ function createMesh({
     roleStore,
     modelRouter,
     computeQueue,
+    listSkills,
   };
 }
 

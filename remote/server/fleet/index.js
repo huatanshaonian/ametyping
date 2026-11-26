@@ -48,6 +48,7 @@ const toolOf = (id) => (/^(codex|opencode|agy|kiro):/.exec(String(id)) || [, 'cl
 
 function createFleet({ dataDir, machines, control = false, audit = () => {}, onChange = () => {}, log = () => {},
   magpieConfig = {}, magpieKeys = createMagpieKeys({ config: magpieConfig }), models = () => [], authAgent = null,
+  getSkills = () => [],
   templateFile = path.join(__dirname, '..', '..', 'public', 'downloads', 'opencode-magpie.json'),
   replyTimeoutMs = 60e3, applyTimeoutMs = 15 * 60e3, harnessTimeoutMs = 17 * 60e3, backTimeoutMs = 5 * 60e3, tickMs = 60e3,
   egressProxies = [], aiAsk = null, releases = null, now = () => Date.now(), dailyGraceMs = 15 * 60e3 }) {
@@ -208,6 +209,8 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
         harnesses: Array.isArray(d.harnesses) ? d.harnesses.filter((x) => x && HARNESSES.includes(x.id)).map((x) => ({
           id: x.id, label: str(x.label, 40), installed: x.installed === true, version: str(x.version, 80), path: str(x.path, 300),
           method: x.method === 'npm' ? 'npm' : x.method === 'self' ? 'self' : '', line: x.line === 'legacy' ? 'legacy' : undefined })) : null,
+        hooks: Array.isArray(d.hooks) ? d.hooks.filter((x) => x && HARNESSES.includes(x.id)).map((x) => ({
+          id: x.id, label: str(x.label, 40), present: x.present === true, installed: x.installed === true })) : null,
         // the agent's look for a way out (harness.js detectNet): which proxy works, reached from where
         net: d.net && typeof d.net === 'object' ? { at: +d.net.at || 0, needProxy: d.net.needProxy !== false,
           recommended: PROXY.test(d.net.recommended || '') ? d.net.recommended : '', recommendedSource: str(d.net.recommendedSource, 60),
@@ -226,7 +229,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       setTimeout(() => maybeAuto(m.name), 3000).unref?.();
       return true;
     }
-    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result', 'harness-result', 'harness-net-result'].includes(d.t) && typeof d.rid === 'string') {
+    if (['fleet-have', 'fleet-ack', 'fleet-result', 'agent-config-result', 'harness-result', 'harness-net-result', 'fleet-sync-hooks-result', 'fleet-sync-skills-result'].includes(d.t) && typeof d.rid === 'string') {
       const p = pending.get(d.rid);
       if (p && p.ws === ws && (p.want === d.t || d.t === 'fleet-result')) p.done(d);
       return true;
@@ -403,6 +406,85 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     return r.ok ? { ok: true, msg: r.net && r.net.recommended ? '找到能用的代理：' + r.net.recommended : r.net && r.net.needProxy === false ? '直连就能到' : '没找到能到 OpenAI 的代理' } : { ok: false, msg: r.msg || '检测失败' };
   }
 
+  // ---- Hook & MCP 一键同步 ----
+  async function syncHooksOne(name) {
+    const ws = socketOf(name), v = ws && ws.fleet;
+    if (!ws) return { machine: name, ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
+    if (!v.control) return { machine: name, ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' };
+    const r = await ask(ws, { t: 'fleet-sync-hooks' }, 'fleet-sync-hooks-result', 60e3);
+    if (Array.isArray(r.hooks) && ws.fleet) {
+      ws.fleet.hooks = r.hooks.filter((x) => x && HARNESSES.includes(x.id)).map((x) => ({
+        id: x.id, label: str(x.label, 40), present: x.present === true, installed: x.installed === true }));
+      const m = machines.get(name);
+      if (m) m.fleet = ws.fleet;
+    }
+    return { machine: name, ok: r.ok === true, msg: str(r.msg, 300) || (r.ok ? '已同步' : '同步失败'),
+      results: Array.isArray(r.results) ? r.results.slice(0, 12).map((x) => ({ name: str(x.name, 40), ok: x.ok === true, msg: str(x.msg, 200) })) : [] };
+  }
+  async function syncHooks(name, ip = '') {
+    if (name === '*') {
+      const targets = [...machines.keys()].filter((n) => {
+        const ws = socketOf(n);
+        return ws && ws.fleet && ws.fleet.control;
+      });
+      if (!targets.length) return { ok: false, msg: '没有在线且开启远程控制的电脑', machines: [] };
+      audit('fleet-sync-hooks', ip, '*', targets.join(','));
+      const list = await Promise.all(targets.map((n) => syncHooksOne(n)));
+      onChange();
+      const okCount = list.filter((x) => x.ok).length;
+      const fail = list.filter((x) => !x.ok).map((x) => `${x.machine}（${x.msg}）`);
+      return {
+        ok: okCount === list.length,
+        msg: fail.length ? `成功 ${okCount}/${list.length} 台；失败：${fail.join('；')}` : `已同步 ${okCount} 台电脑的 Hook 与 MCP`,
+        machines: list,
+      };
+    }
+    audit('fleet-sync-hooks', ip, name);
+    const r = await syncHooksOne(name);
+    onChange();
+    return r;
+  }
+
+  // ---- Skill 一键下发 ----
+  async function syncSkillsOne(name, skills) {
+    const ws = socketOf(name), v = ws && ws.fleet;
+    if (!ws) return { machine: name, ok: false, msg: '这台电脑不在线，或 agent 版本太旧' };
+    if (!v.control) return { machine: name, ok: false, msg: '这台电脑没开远程控制（agent.json "control": true）' };
+    const r = await ask(ws, { t: 'fleet-sync-skills', skills }, 'fleet-sync-skills-result', 30e3);
+    return { machine: name, ok: r.ok === true, msg: str(r.msg, 300) || (r.ok ? '已同步' : '同步失败'),
+      targets: Array.isArray(r.targets) ? r.targets.slice(0, 8).map((t) => str(t, 40)) : [],
+      written: +r.written || 0, unchanged: +r.unchanged || 0,
+      errors: Array.isArray(r.errors) ? r.errors.slice(0, 8).map((e) => str(e, 200)) : [] };
+  }
+  async function syncSkills(name, names = null, ip = '') {
+    const all = (typeof getSkills === 'function' ? getSkills() : []) || [];
+    const want = Array.isArray(names) && names.length ? new Set(names.map((x) => String(x || '').trim()).filter(Boolean)) : null;
+    const picked = all.filter((s) => s && typeof s.name === 'string' && typeof s.raw === 'string' && (!want || want.has(s.name)))
+      .map((s) => ({ name: s.name, raw: s.raw }));
+    if (!picked.length) return { ok: false, msg: want ? '没有找到指定的 Skill' : '当前没有可下发的 Skill', machines: [] };
+    if (name === '*') {
+      const targets = [...machines.keys()].filter((n) => {
+        const ws = socketOf(n);
+        return ws && ws.fleet && ws.fleet.control;
+      });
+      if (!targets.length) return { ok: false, msg: '没有在线且开启远程控制的电脑', machines: [] };
+      audit('fleet-sync-skills', ip, '*', `${picked.length} skills -> ${targets.join(',')}`);
+      const list = await Promise.all(targets.map((n) => syncSkillsOne(n, picked)));
+      const okCount = list.filter((x) => x.ok).length;
+      const fail = list.filter((x) => !x.ok).map((x) => `${x.machine}（${x.msg}）`);
+      return {
+        ok: okCount === list.length,
+        msg: fail.length
+          ? `下发 ${picked.length} 个 Skill：成功 ${okCount}/${list.length} 台；失败：${fail.join('；')}`
+          : `已向 ${okCount} 台电脑下发 ${picked.length} 个 Skill`,
+        count: picked.length,
+        machines: list,
+      };
+    }
+    audit('fleet-sync-skills', ip, name, `${picked.length} skills`);
+    return syncSkillsOne(name, picked);
+  }
+
   function view() {
     const b = bundle();
     const names = new Set([...machines.keys(), ...Object.keys(state.runs)]);
@@ -459,7 +541,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     const p = url.pathname;
     if (!p.startsWith('/api/fleet')) return false;
     if (req.method === 'GET' && p === '/api/fleet') { json(res, 200, view()); return true; }
-    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure', '/api/fleet/harness', '/api/fleet/check', '/api/fleet/netprobe'].includes(p)) return false;
+    if (req.method !== 'POST' || !['/api/fleet/settings', '/api/fleet/update', '/api/fleet/configure', '/api/fleet/harness', '/api/fleet/check', '/api/fleet/netprobe', '/api/fleet/sync-hooks', '/api/fleet/sync-skills'].includes(p)) return false;
     if (!control) { json(res, 200, { ok: false, msg: '服务器处于只读模式' }); return true; }
     if (!fresh()) { json(res, 200, { ok: false, need: 'totp', msg: '需要再输一次验证码' }); return true; }
     let d = {}; try { d = JSON.parse(await readBody(req, 20000)); } catch { json(res, 200, { ok: false, msg: '请求格式不正确' }); return true; }
@@ -502,6 +584,16 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       if (!NAME.test(name)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
       json(res, 200, await netProbe(name)); return true;
     }
+    if (p === '/api/fleet/sync-hooks') {
+      if (name !== '*' && !NAME.test(name)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
+      json(res, 200, await syncHooks(name, ip)); return true;
+    }
+    if (p === '/api/fleet/sync-skills') {
+      const target = name || '*';
+      if (target !== '*' && !NAME.test(target)) { json(res, 200, { ok: false, msg: '电脑名不对' }); return true; }
+      const names = Array.isArray(d.names) ? d.names : null;
+      json(res, 200, await syncSkills(target, names, ip)); return true;
+    }
     if (p === '/api/fleet/harness') {
       const id = String(d.id || ''), action = String(d.action || '');
       if (name === '*') { json(res, 200, action === 'update' && id === '*' ? harnessAll(ip) : { ok: false, msg: '所有电脑只能一起更新全部 harness' }); return true; }
@@ -516,7 +608,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     json(res, 200, await configure(name, { targets: d.targets, reissue: d.reissue === true, proxy: typeof d.proxy === 'string' ? d.proxy : undefined }, ip)); return true;
   }
 
-  return { fromAgent, dropSocket, handle, handleAgent, view, update, configure, harnessRun, harnessAll, dailyCheck, dailyDue, digest, netProbe, bundle,
+  return { fromAgent, dropSocket, handle, handleAgent, view, update, configure, harnessRun, harnessAll, dailyCheck, dailyDue, digest, netProbe, syncHooks, syncSkills, bundle,
     close: () => { clearInterval(timer); clearInterval(dailyTimer); } };
 }
 

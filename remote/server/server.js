@@ -308,6 +308,7 @@ function authAgentReq(req, url) {
 const fleet = createFleet({ dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), machines, control: CONTROL,
   audit: (...a) => audit(...a), onChange: () => broadcast({ t: 'fleet' }), log: console.error, magpieConfig: cfg.magpie || {},
   models: () => magpie.status().models || [], authAgent: authAgentReq,
+  getSkills: () => (mesh && typeof mesh.listSkills === 'function' ? mesh.listSkills() : []),
   // the daily harness check: newest versions and release notes through the NAS's way out, condensed by the model
   egressProxies: (cfg.summary || {}).proxies || [], aiAsk: (prompt, schema, task) => { if (!summary) throw new Error('AI 功能未启用'); return summary.ask(prompt, schema, task); } });
 const summary = createSummary({ magpie, store, dir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data', 'reports'), cfg: cfg.summary || {},

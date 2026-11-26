@@ -245,47 +245,150 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     return { ok: true, msg: '已写入，agent 马上重启', restart: true, notes: pending.notes };
   }
 
-  // the installers of what Claude Code / Codex / OpenCode / Antigravity run here, when those files changed (as deploy.js does)
-  async function hooks(changed, notes) {
-    const hasDir = (p) => { try { return fs.existsSync(p); } catch { return false; } };
-    const xdg = env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, '.config');
-    const tasks = [
+  const hasPath = (p) => { try { return fs.existsSync(p); } catch { return false; } };
+  const xdgConfig = () => (env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, '.config'));
+  const readTextSafe = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
+
+  // Inspect whether AmeTyping hooks / plugin are installed for each of the 4 coding agents on this computer.
+  function hookStatus() {
+    const claudeDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
+    const codexDir = env.CODEX_HOME || path.join(home, '.codex');
+    const ocDir = env.OPENCODE_CONFIG_DIR || path.join(xdgConfig(), 'opencode');
+    const agyBase = path.join(home, '.gemini');
+    const agyCfgDir = env.AGY_CONFIG_DIR || path.join(agyBase, 'config');
+
+    const claudeTxt = readTextSafe(path.join(claudeDir, 'settings.json'));
+    const codexTxt = readTextSafe(path.join(codexDir, 'hooks.json'));
+    const ocTxt = readTextSafe(path.join(ocDir, 'opencode.jsonc')) || readTextSafe(path.join(ocDir, 'opencode.json'));
+    const agyTxt = readTextSafe(path.join(agyCfgDir, 'hooks.json'));
+
+    return [
+      { id: 'claude', label: 'Claude Code', present: hasPath(claudeDir), installed: /hook-relay\.js/.test(claudeTxt) && /permission-hook\.js/.test(claudeTxt) },
+      { id: 'codex', label: 'Codex', present: hasPath(codexDir), installed: /codex-hook\.js/.test(codexTxt) },
+      { id: 'opencode', label: 'OpenCode', present: hasPath(ocDir), installed: /opencode-plugin/.test(ocTxt) },
+      { id: 'agy', label: 'Antigravity', present: !!env.AGY_CONFIG_DIR || hasPath(agyBase), installed: /agy-hook\.js/.test(agyTxt) },
+    ];
+  }
+
+  function hookTasks() {
+    const xdg = xdgConfig();
+    return [
       {
+        id: 'claude',
         label: 'Claude Code hooks',
         script: path.join(root, 'headless', 'install-hooks.js'),
         match: (p) => p === 'headless/install-hooks.js' || p === 'hook-relay.js' || p === 'permission-hook.js',
-        present: () => hasDir(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')),
+        present: () => hasPath(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')),
       },
       {
+        id: 'codex',
         label: 'Codex hooks',
         script: path.join(root, 'install-codex-hooks.js'),
         match: (p) => p === 'install-codex-hooks.js' || p === 'codex-hook.js',
-        present: () => hasDir(env.CODEX_HOME || path.join(home, '.codex')),
+        present: () => hasPath(env.CODEX_HOME || path.join(home, '.codex')),
       },
       {
+        id: 'opencode',
         label: 'OpenCode plugin',
         script: path.join(root, 'install-opencode-plugin.js'),
         match: (p) => p === 'install-opencode-plugin.js' || p.startsWith('opencode-plugin/'),
-        present: () => hasDir(env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode')),
+        present: () => hasPath(env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode')),
       },
       {
+        id: 'agy',
         label: 'Antigravity hooks',
         script: path.join(root, 'install-agy-hooks.js'),
         match: (p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js',
-        present: () => hasDir(env.AGY_CONFIG_DIR || path.join(home, '.gemini')),
+        present: () => !!env.AGY_CONFIG_DIR || hasPath(path.join(home, '.gemini')),
       },
       {
+        id: 'mcp',
         label: 'MCP 登记',
         script: path.join(root, 'install-mesh-mcp.js'),
         match: (p) => p === 'install-mesh-mcp.js' || p === 'tools/ame-mesh.js' || p === 'remote/mcp/client.js',
         present: () => true,
       },
     ];
-    for (const t of tasks) {
-      if (!changed.some(t.match) || !t.present() || !hasDir(t.script)) continue;
+  }
+
+  // the installers of what Claude Code / Codex / OpenCode / Antigravity run here, when those files changed (as deploy.js does)
+  async function hooks(changed, notes) {
+    for (const t of hookTasks()) {
+      if (!changed.some(t.match) || !t.present() || !hasPath(t.script)) continue;
       const r = await run(process.execPath, [t.script], root, 30e3);
       if (!r.ok) notes.push(`${t.label} 没装成：` + r.err.slice(-160));
     }
+  }
+
+  // On-demand one-click sync of all installed providers' hooks/plugins + MCP servers (safe on dev checkouts too).
+  async function syncHooksAndMcp() {
+    const results = [];
+    for (const t of hookTasks()) {
+      if (!t.present()) { results.push({ id: t.id, label: t.label, ok: true, skipped: true, msg: '未安装，跳过' }); continue; }
+      if (!hasPath(t.script)) { results.push({ id: t.id, label: t.label, ok: false, skipped: false, msg: '缺少安装脚本' }); continue; }
+      const r = await run(process.execPath, [t.script], root, 30e3);
+      results.push({ id: t.id, label: t.label, ok: r.ok, skipped: false, msg: (r.ok ? r.out : r.err || r.out).slice(0, 200) || (r.ok ? '已同步' : '失败') });
+    }
+    const failed = results.filter((x) => !x.ok);
+    const ran = results.filter((x) => !x.skipped);
+    return {
+      ok: failed.length === 0,
+      msg: failed.length ? `有 ${failed.length} 项失败：${failed.map((x) => x.label).join('、')}` : `已同步 ${ran.length} 项（Hook / Plugin / MCP）`,
+      results,
+      hooks: hookStatus(),
+    };
+  }
+
+  // Push managed Skills (SKILL.md) to all existing local CLI skills folders, with backup before overwrite.
+  const SKILL_NAME = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+  function syncSkills(skills) {
+    const list = (Array.isArray(skills) ? skills : []).filter((s) => s && SKILL_NAME.test(String(s.name || '')) && typeof s.raw === 'string' && s.raw.trim() && s.raw.length <= 100000);
+    if (!list.length) return { ok: false, msg: '没有可下发的有效 Skill', synced: [], targets: [] };
+    const xdg = xdgConfig();
+    const claudeDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
+    const codexDir = env.CODEX_HOME || path.join(home, '.codex');
+    const ocDir = env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode');
+    const agyBase = path.join(home, '.gemini');
+    const agyCfgDir = env.AGY_CONFIG_DIR || path.join(agyBase, 'config');
+    const agentsDir = path.join(home, '.agents');
+
+    const destDirs = [];
+    if (hasPath(claudeDir)) destDirs.push(path.join(claudeDir, 'skills'));
+    if (hasPath(agentsDir) || hasPath(codexDir) || hasPath(agyBase) || hasPath(ocDir)) destDirs.push(path.join(agentsDir, 'skills'));
+    if (!!env.AGY_CONFIG_DIR || hasPath(agyBase)) destDirs.push(path.join(agyCfgDir, 'skills'));
+    if (hasPath(ocDir)) destDirs.push(path.join(ocDir, 'skills'));
+    const uniqueDirs = [...new Set(destDirs.map((d) => path.resolve(d)))];
+    if (!uniqueDirs.length) return { ok: false, msg: '这台电脑上没有找到任何已安装的 CLI 配置目录', synced: [], targets: [] };
+
+    const backups = path.join(home, '.ametyping', 'config-backups', 'skills');
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    let written = 0, unchanged = 0;
+    for (const dirPath of uniqueDirs) {
+      for (const sk of list) {
+        const target = path.join(dirPath, sk.name, 'SKILL.md');
+        const prev = readTextSafe(target);
+        if (prev && prev === sk.raw) { unchanged++; continue; }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (prev) {
+          try {
+            fs.mkdirSync(backups, { recursive: true, mode: 0o700 });
+            fs.copyFileSync(target, path.join(backups, `${sk.name}-${stamp}-${crypto.randomBytes(2).toString('hex')}.md`));
+          } catch {}
+        }
+        const tmp = `${target}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`;
+        fs.writeFileSync(tmp, sk.raw, 'utf8');
+        fs.renameSync(tmp, target);
+        written++;
+      }
+    }
+    return {
+      ok: true,
+      msg: `已下发 ${list.length} 个 Skill 到 ${uniqueDirs.length} 个目录（写入 ${written}，无变化 ${unchanged}）`,
+      synced: list.map((s) => s.name),
+      targets: uniqueDirs,
+      written,
+      unchanged,
+    };
   }
 
   // waitSec: how long the guard waits for the new agent (tests: short)
@@ -320,7 +423,7 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
     try { writeJSON(pendingFile, { ...p, healthy: Date.now(), healthyPid: process.pid }); } catch {}
   }
 
-  return { version, have, stage, apply, markHealthy, dir, _startGuard: startGuard };
+  return { version, have, stage, apply, markHealthy, hookStatus, syncHooksAndMcp, syncSkills, dir, _startGuard: startGuard };
 }
 
 module.exports = { createFleet, blobId, SAFE, httpBaseOf, downloadBundle };
