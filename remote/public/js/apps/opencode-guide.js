@@ -1,7 +1,7 @@
 // Read-only instructions for connecting another computer to the NAS gateway, with a generator for opencode.json:
 // the models and routing groups the gateway offers (read on the server, the key stays there), ticked, renamed and
 // assigned to the main model / sub-agents here; the configuration in use on huatanshaonian is the starting point.
-import { h, prefs } from '../util.js';
+import { h, prefs, codeBlock } from '../util.js';
 import { BASE_CONFIG } from './opencode-base.js';
 import { buildConfig, rows as modelRows } from './opencode-config.js';
 
@@ -9,15 +9,7 @@ const BASE = 'https://magapi.huatan.org/v1';
 const WEB = 'https://magpie.huatan.org/';
 const link = (text, href) => h('a', { text, href, target: '_blank', rel: 'noopener noreferrer' });
 const para = text => h('p', { text });
-function code(title, text) {
-  const pre = h('pre', { tabindex: '0' }, h('code', { text }));
-  const status = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });
-  const copy = h('button', { class: 'btn', type: 'button', text: '复制命令', onclick: async () => {
-    try { await navigator.clipboard.writeText(text); status.textContent = '已复制'; }
-    catch { const range = document.createRange(); range.selectNodeContents(pre); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); status.textContent = '已选中，请按 Ctrl+C 复制'; }
-  } });
-  return h('div', { class: 'ocg-code' }, h('div', { class: 'ocg-code-head' }, h('b', { text: title }), copy, status), pre);
-}
+const code = (title, text) => codeBlock(title, text, '复制命令');
 const step = (title, ...children) => h('section', { class: 'ocg-step' }, h('h3', { text: title }), ...children);
 const fold = (title, ...children) => h('details', {}, h('summary', { text: title }), ...children);
 

@@ -2,33 +2,25 @@
 // the NAS, the update the server pushes over the agent's own connection (no SSH; a development checkout never), the
 // coding agents ("harnesses") there -- installed, version, install / update, all at once -- and 一键配置: Claude Code
 // and OpenCode pointed at Magpie with a gateway key of the computer's own, Codex given the computer's proxy.
-import { h } from '../util.js';
+import { h, ago } from '../util.js';
 import * as net from '../net.js';
-import { askCode } from '../gate.js';
+import { confirmBox } from '../dialog.js';
 
 const short = (c) => (c ? c.slice(0, 7) : '—');
-const ago = (t) => { const s = Date.parse(t); if (!s) return ''; const m = Math.round((Date.now() - s) / 60e3); return m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : m < 1440 ? `${Math.round(m / 60)} 小时前` : `${Math.round(m / 1440)} 天前`; };
 const STATUS = { running: '更新中', restarting: '重启中', ok: '已更新', failed: '失败', blocked: '没更新' };
 const NAMES = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', agy: 'Antigravity' };
 const TARGET_NOTE = { claude: 'Magpie 网关，局域网直连', opencode: 'Magpie 网关，局域网直连', codex: '保持 ChatGPT 登录，走这台电脑的代理' };
 const MODEL_KEYS = [['opus', 'Claude opus'], ['sonnet', 'Claude sonnet'], ['haiku', 'Claude haiku'], ['fable', 'Claude fable']];
 const PROXY_HINT = 'http://127.0.0.1:10808';
 
-async function post(path, body) {
-  let r = await net.post('/api/fleet/' + path, body);
-  if (r && !r.ok && r.need === 'totp') {
-    if (!(await askCode())) return { ok: false, msg: '已取消' };
-    r = await net.post('/api/fleet/' + path, body);
-  }
-  return r || { ok: false, msg: '服务器没有回答' };
-}
+const post = (path, body) => net.post('/api/fleet/' + path, body);
 
 export function panel() {
   const root = h('div', { class: 'mcp fleet' });
   const msg = h('p', { class: 'gnote', 'aria-live': 'polite' });
   const body = h('div');
   root.append(h('p', { class: 'ghint', text: '每台电脑的 agent 连着看板服务器。部署（deploy.js）会把新版本更新包与 git bundle 放到 NAS 上，各电脑直接从 NAS 经 HTTP 拉取并精确切到部署版本，重启失败两分钟内自动回滚。标了 autoUpdate: false 或多工作树的开发目录永不自动更新；非开发机若本地改动文件导致无法拉取，会直接在此提示手动处理。编程 agent（harness）也在这里装和更新。' }), msg, body);
-  let data = null, busy = false;
+  let data = null, busy = false, destroyed = false, loadSeq = 0;
   const say = (t) => { msg.textContent = t || ''; };
   const act = async (path, body, doing) => {
     busy = true; say(doing);
@@ -124,7 +116,7 @@ export function panel() {
     if (data.control && m.version && m.version.auto && m.version.control && m.behind) {
       const blocked = m.run && m.run.status === 'blocked';
       out.push(h('button', { class: 'btn', type: 'button', text: blocked ? '强制更新' : '更新 agent', disabled: busy, onclick: async () => {
-        if (blocked && !confirm(`${m.name} 上有文件被直接改过，强制更新会覆盖它们（旧文件留有备份）。继续？`)) return;
+        if (blocked && !(await confirmBox(`${m.name} 上有文件被直接改过，强制更新会覆盖它们（旧文件留有备份）。继续？`, { title: '强制更新', ok: '强制更新', danger: true }))) return;
         act('update', { machine: m.name, force: blocked }, `正在更新 ${m.name}…`);
       } }));
     }
@@ -197,7 +189,10 @@ export function panel() {
   }
 
   async function load() {
-    try { data = await (await fetch('/api/fleet')).json(); } catch { data = null; }
+    const seq = ++loadSeq;
+    const next = await net.getJson('/api/fleet');
+    if (destroyed || seq !== loadSeq) return;
+    data = next;
     if (!data || !data.machines) { say('读不到设备信息（看板服务器版本太旧？）'); return; }
     const b = data.bundle;
     const rows = data.machines.map((m) => h('tr', {},
@@ -219,7 +214,7 @@ export function panel() {
       cfgBox, dailyBox(), settingsBox());
     if (!data.control) say('服务器处于只读模式：只能看，不能更新或配置。');
   }
-  const off = net.on('fleet', () => { if (!busy) load(); });
+  const off = net.on('fleet', () => { if (!busy && !destroyed) load(); });
   load();
-  return { root, show: load, destroy: off };
+  return { root, show: load, destroy() { destroyed = true; off(); } };
 }

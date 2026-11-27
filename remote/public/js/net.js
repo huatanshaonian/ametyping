@@ -112,6 +112,15 @@ function actOnce(o) {
   });
 }
 
+// a GET to the server returning parsed JSON (or fallback on network/parse error); redirects on 401
+export async function getJson(url, fallback = null) {
+  try {
+    const res = await fetch(url);
+    if (res.status === 401) { location.href = '/login'; return fallback; }
+    return await res.json();
+  } catch { return fallback; }
+}
+
 // a POST to the server that may need a recently entered code ({ need: 'totp' }): ask for it and retry
 export async function post(url, body) {
   for (;;) {

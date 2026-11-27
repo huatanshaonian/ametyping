@@ -1,34 +1,17 @@
 // 控制面板 › MCP (server/mcp-hub.js): Windose's managed MCP servers -- what each does, its limits and tools -- which coding
 // agents on which computer have them registered (each agent reports it), and one-click sync across online agents.
-import { h } from '../util.js';
+import { h, ago, codeBlock } from '../util.js';
 import * as net from '../net.js';
-import { askCode } from '../gate.js';
 
 const CLIENT_NAMES = { 'ame-mesh': '协同', 'windose-literature': '文献', 'windose-research': '档案', 'windose-hpc': '超算' };
-async function postFleet(path, body) {
-  let r = await net.post('/api/fleet/' + path, body);
-  if (r && !r.ok && r.need === 'totp') {
-    if (!(await askCode())) return { ok: false, msg: '已取消' };
-    r = await net.post('/api/fleet/' + path, body);
-  }
-  return r || { ok: false, msg: '服务器没有回答' };
-}
-function code(title, text) {
-  const pre = h('pre', { tabindex: '0' }, h('code', { text }));
-  const status = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });
-  const copy = h('button', { class: 'btn', type: 'button', text: '复制', onclick: async () => {
-    try { await navigator.clipboard.writeText(text); status.textContent = '已复制'; }
-    catch { const r = document.createRange(); r.selectNodeContents(pre); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); status.textContent = '已选中，按 Ctrl+C 复制'; }
-  } });
-  return h('div', { class: 'ocg-code' }, h('div', { class: 'ocg-code-head' }, h('b', { text: title }), copy, status), pre);
-}
-const ago = (t) => { const m = Math.round((Date.now() - t) / 60e3); return m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : `${Math.round(m / 60)} 小时前`; };
+const postFleet = (path, body) => net.post('/api/fleet/' + path, body);
+const code = (title, text) => codeBlock(title, text, '复制');
 
 export function panel() {
   const root = h('div', { class: 'mcp' });
   const msg = h('p', { class: 'gnote', 'aria-live': 'polite' });
   const body = h('div');
-  let busy = false;
+  let busy = false, destroyed = false, loadSeq = 0;
   root.append(h('p', { class: 'ghint', text: 'MCP 是 Claude Code、Codex、OpenCode、Antigravity 等 agent 调用外部工具的标准接口。下面这些都只连本机的 Windose agent，由它经自己和看板服务器的连接转发：别的电脑不用配 SSH，也不另发密钥；装了 Windose agent 并在线就能用。' }), msg, body);
 
   async function syncHooks(machine, doing) {
@@ -44,8 +27,9 @@ export function panel() {
   }
 
   async function load(keepMsg = false) {
-    let r = null;
-    try { r = await (await fetch('/api/mcp')).json(); } catch {}
+    const seq = ++loadSeq;
+    const r = await net.getJson('/api/mcp');
+    if (destroyed || seq !== loadSeq) return;
     if (!r || !r.servers) { msg.textContent = '读不到 MCP 信息（看板服务器版本太旧？）'; return; }
     if (!keepMsg) { msg.textContent = ''; msg.classList.remove('bad'); }
     const cards = r.servers.map((s) => h('div', { class: 'mcp-card' + (s.enabled ? '' : ' off') },
@@ -82,5 +66,5 @@ export function panel() {
       h('p', { class: 'ghint', text: '前提：这台电脑上 Windose agent 在运行并连上了看板服务器（远程控制要开，agent 才会自动安装；agent.json 里 "mcp": false 可以关掉文献和档案的转发）。详细说明见仓库里的 docs/mcp.md。' }));
   }
   load();
-  return { root, show: () => load() };
+  return { root, show: () => load(), destroy() { destroyed = true; } };
 }

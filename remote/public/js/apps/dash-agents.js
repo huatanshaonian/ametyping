@@ -53,6 +53,6 @@ export function createAgents() {
     if (open) { const now = Date.now(); rows.replaceChildren(...a.map((x) => row(x, now))); }
   }
   // the running times move on without news from the machine
-  setInterval(() => { if (cur && open && el.isConnected && !el.hidden) render(cur); }, 15e3);
-  return { el, render };
+  const timer = setInterval(() => { if (cur && open && el.isConnected && !el.hidden) render(cur); }, 15e3);
+  return { el, render, destroy() { clearInterval(timer); } };
 }

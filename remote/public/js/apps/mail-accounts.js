@@ -2,7 +2,7 @@
 // is kept, when it last looked; add / change / remove (a code within the hour). The password is the mailbox's
 // 客户端专用密码; it stays on the NAS (an empty field when changing keeps the old one). Servers default to 中国科技网
 // (mail.cstnet.cn, IMAP 993 / SMTP 465), changeable under 服务器设置.
-import { h } from '../util.js';
+import { h, mdhm } from '../util.js';
 import * as net from '../net.js';
 import { confirmBox } from '../dialog.js';
 
@@ -14,8 +14,7 @@ export function panel() {
   return { root: p.root, destroy: p.destroy, show: () => p.load() };
 }
 
-const pad = (n) => String(n).padStart(2, '0');
-const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const when = mdhm;
 
 function mount() {
   const msg = h('p', { class: 'gnote' });
@@ -29,8 +28,10 @@ function mount() {
       const r = await net.post('/api/mail/interests', { text: extra.value });
       intMsg.textContent = r.ok ? '已保存' : r.msg || '没能保存';
     } }), intMsg));
+  let destroyed = false, loadSeq = 0;
   (async () => {
-    let r = {}; try { r = await (await fetch('/api/mail/interests')).json(); } catch { return; }
+    const r = await net.getJson('/api/mail/interests');
+    if (destroyed || !r) return;
     guess.textContent = '从工作日报推断：' + ([...(r.projects || []), ...(r.keywords || []).slice(0, 12)].join('、') || '（日报还不多，暂时推断不出来）');
     extra.value = r.extra || '';
   })();
@@ -81,11 +82,14 @@ function mount() {
 
   // the list only (the form being filled in stays as it is)
   async function load(note) {
-    try { accounts = (await (await fetch('/api/mail')).json()).accounts || []; } catch { return; }
+    const seq = ++loadSeq;
+    const r = await net.getJson('/api/mail');
+    if (destroyed || seq !== loadSeq || !r) return;
+    accounts = r.accounts || [];
     if (note !== undefined) msg.textContent = note;
     rows.replaceChildren(...accounts.map(row));
   }
-  const off = net.on('mail', () => load());
-  load('').then(() => showForm(null));
-  return { root, load, destroy() { off(); } };
+  const off = net.on('mail', () => { if (!destroyed) load(); });
+  load('').then(() => { if (!destroyed) showForm(null); });
+  return { root, load, destroy() { destroyed = true; off(); } };
 }

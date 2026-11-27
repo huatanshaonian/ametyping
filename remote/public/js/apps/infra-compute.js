@@ -23,6 +23,8 @@ export function createComputeView({ say = () => {} } = {}) {
   let data = { jobs: [], machines: [], providers: [] };
   let projects = [];
   let loading = false;
+  let destroyed = false;
+  let refreshSeq = 0;
 
   const root = h('div', { class: 'inf-comp' });
   const headBar = h('div', { class: 'inf-comp-head' });
@@ -32,13 +34,15 @@ export function createComputeView({ say = () => {} } = {}) {
   root.append(headBar, grid);
 
   async function refresh() {
-    if (loading) return;
+    if (loading || destroyed) return;
     loading = true;
+    const seq = ++refreshSeq;
     try {
       const [qRes, pRes] = await Promise.all([
-        fetch('/api/mesh/queue').then((r) => r.json()).catch(() => null),
-        fetch('/api/mesh/projects').then((r) => r.json()).catch(() => null),
+        net.getJson('/api/mesh/queue'),
+        net.getJson('/api/mesh/projects'),
       ]);
+      if (destroyed || seq !== refreshSeq) return;
       if (qRes && qRes.ok) data = qRes;
       if (pRes && pRes.ok && Array.isArray(pRes.projects)) projects = pRes.projects;
       render();
@@ -639,5 +643,5 @@ export function createComputeView({ say = () => {} } = {}) {
     );
   }
 
-  return { root, refresh };
+  return { root, refresh, destroy() { destroyed = true; } };
 }
