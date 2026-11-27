@@ -52,6 +52,7 @@ export function mount(el, ctx) {
     const toRead = items.filter((e) => e.status === 'kept' && e.card && !e.readAt).sort((a, b) => ((b.intake || {}).at || 0) - ((a.intake || {}).at || 0));
     const reviews = items.filter((e) => !paper(e) && e.status === 'new');
     const read = items.filter((e) => e.status === 'kept' && e.card && e.readAt).sort((a, b) => b.readAt - a.readAt);
+    const glanced = items.filter((e) => paper(e) && e.status === 'glanced').sort((a, b) => (b.decidedAt || b.created) - (a.decidedAt || a.created));
     const passed = items.filter((e) => paper(e) && ['skipped', 'expired'].includes(e.status));
     const reviewed = items.filter((e) => !paper(e) && e.status !== 'new');
     // (the first time: where there is something to do)
@@ -64,10 +65,11 @@ export function mount(el, ctx) {
     for (const id of tiles.keys()) if (!toRead.some((e) => e.id === id)) tiles.delete(id);
     list.replaceChildren(...(view === 'inbox' ? [
       !open.length && !making.length ? h('p', { class: 'lit-empty', text: '今天没有待看的新文献。宁缺毋滥——没有足够相关的新文献时，会从「气动隐身」里挑旧文献复习（在「今日卡片」里）。' }) : null,
-      sec('待看：收下还是跳过', open.sort((a, b) => (b.date === today) - (a.date === today) || b.created - a.created)),
+      sec('待看：看懂了留印象，要挖深再收下', open.sort((a, b) => (b.date === today) - (a.date === today) || b.created - a.created)),
       sec('收下了，正在准备卡片', making),
       toRead.length ? h('div', { class: 'lf-pool' }, h('span', { text: `${toRead.length} 张卡片做好了，等你读。` }), h('button', { class: 'btn', type: 'button', text: '去今日卡片', onclick: () => pick('cards') })) : null,
-      pool ? h('div', { class: 'lf-pool' }, h('span', { text: `还有 ${pool} 篇够分的候选在等：每天和新找到的一起按分数排，一直留着。` }), h('button', { class: 'btn', type: 'button', text: '去候选里看', onclick: () => ctx.show('pool') })) : null,
+      pool ? h('div', { class: 'lf-pool' }, h('span', { text: `还有 ${pool} 篇够分的候选在等：每天和新找到的一起按分数排，全部留着。` }), h('button', { class: 'btn', type: 'button', text: '去候选里看', onclick: () => ctx.show('pool') })) : null,
+      more('已看懂（眼界笔记）', glanced, (e) => card(e, { past: true })),
       more('跳过的', passed, (e) => card(e, { past: true })),
     ] : [
       !toRead.length && !reviews.length ? h('p', { class: 'lit-empty', text: making.length ? `${making.length} 篇收下的文献正在准备卡片，做好了会出现在这里。` : '没有待读的卡片。在「今日入库」里收下一篇，拿到 PDF 后会自动做带图的深读卡，做好了出现在这里。' }) : null,
@@ -90,17 +92,24 @@ export function mount(el, ctx) {
       p.url ? h('a', { class: 'lf-t', href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('b', { class: 'lf-t', text: p.title }));
     const meta = h('div', { class: 'lf-m', text: [e.old ? (p.source === 'dtic' ? 'DTIC' : 'NTRS') : '', authors(p.authors), p.venue, p.year || (p.date || '').slice(0, 4), p.number, (e.paper && e.paper.sources || []).length > 1 ? `来自 ${e.paper.sources.join('、')}` : ''].filter(Boolean).join(' · ') });
     const why = e.why ? h('div', { class: 'lf-why' }, q ? h('b', { text: `Q${e.question}：${q.text}` }) : null, h('span', { text: e.why })) : null;
+    const b = e.brief && typeof e.brief === 'object' ? e.brief : null;
+    const brief = b && (b.move || b.effect || b.relation) ? h('div', { class: 'lf-tip', style: 'margin:4px 0;padding:4px 6px;border-left:2px solid #808080;line-height:1.45' },
+      b.move ? h('div', {}, h('b', { text: '改了哪一招：' }), h('span', { text: b.move })) : null,
+      b.effect ? h('div', {}, h('b', { text: '定量效果：' }), h('span', { text: b.effect })) : null,
+      b.relation ? h('div', {}, h('b', { text: '与你库里关系：' }), h('span', { text: b.relation })) : null) : null;
     const abs = p.abstract ? h('details', { class: 'lf-abs', open: openAbs.has(e.id), ontoggle: (ev) => { if (ev.target.open) openAbs.add(e.id); else openAbs.delete(e.id); } },
       h('summary', { text: e.tr ? '摘要（中文对照）' : '摘要' }), abstractBody(p.abstract, e.tr)) : h('div', { class: 'lf-m', text: '（没有摘要）' });
     const acts = h('div', { class: 'gbtns' });
     const note = h('div', { class: 'lf-note' });
     if (e.kind === 'review') reviewBody(e, acts, note);
     else if (e.status === 'new') {
-      acts.append(h('button', { class: 'btn go', type: 'button', text: '收下', title: '放进 Zotero 的「每日文献」，然后找 PDF、做深读卡（做好了在「今日卡片」里）', onclick: async (ev) => {
+      acts.append(h('button', { class: 'btn go', type: 'button', text: '收下', title: '收下并深挖：放进 Zotero 的「每日文献」，抓 PDF、抽证据表、做带库内对照的深读卡', onclick: async (ev) => {
         ev.target.disabled = true;
         const r = await post('/api/lit/feed/keep', { id: e.id });
         if (!r.ok) { note.textContent = r.need === 'authorize' ? '需要先授权写入 Zotero：点窗口右上角的「授权写入 Zotero」。' : r.msg || '没能收下'; ev.target.disabled = false; return; }
         refresh();
+      } }), h('button', { class: 'btn', type: 'button', text: '看懂了', title: '仅拓展眼界：保留 3 句话要点进「已看懂（眼界笔记）」，不进 Zotero、不下载 PDF，立刻清掉这条待办', onclick: async () => {
+        await post('/api/lit/feed/glance', { id: e.id }); refresh();
       } }), h('button', { class: 'btn', type: 'button', text: '跳过', onclick: async () => { await post('/api/lit/feed/skip', { id: e.id }); refresh(); } }));
       if (!canWrite) note.textContent = '收下前要先授权写入 Zotero（右上角）。';
     } else if (e.status === 'kept') {
@@ -108,8 +117,8 @@ export function mount(el, ctx) {
       note.append(h('b', { text: STAGE[s.stage] || '' }), s.msg ? ' ' + s.msg : '');
       if (e.folder) note.append(h('div', { class: 'lf-tip', title: e.folderWhy || '', text: `已归入 Zotero：每日文献 / ${e.folder}` }));
       if (e.zkey) acts.append(h('button', { class: 'btn', type: 'button', text: '在文献库里看', onclick: () => ctx.openItem(e.zkey) }));
-    } else if (past) note.textContent = { skipped: '跳过了', done: '复习过了', expired: '过期了（7 天没复习，以后还会轮到）' }[e.status] || '';
-    return h('div', { class: 'lf-i k-' + kind[1] + (past ? ' past' : '') }, head, meta, why, e.kind === 'review' ? null : abs, note, acts.childNodes.length ? acts : null);
+    } else if (past) note.textContent = { glanced: '已看懂（仅留眼界笔记，未入 Zotero）', skipped: '跳过了', done: '复习过了', expired: '过期了（7 天没复习，以后还会轮到）' }[e.status] || '';
+    return h('div', { class: 'lf-i k-' + kind[1] + (past ? ' past' : '') }, head, meta, why, brief, e.kind === 'review' ? null : abs, note, acts.childNodes.length ? acts : null);
   }
 
   // a card to read, drawn once and kept until something of it changes (an opened card is not drawn again by every refresh)

@@ -56,7 +56,7 @@ function noteHtml(md) {
 // ask: the quick cards' model (文献推送); askDeep: the deep cards' (文献深读); vision: the pages read as images (vision.js);
 // myNotes(key): what the user wrote in 深读's 笔记 (notes.js), one line each -- the models read it with the annotations;
 // digest: what a deep card reads of a report too long to give whole (digest.js; without it the start of every page)
-function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, digest = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {} }) {
+function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, vision = null, figures = null, digest = null, myNotes = () => [], writeNotes = true, log = () => {}, onChange = () => {}, kbStruct = null, embed = null }) {
   const marks = (key) => [...annotationLines(mirror, key), ...myNotes(key)];
   const jobs = new Map();                              // item key -> { kind, running, error, at }
   let queue = Promise.resolve();
@@ -173,7 +173,27 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     const figs = figures ? await figures.ensure(key) : [];          // the paper's figures, cut out of its pages
     // the whole text, or for a report too long for that, the notes made of it part by part
     const body = digest ? await digest.forCard(item, ft) : { pages: fitPages(ft.pages, 90000, ft.labels) };
-    const a = await askDeep(deepPrompt(profile.get() || {}, item, body.pages || [], marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long, digest: body.digest }, figs), DEEP_SCHEMA);
+    // Pull top-5 most similar local papers' verified structured evidence for quantitative comparison
+    let similarEv = [];
+    if (kbStruct && embed && typeof embed.similarLitItems === 'function') {
+      try {
+        const near = (await embed.similarLitItems(key, { topK: 6 })) || [];
+        for (const x of near) {
+          if (!x || x.key === key || similarEv.length >= 5) continue;
+          const ev = kbStruct.getEvidence(x.key, 'plasma_rcs_v1') || kbStruct.getEvidence(x.key, 'aero_stealth_v1');
+          const it2 = mirror.item(x.key);
+          if (!ev || !it2) continue;
+          const verifiedFields = {};
+          for (const [fk, fv] of Object.entries(ev.fields || {})) {
+            if (fv && fv.value && fv.verified) verifiedFields[fk] = { value: fv.value, page: fv.page || 0 };
+          }
+          if (Object.keys(verifiedFields).length) {
+            similarEv.push({ zoteroKey: x.key, citekey: it2.citekey, title: it2.title, year: it2.year, fields: verifiedFields });
+          }
+        }
+      } catch {}
+    }
+    const a = await askDeep(deepPrompt(profile.get() || {}, item, body.pages || [], marks(key), mine, others(key), { n: vi && vi.n, read, rest: !!(read && vi && ft.vision.length < vi.n), long, digest: body.digest }, figs, similarEv), DEEP_SCHEMA);
     // a long paper with pages worth reading as images: the request waits for the user's approval
     // (only the pages not read yet: a card made again after some were read may name them again)
     const ask4 = long && a.vision && a.vision.worth ? parseRanges(String(a.vision.pages || '').trim() || 'x', vi.n).filter((p) => !(ft.vision || []).includes(p)) : [];

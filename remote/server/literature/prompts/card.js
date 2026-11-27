@@ -44,13 +44,21 @@ function quickPrompt(profile, it, pages, notes) {
 //        digest: a report too long to give whole -- its parts' notes [{ from, to, notes }] (digest.js) }
 // figs: the paper's figures as cut out of its pages [{ id, page, label, caption, desc }] (figures.js) -- the card shows
 // the ones the model picks, each with what the model says of it
-function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = []) {
+function deepPrompt(profile, it, pages, notes, mine, others, src = {}, figs = [], similarEv = []) {
+  const simBlock = Array.isArray(similarEv) && similarEv.length
+    ? '你库里最相似的已有论文（来自结构化证据表，已核验字段；请在 relevance / actions / relations 中与它们做定量工况对比，指出可迁移或修正之处）：\n'
+      + similarEv.map((s) => {
+        const fs = Object.entries(s.fields || {}).slice(0, 5).map(([k, v]) => `${k}=${cut(v.value, 60)}${v.page ? `[p.${v.page}]` : ''}`).join('；');
+        return `- ${s.citekey || s.zoteroKey}（${s.year || ''}）${cut(s.title, 90)}${fs ? '\n  关键参数/结果：' + fs : ''}`;
+      }).join('\n')
+    : '';
   return [
     '为用户写一张文献“深读卡”（中文；术语、公式符号保留原文；公式用 LaTeX，行内 $...$）。这张卡要帮用户把阅读变成产出：读完能用它做事。',
     '用户的研究主线：' + directionOf(profile), '用户现在要解决的问题：', questionsBlock(profile), '',
     head(it), `摘要：${cut(it.abstract, 3000) || '（无）'}`,
     notes.length ? '用户的批注（用户真正在意的地方，卡片要回应它们）：\n' + notes.map((n) => '- ' + cut(n, 400)).join('\n') : '',
-    mine ? '用户读前写下的理解 / 想从中得到的：\n' + cut(mine, 2000) : '', '',
+    mine ? '用户读前写下的理解 / 想从中得到的：\n' + cut(mine, 2000) : '',
+    simBlock, '',
     src.read ? `正文里第 ${src.read} 页是看原图逐页转写的（公式可信，[?] 表示原图看不清的符号）${src.rest ? `，其余是 PDF 的文字层（公式常有乱码，引用公式时要小心）` : ''}。` : '',
     ...(src.digest ? [`这篇正文太长，没有整篇给你：全文按顺序分成 ${src.digest.length} 段，每段先整理成了详细的阅读笔记（公式、数值、图、结论都保留了，[p.N] 是原文页码，可以直接照着引用）。下面是各段的笔记：`,
       src.digest.map((d) => `### 第 ${d.from}～${d.to} 页的笔记\n${d.notes}`).join('\n\n'), '']

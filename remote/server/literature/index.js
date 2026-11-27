@@ -174,7 +174,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     citekeyOf: (it) => { const c = cards.find(it.key); return c ? path.basename(c.path, '.md') : kb.fileName(it.citekey); } });
   // 长报告: a text too long for the deep card is summed up part by part first
   const digest = createDigest({ dir, ask: askFeed, log, ...(cfg.digestOpts || {}) });
-  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, digest, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k) });
+  const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, digest, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k), kbStruct, embed });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
@@ -183,7 +183,8 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   const translate = createTranslate({ dir, ask: askFeed, field: () => (profile.get() || {}).line || '', log, onChange: () => changed('feed') });
   const wantFeed = () => { translate.want([...feed.list().filter((e) => e.kind === 'new' && e.status === 'new'), ...feed.pool()].map((e) => e.paper.abstract)); };
   let libAccess = null;
-  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, holdAbstracts: () => !!(libAccess && libAccess.enabled()), embed, ...(cfg.feedOpts || {}), onChange: () => { changed('feed'); wantFeed(); } });
+  let scheduleAutoKeep = () => {};
+  const feed = createFeed({ dir, cfg: conf, mirror, profile, sources, ask: askFeed, cards, mail, likes, log, holdAbstracts: () => !!(libAccess && libAccess.enabled()), embed, kbStruct, paradigm, ...(cfg.feedOpts || {}), onChange: () => { changed('feed'); wantFeed(); setImmediate(() => scheduleAutoKeep()); } });
   // 图书馆通道: PDFs no open-access copy was found for, through the browser signed in to the user's library access
   libAccess = createLibrary({ port: () => conf().browserPort, account: () => conf().ieeeAccount, idp: () => conf().ieeeIdp, accessAccount: () => conf().myloftAccount, log, ...(cfg.browser || {}) });
   const pdfq = createPdfQueue({ dir, cfg: conf, library: libAccess, api, mirror, fulltext, log, onChange: () => changed('pdfq'), ...(cfg.pdfQueue || {}) });
@@ -191,6 +192,34 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // abstracts the indexes lack, read off the articles' pages in that browser while the PDF queue has nothing to do
   const absjob = createAbsJob({ feed, library: libAccess, idle: () => !pdfq.status().running, log, ...(cfg.absJob || {}) });
   intake = createIntake({ cfg: conf, api, mirror, fulltext, cards, feed, http, unpaywall, ask: askFeed, profile, pdfq, log, onChange: () => changed('feed') });
+  // Auto-keep high-score pushed papers into Zotero + PDF + deep card when config "autoKeepMinScore" > 0
+  {
+    let autoKeepRunning = false;
+    let autoKeepPending = false;
+    const runAutoKeep = async () => {
+      const minScore = Number(conf().autoKeepMinScore || 0);
+      if (!(minScore > 0) || !api.canWrite()) return;
+      if (autoKeepRunning) { autoKeepPending = true; return; }
+      autoKeepRunning = true;
+      try {
+        const todo = feed.list()
+          .filter((e) => e.kind === 'new' && e.status === 'new' && !e.zkey && (+e.score || 0) >= minScore)
+          .slice(0, 5);
+        for (const e of todo) {
+          try {
+            const r = await intake.keep(e.id);
+            if (r && r.ok) log(`文献：自动入库高分论文（${e.score}/10）「${String((e.paper && e.paper.title) || '').slice(0, 50)}」`);
+          } catch (err) {
+            log(`文献：自动入库失败 ${e.id}：${err.message}`);
+          }
+        }
+      } finally {
+        autoKeepRunning = false;
+        if (autoKeepPending) { autoKeepPending = false; setImmediate(runAutoKeep); }
+      }
+    };
+    scheduleAutoKeep = () => { runAutoKeep().catch(() => {}); };
+  }
   // 下载: papers by DOI, from 文献库's box or an agent (the MCP, over a local socket only: agent-socket.js, mcp.js)
   const downloads = createDownloads({ dir, cfg: conf, api, mirror, fulltext, pdfq, fetchPdf: intake.fetchPdf, log, onChange: () => changed('downloads'),
     lookups: [sources.openalex && ((d) => sources.openalex.byDoi(d)), sources.crossref && ((d) => sources.crossref.byDoi(d))].filter(Boolean), ...(cfg.downloadsOpts || {}) });
@@ -425,6 +454,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     else if (what === 'review/discard') r = review.discard(String(d.id || ''));
     else if (what === 'feed/run') { feed.run({ manual: true }).catch(() => {}); r = { ok: true }; }
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
+    else if (what === 'feed/glance') r = feed.decide(String(d.id || ''), 'glanced') ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/read') { const e = feed.get(String(d.id || '')); r = e && e.status === 'kept' ? (feed.decide(e.id, null, { readAt: d.undo ? 0 : Date.now() }), { ok: true }) : { ok: false, msg: '找不到这条' }; }
     else if (what === 'feed/promote') r = feed.promote(String(d.id || '')) ? { ok: true } : { ok: false, msg: '找不到这条' };

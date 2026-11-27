@@ -6,7 +6,7 @@
 const str = { type: 'string' }, num = { type: 'number' }, bool = { type: 'boolean' };
 const obj = (props) => ({ type: 'object', additionalProperties: false, properties: props, required: Object.keys(props) });
 
-const RANK_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, score: num, question: num, why: str, fun: bool }) } });
+const RANK_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, score: num, question: num, why: str, move: str, effect: str, relation: str, fun: bool }) } });
 const REVIEW_SCHEMA = obj({ why: str, recall: { type: 'array', items: str } });
 const FOLDER_SCHEMA = obj({ folder: str, why: str });
 const FOLDERS_SCHEMA = obj({ items: { type: 'array', items: obj({ ref: str, folder: str }) } });
@@ -24,17 +24,25 @@ function directionOf(profile) {
   return (line || '（见问题）') + (br ? '\n研究分支：\n' + br : '');
 }
 
-// cands: [{ ref, title, venue, year, abstract, source }]; fb: { kept: [titles], skipped: [titles] } -- what the user did
-// with earlier picks (the model calibrates on them)
-function rankPrompt(profile, cands, fb = { kept: [], skipped: [] }) {
+// cands: [{ ref, title, venue, year, abstract, source }]; fb: { kept: [titles], skipped: [titles], glanced?: [titles] }
+// kbCtx: optional { contradictions: [string], gaps: [string] } from kb_struct.sqlite
+function rankPrompt(profile, cands, fb = { kept: [], skipped: [] }, kbCtx = null) {
+  const contra = (kbCtx && Array.isArray(kbCtx.contradictions) ? kbCtx.contradictions : []).slice(0, 6);
+  const gaps = (kbCtx && Array.isArray(kbCtx.gaps) ? kbCtx.gaps : []).slice(0, 8);
   return [
     '你在为用户挑选今天值得读的新文献（每天最多推 2 篇，宁缺毋滥）。用户的研究主线：', directionOf(profile), '',
     '用户现在要解决的问题：', questionsBlock(profile), '',
-    fb.kept.length ? '用户最近收下的推荐（说明这类是用户要的）：\n' + fb.kept.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
-    fb.skipped.length ? '用户最近跳过的推荐（这类要更严格）：\n' + fb.skipped.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
-    '给下面每篇打分 score（0～10）：9～10 = 直接帮用户解决某个问题（方法、数据、可对比的结果）；7～8 = 和问题或主线的某个分支明显相关、值得读（库里覆盖「较少」的分支可以放宽一点）；5～6 = 同方向但关系不大；0～4 = 无关或只是关键词撞上。',
+    contra.length ? '用户本地文献库当前已识别的跨论文分歧/边界问题（命中这些主题的新论文可适当加分）：\n' + contra.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
+    gaps.length ? '用户本地范式矩阵中尚未覆盖的空白组合（补空白的新论文可适当加分）：\n' + gaps.map((t) => '- ' + cut(t, 100)).join('\n') + '\n' : '',
+    fb.kept && fb.kept.length ? '用户最近收下深挖的推荐（说明这类是用户要的）：\n' + fb.kept.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
+    fb.glanced && fb.glanced.length ? '用户最近点「看懂了」拓展眼界的推荐（这类适合快速速览）：\n' + fb.glanced.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
+    fb.skipped && fb.skipped.length ? '用户最近跳过的推荐（这类要更严格）：\n' + fb.skipped.map((t) => '- ' + cut(t, 120)).join('\n') + '\n' : '',
+    '给下面每篇打分 score（0～10）：9～10 = 直接帮用户解决某个问题或命中上述分歧/空白区（方法、数据、可对比的结果）；7～8 = 和问题或主线的某个分支明显相关、值得读（库里覆盖「较少」的分支可以放宽一点）；5～6 = 同方向但关系不大；0～4 = 无关或只是关键词撞上。',
     'question：最相关的问题编号（如 Q2 填 2），都不相关填 0。',
-    'why：一句中文，说清“它和你的哪个问题有关、能拿来做什么”（例如“给出了 RAM C-II 的实测电子密度剖面，可直接作为你 RCS 计算的输入”），不要复述标题，30～60 字。',
+    'why：一句中文，说清“它和你的哪个问题有关、能拿来做什么”，不要复述标题，30～60 字。',
+    'move：一句话中文（≤45 字）说清“它在老方法基础上改了哪一招”（核心做法/技巧）。',
+    'effect：一句话中文（≤45 字）说清“定量效果与适用工况”（有数写数，无数据写主要定性收益）。',
+    'relation：一句话中文（≤45 字）说清“与用户当前研究/知识库的关系”（补了哪个空白、对照哪类矛盾、或适合拓展眼界）。',
     'fun：不直接相关但可能启发思路的有趣工作填 true。',
     '只依据题目和摘要判断；没有摘要的按题目保守打分。', '',
     ...cands.map((c) => `### ${c.ref}\n题目：${c.title}\n来源：${c.venue || c.source} ${c.year || ''}\n摘要：${cut(c.abstract, 900) || '（无摘要）'}`),
