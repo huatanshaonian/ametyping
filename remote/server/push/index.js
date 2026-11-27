@@ -7,10 +7,10 @@
 //   POST /api/push/subscribe  { sub, name } -> { ok, id }      POST /api/push/update { id, name?, kinds? }
 //   POST /api/push/remove     { id }                            POST /api/push/test   { id? }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const wp = require('./webpush');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const KINDS = ['approval', 'done', 'ctx', 'mail', 'mesh', 'infra'];
 const MAX_SUBS = 20;
@@ -19,8 +19,9 @@ const VISIBLE_MS = 45e3;                  // a page that said "I am on screen" c
 function createPush({ dataDir, request, subject = 'mailto:windose@localhost', log = () => {}, audit = () => {} }) {
   const file = path.join(dataDir, 'push.json');
   let data = { keys: null, subs: [] };
-  try { const d = JSON.parse(fs.readFileSync(file, 'utf8')); if (d && Array.isArray(d.subs)) data = d; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(data), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const d = readJsonSafe(file);
+  if (d && Array.isArray(d.subs)) data = d;
+  const save = () => writeJsonAtomic(file, data, { mode: 0o600 });
   if (!data.keys) { data.keys = wp.newKeys(); save(); }
   const idOf = (endpoint) => crypto.createHash('sha256').update(String(endpoint)).digest('hex').slice(0, 16);
   const visible = new Map();                          // sub id -> until (its page on screen)

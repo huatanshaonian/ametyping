@@ -10,6 +10,7 @@ const https = require('https');
 const { tunnel } = require('../google/http');
 const { plain } = require('./anthropic-api');
 const { SYSTEM } = require('../summary/claude');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const HOST = 'generativelanguage.googleapis.com';
 const KEY_RE = /^[A-Za-z0-9_-]{20,300}$/;
@@ -165,21 +166,15 @@ async function runGoogleAi({ key, model, effort = '', prompt, schema, images = [
 function createGoogleAiKey({ dataDir }) {
   const file = path.join(dataDir, 'google-ai-api.json');
   let st = { key: '', setAt: 0, models: DEFAULT_MODELS };
-  try {
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (j && typeof j.key === 'string') {
-      st = {
-        key: j.key,
-        setAt: +j.setAt || 0,
-        models: Array.isArray(j.models) && j.models.length ? j.models : DEFAULT_MODELS,
-      };
-    }
-  } catch {}
-  const save = () => {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file + '.tmp', JSON.stringify(st), { mode: 0o600 });
-    fs.renameSync(file + '.tmp', file);
-  };
+  const j = readJsonSafe(file);
+  if (j && typeof j.key === 'string') {
+    st = {
+      key: j.key,
+      setAt: +j.setAt || 0,
+      models: Array.isArray(j.models) && j.models.length ? j.models : DEFAULT_MODELS,
+    };
+  }
+  const save = () => writeJsonAtomic(file, st, { mode: 0o600 });
 
   function set(key) {
     key = String(key || '').trim();
@@ -219,4 +214,4 @@ function createGoogleAiKey({ dataDir }) {
   };
 }
 
-module.exports = { createGoogleAiKey, checkGoogleKey, runGoogleAi, DEFAULT_MODELS };
+module.exports = { createGoogleAiKey, checkGoogleKey, runGoogleAi };

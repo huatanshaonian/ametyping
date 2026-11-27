@@ -109,11 +109,8 @@ function repairProject(proj, { knownRoles } = {}) {
 }
 
 module.exports = {
-  BUILTIN_ROLES,
   EDGE_TYPES,
   inferRole,
-  knownRoleSet,
-  looksLikeAutoAlias,
   normalizeRoleAlias,
   repairProject,
 };

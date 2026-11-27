@@ -62,4 +62,4 @@ async function parse(msg, me) {
   };
 }
 
-module.exports = { parse, htmlText, fromStructure };
+module.exports = { parse, fromStructure };

@@ -8,9 +8,9 @@
 // that could not be done ("signin") -- until they say 继续; the papers of other sites go on. A browser that is not
 // there pauses everything and is tried again every few minutes. Nothing is retried on its own after a refusal.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const { byDoi, byId } = require('./browser/sites');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const KEEP_DONE_MS = 14 * 86400e3;
 const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -18,8 +18,9 @@ const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(
 function createPdfQueue({ dir, cfg = () => ({}), library, api, mirror, fulltext, log = () => {}, onChange = () => {}, now = () => Date.now(), tickMs = 5000 }) {
   const file = path.join(dir, 'pdf-queue.json');
   let st = { items: {}, blocks: {}, day: '', count: 0 };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st, { indent: 1, mode: 0o600 });
   let running = '', nextAt = 0, timer = null, browser = '';
   const C = () => cfg() || {};
   const gapMs = () => Math.max(0.05, +C().pdfGapSec || 90) * 1000, perDay = () => (C().pdfPerDay != null ? +C().pdfPerDay : 30);

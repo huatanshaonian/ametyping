@@ -11,10 +11,10 @@
 //   <dataDir>/literature/profile.json  { story, line, questions, unclear, suggestions, topics: [{ name, desc, coverage, keywords, papers }],
 //                                         follow: { venues, authors, keywords, arxiv, ntrs, seeds }, confirmed, filledAt }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { FILL_SCHEMA, fillPrompt, PLAN_SCHEMA, planPrompt, QUESTIONS_SCHEMA, questionsPrompt, DIMS } = require('./prompts/profile');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 // AIAA ARC's table-of-contents feeds, by journal name (lower case)
 const AIAA = { 'aiaa journal': 'aiaaj', 'journal of spacecraft and rockets': 'jsr', 'journal of aircraft': 'ja', 'journal of thermophysics and heat transfer': 'jtht',
@@ -28,9 +28,9 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 // onEdit(before, after, by): the line and questions before and after a change by the user or a 梳理 (history.js)
 function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports = () => null, onEdit = () => {}, log = () => {} }) {
   const file = path.join(dir, 'profile.json');
-  let p = null; try { p = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+  let p = readJsonSafe(file, null);
   const blank = () => ({ story: '', line: '', questions: [], unclear: [], suggestions: [], topics: [], follow: { venues: [], authors: [], keywords: [], arxiv: [], ntrs: [], seeds: [] } });
-  const save = () => { p.updated = Date.now(); fs.writeFileSync(file + '.tmp', JSON.stringify(p, null, 1)); fs.renameSync(file + '.tmp', file); };
+  const save = () => { p.updated = Date.now(); writeJsonAtomic(file, p, { indent: 1 }); };
   let job = null;
   const snap = () => ({ line: (p && p.line) || '', questions: ((p && p.questions) || []).map((q) => ({ id: q.id, text: q.text, dim: q.dim, status: q.status })) });
   const edited = (before, by) => { try { onEdit(before, snap(), by); } catch (e) { log('文献：问题历史没记上：' + e.message); } };
@@ -250,4 +250,4 @@ function createProfile({ dir, mirror, ask, openalex = null, s2 = null, reports =
   return { get, organize, fill, update, state, words, openQuestions, library, linkRefs, replace, frontier };
 }
 
-module.exports = { createProfile, AIAA };
+module.exports = { createProfile };

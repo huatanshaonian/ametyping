@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic, writeFileAtomic } = require('./lib/json-store');
 
 const MAX = 1e6;                                     // characters per note
 const ID = /^[0-9a-f]{12}$/;
@@ -13,8 +14,9 @@ function createNotes({ dataDir, onChange = () => {}, audit = () => {} }) {
   const dir = path.join(dataDir, 'notes');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const indexFile = path.join(dir, 'index.json');
-  let index = []; try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch {}   // [{ id, title, created, updated, drive? }]
-  const saveIndex = () => { fs.writeFileSync(indexFile + '.tmp', JSON.stringify(index), { mode: 0o600 }); fs.renameSync(indexFile + '.tmp', indexFile); onChange(); };
+  let index = readJsonSafe(indexFile, []);            // [{ id, title, created, updated, drive? }]
+  if (!Array.isArray(index)) index = [];
+  const saveIndex = () => { writeJsonAtomic(indexFile, index, { mode: 0o600 }); onChange(); };
   const fileOf = (id) => path.join(dir, id + '.txt');
   const titleOf = (text) => (String(text).split('\n').map((l) => l.trim()).find(Boolean) || '无标题').slice(0, 60);
 
@@ -25,7 +27,7 @@ function createNotes({ dataDir, onChange = () => {}, audit = () => {} }) {
     let text = ''; try { text = fs.readFileSync(fileOf(id), 'utf8'); } catch {}
     return { ...e, text };
   }
-  function write(e, text) { fs.writeFileSync(fileOf(e.id), text, { mode: 0o600 }); e.title = titleOf(text); e.updated = Date.now(); }
+  function write(e, text) { writeFileAtomic(fileOf(e.id), text, { mode: 0o600 }); e.title = titleOf(text); e.updated = Date.now(); }
 
   // { id?, text, base? } -> { ok, id, updated, conflict? }
   function save(d) {

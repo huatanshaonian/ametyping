@@ -20,14 +20,7 @@ const { createSearch } = require('./search');
 const { createQA } = require('./qa');
 const { createWeekly, mondayOf } = require('./weekly');
 const { createAi } = require('../ai');
-
-function readBody(req, cap = 4096) {
-  return new Promise((resolve, reject) => {
-    let b = ''; req.setEncoding('utf8');
-    req.on('data', (c) => { b += c; if (b.length > cap) { reject(new Error('too large')); req.destroy(); } });
-    req.on('end', () => resolve(b)); req.on('error', reject);
-  });
-}
+const { readBody } = require('../lib/http-util');
 
 // onNote(note): a new daily / weekly report is there -- the server passes the short note on to each machine's agent
 // (the pet's morning bubble)
@@ -87,7 +80,7 @@ function createSummary({ store, dir, cfg = {}, resumeCmd, artifacts = null, todo
     }
     if (req.method === 'GET' && p === '/api/ask') { json(res, 200, { job: qa.state() }); return true; }
     if (req.method === 'POST' && p === '/api/ask') {
-      let d = {}; try { d = JSON.parse(await readBody(req)); } catch {}
+      let d = {}; try { d = JSON.parse(await readBody(req, 4096)); } catch {}
       const r = qa.start(d.q);
       if (r.ok) audit('ask', ip, `len=${String(d.q || '').length}`);
       json(res, 200, r);

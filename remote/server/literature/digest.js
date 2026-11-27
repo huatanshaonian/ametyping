@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { DIGEST_SCHEMA, digestPrompt } = require('./prompts/digest');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const LIMIT = 250000, PART = 100000, CJK_W = 3, PARALLEL = 2;
 const CJK = /[　-鿿가-힯豈-﫿＀-￯]/g;
@@ -36,7 +37,7 @@ function createDigest({ dir, ask, log = () => {}, limit = LIMIT, part = PART }) 
   const ddir = path.join(dir, 'digest');
   fs.mkdirSync(ddir, { recursive: true });
   const fileOf = (md5) => path.join(ddir, md5 + '.json');
-  const load = (md5) => { try { return { parts: {}, ...JSON.parse(fs.readFileSync(fileOf(md5), 'utf8')) }; } catch { return { parts: {} }; } };
+  const load = (md5) => ({ parts: {}, ...(readJsonSafe(fileOf(md5), {}) || {}) });
   const running = new Map();                           // `${md5}/${hash}` -> promise of the notes
 
   // what the deep card reads: { pages } (the whole text) or { digest: [{ from, to, notes }] } (the parts' notes)
@@ -58,7 +59,7 @@ function createDigest({ dir, ask, log = () => {}, limit = LIMIT, part = PART }) 
         if (!notes) throw new Error(`第 ${label(a)}～${label(b)} 页没有总结出来`);
         const v = load(md5);
         v.parts[hash] = { from: label(a), to: label(b), notes, at: Date.now() };
-        fs.writeFileSync(fileOf(md5) + '.tmp', JSON.stringify(v)); fs.renameSync(fileOf(md5) + '.tmp', fileOf(md5));
+        writeJsonAtomic(fileOf(md5), v);
         return v.parts[hash];
       })().finally(() => running.delete(id)));
       return running.get(id);
@@ -74,4 +75,4 @@ function createDigest({ dir, ask, log = () => {}, limit = LIMIT, part = PART }) 
   return { forCard };
 }
 
-module.exports = { createDigest, split, size, LIMIT, PART };
+module.exports = { createDigest, split, size, LIMIT };

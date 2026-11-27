@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const CHECK_EVERY = 5 * 86400e3, UPDATE_MS = 10 * 60e3;
 const VERSION = /(\d+\.\d+\.\d+(?:-[\w.]+)?)/;
@@ -16,8 +17,7 @@ const VERSION = /(\d+\.\d+\.\d+(?:-[\w.]+)?)/;
 // egress: the proxies (null: direct)
 function createCliAdmin({ dataDir, tool, egress = null, log = () => {} }) {
   const file = dataDir ? path.join(dataDir, `${tool.name}-check.json`) : null;
-  let latest = null, updating = null, lastUpdate = null;      // latest: { version, at, error }
-  try { latest = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+  let latest = readJsonSafe(file, null), updating = null, lastUpdate = null;      // latest: { version, at, error }
 
   async function envFor(host) {
     let env = { ...process.env };
@@ -51,7 +51,7 @@ function createCliAdmin({ dataDir, tool, egress = null, log = () => {} }) {
       const m = VERSION.exec(String(await tool.newest(egress)));
       latest = m ? { version: m[1], at: Date.now(), error: '' } : { version: '', at: Date.now(), error: '没认出版本号' };
     } catch (e) { latest = { version: '', at: Date.now(), error: e.message }; }
-    if (file) try { fs.writeFileSync(file, JSON.stringify(latest), { mode: 0o600 }); } catch {}
+    if (file) try { writeJsonAtomic(file, latest, { mode: 0o600 }); } catch {}
     return latest;
   }
   const login = () => tool.login(run);

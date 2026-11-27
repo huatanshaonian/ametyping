@@ -11,6 +11,7 @@ const https = require('https');
 const dns = require('dns').promises;
 const net = require('net');
 const crypto = require('crypto');
+const { writeFileAtomic } = require('./lib/json-store');
 
 const MAX = 20 * 1024 * 1024;
 const TIMEOUT = 30e3;
@@ -94,13 +95,17 @@ function createWalls(dir) {
     const d = new Date(), day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
     const name = `${day}-${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 10)}.${ext}`;
     const f = path.join(dir, name);
-    if (!fs.existsSync(f)) { fs.writeFileSync(f + '.tmp', buf, { mode: 0o600 }); fs.renameSync(f + '.tmp', f); }
+    if (!fs.existsSync(f)) writeFileAtomic(f, buf, { mode: 0o600, mkdirMode: 0o700 });
     return name;
   }
   function list() {
     let names = [];
     try { names = fs.readdirSync(dir).filter((n) => NAME.test(n)); } catch {}
-    return names.map((name) => ({ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+    const out = [];
+    for (const name of names) {
+      try { out.push({ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs }); } catch {}
+    }
+    return out.sort((a, b) => b.mtime - a.mtime);
   }
   function remove(name) {
     if (!NAME.test(String(name))) return false;

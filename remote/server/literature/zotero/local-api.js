@@ -5,16 +5,16 @@
 // Files: an attachment item is created, then the bytes go through the upload flow (authorize -> upload -> register);
 // Zotero files them in its storage and syncs them to WebDAV itself.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../../lib/json-store');
 
 const APP_NAME = 'Windose 文献';
 
 function createLocalApi({ base = 'http://127.0.0.1:23119', http, dir, log = () => {} }) {
   const keyFile = path.join(dir, 'zotero-key.json');
-  let cred = {}; try { cred = JSON.parse(fs.readFileSync(keyFile, 'utf8')); } catch {}
-  const saveCred = () => { fs.writeFileSync(keyFile + '.tmp', JSON.stringify(cred), { mode: 0o600 }); fs.renameSync(keyFile + '.tmp', keyFile); };
+  let cred = readJsonSafe(keyFile, {}) || {};
+  const saveCred = () => writeJsonAtomic(keyFile, cred, { mode: 0o600 });
   let serverId = cred.serverId || '';
   let authorizing = null;
   const U = (p) => base.replace(/\/$/, '') + p;
@@ -102,4 +102,4 @@ function createLocalApi({ base = 'http://127.0.0.1:23119', http, dir, log = () =
   return { get, version, canWrite, authorize, authorizing: () => !!authorizing, createItems, patchItem, attachPdf, write, serverId: () => serverId };
 }
 
-module.exports = { createLocalApi, APP_NAME };
+module.exports = { createLocalApi };

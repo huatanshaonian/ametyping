@@ -7,8 +7,8 @@
 // 10 minutes for changes made in Google, and when the calendar window asks for the month again. Tasks in other lists
 // are only shown in the calendar.
 'use strict';
-const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const LIST_TITLE = 'Windose 重要计划';
 const EVERY_MS = 10 * 60e3;
@@ -17,8 +17,9 @@ const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 300);
 function createTasksSync({ dataDir, account, tasks, todos, log = () => {} }) {
   const file = path.join(dataDir, 'google-tasks.json');
   let st = { list: '', map: {} };                     // map: todo id -> { task, text, due, done } as last synced
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st, { mode: 0o600 });
   const on = () => { const s = account.status(); return s.connected && s.tasks && account.has('tasks'); };
 
   const wOf = (t) => ({ text: norm(t.text), due: t.due || '', done: !!t.done });

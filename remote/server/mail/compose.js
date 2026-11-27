@@ -162,4 +162,4 @@ function createCompose({ dataDir, accounts, store, ask = null, log = () => {}, a
   return { handle, start, send, draftWithAi, drafts };
 }
 
-module.exports = { createCompose, parseList };
+module.exports = { createCompose };

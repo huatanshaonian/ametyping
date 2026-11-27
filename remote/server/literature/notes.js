@@ -19,19 +19,15 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { NOTE_SCHEMA, notePrompt } = require('./prompts/notes');
+const { parsePngDataUrl } = require('../lib/http-util');
+const { readJsonSafe, writeJsonAtomic, writeFileAtomic } = require('../lib/json-store');
 
 const KEY = /^[A-Z0-9]{8}$/, ID = /^[a-f0-9]{12}$/;
 const MAX_PNG = 6e6, MAX_NOTES = 500, MAX_STROKES = 4000;
-const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 // "data:image/png;base64,..." -> { buf, w, h }, or null
 function pngOf(dataUrl) {
-  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
-  if (!m) return null;
-  const buf = Buffer.from(m[1], 'base64');
-  if (buf.length < 33 || buf.length > MAX_PNG || !buf.subarray(0, 8).equals(PNG_SIG)) return null;
-  const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
-  return w >= 16 && h >= 16 && w <= 6000 && h <= 6000 ? { buf, w, h } : null;
+  return parsePngDataUrl(dataUrl, { maxBytes: MAX_PNG, minDim: 16, maxDim: 6000 });
 }
 // 画板's strokes as sent ({ v, strokes: [{ t, c, w, p }] }), checked; null when there are none
 function inkOf(d) {
@@ -53,11 +49,11 @@ function createNotes({ dir, kbDir, mirror, ask, todos = null, citekeyOf = (it) =
   fs.mkdirSync(ndir, { recursive: true });
   const fileOf = (key) => path.join(ndir, key + '.json');
   const imgOf = (key, id) => path.join(ndir, key, id + '.png');
-  const load = (key) => { try { return { items: [], ...JSON.parse(fs.readFileSync(fileOf(key), 'utf8')) }; } catch { return { items: [] }; } };
+  const load = (key) => ({ items: [], ...(readJsonSafe(fileOf(key), {}) || {}) });
   const reading = new Map();                           // `${key}/${id}` -> promise of the text
   const changed = (key) => { try { onChange(key); } catch {} };
   function save(key, d) {
-    fs.writeFileSync(fileOf(key) + '.tmp', JSON.stringify(d)); fs.renameSync(fileOf(key) + '.tmp', fileOf(key));
+    writeJsonAtomic(fileOf(key), d);
     toKb(key, d);
     changed(key);
   }
@@ -80,7 +76,7 @@ function createNotes({ dir, kbDir, mirror, ask, todos = null, citekeyOf = (it) =
     }
     const inkChanged = JSON.stringify(n.ink || null) !== JSON.stringify(ink);
     Object.assign(n, { text, ink, img: !!ink, updated: Date.now() });
-    if (ink) { fs.mkdirSync(path.join(ndir, key), { recursive: true }); fs.writeFileSync(imgOf(key, n.id), png.buf); n.w = png.w; n.h = png.h; }
+    if (ink) { writeFileAtomic(imgOf(key, n.id), png.buf); n.w = png.w; n.h = png.h; }
     else { try { fs.unlinkSync(imgOf(key, n.id)); } catch {} delete n.w; delete n.h; }
     if (inkChanged || !ink) n.ocr = '';                // (what was read of the old strokes no longer says what they say)
     save(key, all);
@@ -170,7 +166,7 @@ function createNotes({ dir, kbDir, mirror, ask, todos = null, citekeyOf = (it) =
         }
         if (n.text) out.push(n.text, '');
       }
-      fs.writeFileSync(md + '.tmp', out.join('\n')); fs.renameSync(md + '.tmp', md);
+      writeFileAtomic(md, out.join('\n'));
     } catch (e) { log(`文献：笔记没能放进知识库：${e.message}`); }
   }
 
@@ -202,4 +198,4 @@ function createNotes({ dir, kbDir, mirror, ask, todos = null, citekeyOf = (it) =
   return { list, put, remove, img, read, toTodo, lines, handle };
 }
 
-module.exports = { createNotes, pngOf, inkOf };
+module.exports = { createNotes, pngOf };

@@ -58,13 +58,14 @@ const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
 function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false, embed = null, kbStruct = null, paradigm = null }) {
   const file = path.join(dir, 'feed.json');
+  const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
   let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {}, asked: {}, toc: {}, tocAt: {}, s2: {} };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
   const inboxFile = path.join(dir, 'feed-inbox.json');
-  let inbox = {};
-  try { inbox = JSON.parse(fs.readFileSync(inboxFile, 'utf8')) || {}; } catch {}
-  const saveInbox = () => { fs.writeFileSync(inboxFile + '.tmp', JSON.stringify(inbox)); fs.renameSync(inboxFile + '.tmp', inboxFile); };
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
+  let inbox = readJsonSafe(inboxFile, {}) || {};
+  const saveInbox = () => writeJsonAtomic(inboxFile, inbox);
+  const save = () => writeJsonAtomic(file, st);
   // (cfg: an object, or a function giving the settings in effect now -- 控制面板 › 文献 changes them while running)
   const C = () => (typeof cfg === 'function' ? cfg() : cfg) || {};
   const daily = () => Math.max(0, Math.min(5, C().daily != null ? +C().daily : 2));

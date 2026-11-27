@@ -3,6 +3,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const DEFAULT_POOLS = {
   'fast-coder': [
@@ -83,19 +84,18 @@ function createModelRouter({
   function ensurePoolsFile() {
     if (!fs.existsSync(poolsFile)) {
       try {
-        fs.mkdirSync(path.dirname(poolsFile), { recursive: true, mode: 0o700 });
-        fs.writeFileSync(poolsFile, JSON.stringify(DEFAULT_POOLS, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+        writeJsonAtomic(poolsFile, DEFAULT_POOLS, { indent: 2, trailingNewline: true, mode: 0o600, mkdirMode: 0o700 });
       } catch {}
     }
   }
 
   function loadPools() {
     ensurePoolsFile();
-    try {
-      const raw = JSON.parse(fs.readFileSync(poolsFile, 'utf8'));
+    const raw = readJsonSafe(poolsFile);
+    if (raw) {
       const norm = normalizePools(raw);
       if (norm && Object.keys(norm).length > 0) return norm;
-    } catch {}
+    }
     return clonePools(DEFAULT_POOLS);
   }
 
@@ -109,10 +109,7 @@ function createModelRouter({
       return { ok: false, msg: '无效的模型池配置格式' };
     }
     try {
-      fs.mkdirSync(path.dirname(poolsFile), { recursive: true, mode: 0o700 });
-      const tmpFile = poolsFile + '.tmp';
-      fs.writeFileSync(tmpFile, JSON.stringify(norm, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(tmpFile, poolsFile);
+      writeJsonAtomic(poolsFile, norm, { indent: 2, trailingNewline: true, mode: 0o600, mkdirMode: 0o700 });
       return { ok: true, pools: norm };
     } catch (e) {
       return { ok: false, msg: `保存模型池配置失败：${e.message}` };
@@ -541,6 +538,5 @@ function createModelRouter({
 }
 
 module.exports = {
-  DEFAULT_POOLS,
   createModelRouter,
 };

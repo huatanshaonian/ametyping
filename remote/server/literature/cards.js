@@ -263,4 +263,4 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
   return { find, all, brief, run, state, setOwn, setMeta, actions, makeQuick, makeDeep, annotationLines: (k) => annotationLines(mirror, k), NOTE_TAG };
 }
 
-module.exports = { createCards, noteHtml, annotationLines, NOTE_TAG };
+module.exports = { createCards, noteHtml, annotationLines };

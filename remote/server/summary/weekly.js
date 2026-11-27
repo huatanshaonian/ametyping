@@ -83,4 +83,4 @@ function createWeekly({ reports, ask, todos = null, log = () => {} }) {
   return { generateWeek, pendingWeek, mondayOf, datesOf };
 }
 
-module.exports = { createWeekly, WEEK_SCHEMA, mondayOf };
+module.exports = { createWeekly, mondayOf };

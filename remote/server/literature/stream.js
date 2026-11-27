@@ -243,4 +243,4 @@ function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = n
   return { extractTeamsForPaper, listStream, teamDetail, teamGraph: () => (kbStruct ? kbStruct.teamGraph() : { nodes: [], edges: [] }), TEAM_SCHEMA };
 }
 
-module.exports = { createStream, TEAM_SCHEMA, teamIdOf };
+module.exports = { createStream };

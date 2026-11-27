@@ -39,9 +39,19 @@ function createProxy({ target, origin }) {
       // its pages may only be shown inside this site (the editor's frame on the desktop)
       out['content-security-policy'] = [].concat(out['content-security-policy'] || [], "frame-ancestors 'self'");
       res.writeHead(r.statusCode, out);
+      r.on('error', () => res.destroy());
       r.pipe(res);
     });
-    up.on('error', () => { if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('文档服务没有响应'); });
+    up.on('error', () => {
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('文档服务没有响应');
+      } else {
+        res.destroy();
+      }
+    });
+    res.on('close', () => { if (!res.writableEnded) up.destroy(); });
+    req.on('error', () => up.destroy());
     req.pipe(up);
   }
 

@@ -949,6 +949,35 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
         await fxOc.mesh.handle({ method: 'POST' }, {}, new URL('http://local/api/mesh/cli-updates'), '127.0.0.1', (_r, _c, b) => { cuBody = b; }, async () => JSON.stringify({ machine: 'pc-a', tool: 'codex' }));
         assert.equal(cuBody.ok, true);
         assert.equal(cuBody.updates.length, 0);
+
+        // Agent RPC queue submit for providerType="sugon" omits caller machine so gateway resolves cleanly
+        const sugonSockSent = [];
+        fxOc.machines.set('vbuntu', {
+          name: 'vbuntu',
+          online: true,
+          control: true,
+          sockets: new Set([{
+            readyState: 1,
+            remoteControlAllowed: true,
+            send(raw) { sugonSockSent.push(JSON.parse(raw)); },
+          }]),
+          sessions: new Map(),
+        });
+        fxOc.mesh.onSugonStatus('vbuntu', { available: true, defaultPartition: 'kshdnormal' });
+        await fxOc.mesh.fromAgentRpc('pc-a', {
+          t: 'mesh-req',
+          rid: 'r-sugon-sub',
+          op: 'queue',
+          action: 'submit',
+          providerType: 'sugon',
+          resource: 'cpu',
+          command: 'srun ./cem_solver',
+        }, mockWsRev);
+        const subReply = revReplies.find((x) => x.rid === 'r-sugon-sub');
+        assert.equal(subReply.ok, true);
+        assert.equal(sugonSockSent.length, 1);
+        assert.equal(sugonSockSent[0].t, 'sugon-exec');
+        assert.equal(subReply.job.machine, 'vbuntu');
       } finally {
         fxOc.cleanup();
       }

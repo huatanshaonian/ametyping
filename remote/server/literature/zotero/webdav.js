@@ -63,4 +63,4 @@ function createWebdav({ dir }) {
   return { has, read, prop, configured: () => !!dir && fs.existsSync(dir) };
 }
 
-module.exports = { createWebdav, entries, extract };
+module.exports = { createWebdav, entries };

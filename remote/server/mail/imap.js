@@ -158,4 +158,4 @@ function createSyncer({ account, state, setState, store, onNew = () => {}, onSee
   return { start, stop, now, setSeen, status: () => ({ ...st, count: store.count(account.id), unread: store.unread(account.id) }) };
 }
 
-module.exports = { createSyncer, FIRST_DAYS };
+module.exports = { createSyncer };

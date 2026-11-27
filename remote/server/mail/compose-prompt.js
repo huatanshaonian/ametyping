@@ -27,4 +27,4 @@ function draftPrompt(d) {
   return parts.filter((x, i, a) => x !== '' || a[i - 1] !== '').join('\n');
 }
 
-module.exports = { DRAFT_SCHEMA, TONES, draftPrompt };
+module.exports = { DRAFT_SCHEMA, draftPrompt };

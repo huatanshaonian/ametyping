@@ -162,4 +162,4 @@ function createAnnots({ api, mirror, log = () => {}, onChange = () => {}, now = 
   return { list, add, update, remove, handle };
 }
 
-module.exports = { createAnnots, sortIndex, cleanRects };
+module.exports = { createAnnots };

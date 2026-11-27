@@ -13,6 +13,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { verify } = require('./jwt');
 const { PREFIX } = require('./proxy');
+const { readBody } = require('../lib/http-util');
 
 const MAX_FILE = 200 * 1024 * 1024;
 
@@ -72,9 +73,8 @@ function createHook({ sessions, secret, target, host, port, onSaved, onClosed, l
       return s.pipe(res);
     }
     if (mm[1] !== 'cb' || req.method !== 'POST') { res.writeHead(405); return res.end(); }
-    let b = '';
-    req.on('data', (c) => { b += c; if (b.length > 1024 * 1024) req.destroy(); });
-    req.on('end', async () => {
+    readBody(req, 1024 * 1024).then(async (b) => {
+      if (!b) return reply(res, 400, { error: 1 });
       let body; try { body = JSON.parse(b); } catch { return reply(res, 400, { error: 1 }); }
       // signed: in the body (token) or in the header, as {payload}
       const h = String(req.headers.authorizationjwt || req.headers.authorization || '');

@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
+const { cleanStr: cleanStrRaw } = require('./lib/http-util');
 
 const RESOURCES = ['gpu', 'cpu'];
 const PRIORITIES = { urgent: 0, normal: 1, low: 2 };
@@ -23,9 +25,7 @@ function cleanPriority(p) {
   return Object.prototype.hasOwnProperty.call(PRIORITIES, k) ? k : 'normal';
 }
 
-function cleanStr(v, max = 200) {
-  return typeof v === 'string' ? v.trim().slice(0, max) : '';
-}
+const cleanStr = (v, max = 200) => cleanStrRaw(v, max);
 
 function parseSlotRequest(val, fallback, maxLimit) {
   if (val === undefined || val === null || val === '') return fallback;
@@ -75,24 +75,20 @@ function createComputeQueue({
   }
 
   function load() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (raw && typeof raw === 'object') {
-        state.jobs = Array.isArray(raw.jobs) ? raw.jobs : [];
-        state.slots = (raw.slots && typeof raw.slots === 'object' && !Array.isArray(raw.slots)) ? raw.slots : {};
-      }
-    } catch {}
+    const raw = readJsonSafe(file);
+    if (raw && typeof raw === 'object') {
+      state.jobs = Array.isArray(raw.jobs) ? raw.jobs : [];
+      state.slots = (raw.slots && typeof raw.slots === 'object' && !Array.isArray(raw.slots)) ? raw.slots : {};
+    }
   }
 
   function save() {
     try {
-      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
       // Trim finished history beyond MAX_HISTORY
       const active = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
       const done = state.jobs.filter((j) => j.status !== 'queued' && j.status !== 'running').slice(-MAX_HISTORY);
       state.jobs = [...done, ...active];
-      fs.writeFileSync(file + '.tmp', JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(file + '.tmp', file);
+      writeJsonAtomic(file, state, { indent: 2, trailingNewline: true, mode: 0o600, mkdirMode: 0o700 });
     } catch {}
   }
 
@@ -376,7 +372,7 @@ function createComputeQueue({
       // ---- 2) CPU / NUMA slot scheduling with dual-socket concurrency + HoL anti-starvation ----
       const managedNuma = new Set();
       for (const j of state.jobs) {
-        if (j.providerType !== 'colab' && j.machine === machine && j.resource === 'cpu' && j.status === 'running') {
+        if (j.providerType !== 'colab' && j.providerType !== 'sugon' && j.machine === machine && j.resource === 'cpu' && j.status === 'running') {
           const ids = Array.isArray(j.assignedNuma) && j.assignedNuma.length ? j.assignedNuma : [0];
           for (const id of ids) managedNuma.add(id);
         }
@@ -676,4 +672,4 @@ function createComputeQueue({
   };
 }
 
-module.exports = { createComputeQueue, RESOURCES, PRIORITIES, DEFAULT_SLOTS };
+module.exports = { createComputeQueue };

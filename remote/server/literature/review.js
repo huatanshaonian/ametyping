@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { SEARCH_SCHEMA, REVIEW_SCHEMA, searchPrompt, reviewPrompt, CHANGES, PROGRESS, DIMS } = require('./prompts/review');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const DAY = 86400e3;
 const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -29,8 +30,8 @@ function createReview({ dir, kb, profile, history, feed, reports = () => null, a
   fs.mkdirSync(rdir, { recursive: true });
   fs.mkdirSync(path.join(kb.dir, 'reviews'), { recursive: true });
   const fileOf = (id) => path.join(rdir, id + '.json');
-  const read = (id) => { try { return /^[\w-]{1,40}$/.test(id) ? JSON.parse(fs.readFileSync(fileOf(id), 'utf8')) : null; } catch { return null; } };
-  const write = (r) => { fs.writeFileSync(fileOf(r.id) + '.tmp', JSON.stringify(r, null, 1)); fs.renameSync(fileOf(r.id) + '.tmp', fileOf(r.id)); };
+  const read = (id) => (/^[\w-]{1,40}$/.test(id) ? readJsonSafe(fileOf(id), null) : null);
+  const write = (r) => writeJsonAtomic(fileOf(r.id), r, { indent: 1 });
   const all = () => { let ns = []; try { ns = fs.readdirSync(rdir).filter((n) => n.endsWith('.json')); } catch {} return ns.map((n) => read(n.slice(0, -5))).filter(Boolean).sort((a, b) => b.at - a.at); };
   const list = () => all().map((r) => ({ id: r.id, kind: r.kind, from: r.from, to: r.to, at: r.at, auto: !!r.auto, status: r.status, changes: r.changes.length + (r.line && r.line.change ? 1 : 0),
     accepted: r.changes.filter((c) => c.decision === 'accepted').length + (r.line && r.line.decision === 'accepted' ? 1 : 0) }));

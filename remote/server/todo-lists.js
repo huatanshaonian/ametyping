@@ -3,18 +3,19 @@
 // put in from elsewhere (a report's ☆, a mail alert, a note on a paper, Google Tasks). Order is the user's.
 //   <dataDir>/todo-lists.json   [{ id, name }]
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const MAIN = 'main';
 const MAX = 50;
 
 function createTodoLists({ dataDir, onChange = () => {} }) {
   const file = path.join(dataDir, 'todo-lists.json');
-  let lists = []; try { lists = JSON.parse(fs.readFileSync(file, 'utf8')).filter((l) => l && typeof l.id === 'string' && typeof l.name === 'string'); } catch {}
+  const raw = readJsonSafe(file, []);
+  let lists = Array.isArray(raw) ? raw.filter((l) => l && typeof l.id === 'string' && typeof l.name === 'string') : [];
   if (!lists.some((l) => l.id === MAIN)) lists.unshift({ id: MAIN, name: '重要计划' });
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(lists), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); onChange(); };
+  const save = () => { writeJsonAtomic(file, lists, { mode: 0o600 }); onChange(); };
   const name = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 40) : '');
 
   const all = () => lists;

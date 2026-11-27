@@ -148,4 +148,4 @@ function createCalendar({ account, origin, log = () => {} }) {
   return { diary, week, events, target, clear: () => cache.clear() };
 }
 
-module.exports = { createCalendar, OWN_NAME };
+module.exports = { createCalendar };

@@ -835,4 +835,4 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
 
   return {list,change,summarize,summarizeAll,discover,getOverview,saveOverview,generateOverview,promoteMemory,askAssistant,resolveDefaultModel,DEFAULT_MODEL};
 }
-module.exports={createDirectories,DEFAULT_MODEL};
+module.exports={createDirectories};

@@ -79,4 +79,4 @@ function createMagpieKeys({ config = {}, request = httpJSON } = {}) {
   return { available, list, issue, usable };
 }
 
-module.exports = { createMagpieKeys, httpJSON };
+module.exports = { createMagpieKeys };

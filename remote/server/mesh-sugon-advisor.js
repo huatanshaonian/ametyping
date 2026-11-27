@@ -225,6 +225,5 @@ module.exports = {
   ruleBasedDiagnose,
   pickFastGoogleModel,
   pickFastMagpieModel,
-  buildDiagnosisPrompt,
   diagnoseSugonFailure,
 };

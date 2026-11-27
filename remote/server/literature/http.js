@@ -5,31 +5,12 @@
 'use strict';
 const http = require('http');
 const https = require('https');
-const net = require('net');
-const tls = require('tls');
+const { connectTunnel } = require('../lib/http-util');
 
 const TIMEOUT_MS = 30e3;
 const MAX_BYTES = 60 * 1024 * 1024;
 
-function tunnel(proxyUrl, host, port) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(proxyUrl);
-    const s = net.connect(Number(u.port || 80), u.hostname);
-    const fail = (e) => { s.destroy(); reject(e); };
-    s.setTimeout(TIMEOUT_MS, () => fail(new Error('代理连接超时')));
-    s.once('error', fail);
-    s.once('connect', () => s.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`));
-    let head = '';
-    const onData = (d) => {
-      head += d.toString('latin1');
-      if (!head.includes('\r\n\r\n')) return;
-      s.removeListener('data', onData); s.setTimeout(0); s.removeListener('error', fail);
-      if (!/^HTTP\/1\.[01] 200/.test(head)) return fail(new Error('代理拒绝了连接：' + head.split('\r\n')[0]));
-      resolve(tls.connect({ socket: s, servername: host }));
-    };
-    s.on('data', onData);
-  });
-}
+const tunnel = (proxyUrl, host, port) => connectTunnel(proxyUrl, host, port, { timeoutMs: TIMEOUT_MS });
 
 // createHttp({ egress, viaProxy: ['ntrs.nasa.gov'], userAgent }) -> { request, get, json }
 //   request(url, { method, headers, body, maxBytes, timeoutMs, redirects }) -> { status, headers, body (Buffer), url }

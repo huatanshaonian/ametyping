@@ -3,6 +3,7 @@
 const fs = require('fs'), path = require('path'), os = require('os');
 const http = require('http'), https = require('https');
 const { tunnel } = require('../google/http');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 function resolveDeepseek({ env = process.env, home = os.homedir(), profile = '', model = '', base = '', key = '' } = {}) {
   let local = {};
@@ -76,10 +77,7 @@ async function runDeepseek({ key, base = 'https://api.deepseek.com', model = 'de
 
 function createDeepseekKey({ dataDir }) {
   const file = path.join(dataDir, 'research-api.json');
-  const readRaw = () => {
-    try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; }
-    catch { return {}; }
-  };
+  const readRaw = () => readJsonSafe(file, {}) || {};
   const getResolved = () => {
     const raw = readRaw();
     try { return { raw, resolved: resolveDeepseek(raw), error: '' }; }
@@ -118,10 +116,7 @@ function createDeepseekKey({ dataDir }) {
       if (next.model && !/^[A-Za-z0-9._-]{1,120}$/.test(next.model)) return { ok: false, msg: '模型名称无效' };
       try { resolveDeepseek(next); } catch (e) { return { ok: false, msg: e.message }; }
       try {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 });
-        fs.chmodSync(file + '.tmp', 0o600);
-        fs.renameSync(file + '.tmp', file);
+        writeJsonAtomic(file, next, { indent: 2, mode: 0o600, chmod: true });
         return { ok: true };
       } catch (e) {
         return { ok: false, msg: e.message };

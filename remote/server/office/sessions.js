@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const ID = /^[a-f0-9]{24}$/;
 const KEEP_DONE_MS = 6 * 3600e3;          // a closed one: long enough for the page to write its last version back
@@ -17,11 +18,10 @@ function createSessions(dir) {
 
   function get(id) {
     if (!ID.test(String(id))) return null;
-    try { return JSON.parse(fs.readFileSync(path.join(folder(id), 'meta.json'), 'utf8')); } catch { return null; }
+    return readJsonSafe(path.join(folder(id), 'meta.json'), null);
   }
   function put(m) {
-    const f = path.join(folder(m.id), 'meta.json'), tmp = f + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(m)); fs.renameSync(tmp, f);
+    writeJsonAtomic(path.join(folder(m.id), 'meta.json'), m, { mode: 0o600, mkdirMode: 0o700 });
   }
   // a new one; the file itself is then written to file(m) (receive in index.js)
   function create({ machine, path: p, name, ext }) {

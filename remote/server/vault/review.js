@@ -450,4 +450,4 @@ function createReview({vault,memory,ask,model=()=>null,machines=()=>[],onAutoApp
     discard:id=>{const r=db.prepare("UPDATE memory_reviews SET status='discarded',updated=? WHERE id=? AND status IN ('ready','failed')").run(Date.now(),id);if(!r.changes)throw Error('运行中或已应用的方案不能丢弃');},
     close(){closed=true;}};
 }
-module.exports={createReview,SCHEMA,CATEGORIES,normalize,NEW_PROJECT_PREFIX};
+module.exports={createReview,SCHEMA,normalize};

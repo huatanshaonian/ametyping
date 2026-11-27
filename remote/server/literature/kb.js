@@ -62,10 +62,12 @@ function slugify(s) {
 }
 
 function createKb({ dir, log = () => {}, onChange = () => {} }) {
+  const { readJsonSafe, writeJsonAtomic, writeFileAtomic } = require('../lib/json-store');
   for (const d of ['papers', 'topics', '.ame']) fs.mkdirSync(path.join(dir, d), { recursive: true });
   const propFile = path.join(dir, '.ame', 'proposals.json');
-  let proposals = []; try { proposals = JSON.parse(fs.readFileSync(propFile, 'utf8')); } catch {}
-  const saveProps = () => { fs.writeFileSync(propFile + '.tmp', JSON.stringify(proposals)); fs.renameSync(propFile + '.tmp', propFile); };
+  const loadedProps = readJsonSafe(propFile, []);
+  let proposals = Array.isArray(loadedProps) ? loadedProps : [];
+  const saveProps = () => writeJsonAtomic(propFile, proposals);
   const abs = (rel) => { if (!SAFE.test(rel)) throw new Error('无效的路径'); return path.join(dir, rel); };
 
   function read(rel) {
@@ -79,7 +81,7 @@ function createKb({ dir, log = () => {}, onChange = () => {} }) {
     const cur = read(rel);
     if (base !== null && (cur ? cur.hash : '') !== base) return { ok: false, conflict: true, msg: '文件在别处被改过了（比如 Obsidian），请重新打开再改', current: cur };
     const f = abs(rel);
-    fs.writeFileSync(f + '.tmp', text); fs.renameSync(f + '.tmp', f);
+    writeFileAtomic(f, text);
     if (why) appendLog(`${why} [[${path.basename(rel, '.md')}]]`);
     onChange(rel);
     return { ok: true, hash: hash(text) };

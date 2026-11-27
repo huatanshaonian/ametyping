@@ -62,4 +62,4 @@ function createS2({ http, base = 'https://api.semanticscholar.org', key = '' }) 
   };
 }
 
-module.exports = { createS2, fromS2 };
+module.exports = { createS2 };

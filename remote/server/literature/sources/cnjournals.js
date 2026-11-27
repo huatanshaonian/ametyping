@@ -44,4 +44,4 @@ function createCnJournals({ http, journals = JOURNALS }) {
   return { of, toc };
 }
 
-module.exports = { createCnJournals, articles, JOURNALS };
+module.exports = { createCnJournals, articles };

@@ -47,11 +47,13 @@ function slim(d) {
 }
 
 function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () => {} }) {
+  const { readJsonSafe, writeJsonAtomic } = require('../../lib/json-store');
   const file = path.join(dir, 'zotero.json');
   let st = { serverId: '', version: 0, at: 0, items: {}, collections: {}, attachments: {}, notes: {}, annotations: {} };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
   let lastError = '', running = null, timer = null;
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
+  const save = () => writeJsonAtomic(file, st);
   // indexes rebuilt on every load / refresh
   let byParent = new Map(), annByAtt = new Map(), byDoi = new Map(), byTitle = new Map();
   function reindex() {
@@ -140,4 +142,4 @@ function createMirror({ api, dir, log = () => {}, everyMs = 60e3, onChange = () 
     annotationCount: (key) => annotationsOf(key).length };
 }
 
-module.exports = { createMirror, normDoi, normTitle, strip, yearOf };
+module.exports = { createMirror, normDoi, normTitle, strip };
