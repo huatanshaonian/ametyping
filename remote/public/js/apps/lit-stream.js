@@ -150,6 +150,93 @@ export function mount(el, ctx) {
     );
   }
 
+  function renderTeamGraphSvg(nodes, edges, onPick) {
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svgEl = (tag, attrs = {}, text = '') => {
+      const n = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+      if (text) n.textContent = text;
+      return n;
+    };
+    const topNodes = nodes.slice(0, 40);
+    const idSet = new Set(topNodes.map((n) => n.id));
+    const visEdges = edges.filter((e) => idSet.has(e.from) && idSet.has(e.to));
+    const W = 820, H = 360;
+    const cx = W / 2, cy = H / 2;
+
+    // Initial placement on concentric rings (highest paper count near center) + lightweight spring iterations
+    const pos = new Map();
+    topNodes.forEach((n, i) => {
+      const ring = i < 8 ? 0.28 : i < 20 ? 0.58 : 0.86;
+      const angle = (i * 2.39996) % (Math.PI * 2); // golden angle
+      pos.set(n.id, { x: cx + Math.cos(angle) * (W * 0.42) * ring, y: cy + Math.sin(angle) * (H * 0.40) * ring, vx: 0, vy: 0 });
+    });
+    for (let iter = 0; iter < 55; iter++) {
+      for (let i = 0; i < topNodes.length; i++) {
+        const a = pos.get(topNodes[i].id);
+        for (let j = i + 1; j < topNodes.length; j++) {
+          const b = pos.get(topNodes[j].id);
+          let dx = a.x - b.x, dy = a.y - b.y;
+          const d2 = dx * dx + dy * dy + 25;
+          const f = 900 / d2;
+          a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+        }
+      }
+      for (const e of visEdges) {
+        const a = pos.get(e.from), b = pos.get(e.to);
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const k = 0.025 * Math.min(3, e.weight);
+        a.vx += dx * k; a.vy += dy * k; b.vx -= dx * k; b.vy -= dy * k;
+      }
+      for (const n of topNodes) {
+        const p = pos.get(n.id);
+        p.vx += (cx - p.x) * 0.008;
+        p.vy += (cy - p.y) * 0.008;
+        p.x = Math.max(54, Math.min(W - 54, p.x + Math.max(-12, Math.min(12, p.vx * 0.4))));
+        p.y = Math.max(28, Math.min(H - 28, p.y + Math.max(-12, Math.min(12, p.vy * 0.4))));
+        p.vx *= 0.6; p.vy *= 0.6;
+      }
+    }
+
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, style: 'width:100%;height:340px;background:#fafcff;border:1px solid #808080;display:block;margin-bottom:10px' });
+    const tip = h('div', { style: 'font-size:11px;color:#333;min-height:18px;margin-bottom:8px;padding:2px 6px;background:#f4f4f4;border:1px solid #ccc', text: '悬停节点查看团队简介与合作连线，点击节点进入该团队论文时间线（展示前 40 个活跃团队）' });
+
+    const edgeEls = visEdges.map((e) => {
+      const a = pos.get(e.from), b = pos.get(e.to);
+      const line = svgEl('line', { x1: a.x.toFixed(1), y1: a.y.toFixed(1), x2: b.x.toFixed(1), y2: b.y.toFixed(1), stroke: '#9ab0d8', 'stroke-width': Math.min(5, 1 + e.weight * 0.8), 'stroke-opacity': '0.65' });
+      svg.appendChild(line);
+      return { e, line };
+    });
+
+    const maxP = Math.max(1, ...topNodes.map((n) => n.paperCount || 1));
+    for (const n of topNodes) {
+      const p = pos.get(n.id);
+      const r = 6 + Math.round(12 * Math.sqrt((n.paperCount || 1) / maxP));
+      const g = svgEl('g', { style: 'cursor:pointer' });
+      const circle = svgEl('circle', { cx: p.x.toFixed(1), cy: p.y.toFixed(1), r, fill: (n.paperCount || 0) >= 3 ? '#1e4ea8' : '#4a7bd0', stroke: '#fff', 'stroke-width': 1.5 });
+      const shortName = String(n.institution || '').replace(/University of |University|Institute of |Research Center/gi, '').trim().slice(0, 12) || n.institution.slice(0, 12);
+      const label = svgEl('text', { x: p.x.toFixed(1), y: (p.y + r + 11).toFixed(1), 'text-anchor': 'middle', 'font-size': '10', fill: '#111' }, `${shortName}${n.pi ? '·' + n.pi.split(' ').pop() : ''}`);
+      g.appendChild(circle);
+      g.appendChild(label);
+      g.addEventListener('mouseenter', () => {
+        circle.setAttribute('fill', '#d9534f');
+        for (const { e, line } of edgeEls) {
+          const hit = e.from === n.id || e.to === n.id;
+          line.setAttribute('stroke', hit ? '#d9534f' : '#c8d4e8');
+          line.setAttribute('stroke-opacity', hit ? '0.95' : '0.25');
+        }
+        tip.textContent = `${n.institution}${n.lab ? ' · ' + n.lab : ''}${n.pi ? '（' + n.pi + '）' : ''} · ${n.paperCount || 0} 篇${n.bio ? ' — ' + n.bio : ''}`;
+      });
+      g.addEventListener('mouseleave', () => {
+        circle.setAttribute('fill', (n.paperCount || 0) >= 3 ? '#1e4ea8' : '#4a7bd0');
+        for (const { line } of edgeEls) { line.setAttribute('stroke', '#9ab0d8'); line.setAttribute('stroke-opacity', '0.65'); }
+      });
+      g.addEventListener('click', () => onPick(n.id));
+      svg.appendChild(g);
+    }
+    return h('div', {}, svg, tip);
+  }
+
   async function refresh() {
     if (loading) return;
     loading = true;
@@ -166,6 +253,7 @@ export function mount(el, ctx) {
           content.replaceChildren(h('p', { class: 'lit-empty', text: '还没有提取团队信息。点击上方「补全团队信息」即可自动从论文首页识别大学、实验室与合作关系网。' }));
           return;
         }
+        const graphEl = renderTeamGraphSvg(nodes, edges, (tid) => { mode = 'stream'; activeTeam = tid; refresh(); });
         const edgeMap = new Map();
         for (const e of edges) {
           if (!edgeMap.has(e.from)) edgeMap.set(e.from, []);
@@ -174,7 +262,7 @@ export function mount(el, ctx) {
           edgeMap.get(e.to).push({ id: e.from, w: e.weight });
         }
         const byId = new Map(nodes.map((n) => [n.id, n]));
-        content.replaceChildren(...nodes.map((t) => {
+        content.replaceChildren(graphEl, ...nodes.map((t) => {
           const peers = (edgeMap.get(t.id) || []).slice(0, 5).map((p) => {
             const o = byId.get(p.id);
             return o ? `${o.institution}${o.pi ? '·' + o.pi : ''}(${p.w})` : '';
