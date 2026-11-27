@@ -478,14 +478,32 @@ function openKbStruct({ dir, log = () => {} }) {
       for (let i = 0; i < uniq.length; i++) {
         for (let j = i + 1; j < uniq.length; j++) {
           const ek = uniq[i] + '\0' + uniq[j];
-          if (!edgeMap.has(ek)) edgeMap.set(ek, { from: uniq[i], to: uniq[j], weight: 0, keys: [] });
+          if (!edgeMap.has(ek)) edgeMap.set(ek, { from: uniq[i], to: uniq[j], weight: 0, kind: 'coauthor', keys: [] });
           const e = edgeMap.get(ek);
           e.weight++;
           e.keys.push(k);
         }
       }
     }
-    return { nodes, edges: [...edgeMap.values()].sort((a, b) => b.weight - a.weight) };
+    // Add same-institution and shared-tag lightweight edges (dashed in UI) between top teams
+    const top = nodes.slice(0, 45);
+    for (let i = 0; i < top.length; i++) {
+      for (let j = i + 1; j < top.length; j++) {
+        const a = top[i], b = top[j];
+        const ek = a.id < b.id ? a.id + '\0' + b.id : b.id + '\0' + a.id;
+        if (edgeMap.has(ek)) continue;
+        if (a.institution && a.institution === b.institution) {
+          edgeMap.set(ek, { from: a.id, to: b.id, weight: 1, kind: 'inst', keys: [] });
+        } else {
+          const sa = new Set((a.tags || []).map((x) => x.toLowerCase()));
+          const shared = (b.tags || []).filter((x) => sa.has(x.toLowerCase()));
+          if (shared.length >= 1) {
+            edgeMap.set(ek, { from: a.id, to: b.id, weight: shared.length, kind: 'method', label: shared[0], keys: [] });
+          }
+        }
+      }
+    }
+    return { nodes, edges: [...edgeMap.values()].sort((a, b) => (b.kind === 'coauthor') - (a.kind === 'coauthor') || b.weight - a.weight) };
   }
 
   function stats() {

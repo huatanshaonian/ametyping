@@ -95,7 +95,13 @@ export function mount(el, ctx) {
     });
 
     const summaryText = item.oneLine || item.keyResult || '';
-    const bodyEl = summaryText ? h('div', { style: 'font-size:12px;line-height:1.5;margin-bottom:6px;color:#111' }, summaryText) : null;
+    const bodyEl = summaryText ? h('div', { style: 'font-size:12px;line-height:1.5;margin-bottom:5px;color:#111' }, summaryText) : null;
+
+    const resultsEl = item.results && item.results.length ? h('ul', { style: 'margin:0 0 6px 18px;padding:0;font-size:11.5px;line-height:1.45;color:#222' },
+      ...item.results.map((r) => h('li', { text: r }))) : null;
+
+    const doubtEl = item.doubt ? h('div', { style: 'font-size:11px;color:#7a3e00;background:#fff8e6;border-left:2px solid #d48806;padding:2px 6px;margin-bottom:6px' },
+      h('b', { text: '局限/疑点：' }), h('span', { text: item.doubt })) : null;
 
     const mediaEl = item.cover ? h('div', { style: 'margin:6px 0;cursor:pointer', onclick: () => ctx.openItem(item.key) },
       h('img', { src: figUrl(item.cover), loading: 'lazy', alt: '', style: 'max-width:100%;max-height:240px;border:1px solid #808080;background:#fff;display:block' })) : null;
@@ -125,7 +131,7 @@ export function mount(el, ctx) {
 
     return h('article', {
       style: 'border:1px solid #808080;background:#fff;padding:10px 12px;margin-bottom:10px;box-shadow:inset 1px 1px 0 #fff, 1px 1px 0 #c0c0c0',
-    }, header, titleEl, bodyEl, mediaEl, tagsEl, actions);
+    }, header, titleEl, bodyEl, resultsEl, doubtEl, mediaEl, tagsEl, actions);
   }
 
   async function renderTeamHeader(teamId) {
@@ -199,13 +205,21 @@ export function mount(el, ctx) {
     }
 
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, style: 'width:100%;height:340px;background:#fafcff;border:1px solid #808080;display:block;margin-bottom:10px' });
-    const tip = h('div', { style: 'font-size:11px;color:#333;min-height:18px;margin-bottom:8px;padding:2px 6px;background:#f4f4f4;border:1px solid #ccc', text: '悬停节点查看团队简介与合作连线，点击节点进入该团队论文时间线（展示前 40 个活跃团队）' });
+    const tip = h('div', { style: 'font-size:11px;color:#333;min-height:18px;margin-bottom:8px;padding:2px 6px;background:#f4f4f4;border:1px solid #ccc', text: '实线 = 跨团队合著，虚线 = 同校或共享方法；悬停高亮关联，点击进入团队主页（展示前 40 个活跃团队）' });
 
     const edgeEls = visEdges.map((e) => {
       const a = pos.get(e.from), b = pos.get(e.to);
-      const line = svgEl('line', { x1: a.x.toFixed(1), y1: a.y.toFixed(1), x2: b.x.toFixed(1), y2: b.y.toFixed(1), stroke: '#9ab0d8', 'stroke-width': Math.min(5, 1 + e.weight * 0.8), 'stroke-opacity': '0.65' });
+      const isCo = !e.kind || e.kind === 'coauthor';
+      const attrs = {
+        x1: a.x.toFixed(1), y1: a.y.toFixed(1), x2: b.x.toFixed(1), y2: b.y.toFixed(1),
+        stroke: isCo ? '#3b6fc4' : (e.kind === 'inst' ? '#7b9acc' : '#b8c4d8'),
+        'stroke-width': isCo ? Math.min(5, 1.5 + e.weight * 0.9) : 1.1,
+        'stroke-opacity': isCo ? '0.8' : '0.5',
+      };
+      if (!isCo) attrs['stroke-dasharray'] = e.kind === 'inst' ? '5,3' : '2,3';
+      const line = svgEl('line', attrs);
       svg.appendChild(line);
-      return { e, line };
+      return { e, line, isCo };
     });
 
     const maxP = Math.max(1, ...topNodes.map((n) => n.paperCount || 1));

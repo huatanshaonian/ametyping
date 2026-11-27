@@ -36,7 +36,7 @@ async function main() {
   if (!gKey.has()) throw new Error('Google AI Studio key missing');
 
   const ask = async (prompt, schemaJson) => {
-    const r = await runGoogleAi({ key: gKey.get(), model: 'gemini-2.5-flash', prompt, schema: schemaJson, egress, timeoutMs: 120000 });
+    const r = await runGoogleAi({ key: gKey.get(), model: 'gemini-4-neon', prompt, schema: schemaJson, egress, timeoutMs: 120000 });
     return r.data || r.parsed || (typeof r.text === 'string' ? JSON.parse(r.text) : r);
   };
 
