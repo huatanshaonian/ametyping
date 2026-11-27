@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { createWatchdog, loadMeshConfig } = require('./mesh-watchdog');
 const { createBoard, formatWakePrompt, checkBoundaries } = require('./mesh-board');
+const { normalizeRoleAlias, repairProject, EDGE_TYPES } = require('./mesh-repair');
 const { createRoleStore } = require('./mesh-roles');
 const { createModelRouter } = require('./mesh-model-router');
 const { createComputeQueue } = require('./mesh-compute-queue');
@@ -105,8 +106,26 @@ function createMesh({
   notify = null,
 }) {
   const file = path.join(dataDir, 'mesh-projects.json');
-  const board = createBoard({ dataDir });
+  // Board resolves @mentions to node ids (`targets`) against the project's current nodes (alias / live label / id / role)
+  const board = createBoard({
+    dataDir,
+    getNodes: (projectId) => {
+      const proj = data.projects.find((x) => x.id === projectId);
+      if (!proj) return [];
+      return (proj.nodes || []).map((n) => {
+        const live = liveSessionOf(n.machine, n.sessionId);
+        return { id: n.id, alias: n.alias || '', role: n.role || '', label: (live && live.label) || '' };
+      });
+    },
+  });
   const roleStore = createRoleStore({ dataDir });
+  const knownRoles = () => {
+    try {
+      return roleStore.list().map((r) => r.name);
+    } catch {
+      return [];
+    }
+  };
   const localQuotas = new Map(); // provider -> { ...quota, machine, reportedAt }
   function onLocalQuota(machineName, quota) {
     if (!quota || typeof quota !== 'object' || !quota.provider) return;
@@ -516,6 +535,23 @@ function createMesh({
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (raw && Array.isArray(raw.projects)) data = raw;
   } catch {}
+  // Idempotent load-time repair (role/alias swaps, non-master 'master-worker' edges); persist only when changed
+  {
+    let repaired = false;
+    const roles = knownRoles();
+    for (const proj of data.projects) {
+      try {
+        if (repairProject(proj, { knownRoles: roles }).changed) repaired = true;
+      } catch {}
+    }
+    if (repaired) {
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(file + '.tmp', JSON.stringify(data), { mode: 0o600 });
+        fs.renameSync(file + '.tmp', file);
+      } catch {}
+    }
+  }
 
   const pendingSpawns = new Map(); // "machine|cwd" -> [{ projectId, nodeId, t0 }]
 
@@ -1461,6 +1497,11 @@ function createMesh({
 
     const machine = cleanStr(d.machine, 60);
     const sessionId = cleanStr(d.sessionId, 120);
+    // Entry-point guard: an unknown role string (typically an alias passed in the wrong field) never becomes `role`
+    if (typeof d.role === 'string' && d.role.trim()) {
+      const ra = normalizeRoleAlias({ role: cleanStr(d.role, 60), alias: cleanStr(d.alias, 60), knownRoles: knownRoles(), autoAlias: d.autoAlias === true });
+      if (ra.fixed) d = { ...d, role: ra.role, alias: ra.alias };
+    }
     let node = (d.id && proj.nodes.find((n) => n.id === d.id)) ||
       (machine && sessionId && proj.nodes.find((n) => n.machine === machine && n.sessionId === sessionId));
 
@@ -1529,7 +1570,11 @@ function createMesh({
     // Add edge if parentNodeId or peerNodeId is specified
     const fromId = cleanStr(d.fromNodeId, 40);
     if (fromId && fromId !== node.id && proj.nodes.some((n) => n.id === fromId)) {
-      const edgeType = d.edgeType === 'cowork' || node.role === 'peer' ? 'cowork' : 'master-worker';
+      const fromNode = proj.nodes.find((n) => n.id === fromId);
+      // A non-master parent (e.g. a worker spawning the next relay) is a hand-off, not a master-worker command edge
+      const edgeType = d.edgeType === 'cowork' || node.role === 'peer'
+        ? 'cowork'
+        : (fromNode && fromNode.role === 'master' ? 'master-worker' : 'handoff');
       const exists = proj.edges.some((e) => e.from === fromId && e.to === node.id);
       if (!exists && proj.edges.length < MAX_EDGES) {
         proj.edges.push({ from: fromId, to: node.id, type: edgeType });
@@ -1558,8 +1603,9 @@ function createMesh({
       return { ok: false, msg: '节点不存在' };
     }
     const existing = proj.edges.find((e) => (e.from === from && e.to === to) || (type === 'cowork' && e.from === to && e.to === from));
-    if (existing) existing.type = type === 'master-worker' ? 'master-worker' : 'cowork';
-    else proj.edges.push({ from, to, type: type === 'master-worker' ? 'master-worker' : 'cowork' });
+    const edgeType = EDGE_TYPES.includes(type) ? type : 'cowork';
+    if (existing) existing.type = edgeType;
+    else proj.edges.push({ from, to, type: edgeType });
     save();
     return { ok: true, project: enrichProject(proj) };
   }
@@ -2065,7 +2111,6 @@ function createMesh({
       fromNode.updatedAt = Date.now();
     }
 
-    const mentionSet = new Set((entry.mentions || []).map((m) => String(m).toLowerCase()));
     const wakeChannelSet = new Set((entry.mentionChannels || []).map((c) => String(c).toLowerCase()));
     const entryChannel = String(entry.channel || 'main').toLowerCase();
     if (entryChannel && entryChannel !== 'main') {
@@ -2083,19 +2128,14 @@ function createMesh({
       }
     }
 
-    const lowerText = String(entry.text || '').toLowerCase();
+    const resolvedIds = new Set(Array.isArray(entry.targets) ? entry.targets : []);
     const targets = (proj.nodes || []).filter((n) => {
       if (n.archived) return false;
       if (fromNode && n.id === fromNode.id) return false;
-      if (entry.mentionAll || n.wakeMode === 'all') return true;
+      if (entry.mentionAll || entry.targetsAll || n.wakeMode === 'all') return true;
       if (channelSubscribedIds.has(n.id)) return true;
-      const aliasL = String(n.alias || '').toLowerCase();
-      const idL = String(n.id || '').toLowerCase();
-      const roleL = String(n.role || '').toLowerCase();
-      if ((aliasL && mentionSet.has(aliasL)) || (idL && mentionSet.has(idL)) || (roleL && mentionSet.has(roleL))) return true;
-      // Fallback full-alias match for legacy nodes whose alias contains spaces (e.g. "@Ametyping Embedding Plan")
-      if (aliasL && /\s/.test(aliasL) && (lowerText.includes('@' + aliasL) || lowerText.includes('＠' + aliasL))) return true;
-      return false;
+      // Same resolver as board `targets` (alias incl. spaces / label / id / role, longest match)
+      return resolvedIds.has(n.id);
     });
 
     const deliveries = [];
@@ -2448,7 +2488,13 @@ function createMesh({
       proj.workspaces.push({ machine: cleanStr(machine, 60), path: cleanStr(cwd, 500), mode: 'rw', tag: 'worker' });
     }
 
-    const cleanRole = cleanStr(role, 32) || 'worker';
+    // Root-cause guard: callers have passed the intended alias in `role` (e.g. role="worker-m3-clippy-auto", no alias).
+    // Unknown role names (not builtin / not in roleCatalog) become the alias; role is inferred by prefix.
+    const roleAlias = normalizeRoleAlias({ role: cleanStr(role, 60) || 'worker', alias: cleanStr(alias, 60), knownRoles: knownRoles() });
+    const cleanRole = cleanStr(roleAlias.role, 32) || 'worker';
+    const cleanAlias = roleAlias.alias;
+    // path.win32.basename splits both `\` and `/` (posix basename keeps "D:\\repo" whole on a Linux server)
+    const defaultAlias = `${machine}:${path.win32.basename(String(cwd || '')) || cwd}`;
     const roleDef = roleStore.get(cleanRole);
     const effectiveWorkspaceMode = (workspaceMode === 'worktree' || workspaceMode === 'inherit')
       ? workspaceMode
@@ -2507,7 +2553,7 @@ function createMesh({
       ? {
           workspaceMode: 'worktree',
           worktreeBranch: cleanBranch,
-          worktreeAlias: cleanStr(alias, 60) || workerNodeId,
+          worktreeAlias: cleanAlias || workerNodeId,
         }
       : {};
 
@@ -2591,7 +2637,7 @@ function createMesh({
             id: workerNodeId,
             machine,
             sessionId: '',
-            alias: alias || `${machine}:${path.basename(cwd)}`,
+            alias: cleanAlias || defaultAlias,
             role: cleanRole,
             tool: attemptTool,
             pool: effectivePool,
@@ -2653,7 +2699,7 @@ function createMesh({
           projectId: proj.id,
           agent: '模型路由',
           kind: 'watchdog',
-          text: `${masterMention}[模型池耗尽] 为节点 ${alias || workerNodeId} 选型失败，模型池「${effectivePool}」所有候选均不可用（${cleanStr(lastErr, 120)}）。`,
+          text: `${masterMention}[模型池耗尽] 为节点 ${cleanAlias || workerNodeId} 选型失败，模型池「${effectivePool}」所有候选均不可用（${cleanStr(lastErr, 120)}）。`,
         });
         save();
         return {
@@ -2695,7 +2741,7 @@ function createMesh({
       id: workerNodeId,
       machine,
       sessionId: '',
-      alias: alias || `${machine}:${path.basename(cwd)}`,
+      alias: cleanAlias || defaultAlias,
       role: cleanRole,
       tool: explicitTool,
       pool: '',
@@ -3493,6 +3539,7 @@ function createMesh({
               }
               const ms = Array.isArray(e.mentions) ? e.mentions.map((x) => String(x).toLowerCase()) : [];
               const roleL = String(node.role || '').toLowerCase();
+              if (Array.isArray(e.targets)) return e.targets.includes(node.id) || Boolean(e.targetsAll);
               return (aliasL && ms.includes(aliasL)) || (idL && ms.includes(idL)) || (roleL && ms.includes(roleL));
             });
             if (unread.length > 0) {

@@ -35,6 +35,75 @@ function parseMentions(text) {
   return { mentions, mentionAll };
 }
 
+const MENTION_LEAD_RE = /[\s([{"'（【「，。；：、！？]/;
+const MENTION_NAME_CHAR_RE = /[A-Za-z0-9_\u4e00-\u9fa5-]/;
+
+// Resolve @mentions in text (plus explicit mention tokens) to node ids. Shared by wake routing and board `targets`.
+// After `@`/`＠` the longest case-insensitive match among node alias (may contain spaces), label, id and role wins;
+// the match must end at a non-name char. `@all` sets targetsAll. Code spans are ignored like parseMentions.
+// nodes: [{ id, alias, label, role }]; options: { mentions: string[], skipText: bool, excludeId, mentionAll }
+function resolveTargets(text, nodes, { mentions = [], skipText = false, excludeId = null, mentionAll = false } = {}) {
+  const list = Array.isArray(nodes) ? nodes.filter((n) => n && n.id) : [];
+  const names = []; // { low, ids:Set }
+  const byName = new Map();
+  const addName = (name, id) => {
+    const low = String(name || '').trim().toLowerCase();
+    if (!low) return;
+    let rec = byName.get(low);
+    if (!rec) {
+      rec = { low, ids: new Set() };
+      byName.set(low, rec);
+      names.push(rec);
+    }
+    if (id) rec.ids.add(id);
+  };
+  for (const n of list) {
+    addName(n.alias, n.id);
+    addName(n.label, n.id);
+    addName(n.id, n.id);
+    addName(n.role, n.id);
+  }
+  if (!byName.has('all')) addName('all', null);
+  names.sort((a, b) => b.low.length - a.low.length);
+
+  const targets = new Set();
+  let all = Boolean(mentionAll);
+  if (!skipText) {
+    const src = String(text || '')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`[^`\n]+`/g, ' ');
+    const low = src.toLowerCase();
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if (ch !== '@' && ch !== '＠') continue;
+      if (i > 0 && !MENTION_LEAD_RE.test(src[i - 1])) continue;
+      const start = i + 1;
+      if (src[start] === '#') continue; // @#channel
+      for (const rec of names) {
+        if (!low.startsWith(rec.low, start)) continue;
+        const next = src[start + rec.low.length];
+        if (next !== undefined && MENTION_NAME_CHAR_RE.test(next)) continue;
+        if (rec.low === 'all' && !rec.ids.size) all = true;
+        for (const id of rec.ids) targets.add(id);
+        i = start + rec.low.length - 1;
+        break;
+      }
+    }
+  }
+  for (const tok of Array.isArray(mentions) ? mentions : []) {
+    const lowTok = String(tok || '').trim().toLowerCase();
+    if (!lowTok) continue;
+    if (lowTok === 'all' && !(byName.get('all') || { ids: new Set() }).ids.size) {
+      all = true;
+      continue;
+    }
+    const rec = byName.get(lowTok);
+    if (rec) for (const id of rec.ids) targets.add(id);
+  }
+  if (excludeId) targets.delete(excludeId);
+  return { targets: [...targets], targetsAll: all };
+}
+
 // Extract @#channel tokens as a deduplicated lowercase/trimmed array
 function parseChannelMentions(text) {
   const src = String(text || '');
@@ -161,10 +230,32 @@ function formatWakePrompt({ project, entry, targetNode, threshold = 500 }) {
   return `${header}\n${summary}…（正文共 ${len} 字，请调用 mesh_board_read(since=${sinceSeq}) 查看全文）`;
 }
 
-function createBoard({ dataDir }) {
+function createBoard({ dataDir, getNodes = null }) {
   const dir = path.join(dataDir, 'mesh-boards');
   const seqCache = new Map(); // projectId -> highest seq number
   const channelCache = new Map(); // projectId -> replayed channel states
+
+  function nodesOf(projectId) {
+    if (typeof getNodes !== 'function') return [];
+    try {
+      const list = getNodes(projectId);
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // Read-time backfill for legacy entries persisted before `targets` existed (does not rewrite the JSONL)
+  function withTargets(e, nodes) {
+    if (Array.isArray(e.targets)) return e;
+    const r = resolveTargets(e.text, nodes, {
+      mentions: e.mentions,
+      skipText: e.kind === 'brief' || e.kind === 'control',
+      excludeId: e.nodeId || null,
+      mentionAll: Boolean(e.mentionAll),
+    });
+    return { ...e, targets: r.targets, targetsAll: r.targetsAll };
+  }
 
   function filePathFor(projectId) {
     return path.join(dir, `${safeProjectId(projectId)}.jsonl`);
@@ -225,17 +316,26 @@ function createBoard({ dataDir }) {
     const refs = [...new Set([...parsedRefs, ...explicitRefs])].sort((a, b) => a - b);
 
     const kind = String(entry.kind || 'post') || 'post';
+    const nodeId = entry.nodeId || null;
+    const resolved = resolveTargets(text, nodesOf(projectId), {
+      mentions: explicitMentions,
+      skipText: skipTextMentionParse,
+      excludeId: nodeId,
+      mentionAll,
+    });
     const fullEntry = {
       seq: nextSeq,
       ts: Number(entry.ts) || Date.now(),
       channel: String(entry.channel || 'main') || 'main',
       kind,
       agent: String(entry.agent || '系统') || '系统',
-      nodeId: entry.nodeId || null,
+      nodeId,
       text,
       mentions,
       mentionAll,
       mentionChannels,
+      targets: resolved.targets,
+      targetsAll: resolved.targetsAll,
       refs,
       artifacts: Array.isArray(entry.artifacts) ? entry.artifacts : [],
       done: Boolean(entry.done),
@@ -337,8 +437,10 @@ function createBoard({ dataDir }) {
       filtered = all.filter((e) => e.seq > sinceNum && (!ch || e.channel === ch));
     }
 
+    const page = filtered.slice(-lim);
+    const nodes = page.some((e) => !Array.isArray(e.targets)) ? nodesOf(projectId) : [];
     return {
-      entries: filtered.slice(-lim),
+      entries: page.map((e) => withTargets(e, nodes)),
       latestSeq: maxSeq,
     };
   }
@@ -364,6 +466,7 @@ function createBoard({ dataDir }) {
 module.exports = {
   createBoard,
   parseMentions,
+  resolveTargets,
   parseChannelMentions,
   parseRefs,
   formatWakePrompt,

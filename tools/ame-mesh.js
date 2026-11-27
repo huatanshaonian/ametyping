@@ -449,7 +449,7 @@ const MCP_TOOLS = [
         machine: { type: 'string', description: '目标电脑名称' },
         cwd: { type: 'string', description: '目标电脑上的工作目录绝对路径（需在项目允许访问范围内）' },
         tool: { type: 'string', enum: ['claude', 'codex', 'opencode', 'agy', 'kiro'], description: '启动的 Coding Agent 类型' },
-        role: { type: 'string', description: '可选，节点角色名（内置 master/worker/verifier/peer 或自定义角色，自动加载对应规范）' },
+        role: { type: 'string', description: '可选，节点角色名（内置 master/worker/verifier/peer 或自定义角色，自动加载对应规范）。只填角色，节点显示名/别名请用 alias 字段' },
         pool: { type: 'string', description: '可选，模型能力组名（如 fast-coder/flagship/heavy-reasoner，由确定性路由按额度健康度自动选模型并故障回落；可与 tool 配合或替代 tool）' },
         model: { type: 'string', description: '可选，显式指定具体模型名' },
         alias: { type: 'string', description: '给该节点起一个易读别名（如：FEKO求解节点）' },
