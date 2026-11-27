@@ -1141,7 +1141,8 @@ function createMeshSwarm(ctx) {
   }
 
   async function reviewNode({ projectId, nodeId, action = 'approve', note = '', closeTerminal = false, fromNodeId, fromMachine, fromSessionId, callerCwd } = {}) {
-    const resolved = resolveCaller({ projectId, nodeId: fromNodeId, machine: fromMachine, sessionId: fromSessionId, callerCwd });
+    const safeFromNodeId = fromNodeId && fromNodeId !== nodeId ? fromNodeId : undefined;
+    const resolved = resolveCaller({ projectId, nodeId: safeFromNodeId, machine: fromMachine, sessionId: fromSessionId, callerCwd });
     let proj = resolved.project;
     if (!proj && nodeId) {
       for (const p of data.projects) {
@@ -1204,17 +1205,22 @@ function createMeshSwarm(ctx) {
       target.updatedAt = Date.now();
       let postRes = null;
       if (cleanNote) {
+        const masterNode = (proj.nodes || []).find((n) => n.role === 'master' && n.id !== target.id) || null;
         postRes = await postBoard({
           projectId: proj.id,
-          fromNodeId: resolved.node ? resolved.node.id : fromNodeId,
-          fromMachine,
-          fromSessionId,
-          callerCwd,
+          fromNodeId: masterNode ? masterNode.id : null,
           text: `${mentionTokenOf(target)} [打回返工] ${cleanNote}`,
         });
       }
       save();
-      return { ok: true, projectId: proj.id, action: 'reject', node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: false }, ...(postRes && postRes.entry ? { boardSeq: postRes.entry.seq } : {}), msg: `已打回节点「${target.alias || target.id}」返工` };
+      return {
+        ok: true,
+        projectId: proj.id,
+        action: 'reject',
+        node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: false },
+        ...(postRes && postRes.entry ? { boardSeq: postRes.entry.seq, deliveries: postRes.deliveries } : {}),
+        msg: `已打回节点「${target.alias || target.id}」返工`,
+      };
     }
 
     return { ok: false, msg: '无效的 review action（仅支持 approve / reject / archive）' };
@@ -1296,9 +1302,13 @@ function createMeshSwarm(ctx) {
   async function reportResult({
     projectId,
     fromNodeId,
+    nodeId,
     fromMachine,
+    machine,
     fromSessionId,
+    sessionId,
     callerCwd,
+    cwd,
     summary,
     reviewStatus = 'waiting_review',
     artifacts = [],
@@ -1306,13 +1316,13 @@ function createMeshSwarm(ctx) {
     checksOutput = '',
     gitAudit = null,
     boundaries = null,
-  }) {
+  } = {}) {
     const { project: proj, node: workerNode } = resolveCaller({
       projectId,
-      nodeId: fromNodeId,
-      machine: fromMachine,
-      sessionId: fromSessionId,
-      callerCwd,
+      nodeId: fromNodeId || nodeId,
+      machine: fromMachine || machine,
+      sessionId: fromSessionId || sessionId,
+      callerCwd: callerCwd || cwd,
     });
     if (!proj || !workerNode) return { ok: false, msg: '找不到汇报节点所属的项目拓扑' };
 
@@ -1383,6 +1393,44 @@ function createMeshSwarm(ctx) {
     return { ok: true, masterDelivery: deliv, entry, audit: auditRes, project: enrichProject(proj) };
   }
 
+  function bindPendingSpawn(machineName, sessionId, rawCwd, now = Date.now()) {
+    if (!machineName || !sessionId || !rawCwd) return false;
+    const spKey = `${machineName}|${normFolderPath(rawCwd)}`;
+    const waiting = pendingSpawns.get(spKey);
+    if (!waiting || !waiting.length) return false;
+    const alreadyBound = data.projects.some((p) => (p.nodes || []).some((n) => n.machine === machineName && n.sessionId === sessionId));
+    if (alreadyBound) return false;
+
+    for (let i = waiting.length - 1; i >= 0; i--) {
+      const p = data.projects.find((x) => x.id === waiting[i].projectId);
+      const nd = p && (p.nodes || []).find((n) => n.id === waiting[i].nodeId);
+      if (!nd || nd.sessionId) waiting.splice(i, 1);
+    }
+    if (!waiting.length) {
+      pendingSpawns.delete(spKey);
+      return false;
+    }
+
+    const sTool = inferToolFromSessionId(sessionId);
+    let pickIdx = waiting.findIndex((w) => {
+      const p = data.projects.find((x) => x.id === w.projectId);
+      const nd = p && (p.nodes || []).find((n) => n.id === w.nodeId);
+      return nd && !nd.sessionId && (!nd.tool || nd.tool === sTool);
+    });
+    if (pickIdx < 0) pickIdx = 0;
+    const [match] = waiting.splice(pickIdx, 1);
+    if (!waiting.length) pendingSpawns.delete(spKey);
+    const proj = data.projects.find((p) => p.id === match.projectId);
+    const node = proj && (proj.nodes || []).find((n) => n.id === match.nodeId);
+    if (node && !node.sessionId) {
+      node.sessionId = sessionId;
+      node.updatedAt = now;
+      syncMarksGroup(proj);
+      return true;
+    }
+    return false;
+  }
+
   function onMachineState(machineName, sessionsList) {
     let dirty = false;
     const now = Date.now();
@@ -1395,31 +1443,8 @@ function createMeshSwarm(ctx) {
       if (!s || typeof s.id !== 'string') continue;
       const savedInfo = store && store.info && store.info(machineName, s.id);
       const sCwd = s.cwd || (savedInfo && savedInfo.cwd) || '';
-      if (sCwd) {
-        const spKey = `${machineName}|${normFolderPath(sCwd)}`;
-        const waiting = pendingSpawns.get(spKey);
-        if (waiting && waiting.length) {
-          const alreadyBound = data.projects.some((p) => p.nodes.some((n) => n.machine === machineName && n.sessionId === s.id));
-          if (!alreadyBound) {
-            const sTool = inferToolFromSessionId(s.id);
-            let pickIdx = waiting.findIndex((w) => {
-              const p = data.projects.find((x) => x.id === w.projectId);
-              const nd = p && p.nodes.find((n) => n.id === w.nodeId);
-              return nd && !nd.sessionId && (!nd.tool || nd.tool === sTool);
-            });
-            if (pickIdx < 0) pickIdx = 0;
-            const [match] = waiting.splice(pickIdx, 1);
-            if (!waiting.length) pendingSpawns.delete(spKey);
-            const proj = data.projects.find((p) => p.id === match.projectId);
-            const node = proj && proj.nodes.find((n) => n.id === match.nodeId);
-            if (node && !node.sessionId) {
-              node.sessionId = s.id;
-              node.updatedAt = now;
-              syncMarksGroup(proj);
-              dirty = true;
-            }
-          }
-        }
+      if (sCwd && bindPendingSpawn(machineName, s.id, sCwd, now)) {
+        dirty = true;
       }
 
       const isIdle = s.state === 'idle' || s.state === 'done';
@@ -1498,20 +1523,7 @@ function createMeshSwarm(ctx) {
   }
 
   function onSessionMeta(machineName, sessionId, cwd) {
-    if (!cwd || !sessionId) return;
-    const spKey = `${machineName}|${normFolderPath(cwd)}`;
-    const waiting = pendingSpawns.get(spKey);
-    if (!waiting || !waiting.length) return;
-    const alreadyBound = data.projects.some((p) => p.nodes.some((n) => n.machine === machineName && n.sessionId === sessionId));
-    if (alreadyBound) return;
-    const match = waiting.shift();
-    if (!waiting.length) pendingSpawns.delete(spKey);
-    const proj = data.projects.find((p) => p.id === match.projectId);
-    const node = proj && proj.nodes.find((n) => n.id === match.nodeId);
-    if (node && !node.sessionId) {
-      node.sessionId = sessionId;
-      node.updatedAt = Date.now();
-      syncMarksGroup(proj);
+    if (bindPendingSpawn(machineName, sessionId, cwd)) {
       save();
     }
   }

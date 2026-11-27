@@ -461,11 +461,16 @@ test('server shared lib (json-store, http-util) and Kiro session resume/export h
         send(raw) { agentPayloads.push(JSON.parse(raw)); },
       }]),
     }]]);
+    const fakeRecords = [
+      { role: 'user', text: 'hello kiro', t: 1500 },
+      { role: 'assistant', text: 'hi from kiro', t: 1800 },
+    ];
     const fakeStore = {
       sessions: () => ({ 'pc-a': [{ id: kiroId, cwd: 'D:\\repo', first: 1000, last: 2000, title: '' }] }),
       has: () => true,
       info: () => ({ cwd: 'D:\\repo', first: 1000, last: 2000 }),
-      all: () => [{ role: 'user', text: 'hello kiro', t: 1500 }],
+      records: () => fakeRecords,
+      all: () => fakeRecords,
     };
     const ctl = createSessionControl({
       control: true,
@@ -484,7 +489,8 @@ test('server shared lib (json-store, http-util) and Kiro session resume/export h
     assert.equal(agentPayloads[0].id, kiroId);
 
     const exp = createExport({ store: fakeStore, resumeCmd }).build('pc-a', kiroId, 'md');
-    assert.ok(exp && exp.body.includes('# Kiro'));
+    assert.ok(exp && exp.body.includes('# kiro:123'));
+    assert.ok(exp.body.includes('### Kiro · '));
     assert.ok(exp.body.includes('kiro-cli chat --resume-id 12345678-1234-1234-1234-123456789abc'));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

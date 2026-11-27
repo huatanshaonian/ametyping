@@ -218,19 +218,54 @@ function createMeshTopology(ctx) {
     return { proj: null, node: null };
   }
 
+  function maybeBindNodeSession(matchedProj, node, rawSessionId, rawMachine) {
+    if (!matchedProj || !node || node.sessionId) return;
+    const cleanSid = cleanStr(rawSessionId, 120);
+    if (!cleanSid || cleanSid.length < 2 || /\s/.test(cleanSid)) return;
+    if (cleanSid === node.id || cleanSid === node.alias) return;
+    if (/^(?:node|proj|task|msg|evt|trig)_[0-9a-f]+$/i.test(cleanSid)) return;
+    const cleanMach = cleanStr(rawMachine, 60);
+    if (cleanMach && node.machine && cleanMach !== node.machine) return;
+    const targetMachine = node.machine || cleanMach;
+    const alreadyUsed = data.projects.some((p) =>
+      (p.nodes || []).some((n) => n !== node && (!targetMachine || n.machine === targetMachine) && n.sessionId === cleanSid)
+    );
+    if (alreadyUsed) return;
+    node.sessionId = cleanSid;
+    if (!node.machine && cleanMach) node.machine = cleanMach;
+    node.updatedAt = Date.now();
+    if (ctx.pendingSpawns) {
+      for (const [spKey, arr] of ctx.pendingSpawns.entries()) {
+        const filtered = arr.filter((w) => w.nodeId !== node.id);
+        if (filtered.length !== arr.length) {
+          if (filtered.length) ctx.pendingSpawns.set(spKey, filtered);
+          else ctx.pendingSpawns.delete(spKey);
+        }
+      }
+    }
+    syncMarksGroup(matchedProj);
+    save();
+  }
+
   function resolveCaller({ projectId, nodeId, machine, sessionId, callerCwd } = {}) {
     const proj = projectId ? data.projects.find((x) => x.id === projectId) || null : null;
     if (projectId && !proj) return { project: null, node: null };
 
     if (proj && nodeId) {
       const node = (proj.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId) || null;
-      if (node) return { project: proj, node };
+      if (node) {
+        maybeBindNodeSession(proj, node, sessionId, machine);
+        return { project: proj, node };
+      }
     }
 
     if (!projectId && nodeId) {
       for (const p of data.projects) {
         const node = (p.nodes || []).find((n) => n.id === nodeId || n.alias === nodeId);
-        if (node) return { project: p, node };
+        if (node) {
+          maybeBindNodeSession(p, node, sessionId, machine);
+          return { project: p, node };
+        }
       }
     }
 

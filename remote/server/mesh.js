@@ -175,6 +175,7 @@ function createMesh({
     addEdge: ctx.addEdge,
     removeEdge: ctx.removeEdge,
     spawnWorker: ctx.spawnWorker,
+    reviewNode: ctx.reviewNode,
     sendMessage: ctx.sendMessage,
     reportResult: ctx.reportResult,
     postBoard: ctx.postBoard,

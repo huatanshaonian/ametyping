@@ -44,9 +44,10 @@ function crc32Of(buf, crc = 0) {
 }
 
 function normFolderPath(p) {
-  let s = String(p || '').trim().replace(/[\\/]+$/, '');
-  if (/^[A-Za-z]:$/.test(s)) s += '\\';
-  return /^[A-Za-z]:/.test(s) ? s.replace(/\//g, '\\').toLowerCase() : s;
+  let s = String(p || '').trim().replace(/^(?:\\\\\?\\|\/\/\?\/)/, '').replace(/[\\/]+$/, '');
+  if (/^[A-Za-z]:$/.test(s)) return s.toLowerCase() + '\\';
+  if (/^[A-Za-z]:/.test(s)) return s.replace(/[\\/]+/g, '\\').toLowerCase();
+  return s.replace(/\/+/g, '/');
 }
 
 function isSubPath(parentPath, childPath) {

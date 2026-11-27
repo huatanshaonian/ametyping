@@ -449,7 +449,7 @@ function createMeshRoutes(ctx) {
       const callerNodeId = d.fromNodeId || d.nodeId;
       const callerCwd = d.callerCwd || d.cwd;
       if (op === 'status' || op === 'scope') {
-        return reply(scopedViewFor({ projectId: d.projectId, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd, includeTree: d.includeTree === true }));
+        return reply(scopedViewFor({ projectId: d.projectId, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId || d.fromSessionId, callerCwd, includeTree: d.includeTree === true }));
       }
       if (op === 'tree') {
         if (!fsCatalog) return reply({ ok: false, msg: '目录服务未启用' });
@@ -487,7 +487,7 @@ function createMeshRoutes(ctx) {
         return reply(r);
       }
       if (op === 'review') {
-        const r = await reviewNode({ ...d, fromNodeId: callerNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
+        const r = await reviewNode({ ...d, fromNodeId: d.fromNodeId, fromMachine: d.fromMachine || machineName, fromSessionId: d.fromSessionId || d.sessionId, callerCwd });
         return reply(r);
       }
       if (op === 'board_post') {
@@ -495,7 +495,7 @@ function createMeshRoutes(ctx) {
         return reply(r);
       }
       if (op === 'board_read') {
-        const r = readBoard({ ...d, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId, callerCwd });
+        const r = readBoard({ ...d, nodeId: callerNodeId, machine: d.machine || machineName, sessionId: d.sessionId || d.fromSessionId, callerCwd });
         return reply(r);
       }
       if (op === 'task') {

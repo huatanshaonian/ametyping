@@ -985,4 +985,183 @@ describe('Phase 3: Git Worktree Concurrency Isolation', () => {
       fx.cleanup();
     }
   });
+
+  it('reviewNode(reject) wakes target worker via master/system sender without self-suppression, and resolveCaller/pendingSpawns backfill sessionId cleanly', async () => {
+    const fx = makePhase3Fixture();
+    try {
+      // 1a. Reject via Agent RPC (where d.nodeId is the target worker and d.fromNodeId is omitted)
+      //     must post as master (NOT target worker) and actually wake worker-1!
+      fx.dispatched.length = 0;
+      const rpcReplies = [];
+      const mockWs = { send: (raw) => rpcReplies.push(JSON.parse(raw)) };
+      await fx.mesh.fromAgentRpc('pc-a', {
+        t: 'mesh-req',
+        rid: 'r-reject-1',
+        op: 'review',
+        projectId: fx.projId,
+        nodeId: fx.worker1.id,
+        action: 'reject',
+        note: '边界单测漏跑，请补跑后重新交卷',
+      }, mockWs);
+      assert.equal(rpcReplies.length, 1);
+      assert.equal(rpcReplies[0].ok, true);
+      assert.equal(rpcReplies[0].action, 'reject');
+      assert.equal(rpcReplies[0].node.reviewStatus, 'running');
+      assert.ok(rpcReplies[0].boardSeq > 0);
+      assert.ok(Array.isArray(rpcReplies[0].deliveries) && rpcReplies[0].deliveries.some((d) => d.nodeId === fx.worker1.id && d.delivered === true));
+      assert.equal(fx.dispatched.length, 1);
+      assert.equal(fx.dispatched[0].payload.id, 'claude:worker-1');
+      assert.match(fx.dispatched[0].payload.text, /\[打回返工\] 边界单测漏跑/);
+
+      const boardAfter1 = fx.mesh.readBoard({ projectId: fx.projId, seqList: [rpcReplies[0].boardSeq] });
+      assert.equal(boardAfter1.entries[0].nodeId, fx.master.id, 'Reject post should use master nodeId');
+      assert.ok(boardAfter1.entries[0].targets.includes(fx.worker1.id), 'Target worker must be in board targets');
+
+      // 1b. Reject in a masterless project (even if caller mistakenly passed fromNodeId === target.id)
+      //     falls back to null/system sender and still wakes the target node!
+      const noMasterProj = fx.mesh.saveProject({ name: '无Master评审唤醒测试' }).project;
+      const loneWorker = fx.mesh.upsertNode(noMasterProj.id, {
+        machine: 'pc-a',
+        sessionId: 'codex:worker-2',
+        alias: 'lone-worker',
+        role: 'worker',
+        tool: 'codex',
+        reviewStatus: 'waiting_review',
+      }).node;
+      fx.dispatched.length = 0;
+      const rejNoMaster = await fx.mesh.reviewNode({
+        projectId: noMasterProj.id,
+        nodeId: loneWorker.id,
+        fromNodeId: loneWorker.id, // simulates accidental caller=target collision
+        fromMachine: 'pc-a',
+        action: 'reject',
+        note: '无主控项目打回唤醒验证',
+      });
+      assert.equal(rejNoMaster.ok, true);
+      assert.equal(fx.dispatched.length, 1);
+      assert.equal(fx.dispatched[0].payload.id, 'codex:worker-2');
+      const boardAfter2 = fx.mesh.readBoard({ projectId: noMasterProj.id, seqList: [rejNoMaster.boardSeq] });
+      assert.equal(boardAfter2.entries[0].nodeId, null);
+      assert.ok(boardAfter2.entries[0].targets.includes(loneWorker.id));
+
+      // 2a. resolveCaller auto-backfills empty node.sessionId on mesh_task / mesh_board_post / mesh_report
+      fx.mesh.saveProject({ id: fx.projId, workspaces: [{ machine: 'pc-a', path: 'D:\\repo', mode: 'rw' }] });
+      fx.machines.get('pc-a').sessions.set('codex:auto-t1', { id: 'codex:auto-t1', label: 'Auto T1', state: 'idle', lines: [], perms: [] });
+      fx.machines.get('pc-a').sessions.set('agy:auto-b1', { id: 'agy:auto-b1', label: 'Auto B1', state: 'idle', lines: [], perms: [] });
+      fx.machines.get('pc-a').sessions.set('kiro:auto-r1', { id: 'kiro:auto-r1', label: 'Auto R1', state: 'idle', lines: [], perms: [] });
+
+      const spTask = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\repo\\sub1',
+        tool: 'codex',
+        alias: 'w-task-bind',
+        goal: '测试 mesh_task 回填 sessionId',
+      });
+      assert.equal(spTask.node.sessionId, '');
+      await fx.mesh.manageTask({
+        projectId: fx.projId,
+        fromNodeId: spTask.node.id,
+        fromMachine: 'pc-a',
+        fromSessionId: 'codex:auto-t1',
+        action: 'list',
+      });
+      assert.equal(spTask.node.sessionId, 'codex:auto-t1');
+      assert.ok(fx.marks.get().sessions['pc-a|codex:auto-t1'], 'Auto-bound session should sync into session-marks group');
+
+      const spBoard = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\repo\\sub2',
+        tool: 'agy',
+        alias: 'w-board-bind',
+        goal: '测试 mesh_board_post 回填 sessionId',
+      });
+      assert.equal(spBoard.node.sessionId, '');
+      await fx.mesh.postBoard({
+        projectId: fx.projId,
+        nodeId: spBoard.node.id,
+        machine: 'pc-a',
+        sessionId: 'agy:auto-b1',
+        text: '阶段进展同步',
+      });
+      assert.equal(spBoard.node.sessionId, 'agy:auto-b1');
+
+      const spRep = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\repo\\sub3',
+        tool: 'kiro',
+        alias: 'w-rep-bind',
+        goal: '测试 mesh_report 回填 sessionId',
+      });
+      assert.equal(spRep.node.sessionId, '');
+      // Bogus sessionId equal to nodeId or duplicate sessionId must NOT bind
+      await fx.mesh.manageTask({
+        projectId: fx.projId,
+        nodeId: spRep.node.id,
+        machine: 'pc-a',
+        sessionId: spRep.node.id,
+        action: 'list',
+      });
+      assert.equal(spRep.node.sessionId, '');
+      await fx.mesh.manageTask({
+        projectId: fx.projId,
+        nodeId: spRep.node.id,
+        machine: 'pc-a',
+        sessionId: 'agy:auto-b1', // already used on pc-a by spBoard
+        action: 'list',
+      });
+      assert.equal(spRep.node.sessionId, '');
+      // Valid sessionId via reportResult binds cleanly
+      await fx.mesh.reportResult({
+        projectId: fx.projId,
+        nodeId: spRep.node.id,
+        machine: 'pc-a',
+        sessionId: 'kiro:auto-r1',
+        summary: '完成验证',
+      });
+      assert.equal(spRep.node.sessionId, 'kiro:auto-r1');
+
+      // 2b. onSessionMeta & onMachineState normalize Windows forward/back slashes and verbatim \\?\ prefixes
+      const spSlash1 = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:\\repo\\.ame-worktrees\\slash-test-1',
+        tool: 'codex',
+        alias: 'w-slash-1',
+        goal: '测试正反斜杠归一化',
+      });
+      assert.equal(spSlash1.node.sessionId, '');
+      fx.mesh.onSessionMeta('pc-a', 'codex:slash-s1', 'd:/repo/.ame-worktrees/slash-test-1/');
+      assert.equal(spSlash1.node.sessionId, 'codex:slash-s1');
+
+      const spSlash2 = await fx.mesh.spawnWorker({
+        projectId: fx.projId,
+        fromNodeId: fx.master.id,
+        machine: 'pc-a',
+        cwd: 'D:/repo/.ame-worktrees/slash-test-2/',
+        tool: 'codex',
+        alias: 'w-slash-2',
+        goal: '测试 Rust verbatim 路径归一化',
+      });
+      assert.equal(spSlash2.node.sessionId, '');
+      fx.machines.get('pc-a').sessions.set('codex:slash-s2', {
+        id: 'codex:slash-s2',
+        label: 'Slash S2',
+        state: 'idle',
+        cwd: '\\\\?\\D:\\repo\\.ame-worktrees\\slash-test-2',
+        lines: [],
+        perms: [],
+      });
+      fx.mesh.onMachineState('pc-a', [...fx.machines.get('pc-a').sessions.values()]);
+      assert.equal(spSlash2.node.sessionId, 'codex:slash-s2');
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

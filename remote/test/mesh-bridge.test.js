@@ -11,6 +11,20 @@ const { createMesh } = require('../server/mesh');
 const { handleMcpCall, MCP_TOOLS, runCli } = require('../../tools/ame-mesh');
 
 test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS mesh', async () => {
+  const isolatedEnvKeys = [
+    'AME_PROJECT_ID',
+    'AME_NODE_ID',
+    'AME_MESH_PROJECT_ID',
+    'AME_MESH_NODE_ID',
+    'AME_SESSION_ID',
+    'CLAUDE_SESSION_ID',
+    'CODEX_THREAD_ID',
+  ];
+  const savedEnv = {};
+  for (const k of isolatedEnvKeys) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-bridge-'));
   let srv = null;
   try {
@@ -333,6 +347,10 @@ test('ame-mesh tool bridge (MCP & CLI) communicates over local loopback to NAS m
       else process.env.AME_NODE_ID = prevNodeEnv;
     }
   } finally {
+    for (const k of isolatedEnvKeys) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
     if (srv) srv.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
