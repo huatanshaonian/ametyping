@@ -56,7 +56,7 @@ const unquote = (s) => String(s || '').replace(/["“”]/g, '').replace(/\s+/g,
 const ymd =(t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // likes(): { pos: [DOIs], neg: [DOIs] } beyond the push's own kept / skipped (the starred cards, the key papers)
-function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false, embed = null }) {
+function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail = () => null, likes = () => ({ pos: [], neg: [] }), log = () => {}, onChange = () => {}, now = () => Date.now(), gapMs = 1500, holdAbstracts = () => false, embed = null, kbStruct = null, paradigm = null }) {
   const file = path.join(dir, 'feed.json');
   let st = { items: {}, seen: {}, reviewed: {}, runs: [], cursors: {}, asked: {}, toc: {}, tocAt: {}, s2: {} };
   try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
@@ -222,7 +222,27 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   }
   function feedback() {
     const done = entries().filter((e) => e.kind === 'new' && e.decidedAt).sort((a, b) => b.decidedAt - a.decidedAt);
-    return { kept: done.filter((e) => e.status === 'kept').slice(0, 10).map((e) => e.paper.title), skipped: done.filter((e) => e.status === 'skipped').slice(0, 10).map((e) => e.paper.title) };
+    return {
+      kept: done.filter((e) => e.status === 'kept').slice(0, 10).map((e) => e.paper.title),
+      glanced: done.filter((e) => e.status === 'glanced').slice(0, 6).map((e) => e.paper.title),
+      skipped: done.filter((e) => e.status === 'skipped').slice(0, 10).map((e) => e.paper.title),
+    };
+  }
+  function kbContext() {
+    if (!kbStruct && !paradigm) return null;
+    try {
+      const contradictions = kbStruct && typeof kbStruct.listContradictions === 'function'
+        ? kbStruct.listContradictions().filter((c) => c.status !== 'dismissed').slice(0, 6).map((c) => `${c.topic}：${String(c.summary || '').slice(0, 80)}`)
+        : [];
+      const gaps = [];
+      if (paradigm && typeof paradigm.buildMatrix === 'function') {
+        for (const [sid, rf, cf] of [['plasma_rcs_v1', 'flow_chem_model', 'em_method'], ['aero_stealth_v1', 'aero_solver', 'em_method']]) {
+          const m = paradigm.buildMatrix(sid, { rowField: rf, colField: cf });
+          for (const g of (m && m.gaps ? m.gaps : []).slice(0, 4)) gaps.push(`${g.row} × ${g.col}`);
+        }
+      }
+      return (contradictions.length || gaps.length) ? { contradictions, gaps } : null;
+    } catch { return null; }
   }
   // the question's own text kept with a pick (its number changes when questions are reordered, solved or removed)
   const qText = (n) => { const q = n > 0 ? profile.openQuestions()[n - 1] : null; return q ? q.text : ''; };
@@ -234,10 +254,16 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
   async function rankSome(list) {
     if (!list.length) return [];
     const refs = list.map((c, i) => ({ ref: 'C' + (i + 1), c }));
-    const a = await ask(rankPrompt(profile.get() || {}, refs.map(({ ref, c }) => ({ ref, title: c.title, venue: c.venue, year: c.year, abstract: c.abstract, source: c.source })), feedback()), RANK_SCHEMA);
+    const a = await ask(rankPrompt(profile.get() || {}, refs.map(({ ref, c }) => ({ ref, title: c.title, venue: c.venue, year: c.year, abstract: c.abstract, source: c.source })), feedback(), kbContext()), RANK_SCHEMA);
     const by = new Map((a.items || []).map((x) => [String(x.ref).replace(/[^\dC]/gi, '').toUpperCase(), x]));
-    return refs.map(({ ref, c }) => { const x = by.get(ref) || {}; return { c, score: +x.score || 0, question: +x.question || 0, why: String(x.why || '').slice(0, 200), fun: !!x.fun }; })
-      .sort((a, b) => b.score - a.score);
+    return refs.map(({ ref, c }) => {
+      const x = by.get(ref) || {};
+      const move = String(x.move || '').trim().slice(0, 120);
+      const effect = String(x.effect || '').trim().slice(0, 120);
+      const relation = String(x.relation || '').trim().slice(0, 120);
+      const brief = (move || effect || relation) ? { move, effect, relation } : undefined;
+      return { c, score: +x.score || 0, question: +x.question || 0, why: String(x.why || '').slice(0, 200), brief, fun: !!x.fun };
+    }).sort((a, b) => b.score - a.score);
   }
 
   // ---- reviews from the user's own collection ----
@@ -329,7 +355,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
         // per way of finding: how many of the good ones it brought (a paper found two ways counts for both)
         log1.good = {}; for (const r of good) for (const v of r.c.vias || []) log1.good[v] = (log1.good[v] || 0) + 1;
         // today's good ones join the ones earlier days left; the best of them all are the day's picks, the rest waits
-        const fresh = new Set(good.map((r) => add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, fun: r.fun, status: 'spare' }).id));
+        const fresh = new Set(good.map((r) => add({ kind: 'new', date, paper: r.c, score: r.score, question: r.question, qText: qText(r.question), why: r.why, brief: r.brief, fun: r.fun, status: 'spare' }).id));
         const pool = entries().filter((e) => e.kind === 'new' && !e.old && !e.lapsed && e.status === 'spare').sort((a, b) => b.score - a.score || b.created - a.created);
         const picks = [], lately = pool.find((e) => { const t = Date.parse(e.paper.date || ''); return t && now() - t < FRESH_DAYS * DAY_MS; });
         if (lately && !pushedOn(date).some((e) => e.fresh)) { lately.fresh = true; picks.push(lately); }
@@ -353,7 +379,8 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
     return running;
   }
   // seen fingerprints older than half a year are forgotten; a paper shown and not decided in 7 days goes back among
-  // the candidates (a review lapses: it comes round again by itself); what the user skipped goes after two months
+  // the candidates (a review lapses: it comes round again by itself); what the user skipped goes after two months;
+  // spare candidates are never deleted automatically.
   function prune() {
     const t = now();
     for (const [fp, at] of Object.entries(st.seen)) if (t - at > 180 * DAY_MS) delete st.seen[fp];
@@ -362,6 +389,7 @@ function createFeed({ dir, cfg = {}, mirror, profile, sources, ask, cards, mail 
       const paper = e.kind === 'new' && !e.zkey;
       if (e.status === 'new' && t - e.created > 7 * DAY_MS) Object.assign(e, paper ? { status: 'spare', lapsed: true } : { status: 'expired' });
       if (e.status === 'expired' && paper) Object.assign(e, { status: 'spare', lapsed: true });     // (lapsed under the old rule)
+      if (e.status === 'glanced' && t - (e.decidedAt || e.created) > 180 * DAY_MS) { delete st.items[e.id]; continue; }
       if (['expired', 'skipped'].includes(e.status) && t - e.created > 60 * DAY_MS) delete st.items[e.id];
     }
   }
