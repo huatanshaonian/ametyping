@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const MAX_DRAFTS = 100, OLD_MS = 60 * 86400e3;
 const FILE_MAX = 20 * 1024 * 1024, TOTAL_MAX = 25 * 1024 * 1024;
@@ -16,8 +17,9 @@ const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
 
 function createDrafts({ dataDir }) {
   const file = path.join(dataDir, 'mail-drafts.json'), up = path.join(dataDir, 'mail-uploads');
-  let items = []; try { items = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(items), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file, []);
+  let items = Array.isArray(loaded) ? loaded : [];
+  const save = () => writeJsonAtomic(file, items, { mode: 0o600 });
   const upPath = (attId) => path.join(up, attId.replace(/[^a-f0-9]/g, ''));
   const dropUploads = (d) => { for (const a of d.atts || []) if (a.src === 'upload') try { fs.rmSync(upPath(a.id), { force: true }); } catch {} };
 
@@ -54,27 +56,48 @@ function createDrafts({ dataDir }) {
   // else when it gets there -- the rest is read and dropped (the answer goes back on the same connection)
   function upload(id, name, type, req) {
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (res) => { if (settled) return; settled = true; resolve(res); };
       const x = get(id);
       const tooBig = (n, total) => (n > FILE_MAX ? '单个附件不能超过 20 MB' : total + n > TOTAL_MAX ? '一封信的附件合计不能超过 25 MB' : '');
-      const drain = (msg) => { req.on('end', () => resolve({ ok: false, msg })); req.on('error', () => resolve({ ok: false, msg })); req.resume(); };
+      const drain = (msg) => {
+        const done = () => finish({ ok: false, msg });
+        req.on('end', done); req.on('error', done); req.on('close', done);
+        req.resume();
+      };
       if (!x) return drain('这份草稿已经没有了');
       const total = x.atts.reduce((n, a) => n + (a.size || 0), 0);
       const said = tooBig(+req.headers['content-length'] || 0, total);
       if (said) return drain(said);
       fs.mkdirSync(up, { recursive: true, mode: 0o700 });
       const att = { id: crypto.randomBytes(8).toString('hex'), name: str(name, 200).replace(/[\\/\r\n]/g, '_') || '附件', type: str(type, 100) || 'application/octet-stream', size: 0, src: 'upload' };
-      const out = fs.createWriteStream(upPath(att.id), { mode: 0o600 });
-      let n = 0, over = '';
+      const filePath = upPath(att.id);
+      const out = fs.createWriteStream(filePath, { mode: 0o600 });
+      let n = 0, over = '', reqEnded = false;
+      const abortUpload = (msg) => {
+        if (settled) return;
+        try { req.unpipe(out); } catch {}
+        out.destroy();
+        try { fs.rmSync(filePath, { force: true }); } catch {}
+        finish({ ok: false, msg });
+      };
       req.on('data', (c) => {
         n += c.length;
         if (over) return;
         over = tooBig(n, total);
-        if (over) { req.unpipe(out); out.destroy(); fs.rmSync(upPath(att.id), { force: true }); }
+        if (over) { req.unpipe(out); out.destroy(); try { fs.rmSync(filePath, { force: true }); } catch {} }
       });
-      req.on('end', () => { if (over) resolve({ ok: false, msg: over }); });
+      req.on('end', () => { reqEnded = true; if (over) finish({ ok: false, msg: over }); });
+      req.on('aborted', () => abortUpload('上传中断'));
+      req.on('error', () => abortUpload('上传中断'));
+      req.on('close', () => { if (!reqEnded && !settled) abortUpload(over || '上传中断'); });
       req.pipe(out);
-      out.on('finish', () => { if (over) return; att.size = n; x.atts.push(att); x.updated = Date.now(); save(); resolve({ ok: true, att }); });
-      out.on('error', () => { if (!over) resolve({ ok: false, msg: '附件没能存下' }); });
+      out.on('finish', () => {
+        if (over || settled) return;
+        if (!reqEnded) return abortUpload('上传中断');
+        att.size = n; x.atts.push(att); x.updated = Date.now(); save(); finish({ ok: true, att });
+      });
+      out.on('error', () => { if (!over) abortUpload('附件没能存下'); });
     });
   }
   function removeAtt(id, attId) {

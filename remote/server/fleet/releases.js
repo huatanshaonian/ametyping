@@ -9,9 +9,9 @@
 // What changed is condensed by the model (the daily report's job) into a few lines, the major ones marked: new
 // abilities, changed behaviour, things that break. <dataDir>/fleet/releases.json keeps the newest seen and the history.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const { request: httpsRequest } = require('../google/http');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const VER = /(\d+)\.(\d+)\.(\d+)/;
 const parts = (s) => { const m = VER.exec(String(s || '')); return m ? m.slice(1).map(Number) : null; };
@@ -44,11 +44,10 @@ ${list.map((x) => `### ${x.id}（${LABELS[x.id]}）${x.from ? x.from + ' → ' :
 function createReleases({ dataDir, egress = null, ask = null, log = () => {}, request = httpsRequest, now = () => Date.now() }) {
   const file = path.join(dataDir, 'fleet', 'releases.json');
   let state = { latest: {}, history: [], checkedAt: 0, error: '' };
-  try { state = { ...state, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') state = { ...state, ...loaded };
   function save() {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file + '.tmp', JSON.stringify(state, null, 2), { mode: 0o600 });
-    fs.renameSync(file + '.tmp', file);
+    writeJsonAtomic(file, state, { indent: 2, mode: 0o600 });
   }
   const UA = { 'User-Agent': 'Windose', Accept: 'application/json, text/plain, */*' };
   async function getText(url, headers = {}) {
@@ -129,4 +128,4 @@ function createReleases({ dataDir, egress = null, ask = null, log = () => {}, re
   return { check, latestOf, view, historyBetween, LABELS };
 }
 
-module.exports = { createReleases, cmp, plain, inRange, summaryPrompt };
+module.exports = { createReleases, cmp, plain };

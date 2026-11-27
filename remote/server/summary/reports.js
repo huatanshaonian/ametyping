@@ -7,14 +7,15 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function createReports(dir) {
   fs.mkdirSync(path.join(dir, 'cache'), { recursive: true, mode: 0o700 });
   const file = (name) => path.join(dir, name + '.json');
-  const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
-  const writeJson = (f, v) => { fs.writeFileSync(f + '.tmp', JSON.stringify(v), { mode: 0o600 }); fs.renameSync(f + '.tmp', f); };
+  const readJson = readJsonSafe;
+  const writeJson = (f, v) => writeJsonAtomic(f, v, { mode: 0o600, mkdirMode: 0o700 });
 
   const WEEK = /^week-\d{4}-\d{2}-\d{2}$/;
   const get = (date) => (date === 'draft' || DAY.test(String(date)) || WEEK.test(String(date))) ? readJson(file(date), null) : null;

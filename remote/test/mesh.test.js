@@ -398,3 +398,95 @@ test('caller identity injection, callerCwd resolution without sessionId, and aut
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('server shared lib (json-store, http-util) and Kiro session resume/export handle UTF-8 splits, aborts, and Kiro IDs', async () => {
+  const { EventEmitter } = require('events');
+  const { readJsonSafe, writeJsonAtomic } = require('../server/lib/json-store');
+  const { readBody } = require('../server/lib/http-util');
+  const { createSessionControl, resumeCmd } = require('../server/session-control');
+  const { createExport } = require('../server/session-export');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-server-lib-'));
+  try {
+    // 1. Atomic JSON persistence leaves no .tmp files even under concurrent writes
+    const target = path.join(tmp, 'nested', 'state.json');
+    await Promise.all(Array.from({ length: 8 }, (_, i) => Promise.resolve().then(() => {
+      writeJsonAtomic(target, { seq: i, label: '原子写入' }, { indent: 2 });
+    })));
+    const loaded = readJsonSafe(target);
+    assert.equal(loaded.label, '原子写入');
+    const leftovers = fs.readdirSync(path.join(tmp, 'nested')).filter((f) => f.endsWith('.tmp'));
+    assert.deepEqual(leftovers, []);
+
+    // 2. readBody preserves multi-byte UTF-8 characters split mid-codepoint across chunks
+    const reqUtf8 = new EventEmitter();
+    reqUtf8.resume = () => {};
+    reqUtf8.destroy = () => {};
+    const fullUtf8 = Buffer.from('{"msg":"电磁散射求解器验证"}', 'utf8');
+    const pUtf8 = readBody(reqUtf8, 1024);
+    reqUtf8.emit('data', fullUtf8.subarray(0, 10)); // splits inside multi-byte Chinese char
+    reqUtf8.emit('data', fullUtf8.subarray(10));
+    reqUtf8.emit('end');
+    assert.equal(await pUtf8, '{"msg":"电磁散射求解器验证"}');
+
+    // 3. readBody resolves cleanly with overValue on oversize body and on premature client close
+    const reqOver = new EventEmitter();
+    reqOver.destroy = () => {};
+    const pOver = readBody(reqOver, 8, { overValue: null });
+    reqOver.emit('data', Buffer.from('0123456789abcdef'));
+    reqOver.emit('end');
+    assert.equal(await pOver, null);
+
+    const reqClose = new EventEmitter();
+    reqClose.resume = () => {};
+    reqClose.destroy = () => {};
+    const pClose = readBody(reqClose, 1024);
+    reqClose.emit('data', Buffer.from('partial'));
+    reqClose.emit('close');
+    assert.equal(await pClose, '');
+
+    // 4. Kiro session resume & export parity
+    const kiroId = 'kiro:12345678-1234-1234-1234-123456789abc';
+    const agentPayloads = [];
+    const machines = new Map([['pc-a', {
+      name: 'pc-a',
+      online: true,
+      control: true,
+      files: true,
+      sessions: new Map(),
+      sockets: new Set([{
+        readyState: 1,
+        remoteControlAllowed: true,
+        filesAllowed: true,
+        send(raw) { agentPayloads.push(JSON.parse(raw)); },
+      }]),
+    }]]);
+    const fakeStore = {
+      sessions: () => ({ 'pc-a': [{ id: kiroId, cwd: 'D:\\repo', first: 1000, last: 2000, title: '' }] }),
+      has: () => true,
+      info: () => ({ cwd: 'D:\\repo', first: 1000, last: 2000 }),
+      all: () => [{ role: 'user', text: 'hello kiro', t: 1500 }],
+    };
+    const ctl = createSessionControl({
+      control: true,
+      machines,
+      store: fakeStore,
+      auth: { checkSession: () => ({ ok: true }), isFresh: () => true },
+    });
+    const browserReplies = [];
+    ctl.onBrowserAction(
+      { sid: 's1', ip: '127.0.0.1', ws: { send(raw) { browserReplies.push(JSON.parse(raw)); } } },
+      { t: 'resume', rid: 'br-1', machine: 'pc-a', id: kiroId }
+    );
+    assert.equal(browserReplies.length, 0);
+    assert.equal(agentPayloads.length, 1);
+    assert.equal(agentPayloads[0].t, 'resume');
+    assert.equal(agentPayloads[0].id, kiroId);
+
+    const exp = createExport({ store: fakeStore, resumeCmd }).build('pc-a', kiroId, 'md');
+    assert.ok(exp && exp.body.includes('# Kiro'));
+    assert.ok(exp.body.includes('kiro-cli chat --resume-id 12345678-1234-1234-1234-123456789abc'));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

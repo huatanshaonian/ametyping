@@ -4,6 +4,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 // (as the Console issues them: "sk-ant-..." and nothing but letters, digits, - and _)
 const KEY = /^sk-ant-[A-Za-z0-9_-]{20,300}$/;
@@ -11,8 +12,9 @@ const KEY = /^sk-ant-[A-Za-z0-9_-]{20,300}$/;
 function createApiKey({ dataDir }) {
   const file = path.join(dataDir, 'anthropic-api.json');
   let st = { key: '', setAt: 0 };
-  try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); if (j && typeof j.key === 'string') st = { key: j.key, setAt: +j.setAt || 0 }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const j = readJsonSafe(file);
+  if (j && typeof j.key === 'string') st = { key: j.key, setAt: +j.setAt || 0 };
+  const save = () => writeJsonAtomic(file, st, { mode: 0o600 });
 
   // '' takes the key away
   function set(key) {

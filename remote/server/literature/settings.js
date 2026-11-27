@@ -8,8 +8,8 @@
 // sources read the keys on every call; the push reads its numbers on every run). Keys never go back to the page whole:
 // only whether one is set and its last four characters.
 'use strict';
-const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const MAIL = /^[^\s@<>()"',;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
 const KEY = /^[\x21-\x7e]{8,200}$/;
@@ -19,9 +19,9 @@ const IDP = 'https://passport.escience.cn/idp/shibboleth';
 
 function createSettings({ dir, cfg = {} }) {
   const file = path.join(dir, 'settings.json');
-  let st = { keys: {} };
-  try { st = { keys: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  let st = { keys: {}, ...(loaded && typeof loaded === 'object' ? loaded : {}) };
+  const save = () => writeJsonAtomic(file, st, { indent: 1, mode: 0o600 });
   const listeners = new Set();
 
   // the value in effect: set here, else config.json's, else the default

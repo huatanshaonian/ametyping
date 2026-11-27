@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { decodeModel } = require('../magpie/ai');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const TASKS = [
   { id: 'daily', name: '工作日报', note: '每天早上读前一天的全部对话写日报，也核对重要计划' },
@@ -44,8 +45,9 @@ const isClaude = (slug) => /^(claude-|opus$|sonnet$|haiku$|fable$)/.test(slug);
 function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex'), claudeHome = path.join(os.homedir(), '.claude'), fallbackModel = 'gpt-6-luna', claudeApis = null, machine = 'nas', magpie = null, googleAi = null }) {
   const file = path.join(dataDir, 'ai-settings.json');
   let st = { default: { model: '', effort: '' }, backup: { model: '', effort: '' }, clippy: { model: '' }, tasks: {} };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st, { indent: 1, mode: 0o600 });
 
   function codexModels() {
     try {
@@ -154,4 +156,4 @@ function createAiSettings({ dataDir, codexHome = path.join(os.homedir(), '.codex
   return { pick, set, view, models, clippyModel, TASKS };
 }
 
-module.exports = { createAiSettings, TASKS };
+module.exports = { createAiSettings };

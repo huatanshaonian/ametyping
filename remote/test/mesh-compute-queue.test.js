@@ -455,4 +455,56 @@ describe('mesh-compute-queue (Mini-Slurm multi-GPU & dual-socket NUMA scheduler)
     assert.equal(envExplicit.OMP_NUM_THREADS, '8');
     assert.equal(envExplicit.AME_ASSIGNED_GPUS, '1');
   });
+
+  it('sugon remote CPU jobs do not lock gateway machine local NUMA slot 0', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-cq-sugon-numa-'));
+    try {
+      let curTime = 7000000;
+      const q = createComputeQueue({
+        dataDir: tmp,
+        now: () => curTime,
+        getMachineProbe: (m) => (m === 'vbuntu' ? {
+          hasGpu: false,
+          gpus: [],
+          cores: 16,
+          cpuCount: 16,
+          cpuBusy: false,
+          numaNodes: [{ id: 0, cpuList: '0-15', cpuCount: 16, busy: false }],
+          at: curTime,
+        } : null),
+      });
+      q.registerProvider({
+        id: 'sugon',
+        name: '曙光超算',
+        status: 'active',
+        meta: { machine: 'vbuntu', available: true },
+      });
+
+      const sugonJob = q.enqueue({
+        machine: 'vbuntu',
+        providerType: 'sugon',
+        mode: 'remote',
+        resource: 'cpu',
+        ntasks: 64,
+        command: 'mpirun -np 64 ./solver',
+        label: 'Sugon Slurm CPU',
+      });
+      assert.equal(sugonJob.granted, true);
+      assert.equal(sugonJob.job.status, 'running');
+      assert.deepEqual(sugonJob.job.assignedNuma, []);
+
+      curTime += 100;
+      const localCpu = q.enqueue({
+        machine: 'vbuntu',
+        providerType: 'local-agent',
+        resource: 'cpu',
+        numa: 1,
+        label: 'Local Gateway CPU',
+      });
+      assert.equal(localCpu.granted, true);
+      assert.deepEqual(localCpu.job.assignedNuma, [0]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

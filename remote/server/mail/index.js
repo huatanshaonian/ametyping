@@ -168,6 +168,7 @@ function createMail({ dataDir, onChange = () => {}, log = console.log, audit = (
     got.stream.on('data', (c) => { n += c.length; if (n > ATT_MAX) got.stream.destroy(); });
     got.stream.on('error', () => res.destroy());
     got.stream.on('close', () => got.close());
+    res.on('close', () => { if (!res.writableEnded) got.stream.destroy(); });
     got.stream.pipe(res);
   }
 

@@ -100,4 +100,4 @@ const ABSTRACT = `(() => {
   return { host: location.host, url: location.href, ready: document.readyState, challenge, abs: strip(abs) };
 })()`;
 
-module.exports = { SITES, OTHER, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK, ABSTRACT };
+module.exports = { OTHER, ACCESS, ACCESS_ON, ACCESS_OFF, RESOLVERS, RESOLVED, byHost, byDoi, byId, LOOK, ABSTRACT };

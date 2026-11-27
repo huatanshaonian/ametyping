@@ -76,4 +76,4 @@ function createOpenAlex({ http, base = 'https://api.openalex.org', key = '', mai
   };
 }
 
-module.exports = { createOpenAlex, abstractOf, fromWork };
+module.exports = { createOpenAlex };

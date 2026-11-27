@@ -6,6 +6,7 @@ const fs = require('fs'), path = require('path');
 const {createPilots}=require('./pilots');
 const {createReview}=require('./review');
 const {createDirectories}=require('./directories');
+const { writeJsonAtomic } = require('../lib/json-store');
 
 function createResearch({ vault, config = {}, getProject = () => null, listProjects=()=>[],saveProject=null,control = false, fresh = () => false,
   audit = () => {}, log = () => {}, call = runDeepseek, resolve = null, getMagpie = () => null, egress = null, getEmbed = () => null, getLit = () => null, onMemoryChange = () => {} }) {
@@ -26,8 +27,7 @@ function createResearch({ vault, config = {}, getProject = () => null, listProje
     }
     if(next.model&&!/^[A-Za-z0-9._-]{1,120}$/.test(next.model))throw Error('模型名称无效');
     resolveDeepseek({...config,...next}); // validate before replacing the config
-    fs.writeFileSync(settingsFile+'.tmp',JSON.stringify(next,null,2),{mode:0o600});
-    fs.chmodSync(settingsFile+'.tmp',0o600);fs.renameSync(settingsFile+'.tmp',settingsFile);
+    writeJsonAtomic(settingsFile, next, { indent: 2, mode: 0o600, chmod: true });
     return publicConfig();
   }
   let active = false, closed = false, abort = null;

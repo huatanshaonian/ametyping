@@ -31,9 +31,11 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { pipeline } = require('stream');
 const { createMagpieKeys } = require('./magpie-keys');
 const { createReleases, cmp } = require('./releases');
 const { createEgress } = require('../egress');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const TARGETS = ['claude', 'opencode', 'codex'];
@@ -60,7 +62,8 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
   // harnessLog: [{ at, machine, id, action, before, after, ok, msg, by }] (newest first); daily: { date, at, msg }
   let state = { settings: { auto: true, gateway: '', models: {}, proxy: '', daily: { on: true, at: '03:40' }, harnessOff: {} },
     keys: {}, runs: {}, net: {}, harness: {}, harnessLog: [], daily: null };
-  try { const s = JSON.parse(fs.readFileSync(stateFile, 'utf8')); state = { ...state, ...s, settings: { ...state.settings, ...(s.settings || {}) } }; } catch {}
+  const loaded = readJsonSafe(stateFile);
+  if (loaded && typeof loaded === 'object') state = { ...state, ...loaded, settings: { ...state.settings, ...(loaded.settings || {}) } };
   for (const k of ['net', 'harness']) if (!state[k] || typeof state[k] !== 'object') state[k] = {};
   if (!Array.isArray(state.harnessLog)) state.harnessLog = [];
   if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
@@ -83,9 +86,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
     try { const t = JSON.parse(fs.readFileSync(templateFile, 'utf8')); state.settings.gateway = String(t.providers.magpie.settings.baseURL || '').replace(/\/v1\/?$/, ''); } catch {}
   }
   function save() {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(stateFile + '.tmp', JSON.stringify(state, null, 2), { mode: 0o600 });
-    fs.renameSync(stateFile + '.tmp', stateFile);
+    writeJsonAtomic(stateFile, state, { indent: 2, mode: 0o600 });
   }
   let manifest = null, manifestAt = 0, known = new Set();
   function bundle() {
@@ -533,7 +534,7 @@ function createFleet({ dataDir, machines, control = false, audit = () => {}, onC
       'X-Fleet-Commit': b.commit,
       ...(gb.sha256 ? { 'X-Fleet-Sha256': gb.sha256 } : {}),
     });
-    fs.createReadStream(file).pipe(res);
+    pipeline(fs.createReadStream(file), res, () => {});
     return true;
   }
 

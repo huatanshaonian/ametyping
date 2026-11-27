@@ -8,20 +8,21 @@
 // Plans are sorted into lists (todo-lists.js; no "list" = the first one, so plans from before lists and those put in
 // from elsewhere need no change), may be starred (重要), and may have numbered steps (todo-steps.js).
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createTodoLists, MAIN } = require('./todo-lists');
 const steps = require('./todo-steps');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MAX = 500;
 
 function createTodos({ dataDir, onChange = () => {}, audit = () => {} }) {
   const file = path.join(dataDir, 'todos.json');
-  let items = []; try { items = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+  const raw = readJsonSafe(file, []);
+  let items = Array.isArray(raw) ? raw : [];
   const lists = createTodoLists({ dataDir, onChange });
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(items), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); onChange(); };
+  const save = () => { writeJsonAtomic(file, items, { mode: 0o600 }); onChange(); };
   const str = (v, n) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 
   const list = () => items;

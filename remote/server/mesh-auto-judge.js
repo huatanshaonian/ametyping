@@ -206,8 +206,6 @@ async function judgeL3Stall({
 }
 
 module.exports = {
-  JUDGE_SCHEMA,
   ruleBasedJudge,
-  buildJudgePrompt,
   judgeL3Stall,
 };

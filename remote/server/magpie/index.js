@@ -1,23 +1,22 @@
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const { createClient } = require('./client');
 const { catalog, snapshot } = require('./normalize');
 const { modelsFor, runMagpie } = require('./ai');
 const { planReminders, delivered } = require('./reminders');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 // Read-only gateway monitoring. No account/configuration mutation endpoints.
 function createMagpie({ config = {}, dataDir, onChange = () => {}, onNotice = () => {}, client = createClient(config), now = Date.now, autoStart = true }) {
   const file = path.join(dataDir, 'magpie-monitor.json');
   let state = {}, notices = [], models = [], quotas = null, quotaAt = null, errors = {}, busy = null, stopped = false;
   const usage = new Map();
-  try { const s = JSON.parse(fs.readFileSync(file, 'utf8')); state = s.state || {}; notices = Array.isArray(s.notices) ? s.notices : []; } catch {}
+  const s = readJsonSafe(file);
+  if (s && typeof s === 'object') { state = s.state || {}; notices = Array.isArray(s.notices) ? s.notices : []; }
   function activeNotices() { return notices.filter(n => n.resetAt > now() && n.expiresAt > now()); }
   function persist() {
     notices = activeNotices().slice(-100);
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(file + '.tmp', JSON.stringify({ state, notices }), { mode: 0o600 });
-    fs.renameSync(file + '.tmp', file);
+    writeJsonAtomic(file, { state, notices }, { mode: 0o600 });
   }
   async function readUsage(period) {
     try { const raw = await client.request('magpie/usage?period=' + period); usage.set(period, { raw, at: new Date(now()).toISOString() }); delete errors[period]; }

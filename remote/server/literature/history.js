@@ -8,9 +8,9 @@
 // carries from: [the merged ones], each of which gets its own 合并 event. A question no longer in the profile lives on
 // here. graph() is what the window draws; mermaid() the same for the knowledge base (Obsidian draws it).
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const TYPES = ['提出', '新增', '修改', '细化', '分叉', '合并', '搁置', '解决', '重开', '删除', '主线'];
 const ENDED = { 分叉: 'split', 合并: 'merged', 搁置: 'shelved', 解决: 'done', 删除: 'gone' };
@@ -19,9 +19,9 @@ const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return 
 
 function createHistory({ dir, now = () => Date.now(), onChange = () => {} }) {
   const file = path.join(dir, 'history.json');
-  let st = { events: [] };
-  try { st = { events: [], ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); try { onChange(); } catch {} };
+  const loaded = readJsonSafe(file);
+  let st = { events: [], ...(loaded && typeof loaded === 'object' ? loaded : {}) };
+  const save = () => { writeJsonAtomic(file, st); try { onChange(); } catch {} };
 
   function add(list) {
     const at = now();

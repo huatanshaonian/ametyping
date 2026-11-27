@@ -87,4 +87,4 @@ function digest(s, recs, opts = {}) {
   };
 }
 
-module.exports = { digest, activeMinutes, absPath };
+module.exports = { digest, absPath };

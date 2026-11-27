@@ -199,6 +199,4 @@ function createEmbedSearch({ client, store }) {
 module.exports = {
   createEmbedSearch,
   fuseSessions,
-  makeSnippet,
-  DEFAULT_RRF_K,
 };

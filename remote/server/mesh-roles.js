@@ -2,6 +2,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomic } = require('./lib/json-store');
 
 const ROLE_NAME_RE = /^[a-z0-9_-]{1,32}$/i;
 const BUILTIN_ORDER = ['master', 'worker', 'verifier', 'peer'];
@@ -130,11 +131,8 @@ function createRoleStore({ dataDir, builtinDir = path.join(__dirname, 'mesh-role
       return { ok: false, msg: '角色模板内容过长（上限 64KB）' };
     }
     try {
-      fs.mkdirSync(userDir, { recursive: true, mode: 0o700 });
       const targetFile = path.join(userDir, `${cleanName}.md`);
-      const tmpFile = `${targetFile}.tmp`;
-      fs.writeFileSync(tmpFile, rawContent.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(tmpFile, targetFile);
+      writeFileAtomic(targetFile, rawContent.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600, mkdirMode: 0o700 });
       return { ok: true, role: get(cleanName) };
     } catch (e) {
       return { ok: false, msg: `保存角色模板失败：${e.message}` };
@@ -174,5 +172,4 @@ function createRoleStore({ dataDir, builtinDir = path.join(__dirname, 'mesh-role
 
 module.exports = {
   createRoleStore,
-  parseFrontmatter,
 };

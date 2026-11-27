@@ -124,4 +124,4 @@ function* segments(events, maxChars = 18000) {
   }
   if (batch.length) yield batch;
 }
-module.exports = { VERSION, normalize, documentId, jsonLines, segments, cleanText, hash };
+module.exports = { VERSION, normalize, documentId, segments, cleanText, hash };

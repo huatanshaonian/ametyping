@@ -3,10 +3,10 @@
 // connecting sends you to Google's consent screen and back. Kept in <dataDir>/google.json (mode 600): the client, the
 // refresh token, the account's e-mail, settings. Access tokens are renewed when they run out.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { request } = require('./http');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 // calendar.app.created: the "Windose 日报" calendar of our own (and nothing of the other calendars)
 const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/drive.file',
@@ -17,8 +17,9 @@ const STATE_MS = 10 * 60e3;
 
 function createAccount({ dataDir, origin, egress, log = () => {} }) {
   const file = path.join(dataDir, 'google.json');
-  let st = {}; try { st = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 2), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file, {});
+  let st = loaded && typeof loaded === 'object' ? loaded : {};
+  const save = () => writeJsonAtomic(file, st, { indent: 2, mode: 0o600 });
   const redirect = () => String(origin || '').replace(/\/$/, '') + '/api/google/callback';
   const states = new Map();                            // state -> { sid, at }: one sign-in in progress each
 
@@ -111,4 +112,4 @@ function createAccount({ dataDir, origin, egress, log = () => {} }) {
   return { status, has, setClient, setDiary, setTasks, setRemind, authUrl, callback, api, disconnect, get, remember };
 }
 
-module.exports = { createAccount, SCOPES };
+module.exports = { createAccount };

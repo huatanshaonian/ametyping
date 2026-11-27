@@ -8,6 +8,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const FLUSH_MS = +process.env.AME_FLUSH_MS || 10e3;   // tests shorten it
 const TAIL = 300;              // display messages kept per open conversation
@@ -73,8 +74,8 @@ const cleanAi = (a) => (a && typeof a === 'object' && /^[a-z0-9-]{1,32}$/.test(S
 function createStore(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stateFile = path.join(dir, 'state.json');
-  let state = {};                                    // machine -> id -> { off, project, title, cwd, days[], first, last }
-  try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
+  const loadedState = readJsonSafe(stateFile, {});
+  let state = loadedState && typeof loadedState === 'object' && !Array.isArray(loadedState) ? loadedState : {}; // machine -> id -> { off, project, title, cwd, days[], first, last }
   const pending = new Map();                         // file -> [lines]
   const tails = new Map();                           // "machine|id" -> { msgs, used }
   let dirty = false;
@@ -181,8 +182,7 @@ function createStore(dir) {
     }
     if (!dirty) return;
     try {
-      fs.writeFileSync(stateFile + '.tmp', JSON.stringify(state), { mode: 0o600 });
-      fs.renameSync(stateFile + '.tmp', stateFile);
+      writeJsonAtomic(stateFile, state, { mode: 0o600, mkdirMode: 0o700 });
       dirty = false;
     } catch (e) { console.error('写入 state.json 失败：' + e.message); }
   }

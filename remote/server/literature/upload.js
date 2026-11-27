@@ -2,19 +2,9 @@
 // body of the request, are checked to be a PDF, and go to Zotero as the paper's attachment -- the same way as one the
 // library access fetched (pdfqueue.js). For the few that no source gives: a journal not online, a report by mail.
 'use strict';
+const { readBytes } = require('../lib/http-util');
 
 const MAX_BYTES = 80 * 1024 * 1024;
-
-// the body of a request as bytes (the server's own readBody makes a string of it); null when it is too large
-function readBytes(req, cap) {
-  return new Promise((resolve) => {
-    if (+req.headers['content-length'] > cap) { req.resume(); return resolve(null); }
-    const parts = []; let n = 0, over = false;
-    req.on('data', (c) => { if (over) return; n += c.length; if (n > cap) { over = true; parts.length = 0; return; } parts.push(c); });
-    req.on('end', () => resolve(over ? null : Buffer.concat(parts)));
-    req.on('error', () => resolve(Buffer.alloc(0)));
-  });
-}
 
 function createUpload({ api, mirror, fulltext, pdfq, log = () => {}, maxBytes = MAX_BYTES }) {
   // take(req, key, name) -> { ok: true, bytes } | { ok: false, msg }

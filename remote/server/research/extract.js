@@ -103,4 +103,4 @@ function validateResult(result, segment) {
   return result;
 }
 const segmentKey = (sourceId, segment, model) => hash(JSON.stringify([sourceId, VERSION, model, segment]));
-module.exports = { VERSION, SCHEMA, promptFor, validateResult, segmentKey, evidenceUnits };
+module.exports = { VERSION, SCHEMA, promptFor, validateResult, segmentKey };

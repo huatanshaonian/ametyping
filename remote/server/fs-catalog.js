@@ -3,9 +3,9 @@
 // without fetching actual files over Tailscale.
 //   <dataDir>/fs-catalog.json   { items: { "machine|normPath": { machine, path, tag, userNote, aiNote, updatedAt, snapshot } } }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const MAX_ITEMS = 1000;
 const TAG_LABELS = {
@@ -54,18 +54,14 @@ function cleanTree(nodes, depth = 1, countObj = { n: 0 }) {
 function createFsCatalog({ dataDir, machines, onChange = () => {}, audit = () => {} }) {
   const file = path.join(dataDir, 'fs-catalog.json');
   let data = { items: {} };
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (raw && typeof raw.items === 'object' && !Array.isArray(raw.items)) data = raw;
-  } catch {}
+  const raw = readJsonSafe(file);
+  if (raw && typeof raw.items === 'object' && !Array.isArray(raw.items)) data = raw;
 
   const pendingSyncs = new Map(); // rid -> { key, machine, path, resolve, timer }
 
   function save() {
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(file + '.tmp', JSON.stringify(data), { mode: 0o600 });
-      fs.renameSync(file + '.tmp', file);
+      writeJsonAtomic(file, data, { mode: 0o600, mkdirMode: 0o700 });
     } catch {}
     onChange();
   }

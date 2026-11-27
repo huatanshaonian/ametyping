@@ -15,6 +15,7 @@ const path = require('path');
 const { FEEDBACK_SCHEMA, CHAT_SCHEMA, DISTILL_SCHEMA, TOPIC_SCHEMA, RELATED_SCHEMA, CARD_SECTIONS, feedbackPrompt, chatPrompt, distillPrompt, topicPrompt, relatedPrompt } = require('./prompts/reader');
 const { pickPages, fitPages } = require('./fulltext');
 const { size } = require('./digest');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const KEY = /^[A-Z0-9]{8}$/;
 const CHAT_WHOLE = 200000, CHAT_PICK = 120000, CHAT_TURNS = 40, CHAT_TALK = 150000;     // (sizes counted as digest.js counts them)
@@ -24,8 +25,8 @@ function createReader({ dir, kb, mirror, fulltext, cards, profile, ask, vision =
   const cdir = path.join(dir, 'chats');
   fs.mkdirSync(cdir, { recursive: true });
   const fileOf = (key) => path.join(cdir, key + '.json');
-  const load = (key) => { try { return JSON.parse(fs.readFileSync(fileOf(key), 'utf8')); } catch { return { turns: [] }; } };
-  const save = (key, c) => { fs.writeFileSync(fileOf(key) + '.tmp', JSON.stringify(c)); fs.renameSync(fileOf(key) + '.tmp', fileOf(key)); };
+  const load = (key) => readJsonSafe(fileOf(key), { turns: [] }) || { turns: [] };
+  const save = (key, c) => writeJsonAtomic(fileOf(key), c);
   const jobs = new Map();                               // key -> { what, running, error }
 
   function job(key, what, fn) {

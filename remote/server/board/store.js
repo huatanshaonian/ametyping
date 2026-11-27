@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const ID = /^[0-9a-f]{12}$/;
 const MAX_STROKES = 20000, MAX_POINTS = 6000;        // per board / per stroke
@@ -31,9 +32,10 @@ function createBoardStore({ dataDir, onChange = () => {} }) {
   const dir = path.join(dataDir, 'boards');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const indexFile = path.join(dir, 'index.json');
-  let index = []; try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch {}
-  const put = (file, text) => { fs.writeFileSync(file + '.tmp', text, { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
-  const saveIndex = () => { put(indexFile, JSON.stringify(index)); onChange(); };
+  let index = readJsonSafe(indexFile, []);
+  if (!Array.isArray(index)) index = [];
+  const put = (f, data) => writeJsonAtomic(f, data, { mode: 0o600, mkdirMode: 0o700 });
+  const saveIndex = () => { put(indexFile, index); onChange(); };
   const file = (id, ext) => path.join(dir, id + ext);
   const entry = (id) => (ID.test(String(id)) ? index.find((x) => x.id === id) : null) || null;
   const name = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
@@ -42,7 +44,7 @@ function createBoardStore({ dataDir, onChange = () => {} }) {
   function get(id) {
     const e = entry(id);
     if (!e) return null;
-    let doc = { v: 1, strokes: [] }; try { doc = JSON.parse(fs.readFileSync(file(id, '.json'), 'utf8')); } catch {}
+    const doc = readJsonSafe(file(id, '.json'), { v: 1, strokes: [] });
     return { ...e, doc };
   }
 
@@ -54,7 +56,7 @@ function createBoardStore({ dataDir, onChange = () => {} }) {
     if (e && Number.isFinite(d.base) && e.updated > d.base) { conflict = true; title = (e.title || '画板') + '（冲突副本）'; e = null; }
     if (!e) { e = { id: crypto.randomBytes(6).toString('hex'), created: Date.now(), updated: 0, title: '', strokes: 0 }; index.push(e); }
     const doc = cleanDoc(d.doc);
-    put(file(e.id, '.json'), JSON.stringify(doc));
+    put(file(e.id, '.json'), doc);
     Object.assign(e, { title: title || '画板', updated: Math.max(Date.now(), e.updated + 1), strokes: doc.strokes.length });
     saveIndex();
     return { ok: true, id: e.id, updated: e.updated, title: e.title, conflict };
@@ -76,13 +78,13 @@ function createBoardStore({ dataDir, onChange = () => {} }) {
 
   // the picture given to the model, and what came back
   const shotFile = (id) => file(id, '.png');
-  function out(id) { try { return JSON.parse(fs.readFileSync(file(id, '.out.json'), 'utf8')); } catch { return {}; } }
+  function out(id) { return readJsonSafe(file(id, '.out.json'), {}); }
   function setOut(id, part) {
     if (!entry(id)) return;
-    put(file(id, '.out.json'), JSON.stringify({ ...out(id), ...part }));
+    put(file(id, '.out.json'), { ...out(id), ...part });
     onChange();
   }
   return { list, get, entry, save, rename, remove, shotFile, out, setOut };
 }
 
-module.exports = { createBoardStore, cleanDoc, ID };
+module.exports = { createBoardStore, ID };

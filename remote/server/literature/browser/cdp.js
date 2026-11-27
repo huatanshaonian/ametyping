@@ -55,4 +55,4 @@ async function connect(port, host = '127.0.0.1') {
   return { send, on, attach, evaluate, close: () => { try { ws.close(); } catch {} }, version: v.Browser || '' };
 }
 
-module.exports = { connect, getJson };
+module.exports = { connect };

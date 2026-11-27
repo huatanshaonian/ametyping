@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const { readBody: readUtf8Body } = require('../lib/http-util');
 
 const KEY = /^[A-Z0-9]{8}$/;
 const DEFAULT_SCHEMA = 'plasma_rcs_v1';
@@ -22,14 +23,7 @@ const defaultSocket = (dir) => process.platform === 'win32'
   ? '\\\\.\\pipe\\ame-lit-' + crypto.createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 12)
   : path.join(dir, 'agent.sock');
 
-function readBody(req, cap = 64 * 1024) {
-  return new Promise((resolve) => {
-    const parts = []; let n = 0, over = false;
-    req.on('data', (c) => { n += c.length; if (n > cap) { over = true; return; } if (!over) parts.push(c); });
-    req.on('end', () => resolve(over ? null : Buffer.concat(parts).toString('utf8')));
-    req.on('error', () => resolve(null));
-  });
-}
+const readBody = (req, cap = 64 * 1024) => readUtf8Body(req, cap, { overValue: null });
 
 function evidencePaper(item, mirror) {
   const { title = '', year = null, citekey = '' } = mirror.item(item.zoteroKey) || {};

@@ -137,10 +137,8 @@ function hashText(text) {
 
 module.exports = {
   RULE_VERSION,
-  MIN_EFFECTIVE_CHARS,
   DEFAULT_MAX_CHARS,
   cleanLine,
   chunkText,
   hashText,
-  detectTag,
 };

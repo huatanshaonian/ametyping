@@ -4,19 +4,10 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { loadSqlite, quarantineSqliteFiles } = require('../lib/sqlite-util');
+const { parseJsonSafe } = require('../lib/json-store');
 
 const SCHEMA_VERSION = '1';
-
-function loadSqlite() {
-  const emit = process.emitWarning;
-  process.emitWarning = function (w, ...rest) {
-    if (/SQLite/i.test(String((w && w.message) || w))) return;
-    return emit.call(process, w, ...rest);
-  };
-  try { return require('node:sqlite'); }
-  catch { return null; }
-  finally { setTimeout(() => { process.emitWarning = emit; }, 0); }
-}
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -93,14 +84,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS paper_teams_team ON paper_teams (team_id);
 `;
 
-function parseJson(raw, fallback) {
-  try {
-    const v = JSON.parse(raw);
-    return v != null ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+const parseJson = parseJsonSafe;
 
 function mapEvidenceRow(r) {
   if (!r) return null;
@@ -185,12 +169,7 @@ function openKbStruct({ dir, log = () => {} }) {
   } catch (e) {
     log('结构化知识库打不开（' + e.message + '），移走并重建');
     try { db && db.close(); } catch {}
-    for (const sfx of ['', '-wal', '-shm']) {
-      const src = file + sfx;
-      const dst = src + '.bad';
-      try { fs.rmSync(dst, { force: true }); } catch {}
-      try { fs.renameSync(src, dst); } catch {}
-    }
+    quarantineSqliteFiles(file);
     try {
       init();
       rebuilt = true;

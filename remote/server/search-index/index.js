@@ -6,20 +6,13 @@
 // from them (the conversations in the background; search scans the files meanwhile). <dataDir>/search.db
 // Node's built-in node:sqlite (Node 22.5+) -- nothing to install. Without it, open() returns null and search scans.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const lines = require('./lines');
 const docs = require('./docs');
+const { loadSqlite, quarantineSqliteFiles } = require('../lib/sqlite-util');
 
 const VERSION = '5';
 const SWEEP_BATCH = 40;                 // conversation files per step of the background sweep
-
-// node:sqlite still prints an "experimental" warning when loaded: not for this one
-function loadSqlite() {
-  const emit = process.emitWarning;
-  process.emitWarning = function (w, ...rest) { if (/SQLite/i.test(String(w && w.message || w))) return; return emit.call(process, w, ...rest); };
-  try { return require('node:sqlite'); } catch { return null; } finally { setTimeout(() => { process.emitWarning = emit; }, 0); }
-}
 
 function open({ dataDir, log = () => {} }) {
   const sqlite = loadSqlite();
@@ -42,7 +35,7 @@ function open({ dataDir, log = () => {} }) {
   catch (e) {                                                       // damaged: put it aside and build a new one
     log('搜索索引打不开（' + e.message + '），重建');
     try { db && db.close(); } catch {}
-    for (const sfx of ['', '-wal', '-shm']) { try { fs.renameSync(file + sfx, file + sfx + '.bad'); } catch {} }
+    quarantineSqliteFiles(file);
     try { create(); } catch (e2) { log('搜索索引建不起来：' + e2.message); return null; }
   }
   const L = lines.createLines(db, { dataDir, log }), D = docs.createDocs(db, { log });

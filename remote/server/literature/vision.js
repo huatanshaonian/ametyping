@@ -56,15 +56,15 @@ function formatRanges(pages) {
 // ask(prompt, schema, { images }): the litVision job's model; maxPages(): the page limit for reading a paper whole;
 // onRead(key, why, pages): a run read `pages` (why: 'auto' / 'approved')
 function createVision({ dir, mirror, fulltext, ask, maxPages = () => 30, log = () => {}, onChange = () => {}, onRead = () => {} }) {
+  const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
   const vdir = path.join(dir, 'vision');
   fs.mkdirSync(vdir, { recursive: true });
   const fileOf = (md5) => path.join(vdir, md5 + '.json');
-  const load = (md5) => { try { return { n: 0, pages: {}, ...JSON.parse(fs.readFileSync(fileOf(md5), 'utf8')) }; } catch { return { n: 0, pages: {} }; } };
-  const save = (md5, v) => { fs.writeFileSync(fileOf(md5) + '.tmp', JSON.stringify(v)); fs.renameSync(fileOf(md5) + '.tmp', fileOf(md5)); };
+  const load = (md5) => ({ n: 0, pages: {}, ...(readJsonSafe(fileOf(md5), {}) || {}) });
+  const save = (md5, v) => writeJsonAtomic(fileOf(md5), v);
   const reqFile = path.join(dir, 'vision-requests.json');
-  let requests = {};
-  try { requests = JSON.parse(fs.readFileSync(reqFile, 'utf8')); } catch {}
-  const saveReq = () => { fs.writeFileSync(reqFile + '.tmp', JSON.stringify(requests)); fs.renameSync(reqFile + '.tmp', reqFile); };
+  let requests = readJsonSafe(reqFile, {}) || {};
+  const saveReq = () => writeJsonAtomic(reqFile, requests);
   const jobs = new Map();                              // item key -> { running, total, done, why, error, at, wait }
   const changed = (key) => { try { onChange(key); } catch {} };
 

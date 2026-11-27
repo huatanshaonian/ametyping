@@ -9,18 +9,19 @@
 // Kept in <dataDir>/mail-triage.json: { interests (the user's own words), results: { dup: {...} }, alerts: [...] }.
 // onAlert(alert): a new alert (the server passes it on: the tray, Google Calendar, 糖糖).
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { TRIAGE_SCHEMA, KINDS, triagePrompt, interestsOf, ymd } = require('./triage-prompt');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const WAIT_MS = 60e3, BATCH = 8, RETRY_MS = 30 * 60e3, BACK_DAYS = 30, KEEP_ALERTS = 300;
 
 function createTriage({ dataDir, store, accounts, ask, reports = () => null, onAlert = () => {}, onChange = () => {}, log = () => {}, waitMs = WAIT_MS }) {
   const file = path.join(dataDir, 'mail-triage.json');
   let st = { interests: '', results: {}, alerts: [] };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st, { mode: 0o600 });
 
   const queue = new Map();                            // dup -> { key, old } waiting to be asked about
   let timer = null, running = false;

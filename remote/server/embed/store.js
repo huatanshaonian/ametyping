@@ -8,19 +8,9 @@
 const fs = require('fs');
 const path = require('path');
 const { dot } = require('./client');
+const { loadSqlite, quarantineSqliteFiles } = require('../lib/sqlite-util');
 
 const SCHEMA_VERSION = '1';
-
-function loadSqlite() {
-  const emit = process.emitWarning;
-  process.emitWarning = function (w, ...rest) {
-    if (/SQLite/i.test(String((w && w.message) || w))) return;
-    return emit.call(process, w, ...rest);
-  };
-  try { return require('node:sqlite'); }
-  catch { return null; }
-  finally { setTimeout(() => { process.emitWarning = emit; }, 0); }
-}
 
 function toBlob(vec) {
   const f32 = vec instanceof Float32Array ? vec : new Float32Array(vec);
@@ -128,9 +118,7 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
   } catch (e) {
     log('向量库打不开（' + e.message + '），移走并重建');
     try { db && db.close(); } catch {}
-    for (const sfx of ['', '-wal', '-shm']) {
-      try { fs.renameSync(file + sfx, file + sfx + '.bad'); } catch {}
-    }
+    quarantineSqliteFiles(file);
     try {
       init();
       rebuilt = true;
@@ -489,4 +477,4 @@ function openStore({ dataDir, model = 'Qwen3-Embedding-4B', dims = 2560, task = 
   };
 }
 
-module.exports = { openStore, SCHEMA_VERSION, toBlob, fromBlob };
+module.exports = { openStore, SCHEMA_VERSION, toBlob };

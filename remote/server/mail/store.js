@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const pad = (n) => String(n).padStart(2, '0');
 const monthOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
@@ -26,7 +27,7 @@ function createMailStore({ dataDir }) {
 
   for (const acc of fs.readdirSync(root)) {
     let files = []; try { files = fs.readdirSync(path.join(root, acc)).filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f)); } catch {}
-    let seen = {}; try { seen = JSON.parse(fs.readFileSync(seenFile(acc), 'utf8')); } catch {}
+    const seen = readJsonSafe(seenFile(acc), {}) || {};
     seenOf.set(acc, seen);
     for (const f of files) {
       for (const line of fs.readFileSync(path.join(root, acc, f), 'utf8').split('\n')) {
@@ -81,7 +82,9 @@ function createMailStore({ dataDir }) {
     }
     if (changed.length) {                              // (written a moment later: a refresh changes many at once)
       clearTimeout(saveT.get(acc));
-      saveT.set(acc, setTimeout(() => { try { fs.writeFileSync(seenFile(acc), JSON.stringify(seen), { mode: 0o600 }); } catch {} }, 500));
+      const t = setTimeout(() => { try { writeJsonAtomic(seenFile(acc), seen, { mode: 0o600, mkdirMode: 0o700 }); } catch {} }, 500);
+      if (t.unref) t.unref();
+      saveT.set(acc, t);
     }
     return changed;
   }
@@ -123,4 +126,4 @@ function createMailStore({ dataDir }) {
   return { has, brief, add, get, list, copiesOf, between, count, unread, setSeen, uidsOf, removeAccount };
 }
 
-module.exports = { createMailStore, dupOf };
+module.exports = { createMailStore };

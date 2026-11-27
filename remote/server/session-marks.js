@@ -2,9 +2,9 @@
 // Kept on the server so every device shows the same list; a change is broadcast as `marks` and the pages reload.
 //   <dataDir>/session-marks.json   { sessions: { "machine|id": { hidden, pinned, starred, group } }, groups: [{ id, name, created }] }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const KEY = /^[^|\x00-\x1f]{1,100}\|[^|\x00-\x1f]{1,160}$/;      // "machine|session id"
 const FLAGS = ['hidden', 'pinned', 'starred'];
@@ -13,8 +13,9 @@ const MAX_SESSIONS = 3000, MAX_GROUPS = 50;
 function createMarks({ dataDir, onChange = () => {}, audit = () => {} }) {
   const file = path.join(dataDir, 'session-marks.json');
   let data = { sessions: {}, groups: [] };
-  try { const d = JSON.parse(fs.readFileSync(file, 'utf8')); if (d && typeof d.sessions === 'object' && Array.isArray(d.groups)) data = d; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(data), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); onChange(); };
+  const d = readJsonSafe(file);
+  if (d && typeof d.sessions === 'object' && !Array.isArray(d.sessions) && Array.isArray(d.groups)) data = d;
+  const save = () => { writeJsonAtomic(file, data, { mode: 0o600 }); onChange(); };
   const name = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 40) : '');
 
   // one session's marks; a field left out stays as it is, group '' takes it out of its group

@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { normDoi } = require('./zotero/mirror');
 const { toZotero } = require('./sources/normalize');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const TAG = 'Windose下载';
 const DOI = /^10\.\d{4,9}\/[^\s"<>]{1,250}$/;
@@ -38,12 +39,12 @@ function pdfName(it, fallback = 'paper.pdf') {
 // lookups: [(doi) -> paper | null] (OpenAlex, then Crossref); fetchPdf: intake.fetchPdf
 function createDownloads({ dir, cfg = () => ({}), api, mirror, fulltext, pdfq, fetchPdf, lookups = [], log = () => {}, onChange = () => {}, now = () => Date.now(), tickMs = 30e3 }) {
   const file = path.join(dir, 'downloads.json');
-  let st = { jobs: {} };
-  try { st = { jobs: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
+  const loaded = readJsonSafe(file);
+  let st = { jobs: {}, ...(loaded && typeof loaded === 'object' ? loaded : {}) };
   for (const j of Object.values(st.jobs)) if (j.state === 'working') j.state = 'queued';          // (stopped half-way)
   const save = () => {
     for (const [k, j] of Object.entries(st.jobs)) if (FINAL.has(j.state) && now() - j.at > KEEP_MS) delete st.jobs[k];
-    fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file);
+    writeJsonAtomic(file, st, { indent: 1, mode: 0o600 });
   };
   const changed = () => { save(); onChange(); };
   const C = () => cfg() || {};
@@ -202,4 +203,4 @@ function createDownloads({ dir, cfg = () => ({}), api, mirror, fulltext, pdfq, f
   return { submit, list, pdf, limits, start, stop, kick, idle: () => !working, TAG };
 }
 
-module.exports = { createDownloads, doisIn, cleanDoi, pdfName, MAX_PER_CALL };
+module.exports = { createDownloads, doisIn, pdfName };

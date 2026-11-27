@@ -215,8 +215,5 @@ function evaluateFableAdvice({ magpieStatus = null, projects = [], todos = [], r
 }
 
 module.exports = {
-  findDevinExpiringWindow,
-  collectHardProblems,
   evaluateFableAdvice,
-  buildAdvisorPrompt,
 };

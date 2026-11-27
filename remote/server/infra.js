@@ -4,117 +4,23 @@
 //     (POST /api/infra/report with Bearer token, plus GET /api/infra/poll long-polling for <1s remote control).
 //   - Event-driven: service/container state changes or node offline transitions record events and trigger Web Push.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const auth = require('./auth');
 const { createCollector, stateSignature } = require('../agent/infra-probe');
-
-const OFFLINE_MS = 5 * 60 * 1000;   // 5 heartbeats (60s * 5) without report -> offline
-const STALL_MS = 45 * 1000;         // event-loop stall threshold (e.g. SQLite backup pause)
-const ALERT_COOLDOWN_MS = 10 * 60e3; // 10 min cooldown per alert key
-const MAX_EVENTS = 80;
-// what remote/deploy/nas/docker-upgrade.sh reports about a container's last one-click upgrade
-const UPGRADE_STATES = ['running', 'latest', 'done', 'failed', 'rolledback'];
-const UPGRADE_EVENTS = {
-  done: ['ok', '已升级'],
-  latest: ['ok', '已是最新版本'],
-  rolledback: ['err', '升级失败，已回退到旧版本'],
-  failed: ['err', '升级失败'],
-};
-
-const DEFAULT_NODES = [
-  {
-    id: 'openwrt',
-    label: 'OpenWrt 软路由',
-    role: 'router',
-    host: '192.168.114.1',
-    tier: 1,
-    watched: ['sing-box', 'singbox-watchdog', 'tailscale', 'dnsmasq'],
-  },
-  {
-    id: 'huatanshaonian',
-    label: '主力工作站 (huatanshaonian)',
-    role: 'workstation',
-    host: 'LAN / Tailscale',
-    tier: 0,
-    watched: [],
-  },
-  {
-    id: 'dell97',
-    label: 'Linux 工作站 (dell97)',
-    role: 'workstation',
-    host: '100.107.95.65',
-    tier: 0,
-    watched: [],
-  },
-  {
-    id: 'nas',
-    label: '群晖 NAS (huatan_balcony)',
-    role: 'nas',
-    host: '192.168.114.6 / 100.65.10.90',
-    tier: 1,
-    watched: ['ame-remote', 'egress-tunnel', 'tailscaled', 'docker:partdb', 'docker:zotero', 'docker:ame-onlyoffice', 'docker:jellyfin'],
-  },
-  {
-    id: 'aws1',
-    label: 'AWS 东京 (aws1)',
-    role: 'cloud',
-    host: '3.114.240.137 / 100.120.53.46',
-    tier: 2,
-    watched: ['danted', 'frps', 'rustdesk-hbbs', 'rustdesk-hbbr', 'nginx', 'tailscaled', 'vnstat'],
-  },
-  {
-    id: 'gcp1',
-    label: 'GCP 节点 (gcp1)',
-    role: 'cloud',
-    host: '136.69.199.90 / 100.104.233.112',
-    tier: 2,
-    watched: ['claude-gcp-proxy', 'danted', 'magpie', 'tailscaled'],
-  },
-];
-
-const DEFAULT_LINKS = [
-  { id: 'l_pc_openwrt', from: 'huatanshaonian', to: 'openwrt', label: 'LAN 网关 / Sing-box', service: 'sing-box', probeHost: '192.168.114.1', probePort: 9090 },
-  { id: 'l_pc_nas', from: 'huatanshaonian', to: 'nas', label: 'LAN 直连 / NAS :445', service: 'ame-remote', probeHost: '192.168.114.6', probePort: 445 },
-  { id: 'l_dell_nas', from: 'dell97', to: 'nas', label: 'Tailscale :8788', service: 'tailscaled', probeHost: '100.65.10.90', probePort: 8788 },
-  { id: 'l_nas_aws_egress', from: 'nas', to: 'aws1', label: 'SSH -D :1058 (egress.sh)', service: 'egress-tunnel', probeHost: '127.0.0.1', probePort: 1057, standby: true },
-  { id: 'l_nas_aws_socks', from: 'nas', to: 'aws1', label: 'Tailscale SOCKS5 :1080', service: 'danted', probeHost: '100.120.53.46', probePort: 1080 },
-  { id: 'l_nas_aws_frp', from: 'nas', to: 'aws1', label: 'FRP 穿透 :7000', service: 'frps', probeHost: '100.120.53.46', probePort: 7000 },
-  { id: 'l_nas_gcp_claude', from: 'nas', to: 'gcp1', label: 'Claude HTTP :18888', service: 'claude-gcp-proxy', probeHost: '100.104.233.112', probePort: 18888 },
-  { id: 'l_nas_gcp_socks', from: 'nas', to: 'gcp1', label: 'Tailscale SOCKS5 :1080', service: 'danted', probeHost: '100.104.233.112', probePort: 1080 },
-  { id: 'l_openwrt_aws', from: 'openwrt', to: 'aws1', label: 'Sing-box / Tailscale', service: 'sing-box', probeHost: '100.120.53.46', probePort: 1080 },
-  { id: 'l_openwrt_gcp', from: 'openwrt', to: 'gcp1', label: 'Tailscale 互联', service: 'tailscale', probeHost: '100.104.233.112', probePort: 1080 },
-];
-
-// Display metadata for discovered services. Probes report raw unit names only; the
-// server owns labels and ports so they can change without redeploying probes.
-const SERVICE_META = {
-  danted: { label: 'Dante SOCKS5 代理 (danted)', port: 1080 },
-  'claude-gcp-proxy': { label: 'Claude HTTP 代理 (tinyproxy)', port: 18888 },
-  frps: { label: 'FRP 穿透服务端 (frps)', port: 7000 },
-  'rustdesk-hbbs': { label: 'RustDesk ID 服务 (hbbs)', port: 21116 },
-  'rustdesk-hbbr': { label: 'RustDesk 中继服务 (hbbr)', port: 21117 },
-  nginx: { label: 'Nginx Web/反代', port: 443 },
-  tailscaled: { label: 'Tailscale 节点服务' },
-  vnstat: { label: 'vnStat 流量统计' },
-  magpie: { label: 'Magpie Web 服务', port: 3430 },
-  'ame-probe': { label: 'AmeTyping 监控探针' },
-  'sing-box': { label: 'Sing-box 代理', port: 9090 },
-  'singbox-watchdog': { label: 'Sing-box 断流自愈守护' },
-  tailscale: { label: 'Tailscale 路由节点' },
-  dnsmasq: { label: 'Dnsmasq (DHCP/DNS)', port: 53 },
-  odhcpd: { label: 'odhcpd (DHCPv6/RA)' },
-  uhttpd: { label: 'LuCI 管理界面 (uhttpd)', port: 443 },
-  dropbear: { label: 'Dropbear SSH', port: 22 },
-  wpad: { label: 'Wi-Fi (hostapd)' },
-  firewall: { label: '防火墙 (fw4)' },
-  'adblock-fast': { label: '广告拦截 (adblock-fast)' },
-  sysntpd: { label: 'NTP 时间同步' },
-  cron: { label: '计划任务 (cron)' },
-};
-
-const str = (v, n = 80) => String(v == null ? '' : v).trim().slice(0, n);
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
+const {
+  OFFLINE_MS,
+  STALL_MS,
+  ALERT_COOLDOWN_MS,
+  MAX_EVENTS,
+  UPGRADE_EVENTS,
+  DEFAULT_NODES,
+  DEFAULT_LINKS,
+  SERVICE_META,
+  str,
+  sanitizeReport,
+} = require('./infra-model');
 
 function createInfra({
   dataDir,
@@ -129,21 +35,23 @@ function createInfra({
   offlineMs = OFFLINE_MS,
 } = {}) {
   const file = path.join(dataDir, 'infra.json');
-  let cfg = { nodes: DEFAULT_NODES.map((n) => ({ ...n, watched: [...n.watched], muted: [] })), links: DEFAULT_NODES ? DEFAULT_LINKS.map((l) => ({ ...l })) : [], events: [] };
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (raw && Array.isArray(raw.nodes) && Array.isArray(raw.links)) {
-      cfg = {
-        nodes: raw.nodes.map((n) => ({
-          ...n,
-          watched: Array.isArray(n.watched) ? n.watched : [],
-          muted: Array.isArray(n.muted) ? n.muted : [],
-        })),
-        links: raw.links,
-        events: Array.isArray(raw.events) ? raw.events.slice(-MAX_EVENTS) : [],
-      };
-    }
-  } catch {}
+  let cfg = {
+    nodes: DEFAULT_NODES.map((n) => ({ ...n, watched: [...n.watched], muted: [] })),
+    links: DEFAULT_LINKS.map((l) => ({ ...l })),
+    events: [],
+  };
+  const raw = readJsonSafe(file);
+  if (raw && Array.isArray(raw.nodes) && Array.isArray(raw.links)) {
+    cfg = {
+      nodes: raw.nodes.map((n) => ({
+        ...n,
+        watched: Array.isArray(n.watched) ? n.watched : [],
+        muted: Array.isArray(n.muted) ? n.muted : [],
+      })),
+      links: raw.links,
+      events: Array.isArray(raw.events) ? raw.events.slice(-MAX_EVENTS) : [],
+    };
+  }
   // The OpenWrt probe now reports procd service names; its init service is "tailscale".
   let migrated = false;
   for (const n of cfg.nodes) {
@@ -160,9 +68,7 @@ function createInfra({
 
   function save() {
     try {
-      fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(file + '.tmp', JSON.stringify(cfg, null, 2), { mode: 0o600 });
-      fs.renameSync(file + '.tmp', file);
+      writeJsonAtomic(file, cfg, { indent: 2, mode: 0o600 });
     } catch {}
   }
   if (migrated) save();
@@ -170,7 +76,7 @@ function createInfra({
   // Runtime state per node id
   const runtime = new Map();       // nodeId -> { lastSeen, report, sig, online }
   const alertCooldown = new Map(); // key -> timestamp
-  const longPolls = new Map();     // nodeId -> Set<{ res, timer }>
+  const longPolls = new Map();     // nodeId -> Set<{ send, timer }>
   const pendingCtl = new Map();    // rid -> { resolve, timer, nodeId }
   const queuedActions = new Map(); // nodeId -> Array<action>
   let fastUntil = 0;               // timestamp until which fast 10s interval is active
@@ -229,99 +135,6 @@ function createInfra({
     return ev;
   }
 
-  function sanitizeReport(d) {
-    if (!d || typeof d !== 'object') return {};
-    const services = Array.isArray(d.services) ? d.services.slice(0, 60).map((s) => {
-      const name = str(s && s.name, 64);
-      const meta = Object.prototype.hasOwnProperty.call(SERVICE_META, name) ? SERVICE_META[name] : null;
-      const rawLabel = str(s && s.label, 80);
-      return {
-        name,
-        label: (rawLabel && rawLabel !== name) ? rawLabel : ((meta && meta.label) || name),
-        state: ['running', 'stopped', 'degraded'].includes(s && s.state) ? s.state : 'stopped',
-        kind: str((s && s.kind) || 'service', 20),
-        port: +(s && s.port) || (meta && meta.port) || undefined,
-        detail: s && s.detail ? str(s.detail, 120) : undefined,
-      };
-    }).filter((s) => s.name) : [];
-
-    const containers = Array.isArray(d.containers) ? d.containers.slice(0, 50).map((c) => ({
-      name: str(c && c.name, 64),
-      state: (c && c.state) === 'running' ? 'running' : 'stopped',
-      status: str(c && c.status, 80),
-      ports: str(c && c.ports, 120),
-      image: str(c && c.image, 80),
-      compose: c && c.compose ? str(c.compose, 64) : undefined,
-      upgrade: c && c.upgrade && typeof c.upgrade === 'object' && UPGRADE_STATES.includes(c.upgrade.state) ? {
-        state: c.upgrade.state,
-        msg: str(c.upgrade.msg, 300),
-        from: str(c.upgrade.from, 20),
-        to: str(c.upgrade.to, 20),
-        at: Math.max(0, +c.upgrade.at || 0),
-      } : undefined,
-    })).filter((c) => c.name) : [];
-
-    const gpus = Array.isArray(d.gpus) ? d.gpus.slice(0, 8).map((g) => ({
-      name: str(g && g.name, 60),
-      utilPct: Math.max(0, Math.min(100, +(g && g.utilPct) || 0)),
-      memUsedMb: Math.max(0, +(g && g.memUsedMb) || 0),
-      memTotalMb: Math.max(0, +(g && g.memTotalMb) || 0),
-      tempC: Math.max(0, +(g && g.tempC) || 0),
-    })) : [];
-
-    const links = {};
-    if (d.links && typeof d.links === 'object') {
-      for (const [k, v] of Object.entries(d.links)) {
-        if (!v || typeof v !== 'object') continue;
-        links[str(k, 40)] = { ok: !!v.ok, ms: v.ok && Number.isFinite(+v.ms) ? Math.round(+v.ms) : null, err: str(v.err, 40) };
-      }
-    }
-
-    const mem = d.mem && typeof d.mem === 'object' ? {
-      totalMb: Math.max(0, +d.mem.totalMb || 0),
-      usedMb: Math.max(0, +d.mem.usedMb || 0),
-      pct: Math.max(0, Math.min(100, +d.mem.pct || 0)),
-    } : null;
-
-    const disk = d.disk && typeof d.disk === 'object' ? {
-      totalGb: Math.max(0, +d.disk.totalGb || 0),
-      usedGb: Math.max(0, +d.disk.usedGb || 0),
-      pct: Math.max(0, Math.min(100, +d.disk.pct || 0)),
-      mount: str(d.disk.mount || '/', 30),
-    } : null;
-
-    const netStat = d.net && typeof d.net === 'object' ? {
-      rxBytes: Math.max(0, +d.net.rxBytes || 0),
-      txBytes: Math.max(0, +d.net.txBytes || 0),
-      rxKbps: Math.max(0, +d.net.rxKbps || 0),
-      txKbps: Math.max(0, +d.net.txKbps || 0),
-      monthRxGb: d.net.monthRxGb != null ? Math.round(+d.net.monthRxGb * 100) / 100 : undefined,
-      monthTxGb: d.net.monthTxGb != null ? Math.round(+d.net.monthTxGb * 100) / 100 : undefined,
-    } : null;
-
-    const proxy = d.proxy && typeof d.proxy === 'object' ? {
-      active: str(d.proxy.active, 60),
-      group: str(d.proxy.group, 40),
-      delayMs: Number.isFinite(+d.proxy.delayMs) ? Math.round(+d.proxy.delayMs) : null,
-      watchdogDupes: Number.isFinite(+d.proxy.watchdogDupes) ? +d.proxy.watchdogDupes : undefined,
-    } : null;
-
-    return {
-      ts: Date.now(),
-      uptimeSec: Math.max(0, +d.uptimeSec || 0),
-      load1: Math.max(0, Math.round((+d.load1 || 0) * 100) / 100),
-      cpuPct: Math.max(0, Math.min(100, Math.round(+d.cpuPct || 0))),
-      mem,
-      disk,
-      net: netStat,
-      gpus,
-      services,
-      containers,
-      links,
-      proxy,
-    };
-  }
-
   function probeTargetsFor(nodeId) {
     return cfg.links
       .filter((l) => l.from === nodeId && l.probeHost && l.probePort)
@@ -345,8 +158,8 @@ function createInfra({
           cntMap.set(cname, item);
         }
       } else if (w && !svcMap.has(w)) {
-        const meta = Object.prototype.hasOwnProperty.call(SERVICE_META, w) ? SERVICE_META[w] : null;
-        const item = { name: w, label: (meta && meta.label) || w, state: 'stopped', kind: 'service', port: (meta && meta.port) || undefined };
+        const svcMeta = Object.prototype.hasOwnProperty.call(SERVICE_META, w) ? SERVICE_META[w] : null;
+        const item = { name: w, label: (svcMeta && svcMeta.label) || w, state: 'stopped', kind: 'service', port: (svcMeta && svcMeta.port) || undefined };
         rep.services.push(item);
         svcMap.set(w, item);
       }
@@ -389,7 +202,6 @@ function createInfra({
           }
         }
       }
-      // a one-click upgrade that finished since the last report
       const prevUp = new Map((prevRep.containers || []).map((c) => [c.name, c.upgrade]));
       for (const c of rep.containers) {
         const u = c.upgrade, p = prevUp.get(c.name);
@@ -491,10 +303,8 @@ function createInfra({
     collectNasNow().then(scheduleNasLoop);
   }
 
-  // Compute full view for the browser
   function snapshot() {
-    // Also auto-register any machine in machines map that isn't in cfg.nodes yet
-    for (const [name, m] of machines.entries()) {
+    for (const [name] of machines.entries()) {
       if (!cfg.nodes.some((n) => n.id === name)) {
         ensureNode(name, { label: name, role: 'workstation', tier: 0 });
       }
@@ -519,7 +329,6 @@ function createInfra({
         muted: mutedSet.has('docker:' + c.name),
       }));
 
-      // Count alerts on this node (muted items are intentionally stopped and do not count as alerts)
       let alertCount = 0;
       if (!online && rt && rt.lastSeen > 0) alertCount++;
       for (const s of services) if (s.watched && !s.muted && s.state !== 'running') alertCount++;
@@ -555,16 +364,13 @@ function createInfra({
       const toNode = nodeById.get(l.to);
       const fromRt = runtime.get(l.from);
       const probe = fromRt && fromRt.report && fromRt.report.links ? fromRt.report.links[l.id] : null;
-      // Also check nas local probe if from !== nas
       const nasRt = runtime.get('nas');
       const nasProbe = nasRt && nasRt.report && nasRt.report.links ? nasRt.report.links[l.id] : null;
       const effProbe = probe || nasProbe || null;
 
-      // Determine link status: 'ok' | 'standby' | 'down' | 'unknown'
       let status = 'unknown';
       const ms = effProbe && effProbe.ok ? effProbe.ms : null;
 
-      // Check associated service on target or source
       let svcOk = true;
       if (l.service) {
         const targetSvcs = [...((toNode && toNode.services) || []), ...((fromNode && fromNode.services) || [])];
@@ -600,7 +406,6 @@ function createInfra({
     };
   }
 
-  // Deliver a control action to a node (NAS local, WebSocket agent, or HTTP long-poll probe)
   function dispatchControl(nodeId, action) {
     if (!control) return Promise.resolve({ ok: false, msg: '服务器关闭了远程控制' });
     if (nodeId === 'nas' && nasCollector) {
@@ -613,7 +418,6 @@ function createInfra({
     const rid = 'ic_' + crypto.randomBytes(8).toString('hex');
     const payload = { ...action, rid };
 
-    // 1. Check if node has an active WebSocket in machines
     const m = machines.get(nodeId);
     const sock = m && m.sockets && [...m.sockets].reverse().find((s) => s.readyState === 1);
     if (sock) {
@@ -622,13 +426,13 @@ function createInfra({
           pendingCtl.delete(rid);
           resolve({ ok: false, msg: '节点响应超时' });
         }, 18000);
+        if (timer.unref) timer.unref();
         pendingCtl.set(rid, { resolve, timer, nodeId });
         try { sock.send(JSON.stringify({ t: 'infra-ctl', ...payload })); }
         catch { clearTimeout(timer); pendingCtl.delete(rid); resolve({ ok: false, msg: '发送控制指令失败' }); }
       });
     }
 
-    // 2. Check if node has an active HTTP long-poll waiting in longPolls
     const polls = longPolls.get(nodeId);
     if (polls && polls.size > 0) {
       return new Promise((resolve) => {
@@ -636,6 +440,7 @@ function createInfra({
           pendingCtl.delete(rid);
           resolve({ ok: false, msg: '探针执行响应超时' });
         }, 20000);
+        if (timer.unref) timer.unref();
         pendingCtl.set(rid, { resolve, timer, nodeId });
         const waiter = [...polls][0];
         polls.delete(waiter);
@@ -644,13 +449,13 @@ function createInfra({
       });
     }
 
-    // 3. Queue for next heartbeat if node is online
     if (isNodeOnline(nodeId)) {
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
           pendingCtl.delete(rid);
           resolve({ ok: true, msg: '指令已加入队列，将在节点下次心跳时执行' });
         }, 15000);
+        if (timer.unref) timer.unref();
         pendingCtl.set(rid, { resolve, timer, nodeId });
         if (!queuedActions.has(nodeId)) queuedActions.set(nodeId, []);
         queuedActions.get(nodeId).push(payload);
@@ -671,7 +476,6 @@ function createInfra({
     return true;
   }
 
-  // Wake all active long-polls and WS agents when fast mode is turned on or refresh is requested
   function wakeAllProbes(forceCollect = false) {
     if (forceCollect && nasCollector) collectNasNow();
     for (const [nodeId, polls] of longPolls.entries()) {
@@ -704,7 +508,6 @@ function createInfra({
     }
   }
 
-  // Authenticate Bearer token for public probe endpoints (/api/infra/report, /api/infra/poll, /api/infra/control-result)
   function authProbe(req, url) {
     const hdr = String(req.headers['authorization'] || '');
     const tok = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : (url.searchParams.get('token') || '').trim();
@@ -713,7 +516,6 @@ function createInfra({
     return auth.matchAgent(agents, tok);
   }
 
-  // Handle public probe HTTP requests (no browser cookie required; uses agent Bearer token)
   async function handleProbe(req, res, url, ip, json, readBody) {
     const p = url.pathname;
     if (p !== '/api/infra/report' && p !== '/api/infra/poll' && p !== '/api/infra/control-result') return false;
@@ -778,6 +580,7 @@ function createInfra({
           } catch {}
         }, 25000),
       };
+      if (waiter.timer.unref) waiter.timer.unref();
       polls.add(waiter);
       req.on('close', () => {
         if (polls.has(waiter)) {
@@ -791,7 +594,6 @@ function createInfra({
     return false;
   }
 
-  // Handle browser HTTP requests (requires logged-in session; control requires fresh TOTP)
   async function handleBrowser(req, res, url, ip, json, readBody, isFresh) {
     const p = url.pathname;
     if (!p.startsWith('/api/infra/')) return false;
@@ -828,7 +630,7 @@ function createInfra({
 
     if (p === '/api/infra/pin') {
       const nodeId = str(d.nodeId, 40);
-      const item = str(d.item, 80); // e.g. 'danted' or 'docker:partdb'
+      const item = str(d.item, 80);
       const node = cfg.nodes.find((n) => n.id === nodeId);
       if (!node || !item) { json(res, 200, { ok: false, msg: '节点或服务名无效' }); return true; }
       if (!Array.isArray(node.watched)) node.watched = [];
@@ -921,9 +723,9 @@ function createInfra({
         return true;
       }
       const nodeId = str(d.nodeId, 40);
-      const kind = str(d.kind, 20); // 'service' | 'docker' | 'egress' | 'singbox'
+      const kind = str(d.kind, 20);
       const target = str(d.target, 64);
-      const op = str(d.op, 20);     // 'restart' | 'start' | 'stop' | 'retest' | 'upgrade' (docker only)
+      const op = str(d.op, 20);
       if (!nodeId || !['service', 'docker', 'egress', 'singbox'].includes(kind) || !['restart', 'start', 'stop', 'retest', 'upgrade'].includes(op) || (op === 'upgrade' && kind !== 'docker')) {
         json(res, 200, { ok: false, msg: '无效的控制参数' });
         return true;
@@ -940,7 +742,6 @@ function createInfra({
     return false;
   }
 
-  // Handle messages arriving from an agent.js WebSocket
   function fromAgentMessage(machineName, d) {
     if (!d || typeof d !== 'object') return false;
     if (d.t === 'infra' && d.report) {
@@ -956,6 +757,12 @@ function createInfra({
   function close() {
     clearInterval(sweepTimer);
     clearTimeout(nasLoopTimer);
+    for (const polls of longPolls.values()) {
+      for (const w of polls) clearTimeout(w.timer);
+    }
+    longPolls.clear();
+    for (const p of pendingCtl.values()) clearTimeout(p.timer);
+    pendingCtl.clear();
   }
 
   return {

@@ -42,4 +42,4 @@ function condMaker(db, table, vocab) {
   return cond;
 }
 
-module.exports = { seg, condMaker, CJK_RUN };
+module.exports = { seg, condMaker };

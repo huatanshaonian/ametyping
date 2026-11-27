@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic, writeFileAtomic } = require('./lib/json-store');
 
 const TIMEOUT_MS = 120e3;
 
@@ -15,10 +16,11 @@ function createArtifacts({ dir, machines, log = () => {} }) {
   const filesDir = path.join(dir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   const indexFile = path.join(dir, 'index.json');
-  let index = []; try { index = JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch {}
+  let index = readJsonSafe(indexFile, []);
+  if (!Array.isArray(index)) index = [];
   const pending = new Map();                          // rid -> { machine, resolve, timer, results, want: Map sha -> [base64] }
 
-  const saveIndex = () => { fs.writeFileSync(indexFile + '.tmp', JSON.stringify(index), { mode: 0o600 }); fs.renameSync(indexFile + '.tmp', indexFile); };
+  const saveIndex = () => writeJsonAtomic(indexFile, index, { mode: 0o600 });
   const has = (sha) => /^[0-9a-f]{64}$/.test(sha) && fs.existsSync(path.join(filesDir, sha));
 
   // ask a machine about files its sessions wrote: [{ id, path }] -> [{ id, path, ok, exists, size, mtime, repo, sha, backed }]
@@ -61,7 +63,7 @@ function createArtifacts({ dir, machines, log = () => {} }) {
       else if (d.last) {
         const buf = Buffer.concat(parts.map((s) => Buffer.from(s, 'base64')));
         p.want.delete(d.sha);
-        if (crypto.createHash('sha256').update(buf).digest('hex') === d.sha) fs.writeFileSync(path.join(filesDir, d.sha), buf, { mode: 0o600 });
+        if (crypto.createHash('sha256').update(buf).digest('hex') === d.sha) writeFileAtomic(path.join(filesDir, d.sha), buf, { mode: 0o600 });
         else log(`产出物副本校验失败：${m.name} ${d.sha.slice(0, 12)}`);
       }
       if (!p.want.size && p.results) finish(d.rid);

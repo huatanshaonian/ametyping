@@ -16,9 +16,10 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const auth = require('./auth');
+const { readBody: readUtf8Body } = require('./lib/http-util');
+const { VIA, str, resumeCmd, agentRows, createSessionControl } = require('./session-control');
 const { createStore, cleanModel, cleanAi } = require('./store');
 const { createWalls } = require('./walls');
 const { createFsRelay } = require('./fs-relay');
@@ -124,76 +125,28 @@ function send(res, code, body, type = 'text/plain; charset=utf-8', extra) {
   res.end(body);
 }
 function json(res, code, obj) { send(res, code, JSON.stringify(obj), 'application/json; charset=utf-8'); }
-function readBody(req, cap = 4096) {
-  return new Promise((resolve) => {
-    let b = ''; req.on('data', (c) => { b += c; if (b.length > cap) req.destroy(); });
-    req.on('end', () => resolve(b)); req.on('error', () => resolve(''));
-  });
-}
+const readBody = (req, cap = 4096) => readUtf8Body(req, cap);
 
 // ---------- the live picture (in memory only) ----------
 // machines: agentName -> { name, online, since, control, sessions: Map(id -> session), sockets:Set }
 // a session: { id, machine, label, project, state, steps, t0, last, lines[], msgs[], via, perms[] }
 const machines = new Map();
-function machine(name) {
-  let m = machines.get(name);
-  if (!m) { m = { name, online: false, since: 0, sessions: new Map() }; machines.set(name, m); }
-  return m;
-}
-function updateMachineCapabilities(m) {
-  const sockets = [...(m.sockets || [])].filter(s => s.readyState === 1);
-  m.control = sockets.some(s => s.remoteControlAllowed === true);
-  m.files = sockets.some(s => s.filesAllowed === true);
-  m.upload = sockets.some(s => s.filesAllowed === true && s.uploadAllowed === true);
-}
-// how to continue a session on its machine (Windows paths get PowerShell syntax)
-// (Codex sessions, "codex:<id>", continue with `codex resume`; OpenCode's, "opencode:<id>", with `opencode -s <id>`)
-function resumeCmd(cwd, id, api = '') {
-  const claude = /^[A-Za-z0-9._-]{1,40}$/.test(String(api || '')) ? `claude-${api}` : 'claude';
-  const cmd = id.startsWith('codex:') ? `codex resume ${id.slice(6)}`
-    : id.startsWith('opencode:') ? `opencode -s ${id.slice(9)}`
-    : id.startsWith('agy:') ? `agy --conversation ${id.slice(4)}`
-    : id.startsWith('kiro:') ? `kiro-cli chat --resume-id ${id.slice(5)}`
-    : `${claude} --resume ${id}`;
-  if (!cwd) return cmd;
-  const q = `'${cwd.replace(/'/g, "''")}'`;
-  return /^[A-Za-z]:[\\/]/.test(cwd) ? `cd ${q}; ${cmd}` : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${cmd}`;
-}
-// subagents of a session as an agent reports them: only these fields, bounded
-const AGENT_STATES = ['run', 'done', 'stop'];
-function agentRows(a) {
-  if (!Array.isArray(a)) return [];
-  return a.filter((x) => x && typeof x.id === 'string' && AGENT_STATES.includes(x.state)).slice(0, 12).map((x) => ({
-    id: str(x.id, 64), type: str(x.type, 40), name: x.name ? str(x.name, 40) : undefined, desc: str(x.desc, 120), bg: x.bg === true || undefined,
-    state: x.state, act: x.act ? str(x.act, 120) : undefined, t0: +x.t0 || 0, last: +x.last || 0, end: +x.end || undefined }));
-}
-// what the browser gets: no pids -- what to display, plus the working directory in the resume command.
-// Every session ever stored is listed (newest activity first); the ones the agent no longer reports are 'history'.
-function snapshot() {
-  const stored = store.sessions();
-  const names = new Set([...machines.keys(), ...Object.keys(stored)]);
-  const out = [];
-  for (const name of names) {
-    const m = machines.get(name) || { name, online: false, since: 0, sessions: new Map() };
-    const ctl = CONTROL && m.online && !!m.control;
-    const saved = new Map((stored[name] || []).map((e) => [e.id, e]));
-    const list = [...m.sessions.values()].map((s) => {
-      const e = saved.get(s.id);
-      return { id: s.id, label: s.label, project: s.project, state: s.state, steps: s.steps, t0: s.t0, last: Math.max(s.last, e ? e.last : 0),
-        lines: s.lines.slice(-8), bg: s.bg || undefined, via: ctl ? s.via : 'off', perms: ctl ? s.perms : [], resume: resumeCmd(e && e.cwd, s.id, s.api || (e && e.api)), api: s.api || (e && e.api) || '', cwd: (e && e.cwd) || undefined, mode: e ? e.mode : '', ctx: e ? e.ctx : null,
-        model: s.model || (e && e.model) || undefined, ai: s.ai || (e && e.ai) || undefined,
-        agents: s.agents && s.agents.length ? s.agents : undefined };
-    });
-    for (const e of saved.values()) {
-      if (m.sessions.has(e.id)) continue;
-      list.push({ id: e.id, label: e.title || e.project || (e.id.startsWith('codex:') ? 'Codex' : e.id.startsWith('opencode:') ? 'OpenCode' : e.id.startsWith('agy:') ? 'Antigravity' : e.id.startsWith('kiro:') ? 'Kiro' : 'Claude'), project: e.project, state: 'history', steps: 0, t0: e.first, last: e.last,
-        lines: [], via: 'off', perms: [], resume: resumeCmd(e.cwd, e.id, e.api), api: e.api || '', cwd: e.cwd || undefined, mode: e.mode, ctx: e.ctx, parked: (m.parked && m.parked.has(e.id)) || undefined,
-        model: e.model || undefined, ai: e.ai || undefined });
-    }
-    out.push({ machine: name, online: m.online, since: m.since, control: ctl, files: m.online && !!m.files, upload: m.online && !!m.files && !!m.upload, sessions: list.sort((a, b) => b.last - a.last) });
-  }
-  return out.sort((a, b) => a.machine.localeCompare(b.machine));
-}
+const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
+const {
+  machine,
+  updateMachineCapabilities,
+  snapshot,
+  finishAction,
+  onBrowserAction,
+  dropClientPending,
+} = createSessionControl({
+  control: CONTROL,
+  machines,
+  store,
+  auth,
+  audit: (...a) => audit(...a),
+  machineProfiles: (m) => machineProfiles(m),
+});
 
 // ---------- browser websocket clients ----------
 const clients = new Set();       // { ws, sub:(machine|null,id|null) }
@@ -207,7 +160,6 @@ function broadcastSoon() {
   if (listTimer) return;
   listTimer = setTimeout(() => { listTimer = null; broadcast({ t: 'sessions', data: snapshot() }); }, 2000);
 }
-const store = createStore(path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'));
 // mesh is created further down; the memory service only reads its workspaces after startup.
 let embed = null;
 const knowledge = createVaultService({dir:path.resolve(path.dirname(CONFIG),cfg.dataDir||'data'),machines,control:CONTROL,
@@ -401,7 +353,7 @@ if (cfg.backup && cfg.backup.dir) {
   createBackup({ serverDir: path.dirname(CONFIG), dataDir: path.resolve(path.dirname(CONFIG), cfg.dataDir || 'data'), ...cfg.backup,
     before: () => knowledge.vault.snapshot(snapFile), after: cleanSnap, log: console.log });
 }
-function flushAndExit() { try { magpie.stop(); fleet.close(); infra.close(); research.close();hostKnowledge&&hostKnowledge.stop();embed&&embed.close();store.flush(); knowledge.close(); } catch {} process.exit(0); }
+function flushAndExit() { try { mesh.watchdog.stop(); magpie.stop(); fleet.close(); infra.close(); research.close(); hostKnowledge && hostKnowledge.stop(); embed && embed.close(); store.flush(); knowledge.close(); } catch {} process.exit(0); }
 process.on('SIGTERM', flushAndExit);
 process.on('SIGINT', flushAndExit);
 
@@ -420,8 +372,6 @@ function pushConvTo(c) {
 // conv   {id, msgs:[{role,text,items,t}]}                            a session's conversation (tail)
 // result {rid, ok, msg}                                              outcome of a send / decide
 // btw    {id, k, q, at, a?, ta?}                                    a /btw question / its answer read off the screen
-const VIA = ['terminal', 'resume', 'busy', 'none', 'unknown', 'codex', 'off'];
-const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 function onAgentMessage(m, raw, ws) {
   let d; try { d = JSON.parse(raw); } catch { return; }
   if (infra.fromAgentMessage(m.name, d)) return;
@@ -568,117 +518,9 @@ function onAgentMessage(m, raw, ws) {
   }
 }
 
-// ---------- browser -> machine actions ----------
-// A browser action gets a server-side rid; the agent's `result` is routed back to that browser only.
-const pending = new Map();         // rid -> { c, crid, machine, timer }
-const ACTION_MAX = 60, ACTION_WIN = 60e3;
-// Claude Code permission modes (app/permission-mode.js): a Shift+Tab's result carries the one it switched to
-const MODES = new Set(['auto', 'manual', 'acceptEdits', 'plan', 'bypassPermissions']);
-// screen: the terminal's visible text, when the action asked for it (终端画面)
-function finishAction(rid, machineName, ok, msg, mode, screen) {
-  const p = pending.get(rid);
-  if (!p || p.machine !== machineName) return;
-  pending.delete(rid); clearTimeout(p.timer);
-  try { p.c.ws.send(JSON.stringify({ t: 'result', rid: p.crid, ok, msg, mode: MODES.has(mode) ? mode : undefined, screen })); } catch {}
-}
-function onBrowserAction(c, d) {
-  const reply = (ok, msg, need) => { try { c.ws.send(JSON.stringify({ t: 'result', rid: d.rid, ok, msg, need })); } catch {} };
-  if (!CONTROL) return reply(false, '服务器关闭了远程控制');
-  const now = Date.now();
-  c.acts = (c.acts || []).filter((t) => now - t < ACTION_WIN);
-  if (c.acts.length >= ACTION_MAX) return reply(false, '操作太频繁，稍后再试');
-  c.acts.push(now);
-  const m = typeof d.machine === 'string' && machines.get(d.machine);
-  const s = m && typeof d.id === 'string' && m.sessions.get(d.id);
-  if (!m || !m.online || !m.sockets || !m.sockets.size) return reply(false, '这台机器不在线');
-  if (!m.control) return reply(false, '这台机器没开远程控制');
-  if (!s && d.t !== 'launch' && d.t !== 'resume') return reply(false, '这个会话已经不在了');
-  if (d.t === 'launch' && !m.files) return reply(false, '这台电脑没开放文件浏览，没法选文件夹启动');
-  const sess = auth.checkSession(c.sid);
-  if (!auth.isFresh(sess)) { c.acts.pop(); return reply(false, '操作前请再输一次验证码', 'totp'); }
-  let out;
-  // the alias a new launch (or a resumed one) runs with: the one asked for, the session's own, or this machine's default
-  const resolveApi = (id) => {
-    return id && machineProfiles(m).aliases.some(p => p.id === id) ? { id, local: true } : null;
-  };
-  if (d.t === 'resume') {
-    // a conversation that is over, opened again on its machine: a terminal in the folder it ran in, `claude --resume`
-    // or, a Codex thread ("codex:<id>"), `codex resume`
-    // (the agent finds the folder in the conversation's own transcript there; nothing about it comes from the page)
-    const id = typeof d.id === 'string' ? d.id : '';
-    const opencodeId = /^opencode:ses_[A-Za-z0-9]{6,80}$/.test(id);
-    if (!opencodeId && !/^(codex:|agy:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return reply(false, '无效请求');
-    if (s && s.via === 'terminal') return reply(false, '这个会话还开着，直接在这里回复就行');
-    const saved = store.sessions()[m.name] || [];
-    if (!s && !saved.some((e) => e.id === id)) return reply(false, '这台电脑没有这个会话');
-    if (id.startsWith('codex:') || id.startsWith('agy:') || opencodeId) {
-      out = { t: 'resume', id };
-      audit('control-resume', c.ip, m.name, id);
-    } else {
-      // the resume selector may name the alias for this one continuation; otherwise the session's own, never the
-      // machine default. '__none__' means the machine's original settings (no alias).
-      const explicit = d.api === '__none__' ? 'none' : (typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '');
-      const stored = saved.find((e) => e.id === id);
-      const wanted = explicit === 'none' ? '' : explicit || (s && s.api) || (stored && stored.api) || '';
-      let api = null;
-      if (wanted) {
-        api = resolveApi(wanted);
-        if (!api) {
-          return reply(false, `API 别名「${wanted}」现在不可用；请换一个别名，或恢复它后再试。`);
-        }
-      }
-      out = { t: 'resume', id, api: api || undefined };
-      audit('control-resume', c.ip, m.name, id, explicit === 'none' ? 'none' : api ? api.id : '');
-    }
-  } else if (d.t === 'launch') {
-    // a new Claude Code (or Codex: tool) session in a folder of that machine (the agent checks it is a folder it lets you browse)
-    const cwd = typeof d.cwd === 'string' ? d.cwd : '', prompt = typeof d.prompt === 'string' ? d.prompt : '';
-    if (!cwd || cwd.length > 1000 || prompt.length > 8000) return reply(false, '无效请求');
-    const tool = ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude';
-    const requested = typeof d.api === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(d.api) ? d.api : '';
-    const api = tool === 'claude' ? resolveApi(requested) : null;
-    if (requested && tool === 'claude' && !api) return reply(false, '这台电脑没有这个本地启动入口，请刷新或配置后再试');
-    out = { t: 'launch', cwd, prompt, tool, api: api || undefined };
-    audit('control-launch', c.ip, m.name, JSON.stringify(cwd).slice(0, 300), `prompt=${prompt.length}`, tool, api ? api.id : '');
-  } else if (d.t === 'send') {
-    const text = typeof d.text === 'string' ? d.text : '';
-    if (!text.trim() || text.length > 8000) return reply(false, '内容为空或太长（最多 8000 字）');
-    out = { t: 'send', id: s.id, text };
-    audit('control-send', c.ip, m.name, s.id, `len=${text.length}`);
-  } else if (d.t === 'key') {
-    // a key by name, Ctrl+letter (not C / D / Z: they interrupt or end the session), or "c:" and text typed as it is,
-    // without Enter (a menu's search box, a path, the letter a menu takes)
-    if (typeof d.key !== 'string' || !/^(up|down|left|right|enter|esc|tab|btab|bksp|ctrlxs|ctrl[abe-y]|btwfork|c:[^\x00-\x1f\x7f]{1,200})$/.test(d.key)) return reply(false, '不支持的按键');
-    out = { t: 'key', id: s.id, key: d.key, screen: d.screen === true, hl: d.hl === true };
-    audit('control-key', c.ip, m.name, s.id, d.key.length > 3 && d.key.startsWith('c:') ? `c:(len=${d.key.length - 2})` : d.key);
-  } else if (d.t === 'screen') {
-    // what that session's terminal shows now (Claude Code's own menus are only there); asked for, never polled
-    // (hl: with what is highlighted there marked -- a menu's current tab; see app/screen-text.js)
-    out = { t: 'screen', id: s.id, hl: d.hl === true };
-    audit('control-screen', c.ip, m.name, s.id);
-  } else {
-    if (typeof d.perm !== 'string' || !['allow', 'always', 'deny', 'defer', 'answer', 'chat'].includes(d.choice)) return reply(false, '无效请求');
-    if (!s.perms.some((p) => p.id === d.perm)) return reply(false, '这个确认已经结束了');
-    out = { t: 'decide', id: s.id, perm: d.perm, choice: d.choice };
-    // Claude's questions answered on the card: { question: answer } (the pet checks them against what was asked)
-    if (d.choice === 'answer') {
-      const a = d.answers, ks = a && typeof a === 'object' && !Array.isArray(a) ? Object.keys(a) : [];
-      if (!ks.length || ks.length > 8 || !ks.every((k) => k.length <= 2000 && typeof a[k] === 'string' && a[k].length <= 4000)) return reply(false, '无效请求');
-      out.answers = Object.fromEntries(ks.map((k) => [k, a[k]]));
-    }
-    audit('control-decide', c.ip, m.name, s.id, d.choice);
-  }
-  const sock = [...m.sockets].reverse().find(s => s.readyState === 1 && s.remoteControlAllowed === true &&
-    (out.t !== 'launch' || s.filesAllowed === true) && (!out.api || (s.claudeProfilesVersion === 1 && s.claudeProfilesAllowed === true)));
-  if (!sock) return reply(false, '没有支持这次操作的 agent 连接，请更新并重启这台电脑的 agent');
-  const rid = crypto.randomBytes(12).toString('hex');
-  const timer = setTimeout(() => { if (pending.delete(rid)) reply(false, '机器没有回应，结果不确定，请看对话确认'); }, 20000);
-  pending.set(rid, { c, crid: d.rid, machine: m.name, timer });
-  try { sock.send(JSON.stringify({ ...out, rid })); } catch { pending.delete(rid); clearTimeout(timer); reply(false, '发送失败'); }
-}
-
 // ---------- http server ----------
 const server = http.createServer(async (req, res) => {
+  try {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   const ip = clientIp(req);
@@ -834,6 +676,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   return send(res, 404, 'not found');
+  } catch (err) {
+    console.error('HTTP route error:', err && err.message ? err.message : err);
+    if (!res.headersSent) send(res, 500, 'internal error');
+    else res.destroy();
+  }
 });
 
 function serveFile(req, res, name, cache) {
@@ -846,7 +693,7 @@ function serveAsset(res, rel) {
   rel = rel.replace(/\\/g, '/');
   if (!ASSET_OK.test(rel)) return send(res, 404, 'not found');
   const f = path.join(ASSETS, rel);
-  if (!f.startsWith(ASSETS)) return send(res, 404, 'not found');
+  if (!f.startsWith(ASSETS + path.sep)) return send(res, 404, 'not found');
   fs.readFile(f, (e, buf) => e ? send(res, 404, 'not found') : send(res, 200, buf, TYPES[path.extname(f)] || 'application/octet-stream', { 'Cache-Control': 'max-age=86400' }));
 }
 
@@ -968,7 +815,7 @@ wssBrowser.on('connection', (ws, req, sid) => {
   });
   // the login can expire (or be ended elsewhere) while the socket stays open: re-check every minute
   const recheck = setInterval(() => { if (!auth.checkSessionQuiet(c.sid)) { try { ws.close(4401, 'expired'); } catch {} } }, 60e3);
-  const gone = () => { clearInterval(recheck); clients.delete(c); fsRelay.dropClient(c); for (const [rid, p] of pending) if (p.c === c) { clearTimeout(p.timer); pending.delete(rid); } };
+  const gone = () => { clearInterval(recheck); clients.delete(c); fsRelay.dropClient(c); dropClientPending(c); };
   ws.on('close', gone);
   ws.on('error', gone);
 });
@@ -1003,10 +850,16 @@ if (AGENT_SPLIT) {
   const ah = cfg.agent.host || '127.0.0.1';
   if (ah === '0.0.0.0' || ah === '::') console.warn('警告：agent 监听在所有网卡上，建议改成 VPN 地址（如 Tailscale 的 100.x.x.x）');
   const agentServer = http.createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://localhost');
-    if (await infra.handleProbe(req, res, url, clientIp(req), json, readBody)) return;
-    if (await fleet.handleAgent(req, res, url, clientIp(req))) return;
-    res.writeHead(404); res.end();
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      if (await infra.handleProbe(req, res, url, clientIp(req), json, readBody)) return;
+      if (await fleet.handleAgent(req, res, url, clientIp(req))) return;
+      res.writeHead(404); res.end();
+    } catch (err) {
+      console.error('Agent HTTP error:', err && err.message ? err.message : err);
+      if (!res.headersSent) { res.writeHead(500); res.end(); }
+      else res.destroy();
+    }
   });
   agentServer.on('upgrade', (req, socket, head) => {
     if (new URL(req.url, 'http://localhost').pathname === '/agent') return agentUpgrade(req, socket, head);

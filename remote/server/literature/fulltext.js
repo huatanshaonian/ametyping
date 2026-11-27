@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 function pdftotext(bin, buf) {
   return new Promise((resolve, reject) => {
@@ -31,7 +32,8 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
 
   async function fromBuffer(buf, md5) {
     const f = path.join(tdir, md5 + '.json');
-    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+    const cached = readJsonSafe(f);
+    if (cached) return cached;
     if (inflight.has(md5)) return inflight.get(md5);
     const p = (async () => {
       const raw = await pdftotext(bin, buf);
@@ -39,7 +41,7 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
       while (pages.length && !pages[pages.length - 1]) pages.pop();
       const chars = pages.reduce((n, s) => n + s.length, 0);
       const doc = { pages, chars, scanned: pages.length > 0 && chars / pages.length < 200 };
-      fs.writeFileSync(f, JSON.stringify(doc));
+      writeJsonAtomic(f, doc);
       return doc;
     })().finally(() => inflight.delete(md5));
     inflight.set(md5, p);
@@ -91,7 +93,8 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
   async function ocrText(url, cacheKey, what) {
     if (!http) return null;
     const f = path.join(tdir, cacheKey + '.json');
-    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+    const cached = readJsonSafe(f);
+    if (cached) return cached;
     const r = await http.get(url, { timeoutMs: 60e3 });
     if (r.status !== 200) return null;
     const raw = r.body.toString('utf8').replace(/\r/g, '');
@@ -99,7 +102,7 @@ function createFulltext({ dir, mirror, webdav, bin = 'pdftotext', http = null, n
     pages = pages.map((s) => s.replace(/\n{3,}/g, '\n\n').trim()).filter(Boolean);
     if (!pages.length) return null;
     const doc = { pages, chars: pages.reduce((n, s) => n + s.length, 0), scanned: false, ocr: what };
-    fs.writeFileSync(f, JSON.stringify(doc));
+    writeJsonAtomic(f, doc);
     log(`文献：扫描版报告 ${what} 改用现成的 OCR 文本`);
     return doc;
   }

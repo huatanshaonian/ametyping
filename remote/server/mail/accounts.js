@@ -4,9 +4,9 @@
 // pass is the mailbox's 客户端专用密码 (a password for mail clients only, made in the webmail's settings); it never
 // leaves this file (the web API gets the accounts without it).
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const DEF = { imap: { host: 'mail.cstnet.cn', port: 993 }, smtp: { host: 'mail.cstnet.cn', port: 465 } };
 const ADDRESS = /^[^\s@<>"]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}$/;
@@ -16,8 +16,9 @@ const MAX = 10;
 function createAccounts({ dataDir }) {
   const file = path.join(dataDir, 'mail.json');
   let st = { accounts: [], state: {} };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st, null, 1), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st, { indent: 1, mode: 0o600 });
 
   const pub = (a) => ({ id: a.id, address: a.address, name: a.name, imap: a.imap, smtp: a.smtp, signature: a.signature || '', added: a.added });
   const list = () => st.accounts.map(pub);
@@ -79,4 +80,4 @@ function createAccounts({ dataDir }) {
   return { list, get, all, add, update, remove, state, setState, DEF };
 }
 
-module.exports = { createAccounts, DEF };
+module.exports = { createAccounts };

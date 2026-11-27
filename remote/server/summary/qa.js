@@ -109,4 +109,4 @@ function createQA({ search, reports, notes = null, mail = () => null, ask, log =
   return { start, state };
 }
 
-module.exports = { createQA, TERMS_SCHEMA, ANSWER_SCHEMA };
+module.exports = { createQA };

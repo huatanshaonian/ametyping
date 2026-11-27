@@ -261,3 +261,19 @@ test('agent writes every directory and expanded worktree, excludes generated fil
     for(const d of [repo,wt,plain])assert.equal(fs.readFileSync(path.join(d,'AGENTS.md'),'utf8'),'');
   }finally{fs.rmSync(home,{recursive:true,force:true});}
 });
+
+test('memory observe accepts kiro provider alongside claude, codex, opencode, and agy',()=>{
+  const dir=temp(),v=openVault(dir),m=createMemory(v);
+  try{
+    m.observe('win',{items:[{
+      path:'C:/Users/TOP/.kiro/steering/AGENTS.md',
+      scope:'machine',
+      owner:'win',
+      provider:'kiro',
+      body:'Kiro steering memory',
+    }]});
+    const obs=m.observed().find(x=>x.provider==='kiro');
+    assert.ok(obs);
+    assert.equal(m.readObserved('win','C:/Users/TOP/.kiro/steering/AGENTS.md').body,'Kiro steering memory');
+  }finally{v.close();fs.rmSync(dir,{recursive:true,force:true});}
+});

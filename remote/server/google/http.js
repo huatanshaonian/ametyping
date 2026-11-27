@@ -2,30 +2,11 @@
 // way out; none configured = direct). A CONNECT tunnel through the HTTP proxy, TLS on top, the request over that.
 'use strict';
 const https = require('https');
-const net = require('net');
-const tls = require('tls');
+const { connectTunnel } = require('../lib/http-util');
 
 const TIMEOUT_MS = 30e3;
 
-function tunnel(proxyUrl, host) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(proxyUrl);
-    const s = net.connect(Number(u.port || 80), u.hostname);
-    const fail = (e) => { s.destroy(); reject(e); };
-    s.setTimeout(TIMEOUT_MS, () => fail(new Error('代理连接超时')));
-    s.once('error', fail);
-    s.once('connect', () => s.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`));
-    let head = '';
-    const onData = (d) => {
-      head += d.toString('latin1');
-      if (!head.includes('\r\n\r\n')) return;
-      s.removeListener('data', onData); s.setTimeout(0); s.removeListener('error', fail);
-      if (!/^HTTP\/1\.[01] 200/.test(head)) return fail(new Error('代理拒绝了连接：' + head.split('\r\n')[0]));
-      resolve(tls.connect({ socket: s, servername: host }));
-    };
-    s.on('data', onData);
-  });
-}
+const tunnel = (proxyUrl, host, port = 443) => connectTunnel(proxyUrl, host, port, { timeoutMs: TIMEOUT_MS });
 
 // request(url, { method, headers, body (string | Buffer) }, egress) -> { status, headers, body (Buffer), json }
 async function request(url, opts = {}, egress = null) {
@@ -49,6 +30,7 @@ async function request(url, opts = {}, egress = null) {
         let json = null; try { json = JSON.parse(buf.toString('utf8')); } catch {}
         resolve({ status: res.statusCode, headers: res.headers, body: buf, json });
       });
+      res.on('error', reject);
     });
     req.on('timeout', () => req.destroy(new Error('Google 没有回应')));
     req.on('error', reject);

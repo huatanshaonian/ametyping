@@ -4,14 +4,14 @@
 'use strict';
 const fs = require('fs');
 const auth = require('./auth');
+const { readJsonSafe, writeJsonAtomic } = require('./lib/json-store');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
 function createAgentsAdmin({ configFile, machines, isOnline = () => false, audit }) {
-  const load = () => JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  const load = () => readJsonSafe(configFile) || JSON.parse(fs.readFileSync(configFile, 'utf8'));
   function save(c) {
-    fs.writeFileSync(configFile + '.tmp', JSON.stringify(c, null, 2), { mode: 0o600 });
-    fs.renameSync(configFile + '.tmp', configFile);
+    writeJsonAtomic(configFile, c, { indent: 2, mode: 0o600 });
   }
 
   // [{ name, added, online }]

@@ -5,9 +5,9 @@
 // for two months. Changed searches (a new profile) start from their first page.
 //   <dataDir>/literature/archive.json  { cursors: { "<source>|<search>": { next, done, at } }, queue: [pick], turn }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const { fingerprint } = require('./sources/normalize');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const PAGE = 10, REST_MS = 60 * 86400e3, MAX_PULLS = 4;
 
@@ -15,8 +15,9 @@ const PAGE = 10, REST_MS = 60 * 86400e3, MAX_PULLS = 4;
 function createArchive({ dir, sources, profile, mirror, rank, seen, see, minScore = () => 6, log = () => {}, now = () => Date.now() }) {
   const file = path.join(dir, 'archive.json');
   let st = { cursors: {}, queue: [], turn: 0 };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  if (loaded && typeof loaded === 'object') st = { ...st, ...loaded };
+  const save = () => writeJsonAtomic(file, st);
   const srcs = () => ['ntrs', 'dtic'].filter((s) => sources[s]);
   const searches = () => ((profile.get() || {}).follow || {}).ntrs || [];
 

@@ -3,10 +3,10 @@
 // shows. A few at a time in one call, in the background; a failure is left alone for some hours.
 //   <dataDir>/literature/translations.json  { done: { id: { segs: [[src, zh], ...], at } }, failed: { id: t } }
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { TRANSLATE_SCHEMA, translatePrompt } = require('./prompts/translate');
+const { readJsonSafe, writeJsonAtomic } = require('../lib/json-store');
 
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const bare = (s) => String(s || '').replace(/\s+/g, '');
@@ -19,9 +19,9 @@ function foreign(text) {
 
 function createTranslate({ dir, ask, field = () => '', log = () => {}, onChange = () => {}, now = () => Date.now(), batch = 6, retryMs = 6 * 3600e3, maxChars = 6000 }) {
   const file = path.join(dir, 'translations.json');
-  let st = { done: {}, failed: {} };
-  try { st = { ...st, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch {}
-  const save = () => { fs.writeFileSync(file + '.tmp', JSON.stringify(st)); fs.renameSync(file + '.tmp', file); };
+  const loaded = readJsonSafe(file);
+  let st = { done: {}, failed: {}, ...(loaded && typeof loaded === 'object' ? loaded : {}) };
+  const save = () => writeJsonAtomic(file, st);
   const waiting = new Map();                                   // id -> text
   let running = null;
 
