@@ -53,6 +53,7 @@ const { openKbStruct } = require('./kb-struct');
 const { listSchemas, getSchema } = require('./evidence-schemas');
 const { createEvidence } = require('./evidence');
 const { createBenchmark } = require('./benchmark');
+const { createStream } = require('./stream');
 
 function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, reports = () => null, mail = () => null, log = console.log, audit = () => {}, onChange = () => {}, embed = null }) {
   if (!cfg || cfg.enabled === false || !ask) return null;
@@ -175,6 +176,7 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
   // 长报告: a text too long for the deep card is summed up part by part first
   const digest = createDigest({ dir, ask: askFeed, log, ...(cfg.digestOpts || {}) });
   const cards = createCards({ kb, mirror, fulltext, profile, ask: askFeed, askDeep: askRead, api, vision, digest, figures: cfg.figures === false ? null : figures, myNotes: notes.lines, writeNotes: cfg.writeNotes !== false, log, onChange: (k) => changed('card:' + k), kbStruct, embed });
+  const stream = kbStruct && createStream({ kbStruct, mirror, cards, fulltext, ask: askFeed, log });
   const conf = () => ({ ...cfg, ...settings.feed() });
   // the push's "like these": starred and checked cards, and the key papers (their DOIs)
   const likes = () => ({ pos: [...new Set([...kb.list('papers').filter((r) => (r.meta.starred || r.meta.verified) && r.meta.doi).map((r) => String(r.meta.doi)),
@@ -377,6 +379,23 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
       json(res, 200, { ok: true, items: benchmark.list({ status: qs('status') || null, zoteroKey: qs('key') || null }) });
       return true;
     }
+    if (G && p === '/api/lit/stream') {
+      if (!stream) { json(res, 503, { ok: false, msg: '速览流模块不可用' }); return true; }
+      const r = stream.listStream({ teamId: qs('team'), tag: qs('tag'), q: qs('q').slice(0, 120), onlyCards: qs('onlyCards') === '1', limit: parseInt(qs('limit'), 10) || 80 });
+      json(res, 200, { ok: true, ...r });
+      return true;
+    }
+    if (G && p === '/api/lit/teams') {
+      if (!stream) { json(res, 503, { ok: false, msg: '团队图谱模块不可用' }); return true; }
+      json(res, 200, { ok: true, ...stream.teamGraph() });
+      return true;
+    }
+    if (G && p === '/api/lit/team') {
+      if (!stream) { json(res, 503, { ok: false, msg: '团队图谱模块不可用' }); return true; }
+      const d = stream.teamDetail(qs('id'));
+      json(res, d ? 200 : 404, d ? { ok: true, ...d } : { ok: false, msg: '找不到该团队' });
+      return true;
+    }
     if (G && p === '/api/lit/topics') { json(res, 200, { items: reader.topics() }); return true; }
     if (G && p === '/api/lit/topic/state') { json(res, 200, { job: reader.topicState(qs('path')) }); return true; }
     if (G && p === '/api/lit/proposals') { json(res, 200, { items: kb.proposals().map((x) => ({ ...x, title: (kb.read(x.path) || { meta: {} }).meta.title || x.path })) }); return true; }
@@ -456,6 +475,18 @@ function createLiterature({ dataDir, cfg = {}, proxies = [], ask, todos = null, 
     else if (what === 'feed/keep') { r = await intake.keep(String(d.id || '')); if (r.ok) audit('lit-keep', ip); }
     else if (what === 'feed/glance') r = feed.decide(String(d.id || ''), 'glanced') ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/skip') r = feed.decide(String(d.id || ''), 'skipped') ? { ok: true } : { ok: false, msg: '找不到这条' };
+    else if (what === 'teams/extract') {
+      if (!stream) r = { ok: false, msg: '团队模块不可用' };
+      else if (KEY.test(key)) { r = await stream.extractTeamsForPaper(key); if (r.ok) changed('stream'); }
+      else {
+        const lim = Math.max(1, Math.min(30, parseInt(d.limit, 10) || 10));
+        const all = stream.listStream({ limit: 300 }).items.filter((x) => !x.teams.length).slice(0, lim);
+        let ok = 0;
+        for (const it of all) { const x = await stream.extractTeamsForPaper(it.key); if (x && x.ok) ok++; }
+        if (ok) changed('stream');
+        r = { ok: true, processed: all.length, extracted: ok };
+      }
+    }
     else if (what === 'feed/read') { const e = feed.get(String(d.id || '')); r = e && e.status === 'kept' ? (feed.decide(e.id, null, { readAt: d.undo ? 0 : Date.now() }), { ok: true }) : { ok: false, msg: '找不到这条' }; }
     else if (what === 'feed/promote') r = feed.promote(String(d.id || '')) ? { ok: true } : { ok: false, msg: '找不到这条' };
     else if (what === 'feed/review') {

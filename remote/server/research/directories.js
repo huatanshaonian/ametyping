@@ -792,7 +792,7 @@ function createDirectories({vault,review,store=null,getMagpie=()=>null,egress=nu
       '5. answer：条理清晰的详细解答（2～5 句话）。',
       '6. locations：列出最相关的电脑与文件夹目录 [{ machine, path, branch, files, role }]，path 必须与输入中的目录 path 保持一致以便前端一键定位。',
       '7. evidence_refs：从输入原文证据池中选择支撑结论的编号（如 ["E1", "E3"]）。',
-      '8. follow_ups：给出 2～3 个有价值的追问建议（简短问句）。',
+      '8. follow_ups：固定返回空数组 []，不要向用户提出追问或反问。',
       '',
       recentTurns.length?('最近对话上下文：\n'+JSON.stringify(recentTurns)+'\n'):'',
       '输入 1：结构化项目总览与各目录工作总结：',
