@@ -91,7 +91,9 @@ function createCards({ kb, mirror, fulltext, profile, ask, askDeep = ask, api, v
     if (kind === 'deep') s.push({ title: '关键假设', text: list(a.assumptions) });
     s.push({ title: '主要结果', text: list(a.results) });
     if (shown.length) s.push({ title: '图表', text: figureSection(shown) });
-    s.push({ title: '与我的关系', text: (a.question > 0 && qText(a.question) ? `**Q${a.question}：${qText(a.question)}**\n\n` : '') + (a.relevance || '') });
+    const qt = a.question > 0 ? qText(a.question) : '';
+    const qShort = qt ? (qt.length > 42 ? qt.slice(0, 42) + '…' : qt) : '';
+    s.push({ title: '与我的关系', text: (qShort ? `**关联 Q${a.question}（${qShort}）**\n\n` : '') + (a.relevance || '') });
     if (kind === 'deep') {
       s.push({ title: '可以采取的行动', text: list(a.actions, (x) => '[ ] ' + x) }, { title: '可复用的公式与数据', text: list(a.reusable) },
         { title: '疑点', text: list(a.doubts) }, { title: '值得追的文献', text: list(a.follow) });

@@ -23,10 +23,59 @@ const TEAM_SCHEMA = {
   required: ['teams'],
 };
 
+const INST_ALIASES = [
+  [/nanjing university of aeronautics and astronautics|南京航空航天大学|南航/i, '南京航空航天大学'],
+  [/national university of defense technology|国防科学技术大学|国防科技大学|国防科大/i, '国防科技大学'],
+  [/northwestern polytechnical university|西北工业大学|西工大/i, '西北工业大学'],
+  [/beihang university|beijing university of aeronautics and astronautics|北京航空航天大学|北航/i, '北京航空航天大学'],
+  [/university of electronic science and technology of china|电子科技大学|成电/i, '电子科技大学'],
+  [/xidian university|西安电子科技大学|西电/i, '西安电子科技大学'],
+  [/harbin institute of technology|哈尔滨工业大学|哈工大/i, '哈尔滨工业大学'],
+  [/tsinghua university|清华大学/i, '清华大学'],
+  [/peking university|北京大学/i, '北京大学'],
+  [/beijing institute of technology|北京理工大学|北理工/i, '北京理工大学'],
+  [/chinese academy of sciences|中国科学院|中科院/i, '中国科学院'],
+  [/china aerodynamics research and development center|中国空气动力研究与发展中心|气动中心/i, '中国空气动力研究与发展中心'],
+  [/science applications international corp(?:oration)?|\bsaic\b/i, 'SAIC'],
+  [/university of illinois.*urbana[- ]?champaign|\buiuc\b/i, 'UIUC'],
+  [/nasa langley research center/i, 'NASA Langley'],
+  [/nasa glenn research center/i, 'NASA Glenn'],
+  [/air force research laboratory|\bafrl\b/i, 'AFRL'],
+  [/university of texas at austin/i, 'UT Austin'],
+  [/massachusetts institute of technology|\bmit\b/i, 'MIT'],
+  [/stanford university/i, 'Stanford University'],
+  [/university of michigan/i, 'University of Michigan'],
+  [/brown university/i, 'Brown University'],
+  [/new york university/i, 'New York University'],
+];
+
+function canonicalizeInstitution(raw) {
+  const s = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  for (const [re, canon] of INST_ALIASES) {
+    if (re.test(s)) return canon;
+  }
+  return s;
+}
+
 function teamIdOf(institution, lab, pi) {
   const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const key = [norm(institution), norm(lab || pi)].filter(Boolean).join('|') || 'unknown';
+  const inst = canonicalizeInstitution(institution);
+  const key = [norm(inst), norm(pi || lab)].filter(Boolean).join('|') || 'unknown';
   return 'team_' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 12);
+}
+
+function extractCardHighlights(card) {
+  if (!card || !Array.isArray(card.sections)) return { results: [], doubt: '' };
+  const resSec = card.sections.find((s) => s.title === '主要结果');
+  const results = resSec
+    ? resSec.text.split('\n').map((l) => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean).slice(0, 3)
+    : [];
+  const doubtSec = card.sections.find((s) => s.title === '疑点');
+  const doubt = doubtSec
+    ? (doubtSec.text.split('\n').map((l) => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean)[0] || '').slice(0, 140)
+    : '';
+  return { results, doubt };
 }
 
 function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = null, log = () => {} }) {
@@ -47,22 +96,26 @@ function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = n
     if (!kbStruct || !mirror || !ask) return { ok: false, reason: 'unavailable' };
     const item = mirror.item(zoteroKey);
     if (!item) return { ok: false, reason: 'not-found' };
-    let firstPage = '';
+    let textChunks = [];
     if (fulltext) {
       try {
         const ft = await fulltext.forItem(zoteroKey);
-        if (ft && ft.pages && ft.pages.length) firstPage = String(ft.pages[0].text || '').slice(0, 2600);
+        if (ft && ft.pages && ft.pages.length) {
+          textChunks.push('[第 1 页]\n' + String(ft.pages[0].text || '').slice(0, 2200));
+          if (ft.pages.length >= 2) textChunks.push('[第 2 页]\n' + String(ft.pages[1].text || '').slice(0, 1200));
+          if (ft.pages.length >= 3) textChunks.push(`[末页 p.${ft.pages.length}]\n` + String(ft.pages[ft.pages.length - 1].text || '').slice(-1400));
+        }
       } catch {}
     }
     const prompt = [
-      '请从下面论文的元数据与首页文字中提取完成该工作的大学/科研院所、实验室/团队和通讯作者（PI）。',
-      '要求：1) 最多提取 2 个核心单位/团队（第一单位 + 主要合作单位）；2) 中文论文用中文标准校名，英文论文保留标准英文校名或常见中文名；3) bio 用一句客观陈述概括该团队在本篇体现的方向与技术特点（≤50字）；4) 禁止编造，未知字段留空，不要向用户提问。',
+      '请从下面论文的元数据、前两页与末页文字中提取完成该工作的大学/科研院所、实验室/团队和通讯作者（PI）。',
+      '要求：1) 最多提取 2 个核心单位/团队（第一单位 + 主要合作单位）；2) 中文论文用中文标准校名（如“南京航空航天大学”“国防科技大学”“西北工业大学”），英文论文保留标准校名；3) bio 用一句客观陈述概括该团队在本篇体现的方向与技术特点（≤50字）；4) 只要正文或页眉/页脚/末页作者简介里有单位信息就务必提取，禁止编造，不要向用户提问。',
       '',
       `标题：${item.title || ''}`,
       `作者：${(item.creators || []).slice(0, 8).join('; ')}`,
       `来源：${item.venue || ''} ${item.year || ''}`,
       `摘要：${String(item.abstract || '').slice(0, 900)}`,
-      firstPage ? `\n第 1 页正文片段：\n${firstPage}` : '',
+      textChunks.length ? '\n' + textChunks.join('\n\n') : '',
     ].filter(Boolean).join('\n');
 
     let ans;
@@ -77,7 +130,7 @@ function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = n
     const saved = [];
     for (let i = 0; i < list.length && i < 3; i++) {
       const t = list[i];
-      const inst = String((t && t.institution) || '').trim();
+      const inst = canonicalizeInstitution(t && t.institution);
       if (!inst) continue;
       const lab = String((t && t.lab) || '').trim();
       const pi = String((t && t.pi) || '').trim();
@@ -133,6 +186,9 @@ function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = n
         if (!hay.includes(ql)) continue;
       }
 
+      const fullCard = card && cards && typeof cards.find === 'function' ? cards.find(it.key) : null;
+      const hi = extractCardHighlights(fullCard);
+
       out.push({
         key: it.key,
         citekey: it.citekey || '',
@@ -147,6 +203,8 @@ function createStream({ kbStruct, mirror, cards = null, fulltext = null, ask = n
         cover: card ? card.cover || '' : '',
         figs: card ? card.figs || 0 : 0,
         oneLine,
+        results: hi.results,
+        doubt: hi.doubt,
         keyResult,
         method: String(method || '').slice(0, 80),
         verifiedRatio: ev ? ev.verifiedRatio : null,
