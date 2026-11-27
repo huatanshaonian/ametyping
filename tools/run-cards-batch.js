@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Batch-generate deep cards (with cropped figures + Top-5 kb_struct comparison) using Google AI Studio.
 // Resumable: skips papers that already have a deep/reviewed card.
-// Usage: node tools/run-cards-batch.js [--limit 70] [--model gemini-4-neon] [--concurrency 2]
+// Usage: node tools/run-cards-batch.js [--limit 70] [--provider google|agy|magpie|auto] [--model gemini-4-neon] [--effort low] [--agy-ssh dell97] [--concurrency 2]
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -11,7 +11,10 @@ const SERVER = path.join(ROOT, 'remote', 'server');
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 const LIMIT = Math.max(1, parseInt(opt('--limit', '70'), 10) || 70);
+const PROVIDER = opt('--provider', 'google');
 const MODEL = opt('--model', 'gemini-4-neon');
+const EFFORT = opt('--effort', 'low');
+const AGY_SSH = opt('--agy-ssh', '');
 const CONCURRENCY = Math.max(1, Math.min(4, parseInt(opt('--concurrency', '2'), 10) || 2));
 
 const cfg = JSON.parse(fs.readFileSync(path.join(SERVER, 'config.json'), 'utf8'));
@@ -30,7 +33,7 @@ const { createCards } = require(path.join(SERVER, 'literature', 'cards'));
 const { createFigures } = require(path.join(SERVER, 'literature', 'figures'));
 const { createDigest } = require(path.join(SERVER, 'literature', 'digest'));
 const { openKbStruct } = require(path.join(SERVER, 'literature', 'kb-struct'));
-const { createGoogleAiKey, runGoogleAi } = require(path.join(SERVER, 'ai', 'google-ai-api'));
+const { createLitAsker } = require(path.join(__dirname, 'lib', 'lit-ask'));
 const embedMod = require(path.join(SERVER, 'embed'));
 
 const log = (s) => console.log(`[${new Date().toISOString()}] ${s}`);
@@ -46,22 +49,8 @@ async function main() {
   const kb = createKb({ dir: path.resolve(SERVER, litCfg.kbDir || path.join(litDir, 'kb')), log: () => {} });
   const kbStruct = openKbStruct({ dir: litDir, log });
   const embed = cfg.embed ? embedMod.open({ dataDir, cfg: cfg.embed, log: () => {} }) : null;
-  const gKey = createGoogleAiKey({ dataDir });
-  if (!gKey.has()) throw new Error('Google AI Studio key missing');
-
-  const askGoogle = async (prompt, schema, opts = {}) => {
-    const r = await runGoogleAi({
-      key: gKey.get(),
-      model: MODEL,
-      effort: 'medium',
-      prompt,
-      schema,
-      images: opts && opts.images ? opts.images : undefined,
-      egress,
-      timeoutMs: 300000,
-    });
-    return r.data || r.parsed || (typeof r.text === 'string' ? JSON.parse(r.text) : r);
-  };
+  const asker = createLitAsker({ serverDir: SERVER, cfg, dataDir, egress, provider: PROVIDER, model: MODEL, effort: EFFORT, agySsh: AGY_SSH, log });
+  const askGoogle = asker.ask;
 
   const profile = createProfile({ dir: litDir, mirror, ask: askGoogle, log: () => {} });
   const digest = createDigest({ dir: litDir, ask: askGoogle, log: () => {} });

@@ -19,8 +19,12 @@ const { createHttp } = require(path.join(SERVER, 'literature', 'http'));
 const { createEgress } = require(path.join(SERVER, 'egress'));
 const { openKbStruct } = require(path.join(SERVER, 'literature', 'kb-struct'));
 const { createStream } = require(path.join(SERVER, 'literature', 'stream'));
-const { createGoogleAiKey, runGoogleAi } = require(path.join(SERVER, 'ai', 'google-ai-api'));
+const { createLitAsker } = require(path.join(__dirname, 'lib', 'lit-ask'));
 
+const argv = process.argv.slice(2);
+const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+const PROVIDER = opt('--provider', 'google');
+const MODEL = opt('--model', 'gemini-4-neon');
 const log = (s) => console.log(`[${new Date().toISOString()}] ${s}`);
 
 async function main() {
@@ -32,13 +36,8 @@ async function main() {
   const webdav = createWebdav({ dir: litCfg.webdavDir || '' });
   const fulltext = createFulltext({ dir: litDir, mirror, webdav, bin: litCfg.pdftotext || 'pdftotext', http, log: () => {} });
   const kbStruct = openKbStruct({ dir: litDir, log });
-  const gKey = createGoogleAiKey({ dataDir });
-  if (!gKey.has()) throw new Error('Google AI Studio key missing');
-
-  const ask = async (prompt, schemaJson) => {
-    const r = await runGoogleAi({ key: gKey.get(), model: 'gemini-4-neon', prompt, schema: schemaJson, egress, timeoutMs: 120000 });
-    return r.data || r.parsed || (typeof r.text === 'string' ? JSON.parse(r.text) : r);
-  };
+  const asker = createLitAsker({ serverDir: SERVER, cfg, dataDir, egress, provider: PROVIDER, model: MODEL, effort: '', log });
+  const ask = asker.ask;
 
   const stream = createStream({ kbStruct, mirror, fulltext, ask, log: () => {} });
   const keys = new Set();
