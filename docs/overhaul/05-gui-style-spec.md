@@ -335,6 +335,15 @@ Win98 这一列特意用了更深的经典色（栗色 `#800000`、深绿 `#004d
 
 去重后的检查规则：在 `main.js`、`control.js`、`infra.js`、`projects.js` 里，`icon('x')` 的每个 `x` 只能对应一个功能含义（可以在 M4 加一条静态检查）。
 
+**与 04 信息架构方案的联动**（`04-ia-integration-plan.md`，architect-ia `3ed02f0`）。上表按现状的入口编写；如果采纳 04 的推荐方案，按下表调整：
+
+| 04 方案 | 入口变化 | 本表的处理 |
+|---|---|---|
+| 1-A 设备与算力中心 | "网络与设备"改名为"设备与算力"；"控制面板 › 电脑"和"Skill 与协同 › 设备与 Harness"并入其中，作为页签 | 窗口图标仍用 `network_three_pcs`。"电脑"这一行作废。并入后的页签按 6.2 节不放图标 |
+| 2-A AI 与 Agent 中心 | "Magpie 用量"升级为"AI 与额度"；AI 模型、OpenCode 指南、MCP、Skill 与协同移进来作为页签 | 窗口图标改用 `chip_ramdrive`（现在"AI 模型"用的图标，原位置随之消失，所以不会重复）；`chart1` 留给额度页签或者挂件。MCP、OpenCode、Skill 这三行改为页签的候选图标，或者直接按 6.2 节不放图标 |
+| 4-A 桌面 11 图标 | 删除"Skill 管理"；Office 三件套合并为"Office 文档"，收进开始菜单 | "Skill 管理"这一行作废，`notepad` 自然归"记事本"独占；"Office 文档"沿用 `office-apps.js:33` 里已有的 `directory_open_cool` |
+| 控制面板缩减为 6 项 | 只剩显示属性、声音、通知、Google 账户、邮箱、文献推送设置 | 6 项图标互不重复：`display_properties`、`mixer_sound`、`msg_information`、`key_world`、`outlook_express`、`catalog` |
+
 ---
 
 ## 8. 桌宠气泡（`app/bubble.html`）与 Windose 桌面的家族化
