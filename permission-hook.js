@@ -5,55 +5,62 @@
 // Pet not running / no answer in time -> no output, and Claude Code carries on with its normal prompt.
 // Configure WITHOUT "async" (the decision is this hook's output) and with a timeout above WAIT_MS, e.g. 3660.
 'use strict';
-const http = require('http');
 const path = require('path');
+const { postLoopbackJson, runJsonHook } = require('./remote/agent/hook-common');
 
-const PORT = +process.env.AME_PORT || 3940;        // (the pet; AME_PORT: the Linux headless service or a test)
-const WAIT_MS = 3600e3;                 // the terminal prompt is shown meanwhile: waiting blocks nothing
-setTimeout(() => process.exit(0), WAIT_MS + 3000).unref();
+const PORT = +process.env.AME_PORT || 3940;
+const WAIT_MS = 3600e3; // the terminal prompt is shown meanwhile: waiting blocks nothing
 
-let raw = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (c) => { raw += c; });
-process.stdin.on('end', () => {
-  let p = {};
-  try { p = JSON.parse(raw.replace(/^﻿/, '')); } catch { process.exit(0); }
-  const body = JSON.stringify({
-    session: p.session_id || null, tool: p.tool_name || '', input: p.tool_input || {},
-    suggestions: Array.isArray(p.permission_suggestions) ? p.permission_suggestions : [],
-    project: p.cwd ? path.basename(p.cwd) : '', cwd: p.cwd || '', transcript: p.transcript_path || '',
-    subagent: p.agent_type || '', agentId: p.agent_id || '', pid: process.ppid,
-  });
-  // the pet holds this request open until you choose (long poll)
-  const req = http.request({ host: '127.0.0.1', port: PORT, method: 'POST', path: '/permission',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
-    let out = '';
-    res.setEncoding('utf8');
-    res.on('data', (c) => { out += c; });
-    res.on('end', () => {
-      let d = {}; try { d = JSON.parse(out || '{}'); } catch {}
-      reply(d, p);
-    });
-  });
-  req.on('error', () => process.exit(0));                  // pet not running: the normal terminal prompt
-  req.setTimeout(WAIT_MS, () => { req.destroy(); process.exit(0); });
-  req.end(body);
-});
-
-function reply(d, p) {
+function formatReply(d, p) {
+  if (!d || typeof d !== 'object') return '';
   let decision = null;
   if (d.choice === 'allow') {
     decision = { behavior: 'allow' };
-    // an answer given on a card (AskUserQuestion: the tool's input with the answers filled in, as Claude Code's own
-    // prompt would hand it on)
-    if (d.updatedInput && typeof d.updatedInput === 'object' && !Array.isArray(d.updatedInput)) decision.updatedInput = d.updatedInput;
+    if (d.updatedInput && typeof d.updatedInput === 'object' && !Array.isArray(d.updatedInput)) {
+      decision.updatedInput = d.updatedInput;
+    }
   } else if (d.choice === 'always') {
-    // allow, and add what the terminal offers as "Yes, and don't ask again for ...": Claude Code's own suggestions,
-    // unchanged (rule and where it is kept -- this session, or the project's local settings); the cards show them
     decision = { behavior: 'allow' };
     const s = (p.permission_suggestions || []).filter((x) => x && typeof x === 'object');
     if (s.length) decision.updatedPermissions = s;
-  } else if (d.choice === 'deny') decision = { behavior: 'deny', message: d.message || '在糖糖的面板上被拒绝了' };
-  if (decision) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }));
-  process.exit(0);
+  } else if (d.choice === 'deny') {
+    decision = { behavior: 'deny', message: d.message || '在糖糖的面板上被拒绝了' };
+  }
+  return decision ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }) : '';
 }
+
+function run() {
+  runJsonHook({
+    initialTimeoutMs: 2000,
+    permissionTimeoutMs: WAIT_MS,
+    fallbackOutput: '',
+    formatOutput: (s) => (typeof s === 'string' ? s : ''),
+    onPayload: async (p, ctx) => {
+      if (!p || typeof p !== 'object') return ctx.finish('');
+      ctx.setGuardTimeout(WAIT_MS + 3000, '');
+      const body = {
+        session: p.session_id || null,
+        tool: p.tool_name || '',
+        input: p.tool_input || {},
+        suggestions: Array.isArray(p.permission_suggestions) ? p.permission_suggestions : [],
+        project: p.cwd ? path.basename(p.cwd) : '',
+        cwd: p.cwd || '',
+        transcript: p.transcript_path || '',
+        subagent: p.agent_type || '',
+        agentId: p.agent_id || '',
+        pid: process.ppid,
+      };
+      const res = await postLoopbackJson({
+        port: PORT,
+        route: '/permission',
+        body,
+        timeoutMs: WAIT_MS,
+        parseJson: true,
+      });
+      ctx.finish(res.ok ? formatReply(res.data, p) : '');
+    },
+  });
+}
+
+if (require.main === module) run();
+module.exports = { formatReply };

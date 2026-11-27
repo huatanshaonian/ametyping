@@ -16,6 +16,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
+const { winCmdQuote, psQuote } = require('./hook-installer-common');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 // a bundle path: relative, no .., nothing inside a .git folder
@@ -249,63 +250,74 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
   const xdgConfig = () => (env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, '.config'));
   const readTextSafe = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
 
-  // Inspect whether AmeTyping hooks / plugin are installed for each of the 4 coding agents on this computer.
+  // Inspect whether AmeTyping hooks / plugin are installed for each coding agent on this computer.
   function hookStatus() {
     const claudeDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
     const codexDir = env.CODEX_HOME || path.join(home, '.codex');
     const ocDir = env.OPENCODE_CONFIG_DIR || path.join(xdgConfig(), 'opencode');
     const agyBase = path.join(home, '.gemini');
     const agyCfgDir = env.AGY_CONFIG_DIR || path.join(agyBase, 'config');
+    const kiroDir = env.KIRO_HOME || path.join(home, '.kiro');
 
     const claudeTxt = readTextSafe(path.join(claudeDir, 'settings.json'));
     const codexTxt = readTextSafe(path.join(codexDir, 'hooks.json'));
     const ocTxt = readTextSafe(path.join(ocDir, 'opencode.jsonc')) || readTextSafe(path.join(ocDir, 'opencode.json'));
     const agyTxt = readTextSafe(path.join(agyCfgDir, 'hooks.json'));
+    const kiroTxt = readTextSafe(path.join(kiroDir, 'agents', 'default.json'));
 
     return [
       { id: 'claude', label: 'Claude Code', present: hasPath(claudeDir), installed: /hook-relay\.js/.test(claudeTxt) && /permission-hook\.js/.test(claudeTxt) },
       { id: 'codex', label: 'Codex', present: hasPath(codexDir), installed: /codex-hook\.js/.test(codexTxt) },
       { id: 'opencode', label: 'OpenCode', present: hasPath(ocDir), installed: /opencode-plugin/.test(ocTxt) },
       { id: 'agy', label: 'Antigravity', present: !!env.AGY_CONFIG_DIR || hasPath(agyBase), installed: /agy-hook\.js/.test(agyTxt) },
+      { id: 'kiro', label: 'Kiro', present: !!env.KIRO_HOME || hasPath(kiroDir), installed: /kiro-hook\.js/.test(kiroTxt) },
     ];
   }
 
   function hookTasks() {
     const xdg = xdgConfig();
+    const isInstCommon = (p) => p === 'remote/agent/hook-installer-common.js';
     return [
       {
         id: 'claude',
         label: 'Claude Code hooks',
         script: path.join(root, 'headless', 'install-hooks.js'),
-        match: (p) => p === 'headless/install-hooks.js' || p === 'hook-relay.js' || p === 'permission-hook.js',
+        match: (p) => p === 'headless/install-hooks.js' || p === 'hook-relay.js' || p === 'permission-hook.js' || isInstCommon(p),
         present: () => hasPath(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')),
       },
       {
         id: 'codex',
         label: 'Codex hooks',
         script: path.join(root, 'install-codex-hooks.js'),
-        match: (p) => p === 'install-codex-hooks.js' || p === 'codex-hook.js',
+        match: (p) => p === 'install-codex-hooks.js' || p === 'codex-hook.js' || isInstCommon(p),
         present: () => hasPath(env.CODEX_HOME || path.join(home, '.codex')),
       },
       {
         id: 'opencode',
         label: 'OpenCode plugin',
         script: path.join(root, 'install-opencode-plugin.js'),
-        match: (p) => p === 'install-opencode-plugin.js' || p.startsWith('opencode-plugin/'),
+        match: (p) => p === 'install-opencode-plugin.js' || p.startsWith('opencode-plugin/') || isInstCommon(p),
         present: () => hasPath(env.OPENCODE_CONFIG_DIR || path.join(xdg, 'opencode')),
       },
       {
         id: 'agy',
         label: 'Antigravity hooks',
         script: path.join(root, 'install-agy-hooks.js'),
-        match: (p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js',
+        match: (p) => p === 'install-agy-hooks.js' || p === 'agy-hook.js' || isInstCommon(p),
         present: () => !!env.AGY_CONFIG_DIR || hasPath(path.join(home, '.gemini')),
+      },
+      {
+        id: 'kiro',
+        label: 'Kiro hooks',
+        script: path.join(root, 'install-kiro-hooks.js'),
+        match: (p) => p === 'install-kiro-hooks.js' || p === 'kiro-hook.js' || isInstCommon(p),
+        present: () => !!env.KIRO_HOME || hasPath(path.join(home, '.kiro')),
       },
       {
         id: 'mcp',
         label: 'MCP 登记',
         script: path.join(root, 'install-mesh-mcp.js'),
-        match: (p) => p === 'install-mesh-mcp.js' || p === 'tools/ame-mesh.js' || p === 'remote/mcp/client.js',
+        match: (p) => p === 'install-mesh-mcp.js' || p === 'tools/ame-mesh.js' || p === 'remote/mcp/client.js' || isInstCommon(p),
         present: () => true,
       },
     ];
@@ -404,8 +416,8 @@ function createFleet({ root = ROOT, home = os.homedir(), cfg = {}, log = () => {
       child.unref();
     } else if (platform === 'win32') {
       // through WMI: a process that is not the agent's child, so not in the scheduled task's job that ends with it
-      const cmd = [process.execPath, ...args].map((a) => '"' + a.replace(/"/g, '') + '"').join(' ');
-      const ps = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${cmd.replace(/'/g, "''")}' }; if ($r.ReturnValue -ne 0) { exit 1 }`;
+      const cmd = [process.execPath, ...args].map(winCmdQuote).join(' ');
+      const ps = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${psQuote(cmd)} }; if ($r.ReturnValue -ne 0) { exit 1 }`;
       // (not detached: under the agent's scheduled task (conhost --headless) a detached PowerShell gets no console and
       // exits at once with 0 having run nothing -- found on dell211 2026-11-25, every Windows update then waited for a
       // guard that never started. The process WMI makes is outside the task's job either way.)

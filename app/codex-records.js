@@ -8,8 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-const SESSIONS = path.join(ROOT, 'sessions');
+const codexRoot = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+const codexSessionsDir = () => path.join(codexRoot(), 'sessions');
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 // text Codex adds to the conversation itself (context, instructions), not something you typed
 const HARNESS = /^\s*(<(environment_context|user_instructions|permissions|user_shell_command|turn_aborted|subagent_notification)|# AGENTS\.md instructions)/;
@@ -54,8 +54,9 @@ const toolRec = (name, args, t) => { const x = toolExtra(name, args); return x ?
 function recordsOf(o) {
   const out = [];
   if (!o || typeof o !== 'object') return out;
-  const t = o && o.timestamp ? Date.parse(o.timestamp) : Date.now();
-  const p = (o && o.payload) || {};
+  const parsedT = o.timestamp ? Date.parse(o.timestamp) : NaN;
+  const t = Number.isFinite(parsedT) ? parsedT : Date.now();
+  const p = o.payload || {};
   if (o.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
     const text = (p.content || []).filter((c) => c && typeof c.text === 'string' && /^(input|output)_text$/.test(c.type)).map((c) => c.text).join('\n').trim();
     if (!text || (p.role === 'user' && HARNESS.test(text))) return out;
@@ -81,8 +82,14 @@ function recordsOf(o) {
   return out;
 }
 
+const metaFileCache = new Map(); // file -> { mtime, size, payload }
 // { id, cwd, sub } from the first line (session_meta)
 function metadataOf(file) {
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  const hit = metaFileCache.get(file);
+  if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) return hit.payload;
+  let payload = null;
   try {
     // the whole first line: it carries Codex's instructions too (over 20 KB since 0.16x), so read on to its end
     const fd = fs.openSync(file, 'r'), parts = [];
@@ -96,9 +103,13 @@ function metadataOf(file) {
       }
     } finally { fs.closeSync(fd); }
     const o = JSON.parse(Buffer.concat(parts).toString('utf8'));
-    if (o.type !== 'session_meta' || !o.payload || !o.payload.id) return null;
-    return o.payload;
-  } catch { return null; }
+    if (o && o.type === 'session_meta' && o.payload && o.payload.id) payload = o.payload;
+  } catch { payload = null; }
+  if (payload) {
+    metaFileCache.set(file, { mtime: st.mtimeMs, size: st.size, payload });
+    if (metaFileCache.size > 500) metaFileCache.delete(metaFileCache.keys().next().value);
+  }
+  return payload;
 }
 function metaOf(file) {
   const p = metadataOf(file);
@@ -125,7 +136,7 @@ function allFiles() {
       if (e.isDirectory() && depth < 3) walk(p, depth + 1);
       else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(p);
     }
-  })(SESSIONS, 0);
+  })(codexSessionsDir(), 0);
   return out;
 }
 
@@ -137,13 +148,13 @@ function fileOf(id) {
 }
 
 // thread titles (id -> name); re-read only when the index file changes
-let titles = new Map(), titlesAt = 0;
+let titles = new Map(), titlesAt = 0, titlesFile = '';
 function titleOf(id) {
-  const f = path.join(ROOT, 'session_index.jsonl');
+  const f = path.join(codexRoot(), 'session_index.jsonl');
   try {
     const m = fs.statSync(f).mtimeMs;
-    if (m !== titlesAt) {
-      titlesAt = m; titles = new Map();
+    if (m !== titlesAt || f !== titlesFile) {
+      titlesAt = m; titlesFile = f; titles = new Map();
       for (const l of fs.readFileSync(f, 'utf8').split('\n')) { try { const o = JSON.parse(l); if (o.id && o.thread_name) titles.set(o.id, String(o.thread_name)); } catch {} }
     }
   } catch {}

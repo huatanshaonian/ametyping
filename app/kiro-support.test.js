@@ -167,3 +167,61 @@ test('kiro-sessions remember / list / forget', () => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('session-locate locates kiro-cli.exe, preserves procAlive, and session-adopt restores live Kiro sessions', async () => {
+  const { home } = makeStore();
+  const prev = process.env.KIRO_HOME;
+  const prevOc = process.env.OPENCODE_AME_HOME;
+  process.env.KIRO_HOME = path.join(home, '.kiro');
+  process.env.OPENCODE_AME_HOME = path.join(home, '.opencode-ame');
+  delete require.cache[require.resolve('./kiro-records')];
+  delete require.cache[require.resolve('./session-adopt')];
+  try {
+    const { createLocator, TERM_HOSTS } = require('./session-locate');
+    const kiroSessions = require('./kiro-sessions');
+    const { adoptRunning } = require('./session-adopt');
+    // Use process.pid for procAlive (process.kill(pid, 0) must succeed) and a distinct fake CLI pid for locate/adopt
+    const cliPid = process.pid + 100000;
+    const fakeBridge = {
+      ancestors: async (p) => (p === 9999
+        ? [{ pid: 9999, name: 'node.exe' }, { pid: cliPid, name: 'kiro-cli.exe' }, { pid: 100, name: 'WindowsTerminal.exe' }]
+        : (p === cliPid || p === process.pid) ? [{ pid: p, name: 'kiro-cli.exe' }, { pid: 100, name: 'WindowsTerminal.exe' }] : []),
+      identity: async (p) => (p === cliPid ? 'boot:kiro-1' : null),
+      screen: async () => null,
+    };
+    const locator = createLocator({ bridge: fakeBridge });
+    assert.equal(await locator.procAlive(process.pid), true, 'kiro-cli.exe is recognized by procAlive');
+
+    const liveSess = { id: 'kiro:' + SID, provider: 'kiro', rawSession: SID, cwd: 'D:/proj' };
+    await locator.locate(liveSess, 9999);
+    assert.equal(liveSess.claudePid, cliPid);
+    assert.equal(liveSess.terminal, true);
+    assert.equal(liveSess.processIdentity, 'boot:kiro-1');
+
+    kiroSessions.remember(liveSess, home);
+    const sessions = new Map();
+    let changed = 0;
+    const adopted = await adoptRunning({
+      sessions,
+      bridge: fakeBridge,
+      home,
+      isClaude: () => false,
+      isTerminal: (n) => TERM_HOSTS.test(n),
+      onChange: () => { changed++; },
+    });
+    assert.equal(adopted, 1);
+    assert.equal(changed, 1);
+    const restored = sessions.get('kiro:' + SID);
+    assert.ok(restored, 'kiro session restored into map');
+    assert.equal(restored.claudePid, cliPid);
+    assert.equal(restored.terminal, true);
+    assert.equal(restored.title, '帮我改一下 main.rs');
+    assert.deepEqual(restored.ai, { slug: 'anthropic', name: 'Anthropic' });
+  } finally {
+    if (prev === undefined) delete process.env.KIRO_HOME; else process.env.KIRO_HOME = prev;
+    if (prevOc === undefined) delete process.env.OPENCODE_AME_HOME; else process.env.OPENCODE_AME_HOME = prevOc;
+    delete require.cache[require.resolve('./kiro-records')];
+    delete require.cache[require.resolve('./session-adopt')];
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

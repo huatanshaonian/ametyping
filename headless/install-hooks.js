@@ -6,43 +6,52 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { fwdSlash, readJsonFile, atomicWriteText } = require('../remote/agent/hook-installer-common');
 
-const FILE = path.join(os.homedir(), '.claude', 'settings.json');
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const FILE = path.join(CLAUDE_DIR, 'settings.json');
 const ROOT = path.resolve(__dirname, '..');
-// forward slashes: on Windows the hook command may run through bash or cmd, both take C:/... inside quotes
-const fwd = (p) => p.replace(/\\/g, '/');
-const NODE = fwd(process.execPath);                                // absolute: hooks do not depend on the shell's PATH (nvm)
-const RELAY = fwd(path.join(ROOT, 'hook-relay.js'));
-const PERM = fwd(path.join(ROOT, 'permission-hook.js'));
-const q = (s) => `"${s}"`;
-const MARK = /[\\/](hook-relay|permission-hook)\.js"?$/;           // how our own entries are recognised
+const NODE = fwdSlash(process.execPath);
+const RELAY = fwdSlash(path.join(ROOT, 'hook-relay.js'));
+const PERM = fwdSlash(path.join(ROOT, 'permission-hook.js'));
+const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
+const MARK = /[\\/](hook-relay|permission-hook)\.js"?$/;
 
-const RELAY_EVENTS = { SessionStart: false, UserPromptSubmit: false, PreToolUse: true, PostToolUse: true,
-  PostToolUseFailure: true, Notification: false, Stop: false, SessionEnd: false };   // true = needs a "*" matcher
+const RELAY_EVENTS = {
+  SessionStart: false, UserPromptSubmit: false, PreToolUse: true, PostToolUse: true,
+  PostToolUseFailure: true, Notification: false, Stop: false, SessionEnd: false,
+};
 
 const remove = process.argv.includes('--remove');
-let cfg = {};
-if (fs.existsSync(FILE)) cfg = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-const hooks = cfg.hooks && typeof cfg.hooks === 'object' ? cfg.hooks : {};
+const exists = fs.existsSync(FILE);
+const existing = exists ? readJsonFile(FILE).obj : {};
+const cfg = JSON.parse(JSON.stringify(existing));
+const hooks = cfg.hooks && typeof cfg.hooks === 'object' && !Array.isArray(cfg.hooks) ? cfg.hooks : {};
 
-// drop our previous entries everywhere (so paths / node version can change), keep everybody else's
 for (const ev of Object.keys(hooks)) {
-  hooks[ev] = (hooks[ev] || []).map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !MARK.test(String(h.command || ''))) }))
+  hooks[ev] = (hooks[ev] || [])
+    .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !MARK.test(String(h.command || ''))) }))
     .filter((g) => g.hooks.length);
   if (!hooks[ev].length) delete hooks[ev];
 }
 if (!remove) {
   for (const [ev, star] of Object.entries(RELAY_EVENTS)) {
-    (hooks[ev] = hooks[ev] || []).push({ ...(star ? { matcher: '*' } : {}),
-      hooks: [{ type: 'command', command: `${q(NODE)} ${q(RELAY)}`, timeout: 5, async: true }] });
+    (hooks[ev] = hooks[ev] || []).push({
+      ...(star ? { matcher: '*' } : {}),
+      hooks: [{ type: 'command', command: `${q(NODE)} ${q(RELAY)}`, timeout: 5, async: true }],
+    });
   }
-  // not async: the decision is this hook's output; timeout above permission-hook.js's own 60 min wait
-  (hooks.PermissionRequest = hooks.PermissionRequest || []).push({ matcher: '*',
-    hooks: [{ type: 'command', command: `${q(NODE)} ${q(PERM)}`, timeout: 3660 }] });
+  (hooks.PermissionRequest = hooks.PermissionRequest || []).push({
+    matcher: '*',
+    hooks: [{ type: 'command', command: `${q(NODE)} ${q(PERM)}`, timeout: 3660 }],
+  });
 }
 if (Object.keys(hooks).length) cfg.hooks = hooks; else delete cfg.hooks;
 
-if (fs.existsSync(FILE)) fs.copyFileSync(FILE, `${FILE}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`);
-fs.mkdirSync(path.dirname(FILE), { recursive: true });
-fs.writeFileSync(FILE, JSON.stringify(cfg, null, 2) + '\n');
-console.log(remove ? `已从 ${FILE} 移除 AmeTyping hook` : `已写入 ${FILE}：${Object.keys(RELAY_EVENTS).length + 1} 个事件 → ${RELAY} / ${PERM}`);
+if ((!exists && remove) || JSON.stringify(existing) === JSON.stringify(cfg)) {
+  console.log(`Already ${remove ? 'removed' : 'installed'}: ${FILE}`);
+} else {
+  const next = JSON.stringify(cfg, null, 2) + '\n';
+  atomicWriteText(FILE, next, { backupExt: `.bak-${new Date().toISOString().replace(/[:.]/g, '-')}` });
+  console.log(remove ? `已从 ${FILE} 移除 AmeTyping hook` : `已写入 ${FILE}：${Object.keys(RELAY_EVENTS).length + 1} 个事件 → ${RELAY} / ${PERM}`);
+}

@@ -39,8 +39,11 @@ const NAS_EXCLUDE = ['remote/node_modules', 'remote/server/data', 'remote/server
 // what an agent machine runs: remote/agent/ and headless/, plus the app/ modules they load (found by following their
 // require()s) -- not the pet's own files -- and the hooks Claude Code and Codex run there, and the OpenCode plugin
 const HOOKS = ['hook-relay.js', 'permission-hook.js', 'codex-hook.js', 'install-codex-hooks.js',
-  'agy-hook.js', 'install-agy-hooks.js', 'install-mesh-mcp.js', 'tools/ame-mesh.js', 'remote/mcp/client.js',
-  'remote/agent/update-guard.js', 'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js'];
+  'agy-hook.js', 'install-agy-hooks.js', 'kiro-hook.js', 'install-kiro-hooks.js',
+  'install-mesh-mcp.js', 'tools/ame-mesh.js', 'remote/mcp/client.js',
+  'remote/agent/hook-common.js', 'remote/agent/hook-installer-common.js',
+  'remote/agent/update-guard.js', 'install-opencode-plugin.js', 'opencode-plugin/package.json', 'opencode-plugin/protocol.js', 'opencode-plugin/index.js',
+  'app/console-bridge.ps1'];
 
 // a Linux machine's installed headless unit (filled in from headless/deploy/ame-headless.service when it was set up)
 // made to stop only its own node process on a restart: the default, control-group, killed tmux and every Claude
@@ -167,7 +170,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 
   // ---- 3. the agents ----
   const appChanged = prev && prev.commit && prev.commit !== commit ? git(['diff', '--name-only', prev.commit, commit, '--', 'app']).split('\n').filter(Boolean) : [];
-  const want = depsOf(commit, ['remote/agent', 'headless']);
+  const want = depsOf(commit, ['remote/agent', 'headless', ...HOOKS]);
   for (const h of HOOKS) want.add(h);
   const agentTree = new Map([...treeOf(commit, ['remote/agent', 'headless', 'app', ...HOOKS])].filter(([p]) => want.has(p)));
   const hdeps = depsOf(commit, ['headless']);                       // (the headless service's own code)
@@ -212,6 +215,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
           [path.join(rootDir, 'install-codex-hooks.js'), fs.existsSync(process.env.CODEX_HOME || path.join(homeDir, '.codex'))],
           [path.join(rootDir, 'install-opencode-plugin.js'), fs.existsSync(process.env.OPENCODE_CONFIG_DIR || path.join(xdgDir, 'opencode'))],
           [path.join(rootDir, 'install-agy-hooks.js'), fs.existsSync(process.env.AGY_CONFIG_DIR || path.join(homeDir, '.gemini'))],
+          [path.join(rootDir, 'install-kiro-hooks.js'), fs.existsSync(process.env.KIRO_HOME || path.join(homeDir, '.kiro'))],
           [path.join(rootDir, 'install-mesh-mcp.js'), true],
         ]) {
           if (present && fs.existsSync(script)) { try { run(process.execPath, [script]); } catch {} }

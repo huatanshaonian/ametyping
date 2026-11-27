@@ -829,3 +829,60 @@ test('server fleet syncHooks and syncSkills fan out over agent RPC and expose ho
     fleet.close();
   }
 });
+
+test('Kiro hookStatus, winCmdQuote trailing-backslash safety, and Fleet bundle static require reachability', () => {
+  const { winCmdQuote } = require('../agent/hook-installer-common');
+  // CommandLineToArgvW: unquoted plain path keeps trailing backslash safe; quoted path doubles trailing backslashes
+  assert.equal(winCmdQuote('D:\\ametyping\\'), 'D:\\ametyping\\');
+  assert.equal(winCmdQuote('D:\\my repo\\'), '"D:\\my repo\\\\"');
+  assert.equal(winCmdQuote('D:\\ametyping'), 'D:\\ametyping');
+
+  const root = tmp('root-kiro'), home = tmp('home-kiro');
+  const kiroAgentCfg = path.join(home, '.kiro', 'agents', 'default.json');
+  write(kiroAgentCfg, JSON.stringify({ hooks: { stop: [{ command: 'node D:/ametyping/kiro-hook.js' }] } }));
+  const agent = createAgentFleet({ root, home, platform: 'win32' });
+  const kiroStatus = agent.hookStatus().find((h) => h.id === 'kiro');
+  assert.deepEqual(kiroStatus, { id: 'kiro', label: 'Kiro', present: true, installed: true });
+
+  // Verify every static relative require() from deploy.js HOOKS + remote/agent + headless resolves in working tree
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const deploySrc = fs.readFileSync(path.join(repoRoot, 'remote', 'deploy', 'deploy.js'), 'utf8');
+  const hooksMatch = /const HOOKS = \[([\s\S]*?)\];/.exec(deploySrc);
+  assert.ok(hooksMatch, 'HOOKS list found in deploy.js');
+  const hookRoots = [...hooksMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  assert.ok(hookRoots.includes('kiro-hook.js') && hookRoots.includes('install-kiro-hooks.js'));
+  assert.ok(hookRoots.includes('remote/agent/hook-common.js') && hookRoots.includes('remote/agent/hook-installer-common.js'));
+
+  const visited = new Set();
+  function walkDir(relDir) {
+    for (const e of fs.readdirSync(path.join(repoRoot, relDir), { withFileTypes: true })) {
+      const rel = path.posix.join(relDir, e.name);
+      if (e.isDirectory()) walkDir(rel);
+      else visit(rel);
+    }
+  }
+  function visit(relFile) {
+    if (visited.has(relFile)) return;
+    visited.add(relFile);
+    if (!/\.[cm]?js$/.test(relFile)) return;
+    const src = fs.readFileSync(path.join(repoRoot, relFile), 'utf8');
+    for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
+      const base = path.posix.normalize(path.posix.join(path.posix.dirname(relFile), m[1]));
+      const target = [base, base + '.js', base + '/index.js'].find((f) => fs.existsSync(path.join(repoRoot, f)) && fs.statSync(path.join(repoRoot, f)).isFile());
+      assert.ok(target, `${relFile} requires unresolved relative path ${m[1]}`);
+      visit(target);
+    }
+  }
+  walkDir('remote/agent');
+  walkDir('headless');
+  for (const h of hookRoots) visit(h);
+  for (const mustHave of [
+    'remote/agent/hook-common.js', 'remote/agent/hook-installer-common.js',
+    'remote/agent/worktree.js', 'remote/agent/compute-dispatcher.js', 'remote/agent/mesh-bridge.js',
+    'remote/agent/pet-client.js', 'remote/agent/session-scanner.js',
+    'headless/cli-bin.js', 'app/cli-common.js', 'app/session-registry.js', 'app/control-guard.js',
+    'app/session-locate.js', 'app/session-adopt.js',
+  ]) {
+    assert.ok(visited.has(mustHave), `Fleet dependency walk must include ${mustHave}`);
+  }
+});

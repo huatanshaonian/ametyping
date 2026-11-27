@@ -1,44 +1,20 @@
-// What differs when the session in the terminal is Antigravity CLI (agy) and not Claude Code (remote-control.js, main.js):
-// which process it is, how a reply of several lines is typed into it, and how a closed session is continued in the
-// background (`agy --conversation <id> -p --dangerously-skip-permissions` with prompt on stdin).
+// What differs when the session in the terminal is Antigravity CLI (agy) and not Claude Code (remote-control.js, main.js).
 'use strict';
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
+const { sleep, findCliInChain, sendMultiline, waitCliStarted, findWinCommand } = require('./cli-common');
 
 const AGY_EXE = /^agy(?:\.exe)?$/i;
 const SHIM = /^(node|cmd)\.exe$/i;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const AGY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function findAgy(chain, ownPid) {
-  if (!Array.isArray(chain)) return null;
-  const boundary = ownPid ? chain.findIndex((p) => p.pid === ownPid) : -1;
-  const limit = boundary < 0 ? chain.length : boundary;
-  let i = -1;
-  for (let n = 0; n < limit; n++) {
-    const p = chain[n];
-    if (i >= 0 && /^(powershell|pwsh|cmd|bash|sh|zsh|fish|nu|WindowsTerminal|OpenConsole|conhost)\.exe$/i.test(p.name)) break;
-    if (AGY_EXE.test(p.name)) i = n;
-  }
-  if (i < 0) i = chain.slice(0, limit).findIndex((p) => AGY_EXE.test(p.name));
-  if (i < 0) return null;
-  let j = i + 1;
-  if (chain[j] && SHIM.test(chain[j].name)) j++;
-  const parents = chain.slice(i + 1, i + 4), owner = ownPid ? parents.findIndex((p) => p.pid === ownPid) : -1;
-  const own = owner >= 0 && !parents.slice(0, owner).some((p) => /^(powershell|pwsh)\.exe$/i.test(p.name));
-  return { pid: chain[i].pid, parent: chain[j] || null, own };
+  return findCliInChain(chain, ownPid, { exeMatch: AGY_EXE, shimRe: SHIM });
 }
 
-async function send(bridge, pid, text) {
-  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
-  if (lines.length === 1) return bridge.send(pid, lines[0]);
-  for (let i = 0; i < lines.length; i++) {
-    if (i) { const k = await bridge.key(pid, 'ctrlj'); if (!k.ok) return k; }
-    if (lines[i]) { const r = await bridge.type(pid, lines[i]); if (!r.ok) return r; }
-  }
-  await sleep(Math.min(900, 250 + text.length / 4));
-  return bridge.key(pid, 'enter');
+function send(bridge, pid, text) {
+  return sendMultiline(bridge, pid, text);
 }
 
 async function greet(bridge, pid, prompt) {
@@ -56,49 +32,37 @@ async function greet(bridge, pid, prompt) {
   }
 }
 
-async function started(bridge, pid, tries = 40) {
-  for (let n = 0; n < tries; n++) {
-    const all = await bridge.descendants(pid);
-    const c = all.find((p) => /^agy\.exe$/i.test(p.name)) || all.find((p) => AGY_EXE.test(p.name));
-    if (c) return c.pid;
-    if (n > 3 && !all.length && !(await bridge.alive(pid))) return 0;
-    await sleep(500);
-  }
-  return 0;
+function started(bridge, pid, tries = 40) {
+  return waitCliStarted(bridge, pid, { primaryMatch: (n) => /^agy\.exe$/i.test(n), fallbackRe: AGY_EXE }, tries);
 }
 
 function command(env) {
   const p = env || process.env;
-  const dirs = (p.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const d of dirs) { const f = path.join(d, 'agy.exe'); if (fs.existsSync(f)) return { exe: f, args: [] }; }
-  for (const d of dirs) { const f = path.join(d, 'agy.cmd'); if (fs.existsSync(f)) return { exe: p.ComSpec || 'cmd.exe', args: ['/d', '/c', f] }; }
   const localApp = p.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  const localF = path.join(localApp, 'agy', 'bin', 'agy.exe');
-  if (fs.existsSync(localF)) return { exe: localF, args: [] };
-  const userLocal = path.join(os.homedir(), '.local', 'bin', 'agy.exe');
-  if (fs.existsSync(userLocal)) return { exe: userLocal, args: [] };
-  return null;
+  return findWinCommand('agy', p, [
+    path.join(localApp, 'agy', 'bin', 'agy.exe'),
+    path.join(os.homedir(), '.local', 'bin', 'agy.exe'),
+  ]);
 }
 
 function resume(id, cwd, text) {
   const c = command();
   const rawId = String(id || '').replace(/^agy:/, '');
-  if (!c || !/^[0-9a-f-]{36}$/i.test(rawId)) return null;
-  const p = spawn(c.exe, [...c.args, '--conversation', rawId, '-p', '--dangerously-skip-permissions'], { cwd, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+  if (!c || !AGY_UUID.test(rawId)) return null;
+  const p = spawn(c.exe, [...c.args, '--conversation', rawId, '-p', '--dangerously-skip-permissions'], {
+    cwd,
+    windowsHide: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
   p.on('error', () => {});
   p.stdin.on('error', () => {});
   p.stdin.end(text);
   return p;
 }
 
-const AGY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Locate an already-running interactive agy.exe process opened with `--conversation <id>` or `--conversation=<id>`
-// (covers sessions manually resumed in PowerShell or surviving a pet restart before their next hook fires).
 function findRunningByConversation(rawId) {
   const id = String(rawId || '').replace(/^agy:/, '').trim();
-  if (!AGY_UUID.test(id)) return Promise.resolve(0);
-  if (process.platform !== 'win32') return Promise.resolve(0);
+  if (!AGY_UUID.test(id) || process.platform !== 'win32') return Promise.resolve(0);
   const psCmd = `Get-CimInstance Win32_Process -Filter "Name='agy.exe'" | Where-Object { $_.CommandLine -match '--conversation[=\\s]+${id}' -and $_.CommandLine -notmatch '(^|\\s)-p(\\s|$)' } | Select-Object -First 1 -ExpandProperty ProcessId`;
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { windowsHide: true, timeout: 4000 }, (err, stdout) => {

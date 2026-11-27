@@ -10,9 +10,13 @@ const { spawn } = require('child_process');
 
 const { modeFromScreen } = require('./permission-mode');
 const { tidyScreen, plainScreen } = require('./screen-text');
+const { sleep, cleanMeshEnv } = require('./cli-common');
 const codexCli = require('./codex-cli');
+const codexSessions = require('./codex-sessions');
 const agyCli = require('./agy-cli');
+const agySessions = require('./agy-sessions');
 const kiroCli = require('./kiro-cli');
+const kiroSessions = require('./kiro-sessions');
 const opencode = require('./opencode');
 const btwPanel = require('./btw-panel');
 const claudeApi = require('./claude-api');
@@ -21,22 +25,9 @@ let harnessProxy = () => '', harnessNoProxy = 'localhost,127.0.0.1,::1';
 try { ({ proxyFor: harnessProxy, NO_PROXY: harnessNoProxy } = require('../remote/agent/harness')); } catch {}
 const { createProfiles } = claudeApi;
 
-// (ctrlb / ctrls / ctrlxs: Claude Code's Ctrl+B, Ctrl+S, Ctrl+X Ctrl+S -- to the background, stash the draft, send now;
-// ctrl<letter>: the Ctrl combinations its menus name, e.g. Ctrl+A in /resume -- never C, D or Z, which interrupt or
-// end the session; bksp: Backspace, for what was typed into a menu's box)
 const KEYS = new Set(['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'btab', 'bksp', 'ctrlxs']);
 const CTRL = /^ctrl[abe-y]$/;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ps = (x) => "'" + String(x).replace(/'/g, "''") + "'";
-
-function cleanMeshEnv(v) {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const out = {};
-  for (const k of ['AME_PROJECT_ID', 'AME_NODE_ID']) {
-    if (typeof v[k] === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(v[k])) out[k] = v[k];
-  }
-  return Object.keys(out).length ? out : null;
-}
 
 function meshPsPrefix(mEnv) {
   return mEnv ? Object.entries(mEnv).map(([k, v]) => `$env:${k} = ${ps(v)}; `).join('') : '';
@@ -236,21 +227,23 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
   // (Claude Code's SessionStart comes at once), so nothing would say the thread is open: it stayed "历史" on the
   // dashboard, where a message can only be sent to an open session -- never to become one. It is put on the list here,
   // by the process we started.
-  async function adoptCodex(id, pid, cwd) {
-    const cpid = await codexCli.started(bridge, pid);
+  async function adoptCliWindow(provider, cliMod, regMod, id, pid, cwd) {
+    const cpid = await cliMod.started(bridge, pid);
     if (!cpid) return;
     const t = Date.now();
     let s = sessions.get(id);
-    if (s && s.claudePid && s.state !== 'ended') return;           // (its own hook came in meanwhile)
-    if (!s) { s = { id, provider: 'codex', rawSession: id.slice(6), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
+    if (s && s.claudePid && s.state !== 'ended') return;
+    const rawSession = id.slice(provider.length + 1);
+    if (!s) {
+      s = { id, provider, rawSession, project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t };
+      sessions.set(id, s);
+    }
     Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: cpid, fromPid: null, headless: false, terminal: true });
     s.processIdentity = bridge.identity ? await bridge.identity(cpid) : null;
-    require('./codex-sessions').remember(s, home());
+    regMod.remember(s, home());
     pushBubble(null);
   }
 
-  // An OpenCode session opened again in a window of ours: the plugin registers it the moment it says anything.
-  // Until then the dashboard keeps it as history, where a reply goes through the plugin anyway (chatSend above).
   async function adoptOpenCode(id, cwd) {
     for (let n = 0; n < 20; n++) {
       const m = opencode.metaOf(id);
@@ -264,34 +257,6 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
       }
       await sleep(500);
     }
-  }
-
-  async function adoptAgy(id, pid, cwd) {
-    const cpid = await agyCli.started(bridge, pid);
-    if (!cpid) return;
-    const t = Date.now();
-    let s = sessions.get(id);
-    if (s && s.claudePid && s.state !== 'ended') return;
-    if (!s) { s = { id, provider: 'agy', rawSession: id.slice(4), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
-    Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: cpid, fromPid: null, headless: false, terminal: true });
-    s.processIdentity = bridge.identity ? await bridge.identity(cpid) : null;
-    require('./agy-sessions').remember(s, home());
-    pushBubble(null);
-  }
-
-  // A Kiro thread opened again in a window of ours. Kiro's agentSpawn hook fires at session start, but a resumed
-  // session may run before the hook is wired; put it on the list by the process we started so a reply can reach it.
-  async function adoptKiro(id, pid, cwd) {
-    const cpid = await kiroCli.started(bridge, pid);
-    if (!cpid) return;
-    const t = Date.now();
-    let s = sessions.get(id);
-    if (s && s.claudePid && s.state !== 'ended') return;
-    if (!s) { s = { id, provider: 'kiro', rawSession: id.slice(5), project: path.basename(cwd), cwd, lines: [], steps: 0, t0: t, born: t }; sessions.set(id, s); }
-    Object.assign(s, { state: 'idle', last: t, dormant: false, claudePid: cpid, fromPid: null, headless: false, terminal: true });
-    s.processIdentity = bridge.identity ? await bridge.identity(cpid) : null;
-    require('./kiro-sessions').remember(s, home());
-    pushBubble(null);
   }
 
   // resume: a past conversation's id -- `claude --resume <id>` there instead of a new session (its folder, from its
@@ -363,9 +328,9 @@ function createRemoteControl({ sessions, permissions, bridge, procAlive, pushBub
     else if (agy) agyCli.greet(bridge, pid, agyThread ? '' : first).catch(() => {});
     else if (kiro) kiroCli.greet(bridge, pid, kiroThread ? '' : first).catch(() => {});
     else answerTrust(pid);
-    if (thread) adoptCodex(resume, pid, cwd).catch(() => {});
-    if (agyThread) adoptAgy(resume, pid, cwd).catch(() => {});
-    if (kiroThread) adoptKiro(resume, pid, cwd).catch(() => {});
+    if (thread) adoptCliWindow('codex', codexCli, codexSessions, resume, pid, cwd).catch(() => {});
+    if (agyThread) adoptCliWindow('agy', agyCli, agySessions, resume, pid, cwd).catch(() => {});
+    if (kiroThread) adoptCliWindow('kiro', kiroCli, kiroSessions, resume, pid, cwd).catch(() => {});
     return { ok: true, msg: resume ? '已在这台电脑上打开一个新的命令行窗口，接着这个对话' : '已在这台电脑上打开一个新的命令行窗口启动（新文件夹会自动确认信任）' };
   }
 
