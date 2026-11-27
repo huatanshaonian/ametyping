@@ -38,24 +38,40 @@ function nasNode(script, inputObj = null) {
 }
 
 function callAgy(prompt, schema, eff = EFFORT) {
-  const sf = path.join(os.tmpdir(), `agy-card-${crypto.randomBytes(6).toString('hex')}.json`);
+  const id = crypto.randomBytes(6).toString('hex');
+  const sf = path.join(os.tmpdir(), `agy-card-${id}.json`);
+  const pf = path.join(os.tmpdir(), `agy-prompt-${id}.txt`);
   try {
     fs.writeFileSync(sf, JSON.stringify(schema));
+    fs.writeFileSync(pf, String(prompt || ''), 'utf8');
     const args = ['--output-format', 'json', '--json-schema', sf, '--disable-slash-commands', '--model', MODEL, '--effort', eff, '--print', 'Follow the instructions from stdin and return only the requested JSON.'];
-    const r = cp.spawnSync(AGY_BIN, args, {
-      input: prompt,
-      encoding: 'utf8',
-      timeout: 360000,
-      maxBuffer: 32 * 1024 * 1024,
-      windowsHide: true,
-    });
-    if (r.error) throw r.error;
-    if (r.status !== 0) throw new Error(`agy failed (${r.status}): ${String(r.stderr || r.stdout).slice(0, 300)}`);
-    const out = JSON.parse(String(r.stdout || '').trim());
-    if (out.structured_output != null) return out.structured_output;
-    return typeof out.response === 'string' ? JSON.parse(out.response) : out;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let fd = null;
+      try {
+        fd = fs.openSync(pf, 'r');
+        const r = cp.spawnSync(AGY_BIN, args, {
+          stdio: [fd, 'pipe', 'pipe'],
+          encoding: 'utf8',
+          timeout: 360000,
+          maxBuffer: 32 * 1024 * 1024,
+          windowsHide: true,
+        });
+        fs.closeSync(fd); fd = null;
+        if (r.error) throw r.error;
+        if (r.status !== 0) throw new Error(`agy failed (${r.status}): ${String(r.stderr || r.stdout).slice(0, 300)}`);
+        const out = JSON.parse(String(r.stdout || '').trim());
+        if (out.structured_output != null) return out.structured_output;
+        return typeof out.response === 'string' ? JSON.parse(out.response) : out;
+      } catch (e) {
+        if (fd != null) { try { fs.closeSync(fd); } catch {} }
+        lastErr = e;
+      }
+    }
+    throw lastErr;
   } finally {
     try { fs.unlinkSync(sf); } catch {}
+    try { fs.unlinkSync(pf); } catch {}
   }
 }
 
