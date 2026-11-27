@@ -83,9 +83,6 @@ export async function init() {
 }
 
 // ---- 显示属性 window ----
-// 显示属性 lives in 控制面板 (apps/control.js): this opens it there
-export function openSettings() { import('./apps/control.js').then((c) => c.open('display')); }
-
 // the 显示属性 page itself, for 控制面板: { root }
 export function settingsPanel() {
   const grid = h('div', { class: 'walls' });

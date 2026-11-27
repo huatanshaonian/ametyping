@@ -1,7 +1,7 @@
 // 控制面板 › Skill 与协同 (Skill 文档、角色提示词 .md、全局模型池、机器角色备忘)
 import { h, ago } from '../util.js';
 import * as net from '../net.js';
-import { askCode } from '../gate.js';
+import { confirmBox } from '../dialog.js';
 import { panel as fleetPanel } from './fleet-panel.js';
 
 const TABS = [
@@ -30,15 +30,7 @@ function fmtTime(t) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}（${ago(ms)}）`;
 }
 
-async function fetchJson(url) {
-  try {
-    const res = await fetch(url);
-    if (res.status === 401) { location.href = '/login'; return { ok: false, msg: '需要重新登录' }; }
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+const fetchJson = (url) => net.getJson(url, null);
 
 async function copyText(text, targetEl, statusEl) {
   try {
@@ -300,7 +292,7 @@ function createMdLibraryView(cfg) {
     if (!cur) return;
     if (cur.builtin && !cur.overridden) return;
     const actName = cur.builtin ? '还原为内置默认内容' : '永久删除';
-    if (!confirm(`确定要将「${cur.name}」${actName}？`)) return;
+    if (!(await confirmBox(`确定要将「${cur.name}」${actName}？`, { title: cur.builtin ? '还原默认' : '删除确认', ok: cur.builtin ? '还原' : '删除', danger: true }))) return;
     busy = true;
     resetBtn.disabled = true;
     statusEl.textContent = '处理中…';
@@ -316,9 +308,13 @@ function createMdLibraryView(cfg) {
     await load();
   });
 
+  let loadSeq = 0;
+  let destroyed = false;
   async function load() {
+    const seq = ++loadSeq;
     say('加载中…');
     const r = await fetchJson(cfg.endpoint);
+    if (destroyed || seq !== loadSeq) return;
     if (!r || !r.ok || !Array.isArray(r[cfg.listKey])) {
       say((r && r.msg) || `读取${cfg.title}失败（看板服务器尚未启用该接口或网络异常）`, true);
       return;
@@ -334,7 +330,7 @@ function createMdLibraryView(cfg) {
     renderEditor();
   }
 
-  return { root, load };
+  return { root, load, destroy() { destroyed = true; } };
 }
 
 function stripPoolReadOnlyFields(poolsObj) {
@@ -670,9 +666,13 @@ function createMachinesView() {
     }));
   }
 
+  let loadSeq = 0;
+  let destroyed = false;
   async function load() {
+    const seq = ++loadSeq;
     say('加载中…');
     const r = await fetchJson('/api/mesh/machine-profiles');
+    if (destroyed || seq !== loadSeq) return;
     if (!r || !r.ok || !Array.isArray(r.machines)) {
       say((r && r.msg) || '读取机器角色备忘失败（看板服务器尚未启用该接口或网络异常）', true);
       return;
@@ -681,14 +681,18 @@ function createMachinesView() {
     renderMachines(r.machines);
   }
 
-  return { root, load };
+  return { root, load, destroy() { destroyed = true; } };
 }
 
 // 设备与 Harness (fleet-panel.js): made the first time the tab is opened, then refreshed on each visit
 function createFleetView() {
   const root = h('div', { class: 'skp-fleet' });
   let p = null;
-  return { root, load() { if (!p) { p = fleetPanel(); root.replaceChildren(p.root); } else p.show(); } };
+  return {
+    root,
+    load() { if (!p) { p = fleetPanel(); root.replaceChildren(p.root); } else p.show(); },
+    destroy() { if (p && p.destroy) p.destroy(); p = null; },
+  };
 }
 
 export function panel(initialTab) {
@@ -759,5 +763,13 @@ export function panel(initialTab) {
   }
 
   show(active);
-  return { root, show };
+  return {
+    root,
+    show,
+    destroy() {
+      for (const v of Object.values(views)) {
+        if (v && v.destroy) v.destroy();
+      }
+    },
+  };
 }

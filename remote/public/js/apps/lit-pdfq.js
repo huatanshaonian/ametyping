@@ -2,11 +2,11 @@
 // found for, fetched through the browser signed in to the user's institution. Shown only when there is something to
 // say: what a site waits for from the user (a check that asks for a person, a sign-in) with 继续 once they did it,
 // how many wait, the ones it could not get (重试). 补齐 puts every paper of 每日文献 and 调研工作 without a PDF in.
-import { h } from '../util.js';
+import { h, hhmm } from '../util.js';
 import { get, post } from './lit-api.js';
 
 const NEED = { verify: '要你点一下人机验证', signin: '要你登录一次' };
-const hm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const hm = hhmm;
 
 export function pdfqBox(ctx) {
   const el = h('div', { class: 'lpq', hidden: true });

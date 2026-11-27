@@ -260,7 +260,7 @@ function mount(current) {
   const renderList = () => sessionList.render();
   // a phone's back gesture (js/backnav.js): a conversation open in the narrow layout is one level; back shows the list
   const navLevel = () => backnav.level('dash', root.isConnected && root.classList.contains('narrow') && root.classList.contains('viewing') ? 1 : 0);
-  backnav.step(() => {
+  const offBacknav = backnav.step(() => {
     if (!root.isConnected || !root.offsetParent || !root.classList.contains('narrow') || !root.classList.contains('viewing')) return false;
     root.classList.remove('viewing'); navLevel(); return true;
   }, 10);
@@ -560,6 +560,6 @@ function mount(current) {
     root,
     setCurrent(c) { sessionList.setCurrent(c); },
     select,
-    destroy() { sessionList.destroy(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); document.removeEventListener('keydown', onTermKey); ro.disconnect(); net.send({ t: 'unwatch' }); backnav.level('dash', 0); },
+    destroy() { sessionList.destroy(); agents.destroy(); clearTimeout(draftT); offBacknav(); for (const off of offs) off(); clearInterval(tickT); document.removeEventListener('keydown', onEnter); document.removeEventListener('keydown', onTermKey); ro.disconnect(); net.send({ t: 'unwatch' }); backnav.level('dash', 0); },
   };
 }

@@ -15,11 +15,10 @@ const changed = () => { for (const fn of listeners) { try { fn(); } catch {} } }
 export const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
 export const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 export const canInstall = () => !!installOffer;
-export const subscription = () => sub;
 export function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 
 // the device as people call it: 安卓 Chrome, iPhone Safari, Windows Edge...
-export function deviceName() {
+function deviceName() {
   const ua = navigator.userAgent;
   const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? '安卓' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '设备';
   const br = /EdgA?\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '浏览器';

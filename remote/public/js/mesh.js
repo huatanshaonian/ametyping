@@ -73,7 +73,7 @@ export const reviewNode = (projectId, nodeId, action = 'approve', note = '', clo
 export const flushInbox = (projectId, nodeId) => post('flush', { projectId, nodeId });
 export const requestTransfer = (d) => post('transfer', d);
 export const confirmTransfer = (projectId, transferId, opts = {}) => post('transfer-confirm', { projectId, transferId, ...opts });
-export const trigger = (d) => post(d && d.op === 'remove' ? 'trigger-remove' : 'trigger-upsert', d);
+export const trigger = (d) => post(d && (d.op === 'remove' || d.op === 'delete') ? 'trigger-remove' : 'trigger-upsert', d);
 export const dismissWatchdog = (projectId, nodeId) => post('watchdog-dismiss', { projectId, nodeId });
 export async function getConfig() {
   try {

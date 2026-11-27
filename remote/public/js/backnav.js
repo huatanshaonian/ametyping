@@ -30,7 +30,12 @@ function sync() {
   }
 }
 export function level(name, n) { levels.set(name, Math.max(0, n | 0)); sync(); }
-export function step(fn, prio = 0) { steps.push({ fn, prio }); steps.sort((a, b) => b.prio - a.prio); }
+export function step(fn, prio = 0) {
+  const entry = { fn, prio };
+  steps.push(entry);
+  steps.sort((a, b) => b.prio - a.prio);
+  return () => { const i = steps.indexOf(entry); if (i >= 0) steps.splice(i, 1); };
+}
 export const enabled = () => on;
 
 addEventListener('popstate', () => {
@@ -60,8 +65,9 @@ export function pane(root, deepClass, goBack) {
   const name = 'pane' + (++panes);
   const deep = () => root.isConnected && root.classList.contains(deepClass) && !!root.closest('.narrow');
   const mo = new MutationObserver(() => report());
+  const ro = new ResizeObserver(() => report());
   function report() {
-    if (!root.isConnected && mo.seen) { mo.disconnect(); levels.delete(name); const i = steps.indexOf(entry); if (i >= 0) steps.splice(i, 1); sync(); return; }
+    if (!root.isConnected && mo.seen) { mo.disconnect(); ro.disconnect(); levels.delete(name); const i = steps.indexOf(entry); if (i >= 0) steps.splice(i, 1); sync(); return; }
     if (root.isConnected) mo.seen = true;
     level(name, deep() ? 1 : 0);
   }
@@ -73,6 +79,6 @@ export function pane(root, deepClass, goBack) {
   steps.push(entry); steps.sort((a, b) => b.prio - a.prio);
   mo.observe(root, { attributes: true, attributeFilter: ['class'] });
   // narrow comes and goes with the window's width (a class on the root or around it): looked at again then
-  const ro = new ResizeObserver(() => report()); ro.observe(root);
+  ro.observe(root);
   report();
 }

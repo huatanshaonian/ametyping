@@ -3,7 +3,7 @@
 // window shows your events and tasks, notes can be copied to Drive. A sign-in from before a feature's permission was
 // added is asked to connect once more.
 // Anything that changes the account asks for the code again (js/net.js post()).
-import { h } from '../util.js';
+import { h, mdhm } from '../util.js';
 import * as net from '../net.js';
 import { confirmBox } from '../dialog.js';
 
@@ -42,25 +42,29 @@ net.on('status', (up) => { if (up) status(); });
 
 // Google 账户 lives in 控制面板 (control.js): this opens it there; message (after signing in) is shown on top
 export function open(message) { import('./control.js').then((c) => c.open('google', message)); }
-// the page itself, for 控制面板: { root, show(message) }
+// the page itself, for 控制面板: { root, show(message), destroy }
 export function panel(message) {
   const p = mount();
   p.render(message);
-  return { root: p.root, show: (m) => p.render(m) };
+  return { root: p.root, show: (m) => p.render(m), destroy: p.destroy };
 }
 
 function mount() {
   const root = h('div', { class: 'gacc' });
   const note = (text, bad) => h('p', { class: 'gnote' + (bad ? ' bad' : ''), text });
+  let destroyed = false, renderSeq = 0, tasksTimer = null, bfTimer = null;
   async function render(message) {
+    const seq = ++renderSeq;
     const s = await status() || {};
+    if (destroyed || seq !== renderSeq) return;
+    clearTimeout(bfTimer); bfTimer = null;
     const parts = [];
     if (message) parts.push(note(message, /失败|没能/.test(message)));
     if (s.error) parts.push(note(s.error, true));
     if (s.connected) {
       const toggle = (what, on, label) => {
         const box = h('input', { type: 'checkbox', checked: on });
-        box.addEventListener('change', async () => { const r = await net.post('/api/google/' + what, { on: box.checked }); if (!r.ok) box.checked = !box.checked; else if (what === 'tasks') setTimeout(() => render(), 8000); });
+        box.addEventListener('change', async () => { const r = await net.post('/api/google/' + what, { on: box.checked }); if (!r.ok) box.checked = !box.checked; else if (what === 'tasks') { clearTimeout(tasksTimer); tasksTimer = setTimeout(() => { if (!destroyed) render(); }, 8000); } });
         return h('label', { class: 'gline' }, box, ' ' + label);
       };
       const missing = s.missing || [];
@@ -68,7 +72,7 @@ function mount() {
       const synced = sync.last ? new Date(sync.last) : null;
       const FEATURES = { tasks: 'Google 任务', calendar: '单独的「Windose 日报」日历' };
       const last = s.diaryLast, bf = s.backfill || {};
-      if (bf.running) setTimeout(() => { if (root.isConnected) render(); }, 2000);        // the backfill's progress
+      if (bf.running) bfTimer = setTimeout(() => { if (!destroyed && root.isConnected) render(); }, 2000);        // the backfill's progress
       parts.push(h('p', {}, '已连接：', h('b', { text: s.email || 'Google 账户' })),
         missing.length ? h('div', { class: 'gnote' }, `新功能${missing.map((f) => '「' + FEATURES[f] + '」').join('、')}需要多授权权限，请重新连接一次（不用重填客户端）：`,
           h('div', { class: 'gbtns' }, connectBtn('重新授权'))) : null,
@@ -96,7 +100,7 @@ function mount() {
     } else parts.push(...setup(s));
     root.replaceChildren(...parts);
   }
-  const when = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const when = mdhm;
   function connectBtn(text) {
     return h('button', { class: 'btn go', type: 'button', text, onclick: async () => {
       const r = await net.post('/api/google/connect', {});
@@ -127,5 +131,5 @@ function mount() {
       h('p', { class: 'ghint', text: '客户端密钥和授权只保存在群晖上（仅本机可读），不会出现在网页里。' }),
     ];
   }
-  return { root, render };
+  return { root, render, destroy() { destroyed = true; clearTimeout(tasksTimer); clearTimeout(bfTimer); } };
 }
