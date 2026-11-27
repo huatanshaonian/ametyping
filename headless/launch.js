@@ -21,20 +21,13 @@ let harnessProxy = () => '', harnessNoProxy = 'localhost,127.0.0.1,::1';
 try { ({ proxyFor: harnessProxy, NO_PROXY: harnessNoProxy } = require('../remote/agent/harness')); } catch {}
 const { agyBin, threadOf: agyThreadOf } = require('./agy');
 const { kiroBin, threadOf: kiroThreadOf } = require('./kiro');
+const { findUnixBin } = require('./cli-bin');
+const { cleanMeshEnv } = require('../app/cli-common');
 const opencode = require('../app/opencode');
 const claudeApi = require('../app/claude-api');
 
 const CARRY = /^(https?_proxy|all_proxy|no_proxy|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|CODEX_[A-Z0-9_]+|GEMINI_[A-Z0-9_]+|AGY_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|LANG|LC_ALL)$/;
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
-
-function cleanMeshEnv(v) {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const out = {};
-  for (const k of ['AME_PROJECT_ID', 'AME_NODE_ID']) {
-    if (typeof v[k] === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(v[k])) out[k] = v[k];
-  }
-  return Object.keys(out).length ? out : null;
-}
 
 function cleanModel(v) {
   return typeof v === 'string' && /^[A-Za-z0-9._:/-]{1,120}$/.test(v.trim()) ? v.trim() : '';
@@ -52,14 +45,7 @@ function buildTail({ thread, agyThread, kiroThread, kiro, agy, codex, resume, pr
     : resume ? ' --resume ' + q(resume) : mFlag + (trimmed ? ' ' + q(prompt) : '');
 }
 
-function claudeBin(env) {
-  for (const dir of ((env && env.PATH) || process.env.PATH || '').split(path.delimiter)) {
-    const f = dir && path.join(dir, 'claude');
-    if (f && fs.existsSync(f)) return f;
-  }
-  const f = path.join(os.homedir(), '.local', 'bin', 'claude');
-  return fs.existsSync(f) ? f : null;
-}
+const claudeBin = (env) => findUnixBin('claude', env);
 
 // cwd: a folder the agent already checked; env: a recent session's environment (or null); prompt: optional first message;
 // resume: a past conversation's id -- `claude --resume <id>` in its folder instead of a new session; a Codex thread's

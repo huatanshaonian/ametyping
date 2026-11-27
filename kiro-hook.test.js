@@ -138,6 +138,7 @@ test('commandFor never begins with a quoted path (Kiro runs it through the shell
   const node = 'C:\\Program Files\\nodejs\\node.exe';
   assert.equal(installer.commandFor(node, 'D:\\ametyping\\kiro-hook.js', () => true), 'node D:/ametyping/kiro-hook.js');
   assert.equal(installer.commandFor(node, 'D:\\my pet\\kiro-hook.js', () => true), 'node "D:/my pet/kiro-hook.js"');
+  assert.equal(installer.commandFor(node, 'D:\\ame(dev)\\kiro-hook.js', () => true), 'node "D:/ame(dev)/kiro-hook.js"');
   assert.equal(installer.commandFor('/usr/bin/node', '/opt/ame/kiro-hook.js', () => true), '/usr/bin/node /opt/ame/kiro-hook.js');
   assert.equal(installer.commandFor(node, 'D:\\a\\kiro-hook.js', () => false), '"C:/Program Files/nodejs/node.exe" D:/a/kiro-hook.js');
 });
@@ -182,4 +183,21 @@ test('real hook process -> loopback HTTP, stdout stays empty', async (t) => {
   // no session id -> nothing sent, still exit 0
   const nosid = await child(port, { hook_event_name: 'stop' }, '');
   assert.equal(nosid.code, 0); assert.equal(nosid.stdout, '');
+
+  // streaming stdin kept open without EOF still dispatches promptly and exits 0
+  received = null;
+  const openStdinRes = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, [path.join(__dirname, 'kiro-hook.js')], {
+      env: { ...process.env, AME_PORT: String(port), KIRO_SESSION_ID: SID }, windowsHide: true,
+    });
+    let stdout = '';
+    const timer = setTimeout(() => { p.kill(); reject(new Error('hook hung on open stdin')); }, 1500);
+    p.stdout.on('data', (c) => { stdout += c; });
+    p.on('error', reject);
+    p.on('exit', (code) => { clearTimeout(timer); resolve({ code, stdout }); });
+    p.stdin.write(JSON.stringify({ hook_event_name: 'stop', cwd: 'D:/p', assistant_response: 'done' }));
+  });
+  assert.equal(openStdinRes.code, 0);
+  assert.equal(openStdinRes.stdout, '');
+  assert.equal(received && received.route, '/event/done');
 });

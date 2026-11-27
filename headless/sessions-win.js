@@ -33,6 +33,7 @@ function createWinSessions({ procAlive, cards, onGone }) {
   function via(s) {
     if (s.state === 'ended') return 'resume';
     if (s.headless) return 'busy';
+    if (s.provider === 'opencode') return s.claudePid ? 'terminal' : 'unknown';
     if (s.claudePid && s.terminal) return 'terminal';
     return s.claudePid ? 'none' : 'unknown';
   }

@@ -214,29 +214,43 @@ function historyMeta(root, id) {
   return cached.entries.get(id) || null;
 }
 
+const subagentIndexCache = new Map(); // root -> { builtAt, byChild: Map<childId, { parent, role, cwd }> }
+const SUBAGENT_CACHE_TTL_MS = 5000;
+
 function subagentDescriptor(root, id) {
   if (!root || !id) return null;
-  const brainDir = path.join(root, 'brain');
-  let entries = [];
-  try { entries = fs.readdirSync(brainDir, { withFileTypes: true }); } catch { return null; }
-  for (const ent of entries) {
-    if (!ent.isDirectory() || ent.name === id) continue;
-    const descFile = path.join(brainDir, ent.name, '.system_generated', 'subagents', `${id}.json`);
-    try {
-      const data = JSON.parse(fs.readFileSync(descFile, 'utf8'));
-      const desc = data.subagentDescriptor || {};
-      let cwd = '';
-      if (Array.isArray(data.workspaceUris) && data.workspaceUris[0]) {
-        cwd = fileUriToPath(data.workspaceUris[0]);
+  const now = Date.now();
+  let cached = subagentIndexCache.get(root);
+  if (!cached || now - cached.builtAt > SUBAGENT_CACHE_TTL_MS) {
+    const brainDir = path.join(root, 'brain');
+    const byChild = new Map();
+    let entries = [];
+    try { entries = fs.readdirSync(brainDir, { withFileTypes: true }); } catch { return null; }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const subDir = path.join(brainDir, ent.name, '.system_generated', 'subagents');
+      let files;
+      try { files = fs.readdirSync(subDir); } catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue;
+        const childId = f.slice(0, -5);
+        if (!childId || childId === ent.name) continue;
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(subDir, f), 'utf8'));
+          const desc = data.subagentDescriptor || {};
+          const cwd = Array.isArray(data.workspaceUris) && data.workspaceUris[0] ? fileUriToPath(data.workspaceUris[0]) : '';
+          byChild.set(childId, {
+            parent: ent.name,
+            role: desc.role || desc.typeName || 'subagent',
+            cwd,
+          });
+        } catch {}
       }
-      return {
-        parent: ent.name,
-        role: desc.role || desc.typeName || 'subagent',
-        cwd,
-      };
-    } catch {}
+    }
+    cached = { builtAt: now, byChild };
+    subagentIndexCache.set(root, cached);
   }
-  return null;
+  return cached.byChild.get(id) || null;
 }
 
 function providerOfModel(modelName) {
@@ -324,6 +338,7 @@ function metadataOf(file, home) {
   };
 
   metaCache.set(file, { mtime: st.mtimeMs, meta });
+  if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
   return meta;
 }
 
@@ -396,9 +411,14 @@ function recordsOf(o, st) {
   const out = [];
   if (!o || typeof o !== 'object') return out;
 
-  o.uuid = o.uuid || (o.step_index != null ? 'step-' + o.step_index : (o.stepIdx != null ? 'step-' + o.stepIdx : undefined));
-  o.timestamp = o.timestamp || o.created_at || o.createdAt;
-  const t = o.timestamp ? Date.parse(o.timestamp) : Date.now();
+  const uid = o.uuid || (o.step_index != null ? 'step-' + o.step_index : (o.stepIdx != null ? 'step-' + o.stepIdx : undefined));
+  const rawTs = o.timestamp || o.created_at || o.createdAt;
+  if (!Object.isFrozen(o)) {
+    o.uuid = uid;
+    o.timestamp = rawTs;
+  }
+  const parsedT = rawTs ? Date.parse(rawTs) : NaN;
+  const t = Number.isFinite(parsedT) ? parsedT : Date.now();
 
   if (o.type === 'USER_INPUT') {
     const raw = o.content || '';

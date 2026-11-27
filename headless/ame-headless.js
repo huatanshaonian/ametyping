@@ -11,8 +11,6 @@
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
 const { createPermissions } = require('../app/permissions');
 const { normalizeSession } = require('../app/session-source');
 const { createSessions } = require('./sessions');
@@ -34,11 +32,10 @@ const { resume } = require('./resume');
 const claudeApi = require('../app/claude-api');
 const { launch } = require('./launch');
 const btwPanel = require('../app/btw-panel');
+const { PERM_END, createControlGuard, createCliUpdateTracker } = require('../app/control-guard');
 
 const PORT = +process.env.AME_PORT || 3940;
 const sessions = createSessions();
-const PERM_END = { decided: (e) => (e.choice === 'allow' ? '已允许' : e.choice === 'always' ? '已总是允许' : e.choice === 'answer' ? '已回答' : e.choice === 'chat' ? '先聊聊' : '已拒绝'),
-  closed: () => '已在终端处理', advanced: () => '已在终端处理' };
 const permissions = createPermissions((sid, end) => {
   const s = sessions.map.get(sid), say = end && PERM_END[end.why];
   if (say && s && s.state === 'waiting' && !permissions.list(sid).length) sessions.event('thinking', { session: sid, text: `${say(end)}：${end.tool}` });
@@ -161,19 +158,9 @@ async function chatScreen(id, hl = false) {
 }
 
 // ---- control API for the agent ----
-const CONTROL_TOKEN = crypto.randomBytes(32).toString('hex');
-const tokenFile = path.join(os.homedir(), '.ametyping', `control-token-${PORT}`);
-function writeToken() {
-  fs.mkdirSync(path.dirname(tokenFile), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(tokenFile, CONTROL_TOKEN, { mode: 0o600 });
-}
-function removeToken() { try { if (fs.readFileSync(tokenFile, 'utf8') === CONTROL_TOKEN) fs.unlinkSync(tokenFile); } catch {} }
-function controlOk(req) {
-  const t = Buffer.from(String(req.headers['x-ame-control'] || ''));
-  return !req.headers.origin && t.length === CONTROL_TOKEN.length && crypto.timingSafeEqual(t, Buffer.from(CONTROL_TOKEN));
-}
-const cliUpdates = new Map();
-const recordCliUpdate = (u) => { if (u && u.tool) cliUpdates.set(String(u.tool), { tool: String(u.tool).slice(0, 32), detail: String(u.detail || '').slice(0, 160), at: Number(u.at) || Date.now() }); };
+const { tokenFileOf, writeToken, removeToken, controlOk } = createControlGuard(PORT, () => os.homedir());
+const cliUpdates = createCliUpdateTracker();
+const recordCliUpdate = cliUpdates.record;
 
 function controlState() {
   return sessions.list().map((s) => ({
@@ -187,7 +174,7 @@ function controlState() {
 async function onControl(req, res, body) {
   const out = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (!controlOk(req)) return out(403, { ok: false });
-  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState(), cliUpdates: [...cliUpdates.values()] });
+  if (req.method === 'GET' && req.url === '/control/state') return out(200, { sessions: controlState(), cliUpdates: cliUpdates.values() });
   let d = {}; try { d = JSON.parse(body || '{}'); } catch {}
   if (req.method === 'POST' && req.url === '/control/send') {
     const text = typeof d.text === 'string' ? d.text : '';
@@ -248,13 +235,17 @@ const server = http.createServer((req, res) => {
 setInterval(() => sessions.expire(), 5000).unref();
 server.on('error', (e) => { console.error(`监听 127.0.0.1:${PORT} 失败：${e.message}`); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => {
-  writeToken();
+  const tokenFile = writeToken();
   console.log(`Ame 无头服务监听 127.0.0.1:${PORT}；控制令牌 ${tokenFile}`);
   adoptRunning();
 });
 
-// Claude Code sessions already open when the service starts (restart, update): on the list at once instead of only
-// with their next hook event. The record's pid must be that Claude process itself (not a reused pid).
+const HEADLESS_PROVIDERS = [
+  { provider: 'codex', registry: codexSessions, find: proc.findCodex, records: codexRecords },
+  { provider: 'agy', registry: agySessions, find: proc.findAgy, records: agyRecords },
+  { provider: 'kiro', registry: kiroSessions, find: proc.findKiro, records: kiroRecords },
+];
+
 function adoptRunning() {
   let n = 0;
   for (const r of listRunning(os.homedir())) {
@@ -264,41 +255,25 @@ function adoptRunning() {
     const s = sessions.ensure(r.sessionId, {});
     Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, transcript: transcriptOf(os.homedir(), r.cwd, r.sessionId) || undefined });
     if (r.name) s.title = r.name;
-    locate(s, r.pid);                                                 // its tmux pane and environment, as for a hook
-    n++;
-  }
-  for (const r of codexSessions.list()) {
-    const id = 'codex:' + r.id;
-    if (sessions.map.has(id)) continue;
-    const c = proc.findCodex(r.pid);
-    if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { codexSessions.forget(r.id); continue; }
-    const s = sessions.ensure(id, { provider: 'codex', rawSession: r.id });
-    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, title: codexRecords.titleOf(r.id) || r.title || undefined,
-      transcript: r.transcript || codexRecords.fileOf(r.id) || undefined });
     locate(s, r.pid);
     n++;
   }
-  for (const r of agySessions.list()) {
-    const id = 'agy:' + r.id;
-    if (sessions.map.has(id)) continue;
-    const c = proc.findAgy(r.pid);
-    if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { agySessions.forget(r.id); continue; }
-    const s = sessions.ensure(id, { provider: 'agy', rawSession: r.id });
-    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, title: agyRecords.titleOf(r.id) || r.title || undefined,
-      transcript: r.transcript || agyRecords.fileOf(r.id) || undefined });
-    locate(s, r.pid);
-    n++;
-  }
-  for (const r of kiroSessions.list()) {
-    const id = 'kiro:' + r.id;
-    if (sessions.map.has(id)) continue;
-    const c = proc.findKiro(r.pid);
-    if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { kiroSessions.forget(r.id); continue; }
-    const s = sessions.ensure(id, { provider: 'kiro', rawSession: r.id });
-    Object.assign(s, { project: projectOf(r.cwd), cwd: r.cwd, title: kiroRecords.titleOf(r.id) || r.title || undefined,
-      transcript: r.transcript || kiroRecords.fileOf(r.id) || undefined });
-    locate(s, r.pid);
-    n++;
+  for (const spec of HEADLESS_PROVIDERS) {
+    for (const r of spec.registry.list()) {
+      const id = `${spec.provider}:${r.id}`;
+      if (sessions.map.has(id)) continue;
+      const c = spec.find(r.pid);
+      if (!c || c.pid !== r.pid || proc.identity(c.pid) !== r.identity) { spec.registry.forget(r.id); continue; }
+      const s = sessions.ensure(id, { provider: spec.provider, rawSession: r.id });
+      Object.assign(s, {
+        project: projectOf(r.cwd),
+        cwd: r.cwd,
+        title: spec.records.titleOf(r.id) || r.title || undefined,
+        transcript: r.transcript || spec.records.fileOf(r.id) || undefined,
+      });
+      locate(s, r.pid);
+      n++;
+    }
   }
   for (const m of opencode.listLive()) {
     const id = 'opencode:' + m.id;

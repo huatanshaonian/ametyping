@@ -1,25 +1,18 @@
 #!/usr/bin/env node
 // Installs AmeTyping's OpenCode plugin into OpenCode's global configuration.
-//
-//   node install-opencode-plugin.js             add (or refresh) the plugin entry
-//   node install-opencode-plugin.js --remove    take the entry out
-//   node install-opencode-plugin.js --config <path>   a specific opencode.json(c)
-//
-// The plugin lives in this repository (opencode-plugin/); the config gets its absolute path. Nothing is copied, so
-// `git pull` updates it. Because OpenCode configs may be JSONC, the edit is textual: comments and formatting stay,
-// the original file is backed up first, and the entry is recognised again on a re-run (idempotent).
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { fwdSlash, atomicWriteText } = require('./remote/agent/hook-installer-common');
 
 const PLUGIN_DIR = path.join(__dirname, 'opencode-plugin');
-const ENTRY = PLUGIN_DIR.split(path.sep).join('/');
+const ENTRY = fwdSlash(PLUGIN_DIR);
 
 // ---------- a tiny JSONC scanner: strings, // and /* */ comments are understood ----------
 function scan(text) {
-  const strings = [];              // [start, end) of every string literal, quotes included
-  const comments = [];             // [start, end) of every comment
+  const strings = [];
+  const comments = [];
   let i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -40,7 +33,7 @@ function scan(text) {
   return { strings, comments };
 }
 const inRanges = (i, ranges) => ranges.some(([a, b]) => i >= a && i < b);
-function strip(text, { keepStrings = true } = {}) {
+function strip(text) {
   const { comments } = scan(text);
   let out = '';
   for (let i = 0; i < text.length;) {
@@ -48,14 +41,13 @@ function strip(text, { keepStrings = true } = {}) {
     if (c) { out += text.slice(i, c[0]).replace(/[^\n]/g, ' '); i = c[1]; continue; }
     out += text[i++];
   }
-  return keepStrings ? out : out;
+  return out;
 }
 function parseJsonc(text) {
   const bare = strip(text).replace(/,(\s*[}\]])/g, '$1');
   return JSON.parse(bare);
 }
 
-// the position of `"key"` used as an object key (not inside a string or comment)
 function keyPos(text, key) {
   const { strings, comments } = scan(text);
   const needle = '"' + key + '"';
@@ -69,12 +61,13 @@ function keyPos(text, key) {
   }
   return null;
 }
-// the index of the object's opening brace (the first `{` outside strings/comments)
+
 function firstBrace(text) {
   const { strings, comments } = scan(text);
   for (let i = 0; i < text.length; i++) if (text[i] === '{' && !inRanges(i, strings) && !inRanges(i, comments)) return i;
   return -1;
 }
+
 function arraySpan(text, open) {
   const { strings, comments } = scan(text);
   let depth = 0;
@@ -86,11 +79,11 @@ function arraySpan(text, open) {
   return null;
 }
 
-// ---------- the config ----------
 function configDir() {
   const xdg = process.env.XDG_CONFIG_HOME;
   return path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), '.config'), 'opencode');
 }
+
 function findConfig(arg) {
   if (arg) return path.resolve(arg);
   const dir = configDir();
@@ -100,7 +93,8 @@ function findConfig(arg) {
   }
   return path.join(dir, 'opencode.json');
 }
-const same = (a) => String(a).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === ENTRY.toLowerCase();
+
+const same = (a) => fwdSlash(a).replace(/\/+$/, '').toLowerCase() === ENTRY.toLowerCase();
 
 function addEntry(text) {
   const cfg = text.trim() ? parseJsonc(text) : null;
@@ -122,6 +116,7 @@ function addEntry(text) {
   const empty = !body.trim();
   return { text: text.slice(0, brace + 1) + `\n  "plugins": [${JSON.stringify(ENTRY)}]${empty ? '' : ','}` + body, changed: true };
 }
+
 function removeEntry(text) {
   const cfg = parseJsonc(text);
   const list = cfg && Array.isArray(cfg.plugins) ? cfg.plugins : [];
@@ -156,8 +151,7 @@ function main() {
     return;
   }
   if (!fs.existsSync(file)) fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  else fs.copyFileSync(file, `${file}.ame-backup-${Math.floor(Date.now() / 1000)}`);
-  fs.writeFileSync(file, result.text.replace(/^\uFEFF/, ''), 'utf8');
+  atomicWriteText(file, result.text.replace(/^\uFEFF/, ''), { backupExt: `.ame-backup-${Math.floor(Date.now() / 1000)}` });
   console.log(`${remove ? '已移除' : '已装入'}：${ENTRY}`);
   console.log(`配置：${file}（原文件已备份）`);
   if (!remove) console.log('打开（或 /reload）OpenCode 后生效；事件会发到本机 127.0.0.1:3940 的糖糖 / 无头服务。');

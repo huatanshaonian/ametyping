@@ -9,8 +9,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = process.env.OPENCODE_AME_HOME || path.join(os.homedir(), '.ametyping', 'opencode');
-const SESSIONS = path.join(ROOT, 'sessions');
+const opencodeRoot = () => process.env.OPENCODE_AME_HOME || path.join(os.homedir(), '.ametyping', 'opencode');
+const opencodeSessionsDir = () => path.join(opencodeRoot(), 'sessions');
+const ROOT = opencodeRoot();
+const SESSIONS = opencodeSessionsDir();
 const META = 'meta';
 
 // the mirror's records are already slim (protocol.js recordsForMessages); pass them through
@@ -49,6 +51,7 @@ function metadataOf(file) {
     if (/^ses_[A-Za-z0-9]+$/.test(id)) meta = { id, cwd: '', title: '' };
   }
   metaCache.set(file, { mtime: st.mtimeMs, meta });
+  if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
   return meta;
 }
 function metaOf(file) {
@@ -68,12 +71,13 @@ function metaOf(file) {
 
 // every mirror file, newest first
 function allFiles() {
+  const sessDir = opencodeSessionsDir();
   let ents = [];
-  try { ents = fs.readdirSync(SESSIONS, { withFileTypes: true }); } catch { return []; }
+  try { ents = fs.readdirSync(sessDir, { withFileTypes: true }); } catch { return []; }
   const out = [];
   for (const e of ents) {
     if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
-    const file = path.join(SESSIONS, e.name);
+    const file = path.join(sessDir, e.name);
     let st; try { st = fs.statSync(file); } catch { continue; }
     out.push({ file, mtime: st.mtimeMs });
   }
@@ -86,7 +90,7 @@ function recentFiles(withinMs) {
 function fileOf(id) {
   const raw = String(id || '').replace(/^opencode:/, '');
   if (!/^[A-Za-z0-9_-]+$/.test(raw)) return null;
-  const file = path.join(SESSIONS, `${raw}.jsonl`);
+  const file = path.join(opencodeSessionsDir(), `${raw}.jsonl`);
   return fs.existsSync(file) ? file : null;
 }
 function titleOf(id) {

@@ -18,8 +18,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = process.env.KIRO_HOME || path.join(os.homedir(), '.kiro');
-const SESSIONS = path.join(ROOT, 'sessions', 'cli');
+const kiroRoot = () => process.env.KIRO_HOME || path.join(os.homedir(), '.kiro');
+const kiroSessionsDir = () => path.join(kiroRoot(), 'sessions', 'cli');
+const ROOT = kiroRoot();
+const SESSIONS = kiroSessionsDir();
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const cut = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
@@ -84,7 +86,8 @@ function recordsOf(o) {
   if (!o || typeof o !== 'object' || !o.data || typeof o.data !== 'object') return out;
   const d = o.data;
   if (o.kind === 'Prompt') {
-    const t = d.meta && Number.isFinite(d.meta.timestamp) ? d.meta.timestamp * 1000 : Date.now();
+    const rawTs = d.meta && Number.isFinite(d.meta.timestamp) ? d.meta.timestamp : null;
+    const t = rawTs != null ? (rawTs > 1e12 ? rawTs : rawTs * 1000) : Date.now();
     const text = textOf(d.content);
     if (text) out.push({ role: 'user', text, t });
   } else if (o.kind === 'AssistantMessage') {
@@ -155,12 +158,13 @@ function titleOf(id) {
 
 // ---- files ----
 function allFiles() {
+  const sessDir = kiroSessionsDir();
   let ents = [];
-  try { ents = fs.readdirSync(SESSIONS, { withFileTypes: true }); } catch { return []; }
+  try { ents = fs.readdirSync(sessDir, { withFileTypes: true }); } catch { return []; }
   const out = [];
   for (const e of ents) {
     if (!e.isFile() || !e.name.endsWith('.jsonl') || !ID.test(e.name.slice(0, -6))) continue;
-    const file = path.join(SESSIONS, e.name);
+    const file = path.join(sessDir, e.name);
     let st; try { st = fs.statSync(file); } catch { continue; }
     out.push({ file, mtime: st.mtimeMs });
   }
@@ -173,14 +177,14 @@ function recentFiles(withinMs) {
 function fileOf(id) {
   const raw = String(id || '').replace(/^kiro:/, '');
   if (!ID.test(raw)) return null;
-  const file = path.join(SESSIONS, raw + '.jsonl');
+  const file = path.join(kiroSessionsDir(), raw + '.jsonl');
   return fs.existsSync(file) ? file : null;
 }
 // a session is live while its {id}.lock exists
 function isLive(id) {
   const raw = String(id || '').replace(/^kiro:/, '');
   if (!ID.test(raw)) return false;
-  return fs.existsSync(path.join(SESSIONS, raw + '.lock'));
+  return fs.existsSync(path.join(kiroSessionsDir(), raw + '.lock'));
 }
 
 module.exports = { ROOT, SESSIONS, recordsOf, toolLine, toolExtra, textOf, metadataOf, metaOf, titleOf, allFiles, recentFiles, fileOf, isLive };
