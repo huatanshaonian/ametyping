@@ -72,6 +72,25 @@ const SCHEMA = `
     error_summary TEXT NOT NULL,
     updated INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS research_teams (
+    id TEXT PRIMARY KEY,
+    institution TEXT NOT NULL,
+    lab TEXT DEFAULT '',
+    pi TEXT DEFAULT '',
+    bio TEXT DEFAULT '',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    updated INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS paper_teams (
+    zotero_key TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    role TEXT DEFAULT 'author',
+    updated INTEGER NOT NULL,
+    PRIMARY KEY (zotero_key, team_id)
+  );
+  CREATE INDEX IF NOT EXISTS paper_teams_team ON paper_teams (team_id);
 `;
 
 function parseJson(raw, fallback) {
@@ -397,12 +416,85 @@ function openKbStruct({ dir, log = () => {} }) {
     return db.prepare(`SELECT * FROM benchmarks${where} ORDER BY updated DESC, id ASC`).all(...params).map(mapBenchmarkRow);
   }
 
+  function mapTeamRow(r) {
+    if (!r) return null;
+    return {
+      id: r.id,
+      institution: r.institution,
+      lab: r.lab || '',
+      pi: r.pi || '',
+      bio: r.bio || '',
+      tags: parseJson(r.tags_json, []),
+      paperCount: r.paper_count != null ? Number(r.paper_count) : undefined,
+      updated: Number(r.updated),
+    };
+  }
+
+  function upsertTeam({ id, institution, lab = '', pi = '', bio = '', tags = [] }) {
+    const now = Date.now();
+    const prev = db.prepare('SELECT * FROM research_teams WHERE id = ?').get(String(id));
+    const mergedTags = [...new Set([...(prev ? parseJson(prev.tags_json, []) : []), ...(Array.isArray(tags) ? tags : [])])].slice(0, 8);
+    const nextLab = String(lab || (prev && prev.lab) || '').trim();
+    const nextPi = String(pi || (prev && prev.pi) || '').trim();
+    const nextBio = String(bio || (prev && prev.bio) || '').trim();
+    db.prepare(`INSERT OR REPLACE INTO research_teams (id, institution, lab, pi, bio, tags_json, updated) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(String(id), String(institution || '').trim(), nextLab, nextPi, nextBio, JSON.stringify(mergedTags), now);
+    return mapTeamRow(db.prepare('SELECT * FROM research_teams WHERE id = ?').get(String(id)));
+  }
+
+  function linkPaperTeam({ zoteroKey, teamId, role = 'author' }) {
+    db.prepare('INSERT OR REPLACE INTO paper_teams (zotero_key, team_id, role, updated) VALUES (?, ?, ?, ?)')
+      .run(String(zoteroKey), String(teamId), String(role || 'author'), Date.now());
+  }
+
+  function getTeam(id) {
+    const r = db.prepare(`SELECT t.*, (SELECT count(*) FROM paper_teams pt WHERE pt.team_id = t.id) AS paper_count FROM research_teams t WHERE t.id = ?`).get(String(id));
+    return mapTeamRow(r);
+  }
+
+  function listTeams() {
+    return db.prepare(`SELECT t.*, (SELECT count(*) FROM paper_teams pt WHERE pt.team_id = t.id) AS paper_count FROM research_teams t ORDER BY paper_count DESC, t.updated DESC`).all().map(mapTeamRow);
+  }
+
+  function teamsOfPaper(zoteroKey) {
+    return db.prepare(`SELECT t.* FROM research_teams t JOIN paper_teams pt ON pt.team_id = t.id WHERE pt.zotero_key = ? ORDER BY pt.role = 'primary' DESC, t.institution ASC`).all(String(zoteroKey)).map(mapTeamRow);
+  }
+
+  function papersOfTeam(teamId) {
+    return db.prepare('SELECT zotero_key FROM paper_teams WHERE team_id = ? ORDER BY updated DESC').all(String(teamId)).map((r) => r.zotero_key);
+  }
+
+  function teamGraph() {
+    const nodes = listTeams();
+    const links = db.prepare('SELECT zotero_key, team_id FROM paper_teams').all();
+    const byPaper = new Map();
+    for (const l of links) {
+      if (!byPaper.has(l.zotero_key)) byPaper.set(l.zotero_key, []);
+      byPaper.get(l.zotero_key).push(l.team_id);
+    }
+    const edgeMap = new Map();
+    for (const [k, tids] of byPaper) {
+      const uniq = [...new Set(tids)].sort();
+      for (let i = 0; i < uniq.length; i++) {
+        for (let j = i + 1; j < uniq.length; j++) {
+          const ek = uniq[i] + '\0' + uniq[j];
+          if (!edgeMap.has(ek)) edgeMap.set(ek, { from: uniq[i], to: uniq[j], weight: 0, keys: [] });
+          const e = edgeMap.get(ek);
+          e.weight++;
+          e.keys.push(k);
+        }
+      }
+    }
+    return { nodes, edges: [...edgeMap.values()].sort((a, b) => b.weight - a.weight) };
+  }
+
   function stats() {
     const evidence = Number(db.prepare('SELECT count(*) AS n FROM paper_evidence').get().n);
     const claims = Number(db.prepare('SELECT count(*) AS n FROM paper_claims').get().n);
     const verifiedClaims = Number(db.prepare('SELECT count(*) AS n FROM paper_claims WHERE verified = 1').get().n);
     const contradictions = Number(db.prepare('SELECT count(*) AS n FROM claim_contradictions').get().n);
     const benchmarks = Number(db.prepare('SELECT count(*) AS n FROM benchmarks').get().n);
+    const teams = Number(db.prepare('SELECT count(*) AS n FROM research_teams').get().n);
     return {
       file,
       evidence,
@@ -410,6 +502,7 @@ function openKbStruct({ dir, log = () => {} }) {
       verifiedClaims,
       contradictions,
       benchmarks,
+      teams,
     };
   }
 
@@ -432,6 +525,13 @@ function openKbStruct({ dir, log = () => {} }) {
     updateContradictionStatus,
     saveBenchmark,
     listBenchmarks,
+    upsertTeam,
+    linkPaperTeam,
+    getTeam,
+    listTeams,
+    teamsOfPaper,
+    papersOfTeam,
+    teamGraph,
     stats,
     close,
   };
