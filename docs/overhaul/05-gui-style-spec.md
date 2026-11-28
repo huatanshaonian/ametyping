@@ -391,6 +391,55 @@ Win98 这一列特意用了更深的经典色（栗色 `#800000`、深绿 `#004d
 | D3 | 桌宠字体去掉 zpix、统一用 PixelMplus | **统一** | 补 zpix 字体文件（先确认许可） |
 | D4 | 紧急"待介入"从屏幕右上的悬浮挂件改成任务栏托盘闪烁加气泡 | **改** | 保留悬浮，但限制在桌面区域内，z-index 低于窗口 |
 
+**拍板结果（2026-11-28）**：D1–D4 全部采用推荐方案，落地情况见第 10 节。
+
+---
+
+## 10. Phase 2 落地记录（M1–M4，任务 `task_6af95d0276`，基线 `cc4440c`）
+
+改后截图在 `D:/ametyping-refactor/docs/overhaul/shots-after/`，文件名与 `shots-baseline/` 一一对应，可以逐张对照；新增 95–98 号用于检查桌宠深夜态和给 JS 预留的钩子。
+
+### 10.1 改了什么
+
+| 里程碑 | 落地内容 | 实测 |
+|---|---|---|
+| M1 令牌层 | 新建 `css/tokens.css`，`index.html` 第一个引入；`desktop.css` 的 `:root` 移进来，并 `@import` 它（`lit-pdf.html` 只引 `desktop.css`，也能拿到令牌）。状态色 5 族 × 4 档（fg/bg/line/solid），分 Windose、深夜/梅子、Win98、豆沙绿、沙漠 5 组取值 | 未定义令牌：0（剩 `--nl` `--pct` `--total-scale-factor` 由 JS 运行时设置） |
+| M2 换令牌 | 21 个业务 CSS 的 hex 和 rgba 全部换成令牌；去掉 `0 0 Npx` 发光阴影；非 50% 的圆角归零（只保留 Clippy 对话气泡的圆角） | 非主题 CSS 的 hex：**579 → 27**，剩下的都是 provider 品牌色（`dash.css` 26 处）和 PDF 批注色（1 处） |
+| M3 组件化 | 新建 `css/components.css`：页签（`.win-tabs/.win-tab`，统一 `.pm-tabs` `.skp-tabs` `.lit-tab`）、`.chip` 及其 5 族和 `.mono`、`.cite-pill`、`.win-group`、`.win-alert`、`.win-meter`、`.win-empty`、开始菜单级联（`.has-sub` + `.msub`）、Clippy 层级；字号全部换成令牌 | 字号取值：21 种 → 7 档令牌（10/11/12/13/14/16/24px，都是整数）；另外保留 1 处 34px 和 3 处 em 相对字号（大号符号、Markdown 标题） |
+| M4 图标与桌宠 | 复制 12 组图标（32 px + 16 px）；`computer_2.png` 原来实际是 16 px、`directory_open_cool.png` 是 48 px，都换成真正的 32 px；`app/bubble.html` 改用同名令牌，去掉 zpix，加深夜/梅子令牌，加 `#hopen/#htopo` 槽位和 `.hlink` 样式 | 页面报错：9 条（clock 404 + zpix 缺失）→ **0 条** |
+
+### 10.2 D1–D4 的实现方式
+
+| 决定 | 实现 | 截图 |
+|---|---|---|
+| D1 Win98 灰底 | `theme-win98.css` 里 `--body: #c0c0c0`，白色只来自 `--surface`（输入框、列表）；默认壁纸"ぴんく"在 Win98 外观下换成 `#008080`（用 `#desktop[style*="pc_wallpaper"]` 匹配，用户自己选的壁纸不受影响） | `70-win98-desktop.png`、`70-win98-projects-board.png` |
+| D2 状态色 | 看板 `.st`、拓扑 `.to-dot/.pm-tdot`、工作线卡片、任务板、算力作业、气泡 `.st/.ln` 统一为：进行中 info、完成 ok、等你 warn、失败 bad、空闲 idle | `10-dashboard-max.png`、`23-projects-topo.png`、`90-bubble-log.png` |
+| D3 桌宠字体 | `bubble.html` 只用 `PixelMplus12-Regular.ttf`。**没有**按 5.5 节新增 PixelMplus10：服务端 `ASSET_OK` 和 `STATIC` 都不放行新 `.ttf`。辅助文字改用 10/11px 的 PixelMplus12 配 `--muted` | `95-bubble-night-permission.png`、`96-bubble-night-chat.png` |
+| D4 待介入 | `.ap-widget.urgent` 去掉 `fixed` 和 `z-index:9500`，留在 `#desktopwidgets`（`--z-widget`），紧急时排到挂件列最上面并加 warn 描边；预写了 `#tray .tray-urgent`（warn 色、`steps(2)` 像素闪烁、`.seen` 和"减少动态效果"时停止闪烁） | `02-desktop-clean.png`、`97-hooks-tray-cascade.png` |
+
+### 10.3 和第 5–6 节规范的差异
+
+- 字号用了 7 档而不是 5.5 节写的 10/12/24 三档：11px（次要信息）和 13px（正文）在现有布局里大量使用，强行并档会让多处换行。7 档都是整数像素，PixelMplus 不再糊。
+- `--fs-meta` 定为 11px（5.5 节原计划配 PixelMplus10，见 10.2 D3）。
+- 状态色比 5.3 节多了一档 `-solid`：用于实心圆点、仪表条和白字徽章，保证白字在实心底上 ≥ 4.5:1。
+- Clippy 从 `z-index:9600` 降到 `--z-widget`，位置挪到网上邻居左侧、机器名上方；对话气泡展开时升到 `--z-popover`。
+
+### 10.4 留给 JS 同伴的钩子（Phase 2A `task_5f89e0d4b1`）
+
+| 钩子 | 写在 | JS 要做的 |
+|---|---|---|
+| 托盘紧急按钮 | `desktop.css` `#tray .tray-urgent` | 插入 `<button class="tray-urgent"><img><b>n</b></button>`，看过后加 `.seen` |
+| 开始菜单级联 | `components.css` `.smi.has-sub` / `.mitem.has-sub` + `.msub` | 子项放进 `.msub`；窄屏点击时切换 `.open` |
+| 气泡跳转按钮 | `bubble.html` `#hopen` `#htopo` | 绑定点击事件，有目标时去掉 `hidden` |
+| 桌宠跟随色调 | `bubble.html` `html[data-shade]` | 给 `document.documentElement.dataset.shade` 设值 |
+| 页签图标去重 | — | 按第 7 节表把 `icon('projects')` 等换成新图标名（文件已就位） |
+| 通用组件 | `.chip` `.cite-pill` `.win-tabs` `.win-alert` `.win-meter` `.win-empty` | 新代码直接用这些类名，不再自写颜色 |
+
+### 10.5 没做的
+
+- 拓扑连线改直角折线、infra 节点详情改属性表（4.4 节）：需要改 JS 的 DOM 结构，不在本阶段的文件边界内。
+- `check-static.js` 的硬编码色值门禁：不在本阶段的文件边界内，建议后续加上。
+
 ---
 
 ## 附录 A · 源码统计（`remote/public/css/`，基线 `3c0a42b`）

@@ -1,5 +1,5 @@
 /* 重要计划: the list as a window, and as a panel pinned to the desktop's top-right corner (under the windows). */
-.tdl { display: flex; flex-direction: column; font-size: 13px; color: var(--ink); }
+.tdl { display: flex; flex-direction: column; font-size: var(--fs-body); color: var(--ink); }
 .tdl:not(.widget) { position: absolute; inset: 0; }
 .td-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 8px; }
 .td-list { list-style: none; margin: 0; padding: 0; }
@@ -7,20 +7,20 @@
 .td-i input[type=checkbox] { margin-top: 3px; flex: none; }
 .td-c { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .td-t { word-break: break-word; cursor: text; }
-.td-c small { font-size: 11px; color: var(--muted); }
+.td-c small { font-size: var(--fs-meta); color: var(--muted); }
 .td-ev { font-style: italic; }
-.td-lit { align-self: flex-start; padding: 0; border: none; background: none; color: var(--border); font-size: 11px; text-decoration: underline; cursor: pointer; }
+.td-lit { align-self: flex-start; padding: 0; border: none; background: none; color: var(--border); font-size: var(--fs-meta); text-decoration: underline; cursor: pointer; }
 .td-i.late small { color: var(--bad); }
 .td-i.soon small { color: var(--warn); }
 .td-i.done .td-t { text-decoration: line-through; color: var(--faint); cursor: default; }
 .td-x { flex: none; border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 3px; visibility: hidden; }
 .td-i:hover .td-x { visibility: visible; }
 .td-x:hover { color: var(--bad); }
-.td-empty { padding: 8px 2px; font-size: 12px; color: var(--muted); }
-.td-more { margin: 6px 0 2px; padding: 0; border: 0; background: none; font-size: 12px; color: var(--accent-muted); cursor: pointer; }
+.td-empty { padding: 8px 2px; font-size: var(--fs-ui); color: var(--muted); }
+.td-more { margin: 6px 0 2px; padding: 0; border: 0; background: none; font-size: var(--fs-ui); color: var(--accent-muted); cursor: pointer; }
 .td-add { display: flex; gap: 4px; margin-top: 8px; }
 .td-in { flex: 1; min-width: 0; }
-.td-due { width: 128px; flex: none; font-size: 12px; }
+.td-due { width: 128px; flex: none; font-size: var(--fs-ui); }
 .td-ed { width: 100%; }
 
 /* the desktop panel */
@@ -29,12 +29,12 @@
 #todowidget .td-head { flex: none; display: flex; align-items: center; gap: 5px; padding: 3px 6px; color: var(--border);
   background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); user-select: none; }
 #todowidget .td-head img { width: 16px; height: 16px; }
-#todowidget .td-n { flex: 1; font-size: 12px; }
+#todowidget .td-n { flex: 1; font-size: var(--fs-ui); }
 #todowidget .td-fold { width: 18px; height: 16px; padding: 0; line-height: 1; border: 1px solid var(--border); background: var(--body); color: var(--border); cursor: pointer; }
 #todowidget.collapsed .td-body { display: none; }
 @media (max-width: 700px) { #todowidget { display: none; } }
 
-html[data-theme="win98"] #todowidget { border: 0; padding: 3px; background: #c0c0c0; box-shadow: var(--raised-outer); }
-html[data-theme="win98"] #todowidget .td-head { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; }
+html[data-theme="win98"] #todowidget { border: 0; padding: 3px; background: var(--panel); box-shadow: var(--raised-outer); }
+html[data-theme="win98"] #todowidget .td-head { color: var(--on-fill); background: linear-gradient(90deg, var(--fill), var(--title-hi)); border-bottom: 0; }
 html[data-theme="win98"] #todowidget .td-body { background: var(--surface); box-shadow: var(--sunken); margin-top: 3px; }
-html[data-theme="win98"] #todowidget .td-fold { border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised); }
+html[data-theme="win98"] #todowidget .td-fold { border: 0; background: var(--panel); color: var(--ink); box-shadow: var(--raised); }

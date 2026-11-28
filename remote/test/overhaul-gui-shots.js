@@ -16,7 +16,8 @@ const { createFakeZotero, toWebdav } = require('./fake-zotero');
 const { createFakeSources } = require('./fake-lit-sources');
 const { makePdf } = require('./make-pdf');
 
-const OUT = process.env.AME_SHOTS_OUT || 'D:/ametyping-refactor/docs/overhaul/shots-baseline';
+// after the overhaul (M1-M4) the shots go to shots-after; --baseline writes the before-set again; AME_SHOTS_OUT any place
+const OUT = process.env.AME_SHOTS_OUT || (process.argv.includes('--baseline') ? 'D:/ametyping-refactor/docs/overhaul/shots-baseline' : 'D:/ametyping-refactor/docs/overhaul/shots-after');
 fs.mkdirSync(OUT, { recursive: true });
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'ame-overhaul-'));
 const PORT = 18910, CDP = 9441, MAGPIE = 18911;
@@ -514,6 +515,49 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
       await shot('93-bubble-chat.png', '桌宠气泡 680×460：常驻对话模式（Markdown、代码块、回复框）');
       await viewport(600, 42); await evalJs("document.body.classList.add('collapsed'); document.querySelector('#ub').classList.add('on'); document.querySelector('#ubn').textContent = '2'"); await sleep(300);
       await shot('94-bubble-collapsed.png', '桌宠气泡：折叠成标题条（未读红点）');
+      // the dark shade (the pet follows 深夜 once bubble.js sets html[data-shade]); the jump buttons shown
+      await viewport(680, 460); await call('Page.navigate', { url }); await sleep(1000);
+      await evalJs("document.documentElement.dataset.shade = 'night'; ['hopen', 'htopo'].forEach(i => { const b = document.getElementById(i); if (b) b.hidden = false; })");
+      await fire('onState', { sessions: [S[0], { ...S[2], state: 'waiting', permissions: [perm], lines: [{ text: '等待确认：Bash', t: now - 5e3, type: 'waiting' }] }, S[1], S[3]], changedId: 's3', mode: 'log', sound: false }); await sleep(500);
+      await shot('95-bubble-night-permission.png', '桌宠气泡 · 深夜：权限卡片、↗看板/↗拓扑 跳转按钮');
+      await call('Page.navigate', { url }); await sleep(1000);
+      await evalJs("document.documentElement.dataset.shade = 'night'; ['hopen', 'htopo'].forEach(i => { const b = document.getElementById(i); if (b) b.hidden = false; })");
+      await fire('onState', { sessions: S, changedId: 's1', mode: 'chat', sound: false }); await sleep(300);
+      await fire('onChat', { id: 's1', msgs: [
+        { role: 'user', text: '把 MLFMA 的块对角预条件接进 CuPy 求解器。', t: now - 3 * 3600e3 },
+        { role: 'assistant', text: '好的：\n\n```python\nM = block_diag_inverse(Z_near, block=64)\n```\n\n迭代 412 → 96。', t: now - 20e3 }] }); await sleep(600);
+      await shot('96-bubble-night-chat.png', '桌宠气泡 · 深夜：常驻对话');
+    });
+
+    // ===== 6b. hooks prepared for the JS side (D4 tray button, start-menu cascades, chips): drawn with stand-in markup =====
+    where = 'hooks';
+    await step('hooks', async () => {
+      await load({}, 1440, 900); await closeAll();
+      await evalJs(`(() => {
+        const tray = document.getElementById('tray');
+        const b = document.createElement('button'); b.className = 'tray-urgent'; b.type = 'button'; b.title = '待介入';
+        b.innerHTML = '<img src="/icons/msg_warning-16.png" alt=""><b>3</b>'; tray.prepend(b);
+        const items = document.querySelector('#startmenu .items');
+        const row = document.createElement('div'); row.className = 'smi has-sub open';
+        row.innerHTML = '<img src="/icons/directory_open_cool.png" alt=""><span>办公与附件</span><div class="msub">' +
+          [['word', 'Word'], ['excel', 'Excel'], ['notepad', '记事本'], ['paint', '画板'], ['sched_task', '重要计划']].map(([i, t]) => '<button class="mitem" type="button"><img src="/icons/' + i + '-16.png" alt="">' + t + '</button>').join('') + '</div>';
+        items.insertBefore(row, items.children[6]);
+        const demo = document.createElement('div');
+        demo.style.cssText = 'position:absolute;left:330px;top:40px;width:430px;padding:12px;background:var(--bg-window);border:2px solid var(--line-strong);display:flex;flex-wrap:wrap;gap:6px;z-index:5';
+        demo.innerHTML = '<b style="width:100%">components.css 组件预览</b>' +
+          ['ok:完成', 'warn:等你确认', 'bad:失败', 'info:进行中', 'idle:空闲'].map(x => '<span class="chip ' + x.split(':')[0] + '">' + x.split(':')[1] + '</span>').join('') +
+          '<span class="chip mono">task_b7040c6fdf</span><span class="cite-pill" tabindex="0">Sun2018Backward</span>' +
+          '<div class="win-tabs" style="width:100%"><button class="win-tab on">拓扑与服务</button><button class="win-tab">算力与作业</button><button class="win-tab">设备与 Harness</button></div>' +
+          '<div class="win-alert warn" style="width:100%">需要你处理：2 个节点等待检视</div><div class="win-alert info" style="width:100%">记忆按三级作用域分层下发</div>' +
+          '<div class="win-meter" style="width:100%"><i style="width:72%" class="warn"></i></div>';
+        document.getElementById('desktop').append(demo);
+      })()`);
+      await evalJs("document.querySelector('#startbtn').click()"); await sleep(600);
+      await shot('97-hooks-tray-cascade.png', '预留钩子：托盘紧急按钮 .tray-urgent、开始菜单级联 .has-sub/.msub、组件预览（chip/cite-pill/win-tabs/win-alert/win-meter）');
+      await evalJs("document.documentElement.dataset.theme = 'win98'"); await sleep(400);
+      await shot('97b-hooks-win98.png', '预留钩子（Windows 标准）');
+      await evalJs("document.documentElement.dataset.theme = ''; document.documentElement.removeAttribute('data-theme'); document.documentElement.dataset.shade = 'night'"); await sleep(400);
+      await shot('97c-hooks-night.png', '预留钩子（深夜）');
     });
 
     // ===== 7. icon contact sheet: the icons now used for several things, next to candidates from the Win98 set =====
@@ -538,6 +582,18 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
       const hgt = await evalJs('document.documentElement.scrollHeight');
       await viewport(1100, Math.min(4000, hgt + 20)); await sleep(300);
       await shot('99-icon-candidates.png', '图标去重对比表：一图多用的现用图标与 windows98-icons 候选');
+      // the icons now in remote/public/icons for the re-mapping (05 §7): each at 32 px and 16 px, with its real size
+      const INST = ['catalog', 'search_file_2', 'help_book_computer', 'script_file_teal', 'tools_gear', 'network_three_pcs', 'network_drive_world', 'world', 'key_world', 'magnifying_glass', 'users', 'clock', 'computer_2', 'notepad_file', 'chip_ramdrive', 'directory_open_cool'];
+      const px = (p) => { try { return fs.readFileSync(p).readUInt32BE(16); } catch { return 0; } };
+      const ic = (n, s) => path.join(R, 'public', 'icons', n + s + '.png');
+      const cells = INST.map((n) => `<figure><img class="b" src="${pathToFileURL(ic(n, '')).href}"><img class="s" src="${pathToFileURL(ic(n, '-16')).href}"><figcaption>${n}<small>${px(ic(n, ''))} / ${px(ic(n, '-16'))} px</small></figcaption></figure>`).join('');
+      const f2 = path.join(T, 'icons-installed.html');
+      fs.writeFileSync(f2, `<!doctype html><meta charset="utf-8"><style>body{margin:12px;font:12px "Microsoft YaHei UI",sans-serif;background:#fff8ff;color:#2a1f5e}
+        figure{display:inline-block;margin:0 8px 10px 0;width:120px;text-align:center;vertical-align:top}img{image-rendering:pixelated;margin:0 4px;vertical-align:bottom}
+        img.b{width:32px;height:32px}img.s{width:16px;height:16px}figcaption{font-size:11px;word-break:break-all}small{display:block;color:#6f6894}</style>
+        <h3>remote/public/icons 已安装的重配图标（32 px 与 16 px，标注实测尺寸）</h3>${cells}`);
+      await viewport(1100, 600); await call('Page.navigate', { url: pathToFileURL(f2).href }); await sleep(1000);
+      await shot('98-icons-installed.png', '已复制进 remote/public/icons 的重配图标（32/16 px 实测）');
     });
     ws.close();
   } catch (e) { failed.push('script: ' + (e && e.stack)); }
