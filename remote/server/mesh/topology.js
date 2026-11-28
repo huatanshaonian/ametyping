@@ -34,6 +34,51 @@ function createMeshTopology(ctx) {
   } = ctx;
 
   const pendingActions = new Map(); // rid -> { machine, resolve, timer }
+  const NODE_ID_RE = /^node_[a-zA-Z0-9_-]{4,40}$/;
+
+  function closeNodeForMachine(machineName, nodeId, role = '') {
+    if (role === 'master') {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '安全保护：禁止关闭主控会话终端' });
+    }
+    if (typeof nodeId !== 'string' || !NODE_ID_RE.test(nodeId)) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '安全拦截：非法的 nodeId 格式' });
+    }
+    if (machines && typeof machines.closeNodeForMachine === 'function') {
+      return machines.closeNodeForMachine(machineName, nodeId, role);
+    }
+    if (typeof dispatchControl === 'function') {
+      const id = 'mcn-' + crypto.randomBytes(8).toString('hex');
+      return Promise.resolve(dispatchControl(machineName, { t: 'mesh-close-node', id, nodeId })).then((r) => ({
+        ok: !!(r && r.ok),
+        closed: Boolean(r && r.closed),
+        count: +(r && r.count) || 0,
+        detail: cleanStr((r && (r.detail || r.msg)) || '', 200),
+      }));
+    }
+    const m = machines && machines.get(machineName);
+    if (!m || !m.online || !m.sockets || !m.sockets.size) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: `机器「${machineName}」不在线` });
+    }
+    const sock = [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+    if (!sock) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: `机器「${machineName}」未开启远程控制` });
+    }
+    const id = 'mesh-close-' + crypto.randomBytes(8).toString('hex');
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (pendingActions.delete(id)) resolve({ ok: false, closed: false, count: 0, detail: '机器响应超时' });
+      }, 12000);
+      if (timer.unref) timer.unref();
+      pendingActions.set(id, { machine: machineName, resolve, timer });
+      try {
+        sock.send(JSON.stringify({ t: 'mesh-close-node', id, nodeId }));
+      } catch {
+        clearTimeout(timer);
+        pendingActions.delete(id);
+        resolve({ ok: false, closed: false, count: 0, detail: '发送关闭终端指令失败' });
+      }
+    });
+  }
 
   function sendToAgent(machineName, payload) {
     if (typeof dispatchControl === 'function') return dispatchControl(machineName, payload);
@@ -61,11 +106,21 @@ function createMeshTopology(ctx) {
   }
 
   function fromAgentResult(machineName, d) {
-    if (!d || typeof d.rid !== 'string' || !d.rid.startsWith('mesh-')) return false;
-    const p = pendingActions.get(d.rid);
+    const key = d && (typeof d.rid === 'string' ? d.rid : (d.t === 'mesh-close-node-res' && typeof d.id === 'string' ? d.id : ''));
+    if (!key || !key.startsWith('mesh-')) return false;
+    const p = pendingActions.get(key);
     if (!p || p.machine !== machineName) return true;
     clearTimeout(p.timer);
-    pendingActions.delete(d.rid);
+    pendingActions.delete(key);
+    if (d.t === 'mesh-close-node-res') {
+      p.resolve({
+        ok: true,
+        closed: !!d.closed,
+        count: +d.count || 0,
+        detail: cleanStr(d.detail, 200),
+      });
+      return true;
+    }
     const res = { ok: !!d.ok, msg: cleanStr(d.msg, 200) };
     if (d.worktreePath !== undefined) res.worktreePath = cleanStr(String(d.worktreePath || ''), 500);
     if (d.worktreeBranch !== undefined) res.worktreeBranch = cleanStr(String(d.worktreeBranch || ''), 120);
@@ -84,7 +139,16 @@ function createMeshTopology(ctx) {
           if (typeof v === 'string' && v.length <= 64) fp[f] = v;
         }
       }
-      res.gitBaseline = { checked: true, isGit: true, changedFiles: files, fingerprints: fp };
+      const headSha = typeof d.gitBaseline.headSha === 'string' && /^[0-9a-f]{40}$/i.test(d.gitBaseline.headSha)
+        ? d.gitBaseline.headSha
+        : '';
+      res.gitBaseline = {
+        checked: true,
+        isGit: true,
+        changedFiles: files,
+        fingerprints: fp,
+        ...(headSha ? { headSha } : {}),
+      };
     }
     p.resolve(res);
     return true;
@@ -729,6 +793,7 @@ function createMeshTopology(ctx) {
 
   return {
     sendToAgent,
+    closeNodeForMachine,
     fromAgentResult,
     syncMarksGroup,
     liveSessionOf,

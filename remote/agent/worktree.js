@@ -8,6 +8,19 @@ const path = require('path');
 
 const GIT_EXEC_OPTS = { timeout: 10000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] };
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,80}$/;
+const NODE_ID_RE = /^node_[a-zA-Z0-9_-]{4,40}$/;
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e && e.code === 'EPERM';
+  }
+};
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function isValidBranchName(name) {
   return Boolean(name && BRANCH_RE.test(name) && !name.includes('..') && !name.startsWith('-'));
@@ -42,6 +55,20 @@ function createGitWorktree(repoDir, alias = 'worker', requestedBranch = '') {
     const detail = (e && (e.stderr || e.message) ? String(e.stderr || e.message) : '').trim().slice(0, 160);
     return { ok: false, msg: '创建 git worktree 失败' + (detail ? '：' + detail : '') };
   }
+  let headSha = '';
+  try {
+    headSha = execGit(['-C', wtPath, 'rev-parse', 'HEAD']).trim();
+    if (/^[0-9a-f]{40}$/i.test(headSha)) {
+      const gitMetaRel = execGit(['-C', wtPath, 'rev-parse', '--git-path', 'ame-baseline-head']).trim();
+      if (gitMetaRel) {
+        fs.writeFileSync(path.resolve(wtPath, gitMetaRel), headSha + '\n', 'utf8');
+      }
+    } else {
+      headSha = '';
+    }
+  } catch {
+    headSha = '';
+  }
   // Link top-level and first-level subpackage node_modules into the worktree so CJS/ESM tests run immediately
   const linkNodeModules = (relDir = '') => {
     try {
@@ -61,7 +88,7 @@ function createGitWorktree(repoDir, alias = 'worker', requestedBranch = '') {
       linkNodeModules(ent.name);
     }
   } catch {}
-  return { ok: true, worktreePath: wtPath, worktreeBranch: branch, worktreeParentRepo: repoRoot };
+  return { ok: true, worktreePath: wtPath, worktreeBranch: branch, worktreeParentRepo: repoRoot, ...(headSha ? { headSha } : {}) };
 }
 
 function checkGitWorktree(wtPath, parentRepo = '', branch = '') {
@@ -175,8 +202,65 @@ function collectGitAudit(cwd) {
       if (top) repoRoot = top;
     } catch {}
   } catch {
-    return { checked: true, isGit: false, changedFiles: [], fingerprints: {} };
+    return { checked: true, isGit: false, changedFiles: [], committedFiles: [], fingerprints: {} };
   }
+
+  let headSha = '';
+  try {
+    const h = execGit(['-C', targetDir, 'rev-parse', 'HEAD'], {
+      timeout: 1500,
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (/^[0-9a-f]{40}$/i.test(h)) headSha = h;
+  } catch {}
+
+  let baseSha = '';
+  try {
+    const metaRel = execGit(['-C', targetDir, 'rev-parse', '--git-path', 'ame-baseline-head'], {
+      timeout: 1500,
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (metaRel) {
+      const metaAbs = path.resolve(targetDir, metaRel);
+      if (fs.existsSync(metaAbs)) {
+        const rawBase = fs.readFileSync(metaAbs, 'utf8').trim();
+        if (/^[0-9a-f]{40}$/i.test(rawBase)) baseSha = rawBase;
+      }
+    }
+  } catch {}
+
+  const committedFiles = [];
+  if (baseSha && headSha && baseSha !== headSha) {
+    try {
+      const diffOut = execGit(
+        ['-C', targetDir, '-c', 'core.quotepath=false', 'diff', '--name-only', `${baseSha}...HEAD`],
+        {
+          timeout: 2500,
+          encoding: 'utf8',
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      const seenCommitted = new Set();
+      for (const rawLine of String(diffOut || '').split(/\r?\n/)) {
+        let p = rawLine.trim();
+        if (!p) continue;
+        if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) {
+          p = p.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+        p = p.replace(/\\/g, '/');
+        if (p && !seenCommitted.has(p)) {
+          seenCommitted.add(p);
+          committedFiles.push(p);
+        }
+      }
+    } catch {}
+  }
+
   const files = [];
   const fingerprints = {};
   for (const line of String(out || '').split(/\r?\n/)) {
@@ -201,7 +285,286 @@ function collectGitAudit(cwd) {
       }
     }
   }
-  return { checked: true, isGit: true, changedFiles: files.slice(0, 200), fingerprints };
+  return {
+    checked: true,
+    isGit: true,
+    ...(headSha ? { headSha } : {}),
+    ...(baseSha ? { baseSha } : {}),
+    changedFiles: files.slice(0, 200),
+    committedFiles: committedFiles.slice(0, 200),
+    fingerprints,
+  };
+}
+
+function commandMatchesNodeId(cmdLine, nodeId) {
+  if (typeof cmdLine !== 'string' || !cmdLine || !NODE_ID_RE.test(nodeId)) return false;
+  const esc = escapeRegExp(nodeId);
+  const assignRe = new RegExp(
+    `(?:\\$env:AME_NODE_ID\\s*=\\s*['"]?|\\bset\\s+["']?AME_NODE_ID=|\\bexport\\s+AME_NODE_ID=['"]?|(?:^|[\\s;])AME_NODE_ID=['"]?)${esc}(?=['";\\s]|$)(?![A-Za-z0-9_-])`
+  );
+  if (assignRe.test(cmdLine)) return true;
+  const encRe = /(?:^|\s)-(?:encodedcommand|ec|e)\s+([A-Za-z0-9+/=]{12,})(?=\s|$)/gi;
+  let m;
+  while ((m = encRe.exec(cmdLine)) !== null) {
+    try {
+      const decoded = Buffer.from(m[1], 'base64').toString('utf16le');
+      if (decoded && assignRe.test(decoded)) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function execFileAsync(file, args, opts) {
+  return new Promise((resolve) => {
+    child_process.execFile(file, args, opts, (err, stdout, stderr) => {
+      resolve({ err, stdout: String(stdout || ''), stderr: String(stderr || '') });
+    });
+  });
+}
+
+function buildAncestorSet(startPid, byPid) {
+  const protectedPids = new Set();
+  let cur = startPid;
+  while (Number.isInteger(cur) && cur > 0 && !protectedPids.has(cur)) {
+    protectedPids.add(cur);
+    const info = byPid.get(cur);
+    cur = info ? info.ppid : 0;
+  }
+  return protectedPids;
+}
+
+function collectSubtreePids(rootPids, childrenOf, protectedPids) {
+  const seen = new Set();
+  const ordered = [];
+  const queue = [...rootPids];
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (!Number.isInteger(pid) || pid <= 0 || seen.has(pid) || protectedPids.has(pid)) continue;
+    seen.add(pid);
+    ordered.push(pid);
+    const kids = childrenOf.get(pid) || [];
+    for (const k of kids) {
+      if (!seen.has(k) && !protectedPids.has(k)) queue.push(k);
+    }
+  }
+  return ordered;
+}
+
+async function closeNodeTerminalWin32(nodeId) {
+  const psCmd = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress';
+  const { err, stdout } = await execFileAsync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCmd],
+    { timeout: 10000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }
+  );
+  if (err && !stdout.trim()) {
+    return { ok: false, closed: false, count: 0, detail: '枚举 Windows 进程列表失败' };
+  }
+  let rows = [];
+  try {
+    const trimmed = stdout.trim();
+    if (trimmed) {
+      const parsed = JSON.parse(trimmed);
+      rows = Array.isArray(parsed) ? parsed : [parsed];
+    }
+  } catch {
+    return { ok: false, closed: false, count: 0, detail: '解析 Windows 进程列表失败' };
+  }
+
+  const byPid = new Map();
+  const childrenOf = new Map();
+  for (const r of rows) {
+    const pid = Number(r && r.ProcessId);
+    const ppid = Number(r && r.ParentProcessId) || 0;
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const cmd = typeof r.CommandLine === 'string' ? r.CommandLine : '';
+    const name = typeof r.Name === 'string' ? r.Name : '';
+    byPid.set(pid, { pid, ppid, name, cmd });
+    if (ppid > 0 && ppid !== pid) {
+      const list = childrenOf.get(ppid) || [];
+      list.push(pid);
+      childrenOf.set(ppid, list);
+    }
+  }
+
+  const protectedPids = buildAncestorSet(process.pid, byPid);
+  const rootPids = [];
+  for (const proc of byPid.values()) {
+    if (protectedPids.has(proc.pid)) continue;
+    if (commandMatchesNodeId(proc.cmd, nodeId)) {
+      rootPids.push(proc.pid);
+    }
+  }
+
+  const targetPids = collectSubtreePids(rootPids, childrenOf, protectedPids);
+  if (!targetPids.length) {
+    return { ok: true, closed: false, count: 0, pids: [], detail: '未找到匹配 AME_NODE_ID 的终端进程' };
+  }
+
+  const rootSet = new Set(rootPids);
+  const directChildren = [];
+  for (const rpid of rootPids) {
+    for (const cpid of childrenOf.get(rpid) || []) {
+      if (!rootSet.has(cpid) && !protectedPids.has(cpid)) directChildren.push(cpid);
+    }
+  }
+
+  const killTree = (pid) => execFileAsync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { timeout: 5000, windowsHide: true });
+
+  // First terminate child CLI processes so non-NoExit PowerShell wrappers exit cleanly with code 0 (closing WT tabs gracefully)
+  if (directChildren.length > 0) {
+    await Promise.all(directChildren.map((cpid) => killTree(cpid)));
+    await sleepMs(180);
+  }
+
+  // Terminate any remaining root shell or descendant processes
+  for (const rpid of rootPids) {
+    if (pidAlive(rpid)) await killTree(rpid);
+  }
+  for (const pid of [...targetPids].reverse()) {
+    if (pidAlive(pid)) {
+      try { process.kill(pid); } catch {}
+    }
+  }
+
+  const deadline = Date.now() + 500;
+  while (Date.now() < deadline && targetPids.some((p) => pidAlive(p))) {
+    await sleepMs(50);
+  }
+
+  const closedCount = targetPids.filter((p) => !pidAlive(p)).length;
+  return {
+    ok: true,
+    closed: closedCount > 0,
+    count: closedCount,
+    pids: targetPids,
+    detail: closedCount > 0 ? `已按 AME_NODE_ID 终止 ${closedCount} 个节点进程` : '未能终止目标节点进程',
+  };
+}
+
+async function closeNodeTerminalUnix(nodeId) {
+  const byPid = new Map();
+  const childrenOf = new Map();
+  const rootCandidates = [];
+  const myUid = typeof process.getuid === 'function' ? process.getuid() : null;
+
+  if (fs.existsSync('/proc')) {
+    let entries = [];
+    try { entries = fs.readdirSync('/proc'); } catch {}
+    for (const name of entries) {
+      if (!/^\d+$/.test(name)) continue;
+      const pid = Number(name);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      const procDir = `/proc/${pid}`;
+      if (myUid !== null) {
+        try {
+          const st = fs.statSync(procDir);
+          if (st.uid !== myUid) continue;
+        } catch {
+          continue;
+        }
+      }
+      let ppid = 0;
+      let comm = '';
+      try {
+        const statusTxt = fs.readFileSync(`${procDir}/status`, 'utf8');
+        const pm = /^PPid:\s*(\d+)/m.exec(statusTxt);
+        if (pm) ppid = Number(pm[1]) || 0;
+        const nm = /^Name:\s*(.+)$/m.exec(statusTxt);
+        if (nm) comm = nm[1].trim();
+      } catch {
+        continue;
+      }
+      byPid.set(pid, { pid, ppid, comm });
+      if (ppid > 0 && ppid !== pid) {
+        const list = childrenOf.get(ppid) || [];
+        list.push(pid);
+        childrenOf.set(ppid, list);
+      }
+      if (/^tmux(?::|$)/i.test(comm)) continue;
+      let matched = false;
+      try {
+        const envBuf = fs.readFileSync(`${procDir}/environ`);
+        const envItems = envBuf.toString('utf8').split('\0');
+        if (envItems.includes(`AME_NODE_ID=${nodeId}`)) matched = true;
+      } catch {}
+      if (!matched) {
+        try {
+          const cmdBuf = fs.readFileSync(`${procDir}/cmdline`);
+          const cmdStr = cmdBuf.toString('utf8').replace(/\0+/g, ' ').trim();
+          if (commandMatchesNodeId(cmdStr, nodeId)) matched = true;
+        } catch {}
+      }
+      if (matched) rootCandidates.push(pid);
+    }
+  } else {
+    const { stdout } = await execFileAsync('ps', ['eww', '-o', 'pid=,ppid=,comm=,command='], {
+      timeout: 6000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    for (const line of stdout.split(/\r?\n/)) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      const ppid = Number(m[2]) || 0;
+      const comm = m[3];
+      const cmd = m[4];
+      byPid.set(pid, { pid, ppid, comm });
+      if (ppid > 0 && ppid !== pid) {
+        const list = childrenOf.get(ppid) || [];
+        list.push(pid);
+        childrenOf.set(ppid, list);
+      }
+      if (/^tmux$/i.test(path.basename(comm))) continue;
+      if (commandMatchesNodeId(cmd, nodeId)) rootCandidates.push(pid);
+    }
+  }
+
+  const protectedPids = buildAncestorSet(process.pid, byPid);
+  const rootPids = rootCandidates.filter((p) => !protectedPids.has(p));
+  const targetPids = collectSubtreePids(rootPids, childrenOf, protectedPids);
+  if (!targetPids.length) {
+    return { ok: true, closed: false, count: 0, pids: [], detail: '未找到匹配 AME_NODE_ID 的终端进程' };
+  }
+
+  for (const pid of [...targetPids].reverse()) {
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+  }
+  const softDeadline = Date.now() + 300;
+  while (Date.now() < softDeadline && targetPids.some((p) => pidAlive(p))) {
+    await sleepMs(40);
+  }
+  for (const pid of [...targetPids].reverse()) {
+    if (pidAlive(pid)) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+  }
+  const hardDeadline = Date.now() + 250;
+  while (Date.now() < hardDeadline && targetPids.some((p) => pidAlive(p))) {
+    await sleepMs(40);
+  }
+
+  const closedCount = targetPids.filter((p) => !pidAlive(p)).length;
+  return {
+    ok: true,
+    closed: closedCount > 0,
+    count: closedCount,
+    pids: targetPids,
+    detail: closedCount > 0 ? `已按 AME_NODE_ID 终止 ${closedCount} 个节点进程` : '未能终止目标节点进程',
+  };
+}
+
+async function closeNodeTerminal({ nodeId, role = '' } = {}) {
+  if (role === 'master') {
+    return { ok: false, closed: false, count: 0, detail: '安全保护：禁止关闭主控会话终端' };
+  }
+  if (typeof nodeId !== 'string' || !NODE_ID_RE.test(nodeId)) {
+    return { ok: false, closed: false, count: 0, detail: '安全拦截：非法的 nodeId 格式' };
+  }
+  if (process.platform === 'win32') {
+    return closeNodeTerminalWin32(nodeId);
+  }
+  return closeNodeTerminalUnix(nodeId);
 }
 
 module.exports = {
@@ -209,4 +572,6 @@ module.exports = {
   checkGitWorktree,
   removeGitWorktree,
   collectGitAudit,
+  closeNodeTerminal,
+  commandMatchesNodeId,
 };

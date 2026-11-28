@@ -24,6 +24,7 @@ const { createSessionScanner } = require('./session-scanner');
 const { createPetClient } = require('./pet-client');
 const { createComputeDispatcher } = require('./compute-dispatcher');
 const { createMeshBridge } = require('./mesh-bridge');
+const { closeNodeTerminal } = require('./worktree');
 
 const CFG = process.env.AME_AGENT_CONFIG || path.join(__dirname, 'agent.json');
 let cfg;
@@ -350,6 +351,28 @@ function handleServerMessage(socket, raw) {
   if (d.t === 'sugon-exec' && typeof d.jobId === 'string') return computeDispatcher.runRemoteSugon(d);
   if (d.t === 'sugon-kill' && typeof d.jobId === 'string') return computeDispatcher.killRemoteSugon(d.jobId);
   if (d.t === 'sugon-query' && typeof d.rid === 'string') return computeDispatcher.handleSugonQuery(d);
+  if (d.t === 'mesh-close-node' && typeof d.id === 'string') {
+    if (!CONTROL) {
+      sendJSON({ t: 'mesh-close-node-res', id: d.id, closed: false, count: 0, detail: '这台电脑没开远程控制' });
+      return;
+    }
+    closeNodeTerminal({ nodeId: d.nodeId, role: d.role })
+      .then((r) => sendJSON({
+        t: 'mesh-close-node-res',
+        id: d.id,
+        closed: !!r.closed,
+        count: +r.count || 0,
+        detail: String(r.detail || '').slice(0, 200),
+      }))
+      .catch((e) => sendJSON({
+        t: 'mesh-close-node-res',
+        id: d.id,
+        closed: false,
+        count: 0,
+        detail: String((e && e.message) || '关闭节点终端出错').slice(0, 200),
+      }));
+    return;
+  }
   if (CONTROL_MSG_TYPES.has(d.t) && typeof d.rid === 'string') {
     petClient.control(d).then((r) => sendJSON({ t: 'result', rid: d.rid, ...r }));
   }

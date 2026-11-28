@@ -44,6 +44,11 @@ export function renderNodeCard(proj, n, { say, openSendDialog }) {
       h('span', { class: 'pm-node-mach', text: `${n.machine} · ${n.tool || 'claude'}${n.model ? ':' + n.model : ''}` }),
       hasWorktree ? h('span', { class: 'pm-wt-badge', title: n.worktreePath || '', text: `worktree: ${wtBranch}` }) : null,
       n.archived ? h('span', { class: 'pm-rev-badge done', text: '已归档 (保留痕迹)' }) : h('span', { class: `pm-rev-badge ${rCls}`, text: rText }),
+      n.archived && n.terminalCloseFailed ? h('span', {
+        class: 'pm-badge warn',
+        title: '归档时终端窗口未能自动关闭，请检查并手动关闭窗口',
+        text: '终端未关',
+      }) : null,
       n.asking ? h('button', {
         type: 'button',
         class: 'pm-badge err',
@@ -95,7 +100,11 @@ export function renderNodeCard(proj, n, { say, openSendDialog }) {
           }
         );
         const r = await mesh.reviewNode(proj.id, n.id, 'archive', '', closeTerm);
-        say(r.msg || (r.ok ? '节点已归档退役' : '归档失败'));
+        if (r && r.ok && closeTerm && r.terminalClosed === false) {
+          say('已归档，但终端窗口未能自动关闭，请手动关闭');
+        } else {
+          say((r && r.msg) || (r && r.ok ? '节点已归档退役' : '归档失败'));
+        }
       } }) : null,
       n.sessionId ? h('button', { class: 'btn', type: 'button', text: '在糖糖看板打开对话', onclick: () => dashboard.openSession(n.machine, n.sessionId) }) : null,
       h('label', { class: 'pm-chk', title: '当该会话已关闭时，收到消息是否自动在后台或终端唤醒续聊' },

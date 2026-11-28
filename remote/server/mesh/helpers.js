@@ -199,6 +199,19 @@ function evaluateGitAudit(node, gitAudit, explicitBoundaries) {
       return false;
     });
   }
+  const rawCommitted = Array.isArray(gitAudit.committedFiles) ? gitAudit.committedFiles : [];
+  if (rawCommitted.length || changedFiles.length) {
+    const merged = [];
+    const seen = new Set();
+    for (const f of [...changedFiles, ...rawCommitted]) {
+      const nf = String(f || '').replace(/\\/g, '/').trim();
+      if (nf && !seen.has(nf)) {
+        seen.add(nf);
+        merged.push(nf);
+      }
+    }
+    changedFiles = merged;
+  }
   const res = checkBoundaries(boundaries, changedFiles);
   const emptyChange = changedFiles.length === 0 && boundaries.length > 0;
   return {

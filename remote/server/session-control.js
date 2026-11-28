@@ -47,6 +47,68 @@ function createSessionControl({
   machineProfiles = () => ({ aliases: [] }),
 }) {
   const pending = new Map(); // rid -> { c, crid, machine, timer }
+  const closeNodePending = new Map(); // id -> { machine, resolve, timer }
+  const NODE_ID_RE = /^node_[a-zA-Z0-9_-]{4,40}$/;
+
+  function closeNodeForMachine(machineName, nodeId, role = '') {
+    if (role === 'master') {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '安全保护：禁止关闭主控会话终端' });
+    }
+    if (typeof nodeId !== 'string' || !NODE_ID_RE.test(nodeId)) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '安全拦截：非法的 nodeId 格式' });
+    }
+    if (!control) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '服务器关闭了远程控制' });
+    }
+    const m = typeof machineName === 'string' ? machines.get(machineName) : null;
+    if (!m || !m.online || !m.sockets || !m.sockets.size) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '这台机器不在线' });
+    }
+    const sock = [...m.sockets].reverse().find((s) => s.readyState === 1 && s.remoteControlAllowed === true);
+    if (!sock) {
+      return Promise.resolve({ ok: false, closed: false, count: 0, detail: '这台机器没开远程控制' });
+    }
+    const id = 'mcn-' + crypto.randomBytes(10).toString('hex');
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (closeNodePending.delete(id)) {
+          resolve({ ok: false, closed: false, count: 0, detail: '机器关闭节点终端超时' });
+        }
+      }, 12000);
+      if (timer.unref) timer.unref();
+      closeNodePending.set(id, { machine: m.name, resolve, timer });
+      try {
+        sock.send(JSON.stringify({ t: 'mesh-close-node', id, nodeId }));
+      } catch {
+        clearTimeout(timer);
+        closeNodePending.delete(id);
+        resolve({ ok: false, closed: false, count: 0, detail: '发送关闭终端指令失败' });
+      }
+    });
+  }
+
+  function onCloseNodeRes(machineName, d) {
+    if (!d || typeof d.id !== 'string') return false;
+    const p = closeNodePending.get(d.id);
+    if (!p || p.machine !== machineName) return false;
+    clearTimeout(p.timer);
+    closeNodePending.delete(d.id);
+    p.resolve({
+      ok: true,
+      closed: !!d.closed,
+      count: +d.count || 0,
+      detail: str(d.detail, 200),
+    });
+    return true;
+  }
+
+  if (machines && typeof machines === 'object') {
+    Object.defineProperty(machines, 'closeNodeForMachine', {
+      value: closeNodeForMachine,
+      configurable: true,
+      writable: true,
+    });
+  }
 
   function machine(name) {
     let m = machines.get(name);
@@ -271,6 +333,8 @@ function createSessionControl({
     finishAction,
     onBrowserAction,
     dropClientPending,
+    closeNodeForMachine,
+    onCloseNodeRes,
   };
 }
 

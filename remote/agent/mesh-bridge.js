@@ -232,8 +232,16 @@ function createMeshBridge({
           return out(200, { ok: false, msg: '本机 agent 尚未连接上群晖服务器' });
         }
         if ((d.op === 'report' || (d.op === 'board_post' && d.done === true))
-          && !d.gitAudit && typeof d.callerCwd === 'string' && d.callerCwd.trim()) {
-          d.gitAudit = collectGitAudit(d.callerCwd.trim());
+          && typeof d.callerCwd === 'string' && d.callerCwd.trim()) {
+          if (!d.gitAudit) {
+            d.gitAudit = collectGitAudit(d.callerCwd.trim());
+          } else if (d.gitAudit.isGit && !Array.isArray(d.gitAudit.committedFiles)) {
+            const fresh = collectGitAudit(d.callerCwd.trim());
+            if (fresh && fresh.isGit) {
+              if (!d.gitAudit.headSha && fresh.headSha) d.gitAudit.headSha = fresh.headSha;
+              if (Array.isArray(fresh.committedFiles)) d.gitAudit.committedFiles = fresh.committedFiles;
+            }
+          }
         }
         const rid = 'mrpc-' + crypto.randomBytes(8).toString('hex');
         const timer = setTimeout(() => {

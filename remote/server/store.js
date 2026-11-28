@@ -268,8 +268,8 @@ function createStore(dir) {
 
   const offsets = (m) => Object.fromEntries(Object.entries(state[m] || {}).map(([id, e]) => [id, e.off]));
   const has = (m, id) => !!(state[m] && state[m][id]);
-  // a session's context fill and name (the phone notification about a nearly full context)
-  const info = (m, id) => { const e = state[m] && state[m][id]; return e ? { ctx: e.ctx || null, title: e.title || e.project || '' } : null; };
+  // a session's context fill, name, and working directory
+  const info = (m, id) => { const e = state[m] && state[m][id]; return e ? { ctx: e.ctx || null, title: e.title || e.project || '', cwd: e.cwd || undefined } : null; };
   return { accept, extra, meta, flush, tail, offsets, has, info, sessions, records, lastActivity, onAppend };
 }
 

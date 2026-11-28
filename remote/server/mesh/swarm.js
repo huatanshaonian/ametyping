@@ -40,6 +40,7 @@ function createMeshSwarm(ctx) {
     board,
     modelRouter,
     sendToAgent,
+    closeNodeForMachine,
     syncMarksGroup,
     liveSessionOf,
     enrichProject,
@@ -904,6 +905,7 @@ function createMeshSwarm(ctx) {
           fingerprints: (launchRes.gitBaseline.fingerprints && typeof launchRes.gitBaseline.fingerprints === 'object')
             ? launchRes.gitBaseline.fingerprints
             : {},
+          headSha: launchRes.gitBaseline.headSha || '',
           capturedAt: Date.now(),
         };
       }
@@ -1171,21 +1173,47 @@ function createMeshSwarm(ctx) {
       target.watchdogAlert = null;
       let terminalClosed = false;
       let closeMsg = '';
+      const manualHint = '（终端未能自动关闭，请手动关闭窗口）';
       if (closeTerminal === true) {
         if (target.role === 'master') {
           closeMsg = '（安全保护：禁止关闭主控会话终端）';
-        } else if (target.sessionId && target.machine) {
-          const live = liveSessionOf(target.machine, target.sessionId);
-          if (live && live.online && live.state !== 'history' && live.state !== 'ended') {
-            const exitRes = await sendToAgent(target.machine, { t: 'send', id: target.sessionId, text: '/exit' });
-            terminalClosed = Boolean(exitRes && exitRes.ok);
-            closeMsg = terminalClosed ? '，已发送 /exit 优雅退出会话' : `（发送退出指令失败：${(exitRes && exitRes.msg) || '未知'}）`;
+          target.terminalCloseFailed = false;
+        } else {
+          let exitClosed = false;
+          let nodeKilled = false;
+          if (target.sessionId && target.machine) {
+            const live = liveSessionOf(target.machine, target.sessionId);
+            if (live && live.online && live.state !== 'history' && live.state !== 'ended') {
+              const exitRes = await sendToAgent(target.machine, { t: 'send', id: target.sessionId, text: '/exit' });
+              exitClosed = Boolean(exitRes && exitRes.ok);
+            }
+          }
+          if (target.machine && typeof closeNodeForMachine === 'function') {
+            const killRes = await closeNodeForMachine(target.machine, target.id, target.role);
+            nodeKilled = Boolean(killRes && killRes.closed);
+          }
+          terminalClosed = exitClosed || nodeKilled;
+          target.terminalCloseFailed = !terminalClosed;
+          if (terminalClosed) {
+            closeMsg = exitClosed && nodeKilled
+              ? '，已发送 /exit 并清理节点终端进程'
+              : (nodeKilled ? '，已按节点标识关闭终端进程' : '，已发送 /exit 优雅退出会话');
           } else {
-            closeMsg = '（会话已处于关闭状态）';
+            closeMsg = manualHint;
           }
         }
+      } else {
+        target.terminalCloseFailed = false;
       }
-      target.lastAct = cleanNote ? `已归档退役：${cleanNote.slice(0, 120)}` : `已归档退役（保留拓扑痕迹${terminalClosed ? '，已退出会话' : ''}）`;
+      if (closeTerminal === true && target.role !== 'master' && !terminalClosed) {
+        target.lastAct = cleanNote
+          ? `已归档退役：${cleanNote.slice(0, 120)}${manualHint}`
+          : `已归档退役（保留拓扑痕迹）${manualHint}`;
+      } else {
+        target.lastAct = cleanNote
+          ? `已归档退役：${cleanNote.slice(0, 120)}${terminalClosed ? '（已退出会话）' : ''}`
+          : `已归档退役（保留拓扑痕迹${terminalClosed ? '，已退出会话' : ''}）`;
+      }
       target.updatedAt = Date.now();
       save();
       return {
@@ -1193,7 +1221,13 @@ function createMeshSwarm(ctx) {
         projectId: proj.id,
         action: 'archive',
         terminalClosed,
-        node: { id: target.id, alias: target.alias, reviewStatus: target.reviewStatus, archived: true },
+        node: {
+          id: target.id,
+          alias: target.alias,
+          reviewStatus: target.reviewStatus,
+          archived: true,
+          terminalCloseFailed: Boolean(target.terminalCloseFailed),
+        },
         msg: `节点「${target.alias || target.id}」已归档退役${closeMsg}`,
       };
     }
@@ -1201,6 +1235,7 @@ function createMeshSwarm(ctx) {
     if (act === 'reject') {
       target.reviewStatus = 'running';
       target.archived = false;
+      target.terminalCloseFailed = false;
       target.watchdogAlert = null;
       target.updatedAt = Date.now();
       let postRes = null;

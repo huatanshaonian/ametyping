@@ -382,12 +382,34 @@ function createSessionScanner({
         r = records.createReader(c.file, serverOff[id] || 0, parseFn);
         readers.set(id, r);
         if (isAlt) r.cwd = c.cwd || null;
-        sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (petMap.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
+        sendJSON({
+          t: 'meta',
+          id,
+          project: c.project || '',
+          title: r.title || c.title || '',
+          cwd: c.cwd || r.cwd || undefined,
+          api: (petMap.get(id) || {}).api,
+          model: c.model || undefined,
+          ai: c.ai || undefined,
+        });
         r.sentTitle = c.title || '';
-      }
-      if (isAlt && r.sentTitle !== (c.title || '')) {
-        sendJSON({ t: 'meta', id, project: c.project || '', title: c.title || '', cwd: r.cwd || undefined, api: (petMap.get(id) || {}).api, model: c.model || undefined, ai: c.ai || undefined });
-        r.sentTitle = c.title || '';
+      } else {
+        const cwdChanged = typeof c.cwd === 'string' && c.cwd.length > 0 && c.cwd !== r.cwd;
+        const titleChanged = isAlt && r.sentTitle !== (c.title || '');
+        if (cwdChanged) r.cwd = c.cwd;
+        if (cwdChanged || titleChanged) {
+          sendJSON({
+            t: 'meta',
+            id,
+            project: c.project || '',
+            title: r.title || c.title || undefined,
+            cwd: c.cwd || r.cwd || undefined,
+            api: (petMap.get(id) || {}).api,
+            model: c.model || undefined,
+            ai: c.ai || undefined,
+          });
+          r.sentTitle = c.title || '';
+        }
       }
       for (let k = 0; k < 8; k++) {
         if (getBufferedAmount() > 8e6) return;

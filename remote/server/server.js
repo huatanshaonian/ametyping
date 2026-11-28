@@ -139,6 +139,7 @@ const {
   finishAction,
   onBrowserAction,
   dropClientPending,
+  onCloseNodeRes,
 } = createSessionControl({
   control: CONTROL,
   machines,
@@ -453,6 +454,7 @@ function onAgentMessage(m, raw, ws) {
   if (d.t === 'sugon-status' && d.status && typeof d.status === 'object') { mesh.onSugonStatus(m.name, d.status); return; }
   if (d.t === 'sugon-alert' && d.alert && typeof d.alert === 'object') { mesh.onSugonAlert(m.name, d.alert); return; }
   if (d.t === 'sugon-query-res' && typeof d.rid === 'string') { mesh.onSugonQueryRes(m.name, d); return; }
+  if (d.t === 'mesh-close-node-res' && typeof d.id === 'string') { onCloseNodeRes(m.name, d); return; }
   if (d.t === 'compute-heartbeat' && typeof d.jobId === 'string') { mesh.computeQueue.heartbeat(d.jobId); return; }
   if (d.t === 'compute-done' && typeof d.jobId === 'string') { mesh.onComputeDone(m.name, d); return; }
   if (d.t === 'local-quota' && d.quota && typeof d.quota === 'object') { mesh.onLocalQuota(m.name, d.quota); return; }

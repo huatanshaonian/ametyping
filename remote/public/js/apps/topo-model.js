@@ -50,8 +50,9 @@ export function nodeStatus(node) {
   if ((!archived && node.watchdogAlert) || rs === 'blocked' || live === 'error') return { cls: 'err', label: '告警/受阻' };
   if ((!archived && node.asking) || rs === 'waiting_review' || live === 'waiting') return { cls: 'warn', label: '等待确认/检视' };
   if (LIVE_STATES.includes(live)) return { cls: 'on', label: '执行中' };
-  if (rs === 'done' || rs === 'approved' || live === 'done') return { cls: 'done', label: archived ? '已完成·归档' : '已完成' };
-  return { cls: '', label: archived ? '已归档' : '空闲/离线' };
+  const closeWarn = archived && node.terminalCloseFailed ? '·终端未关' : '';
+  if (rs === 'done' || rs === 'approved' || live === 'done') return { cls: 'done', label: archived ? `已完成·归档${closeWarn}` : '已完成' };
+  return { cls: '', label: archived ? `已归档${closeWarn}` : '空闲/离线' };
 }
 
 /**
