@@ -380,7 +380,7 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
     await step('projects tabs', async () => {
       await closeAll(); await openIcon('projects'); await maxTop();
       await evalJs("(() => { const i = [...document.querySelectorAll('.pm-item')].find(x => x.textContent.includes('Overhaul')); i && i.click(); })()"); await sleep(1000);
-      const tabs = [['研究与计算', '21-projects-research'], ['黑板与任务', '22-projects-board'], ['协同拓扑', '23-projects-topo'], ['跨机目录', '25-projects-vfs'], ['触发器', '26-projects-events']];
+      const tabs = [['研究与计算', '21-projects-research'], ['黑板与任务', '22-projects-board'], ['协同拓扑', '23-projects-topo'], ['目录权限与摆渡', '25-projects-vfs'], ['触发器', '26-projects-events']];
       for (const [label, name] of tabs) {
         await step(name, async () => { await clickText('.pm-tab', label); await sleep(700); await shot(name + '.png', '项目管理 › ' + label); });
       }
@@ -400,7 +400,7 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
       await shot('31b-infra-nas.png', '设备与算力：选中 NAS（容器列表）');
       await clickText('button', '算力'); await sleep(1500);
       await shot('32-infra-compute.png', '设备与算力 › 算力与作业（Mini-Slurm、唯一机器画像、作业队列）');
-      await step('33-infra-fleet', async () => { await clickText('button', '设备与 Harness'); await sleep(900); await shot('33-infra-fleet.png', '设备与算力 › 设备与 Harness（Fleet 升级与 NAS CLI）'); });
+      await step('33-infra-fleet', async () => { await clickText('button', 'Agent 与 Harness'); await sleep(900); await shot('33-infra-fleet.png', '设备与算力 › Agent 与 Harness（Fleet 升级与 NAS CLI）'); });
       await step('34-infra-agents', async () => { await clickText('button', '设备接入'); await sleep(900); await shot('34-infra-agents.png', '设备与算力 › 设备接入与令牌'); });
     });
     // AI 与额度 5-Tab hub

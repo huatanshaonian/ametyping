@@ -122,12 +122,15 @@ img { image-rendering: pixelated; }
 /* D4: something waits for you (permissions, questions, alerts): a button in the tray, warn-coloured, blinking in pixel steps
    (js adds <button class="tray-urgent"><img><b>n</b></button>); it calms down once seen (.seen) and on reduced motion */
 #tray .tray-urgent { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px 0 4px; font: inherit; font-size: var(--fs-meta);
-  font-weight: bold; color: var(--warn-fg); background: var(--warn-bg); border: 2px solid var(--warn-line); cursor: pointer; animation: trayurgent 1.2s steps(2) infinite; }
+  font-weight: bold; color: var(--warn-fg); background: var(--warn-bg); border: 2px solid var(--warn-line); cursor: pointer; animation: trayurgent 1.2s steps(1, end) infinite; }
 #tray .tray-urgent img { width: 16px; height: 16px; }
 #tray .tray-urgent b { min-width: 14px; padding: 0 2px; text-align: center; color: var(--on-solid); background: var(--warn-solid); }
 #tray .tray-urgent:hover { background: var(--bg-raised); }
 #tray .tray-urgent.seen { animation: none; }
-@keyframes trayurgent { 50% { background: var(--warn-solid); color: var(--on-solid); border-color: var(--warn-solid); } }
+@keyframes trayurgent {
+  0%, 100% { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+  50% { background: var(--warn-solid); color: var(--on-solid); border-color: var(--warn-solid); }
+}
 @media (prefers-reduced-motion: reduce) { #tray .tray-urgent { animation: none; } }
 html[data-theme="win98"] #tray .tray-urgent { border: 0; box-shadow: var(--raised); background: var(--warn-bg); }
 /* the old tray volume popup: raised panel, vertical slider in a sunken groove with ticks, a mute box */

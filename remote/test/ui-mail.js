@@ -21,7 +21,9 @@ const SMTP = 18842;
 const srvAcc = (id, address, pass, name) => ({ id, address, name, imap: { host: '127.0.0.1', port: IMAP }, smtp: { host: '127.0.0.1', port: SMTP }, pass, signature: `张三\n力学研究所`, added: Date.now() });
 fs.writeFileSync(path.join(T, 'srv', 'data', 'mail.json'), JSON.stringify({ accounts: [srvAcc('a1', 'zhangsan@test.ac.cn', 'right', '所里'), srvAcc('a2', 'zhangsan@ucas.ac.cn', 'old', '国科大')], state: {} }));
 
-cp.execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(T, 'k.pem'), '-out', path.join(T, 'c.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
+const osslCnf = path.join(T, 'openssl.cnf');
+fs.writeFileSync(osslCnf, '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = localhost\n');
+cp.execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-config', osslCnf, '-keyout', path.join(T, 'k.pem'), '-out', path.join(T, 'c.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
 const imap = createFakeImap({ key: fs.readFileSync(path.join(T, 'k.pem')), cert: fs.readFileSync(path.join(T, 'c.pem')), users: { 'zhangsan@test.ac.cn': 'right' } });
 const { createFakeSmtp } = require('./fake-smtp');
 const smtp = createFakeSmtp({ key: fs.readFileSync(path.join(T, 'k.pem')), cert: fs.readFileSync(path.join(T, 'c.pem')), users: { 'zhangsan@test.ac.cn': 'right' } });

@@ -66,6 +66,9 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())"); await sleep(300);
 
     chk('the desktop panel shows the old plans', await until("(() => { const w = document.querySelector('#todowidget'); return w && w.textContent.includes('写完第三章') && w.textContent.includes('整理实验数据') && w.querySelector('.td-n').textContent === '（2）'; })()"), 0);
+    await evalJs("(async () => { const ctrl = await import('/js/apps/control.js'); ctrl.open('display'); })()"); await sleep(500);
+    await evalJs("document.querySelector('.cp-pane input[data-extra-icon=\"todo\"]').click()"); await sleep(200);
+    await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())"); await sleep(200);
     chk('a desktop icon 重要计划', await evalJs("!!document.querySelector('.dicon[data-id=todo]')"), 0);
     await evalJs("document.querySelector('.dicon[data-id=todo]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     const title = () => evalJs("(() => { const t = document.querySelector('.tda .tda-title'); return t && t.textContent; })()");

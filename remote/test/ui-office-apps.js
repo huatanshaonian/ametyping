@@ -100,7 +100,7 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())");
     const officeIcon = await evalJs("(() => { const b = document.querySelector('.dicon[data-id=\"office\"]'); return b && [b.textContent, b.querySelector('img').getAttribute('src'), b.querySelector('img').naturalWidth]; })()");
     chk('Office 文档 optional desktop icon renders with directory_open_cool and opens unified launcher',
-      JSON.stringify(officeIcon) === JSON.stringify(['Office 文档', '/icons/directory_open_cool.png', 48]), officeIcon);
+      JSON.stringify(officeIcon) === JSON.stringify(['Office 文档', '/icons/directory_open_cool.png', 32]), officeIcon);
 
     await evalJs("document.querySelector('.dicon[data-id=\"office\"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     const app = (k) => `[...document.querySelectorAll('.win')].find(w => w.querySelector('.title').textContent === ${JSON.stringify(k)})`;

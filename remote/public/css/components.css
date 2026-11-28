@@ -73,7 +73,9 @@ select, input, textarea, button { font-family: inherit; }
 .mitem:hover:not(:disabled), .mitem.open { background: var(--fill); color: var(--on-fill); }
 .mitem:disabled { opacity: .45; cursor: default; }
 .smi.has-sub, .mitem.has-sub { position: relative; }
-.smi.has-sub::after, .mitem.has-sub::after { content: "▸"; margin-left: auto; padding-left: var(--sp-4); font-size: var(--fs-meta); }
+.smi.has-sub::after, .mitem.has-sub:not(:has(> .smi))::after { content: "▸"; margin-left: auto; padding-left: var(--sp-4); font-size: var(--fs-meta); }
+.mitem.has-sub:has(> .smi) { display: block; padding: 0; background: none; }
+.mitem.has-sub.open > .smi, .mitem.has-sub:hover > .smi:not(:disabled) { background: var(--fill); color: var(--on-fill); }
 .has-sub > .msub { display: none; }
 .msub { position: absolute; left: 100%; top: -3px; z-index: var(--z-menu); min-width: 200px; padding: 3px 0;
   background: var(--bg-window); color: var(--ink); border: 2px solid var(--line-strong); box-shadow: var(--shadow-pop); text-align: left; }
@@ -85,10 +87,11 @@ select, input, textarea, button { font-family: inherit; }
 @media (max-width: 700px), (hover: none) {
   .has-sub:hover > .msub, .has-sub:focus-within > .msub { display: none; }
   .has-sub.open > .msub { display: block; position: static; min-width: 0; margin: 2px 0 2px 28px; border: 0; border-left: 2px solid var(--line-strong); box-shadow: none; }
-  .smi.has-sub.open::after, .mitem.has-sub.open::after { content: "▾"; }
+  .smi.has-sub.open::after, .mitem.has-sub:not(:has(> .smi)).open::after { content: "▾"; }
+  .mitem.has-sub.open > .smi .ar { display: inline-block; transform: rotate(90deg); }
 }
 /* a .has-sub row wraps its sub-list: lay the row's own label out as a row, the list below / beside it */
-.smi.has-sub, .mitem.has-sub { flex-wrap: wrap; }
+.smi.has-sub, .mitem.has-sub:not(:has(> .smi)) { flex-wrap: wrap; }
 
 /* ---------- layers (P7): Clippy lives on the desktop, under the windows and beside the network panel;
    with its balloon open it comes up to the popover layer ---------- */
