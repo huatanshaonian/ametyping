@@ -1,0 +1,119 @@
+/* Shared components (docs/overhaul/05-gui-style-spec.md §6): one look for tabs, chips, group boxes, alerts, meters,
+   empty states, the start menu's cascades and the layers. Tokens only (css/tokens.css). Loaded after the app sheets and
+   before the looks (css/theme-*.css), so an app's own class can opt in here and Windows 标准 still has the last word. */
+
+/* ---------- fields: every input follows the interface font (the browser's Arial otherwise) ---------- */
+select, input, textarea, button { font-family: inherit; }
+
+/* ---------- 6.2 tabs: a property sheet -- the chosen tab stands up and joins the page below it ---------- */
+.win-tabs, .pm-tabs, .skp-tabs {
+  display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 2px; padding: var(--sp-2) var(--sp-4) 0; margin: 0;
+  border-bottom: 1px solid var(--line-strong); background: var(--bg-panel);
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.win-tabs::-webkit-scrollbar, .pm-tabs::-webkit-scrollbar, .skp-tabs::-webkit-scrollbar { display: none; }
+.win-tab, .pm-tab, .skp-tab, .lit-tab {
+  flex: none; display: inline-flex; align-items: center; gap: var(--sp-2); white-space: nowrap; cursor: pointer;
+  font: inherit; font-size: var(--fs-ui); line-height: var(--lh-ui); padding: 3px 12px; min-height: 0;
+  color: var(--muted); background: var(--bg-tint); border: 1px solid var(--line); border-radius: var(--r); box-shadow: none; }
+.win-tabs .win-tab, .pm-tab, .skp-tab { margin-bottom: -1px; border-bottom-color: var(--line-strong); }
+.win-tab:hover, .pm-tab:hover, .skp-tab:hover, .lit-tab:hover { color: var(--line-strong); background: var(--hover); }
+.win-tab.on, .win-tab.active, .win-tab.sel, .pm-tab.active, .skp-tab.sel, .lit-tab.on {
+  color: var(--line-strong); background: var(--bg-window); font-weight: bold; border-color: var(--line-strong); }
+.win-tabs .win-tab.on, .win-tabs .win-tab.active, .win-tabs .win-tab.sel, .pm-tab.active, .skp-tab.sel {
+  border-bottom-color: var(--bg-window); padding-top: 5px; box-shadow: inset 0 2px 0 var(--line-strong); }
+.pm-tab img, .win-tab img { width: 16px; height: 16px; }
+/* 文献's bar keeps its row of mixed tools; its tabs are the same tabs */
+.lit-bar { background: var(--bg-panel); border-bottom: 1px solid var(--line-strong); }
+.lit-tab.on { box-shadow: inset 0 -2px 0 var(--line-strong); }
+.skp-tabs { padding-bottom: 0; margin-bottom: var(--sp-4); }
+
+/* ---------- 6.3 chips / badges: square, one family each (ok warn bad info idle); .mono for ids and paths ---------- */
+.chip, .cite-pill {
+  display: inline-flex; align-items: center; gap: var(--sp-1); max-width: 100%; min-height: 16px; padding: 0 var(--sp-2);
+  font-size: var(--fs-meta); line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--ink); background: var(--bg-tint); border: 1px solid var(--line); border-radius: var(--r); vertical-align: middle; }
+.chip.mono { font-family: var(--font-mono); color: var(--idle-fg); background: var(--idle-bg); border-color: var(--idle-line); }
+.chip.ok { color: var(--ok-fg); background: var(--ok-bg); border-color: var(--ok-line); }
+.chip.warn { color: var(--warn-fg); background: var(--warn-bg); border-color: var(--warn-line); }
+.chip.bad { color: var(--bad-fg); background: var(--bad-bg); border-color: var(--bad-line); }
+.chip.info { color: var(--info-fg); background: var(--info-bg); border-color: var(--info-line); }
+.chip.idle { color: var(--idle-fg); background: var(--idle-bg); border-color: var(--idle-line); }
+.chip.solid { color: var(--on-fill); background: var(--fill); border-color: var(--fill); }
+/* a citation ([[citekey]] / DOI) that opens the paper */
+.cite-pill { cursor: pointer; font-family: var(--font-mono); color: var(--link); background: var(--accent-wash); border-color: var(--accent-muted); }
+.cite-pill::before { content: "❝"; font-family: var(--font-ui); opacity: .7; }
+.cite-pill:hover, .cite-pill:focus-visible { color: var(--on-fill); background: var(--fill); border-color: var(--fill); outline: none; }
+
+/* ---------- 6.4 group box: an etched frame with its title on the line; no fill, no shadow ---------- */
+.win-group { margin: 0 0 var(--sp-4); padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r); background: none; }
+.win-group > legend, .win-group > .win-group-t { padding: 0 var(--sp-2); font-weight: bold; color: var(--line-strong); }
+
+/* ---------- 6.6 alert bar: a Win98 message icon, the family's wash and edge ---------- */
+.win-alert { display: flex; align-items: flex-start; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid; font-size: var(--fs-ui); }
+.win-alert::before { content: ""; flex: none; width: 16px; height: 16px; background: center / contain no-repeat; image-rendering: pixelated; }
+.win-alert.info { color: var(--ink); background: var(--info-bg); border-color: var(--info-line); }
+.win-alert.info::before { background-image: url(/icons/msg_information-16.png); }
+.win-alert.warn { color: var(--ink); background: var(--warn-bg); border-color: var(--warn-line); }
+.win-alert.warn::before, .win-alert.bad::before { background-image: url(/icons/msg_warning-16.png); }
+.win-alert.bad { color: var(--ink); background: var(--bad-bg); border-color: var(--bad-line); }
+
+/* ---------- 6.8 meter: a sunken groove, the fill by threshold ---------- */
+.win-meter { position: relative; height: 10px; background: var(--meter-track); box-shadow: var(--sunken); overflow: hidden; }
+.win-meter > i { position: absolute; inset: 0 auto 0 0; background: var(--meter-ok); }
+.win-meter > i.warn { background: var(--meter-warn); } .win-meter > i.err, .win-meter > i.bad { background: var(--meter-bad); }
+
+/* ---------- 6.11 empty state ---------- */
+.win-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); padding: var(--sp-7) var(--sp-5); color: var(--muted); text-align: center; }
+.win-empty img { width: 32px; height: 32px; }
+
+/* ---------- start menu: cascades (开始 › 办公与附件 ▸). A .has-sub item holds its .msub; it opens to the right on
+   hover or .open, and inline (indented) on narrow screens, where only .open counts ---------- */
+.mitem { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; border: 0; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.mitem img { width: 24px; height: 24px; }
+.mitem:hover:not(:disabled), .mitem.open { background: var(--fill); color: var(--on-fill); }
+.mitem:disabled { opacity: .45; cursor: default; }
+.smi.has-sub, .mitem.has-sub { position: relative; }
+.smi.has-sub::after, .mitem.has-sub::after { content: "▸"; margin-left: auto; padding-left: var(--sp-4); font-size: var(--fs-meta); }
+.has-sub > .msub { display: none; }
+.msub { position: absolute; left: 100%; top: -3px; z-index: var(--z-menu); min-width: 200px; padding: 3px 0;
+  background: var(--bg-window); color: var(--ink); border: 2px solid var(--line-strong); box-shadow: var(--shadow-pop); text-align: left; }
+.msub .smi, .msub .mitem { padding: 5px 12px; color: var(--ink); }
+.msub .smi img, .msub .mitem img { width: 16px; height: 16px; }
+.msub .smi:hover:not(:disabled), .msub .mitem:hover:not(:disabled) { background: var(--fill); color: var(--on-fill); }
+.has-sub:hover > .msub, .has-sub.open > .msub, .has-sub:focus-within > .msub { display: block; }
+.smi.has-sub.open, .smi.has-sub:hover { background: var(--fill); color: var(--on-fill); }
+@media (max-width: 700px), (hover: none) {
+  .has-sub:hover > .msub, .has-sub:focus-within > .msub { display: none; }
+  .has-sub.open > .msub { display: block; position: static; min-width: 0; margin: 2px 0 2px 28px; border: 0; border-left: 2px solid var(--line-strong); box-shadow: none; }
+  .smi.has-sub.open::after, .mitem.has-sub.open::after { content: "▾"; }
+}
+/* a .has-sub row wraps its sub-list: lay the row's own label out as a row, the list below / beside it */
+.smi.has-sub, .mitem.has-sub { flex-wrap: wrap; }
+
+/* ---------- layers (P7): Clippy lives on the desktop, under the windows and beside the network panel;
+   with its balloon open it comes up to the popover layer ---------- */
+.clippy-root { z-index: var(--z-widget); right: calc(var(--npw) + 18px); bottom: calc(var(--tbb) + 64px); }   /* above the computer's name (#mark) */
+.clippy-root:has(.clippy-balloon:not(.is-collapsed)) { z-index: var(--z-popover); }
+
+/* ---------- narrow screens: nothing breaks one character per line ---------- */
+@media (max-width: 700px) {
+  .inf-det-head { flex-wrap: wrap; }
+  .inf-det-head .btn, .inf-topbar .btn, .pm-head .btn { white-space: nowrap; }
+}
+
+/* ---------- Windows 标准: the same components drawn with bevels ---------- */
+html[data-theme="win98"] .win-tabs, html[data-theme="win98"] .pm-tabs, html[data-theme="win98"] .skp-tabs { background: var(--panel); border-bottom: 1px solid var(--hi); box-shadow: inset 0 -1px 0 var(--hi); }
+html[data-theme="win98"] .win-tab, html[data-theme="win98"] .pm-tab, html[data-theme="win98"] .skp-tab {
+  color: var(--ink); background: var(--panel); border: 0; box-shadow: inset 1px 1px 0 var(--hi), inset -1px 0 0 var(--lo); padding: 2px 10px; margin-bottom: 0; }
+html[data-theme="win98"] .win-tabs .win-tab.on, html[data-theme="win98"] .win-tabs .win-tab.active, html[data-theme="win98"] .win-tabs .win-tab.sel,
+html[data-theme="win98"] .pm-tab.active, html[data-theme="win98"] .skp-tab.sel {
+  color: var(--ink); background: var(--panel); font-weight: bold; padding: 4px 12px 3px; margin-bottom: -1px; position: relative; z-index: 1;
+  box-shadow: inset 1px 1px 0 var(--hi), inset -1px 0 0 var(--lo); }
+html[data-theme="win98"] .lit-bar { background: var(--panel); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--lo); }
+html[data-theme="win98"] .lit-tab { border: 0; background: var(--panel); color: var(--ink); box-shadow: var(--raised); }
+html[data-theme="win98"] .lit-tab.on { background: var(--bg-tint); box-shadow: var(--pressed); font-weight: bold; }
+html[data-theme="win98"] .msub { background: var(--panel); border: 0; padding: 3px; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .msub .smi, html[data-theme="win98"] .msub .mitem, html[data-theme="win98"] .mitem { color: var(--ink); }
+html[data-theme="win98"] .msub .smi:hover:not(:disabled), html[data-theme="win98"] .msub .mitem:hover:not(:disabled),
+html[data-theme="win98"] .mitem:hover:not(:disabled), html[data-theme="win98"] .smi.has-sub.open { background: var(--fill); color: var(--on-fill); }
+html[data-theme="win98"] .win-meter { background: var(--bg-well); }

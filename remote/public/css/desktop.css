@@ -1,34 +1,10 @@
+@import url(/css/tokens.css);   /* pages that link only desktop.css (lit-pdf.html) get the tokens too; index.html links it first anyway */
 /* Win98 / NGO desktop shell: tokens, window frame (the game's 9-slice bitmap), taskbar, start menu, desktop icons,
    the network-neighbourhood panel and the small dialogs. Colours sampled from NEEDY GIRL OVERDOSE (see amedesktop). */
-@font-face { font-family: "PixelMplus"; src: url(/asset/dialog/PixelMplus12-Regular.ttf); }
-:root {
-  --border: #4d23cf; --border-d: #3a17a8; --title: #f0d1f1; --title-2: #f7c9ec; --body: #fff8ff;
-  --cyan: #90f4e4; --cyan-d: #6fd8dd; --pink: #ff7fc4; --pink-d: #e84fa8; --ink: #2a1f5e;
-  --gamepink: #f7e1fb; --panel: #efe6ff; --edge: rgba(77, 35, 207, .3);
-  --muted: rgba(42, 31, 94, .62); --faint: rgba(42, 31, 94, .48);           /* secondary / tertiary text */
-  --tint: rgba(240, 209, 241, .5); --tint-soft: rgba(240, 209, 241, .32); /* code, command and bar backgrounds */
-  --head-bg: #f1e6fb; --hover: rgba(255, 255, 255, .65);
-  --accent-muted: rgba(77, 35, 207, .5); --accent-wash: rgba(77, 35, 207, .08); --quote-bg: rgba(255, 127, 196, .06);
-  --warn: rgb(208, 82, 28); --bad: rgb(180, 50, 110); --ok: rgb(60, 170, 120); --ok-text: rgb(60, 140, 120); --off: #b9a;
-  /* surfaces and fills by role, so that a colour scheme is one set of values (css/theme-shades.css: 深夜, 梅子, 沙漠, 豆沙绿) */
-  --surface: #fff;                          /* raised white: cards, fields, a hovered button */
-  --fill: #4d23cf; --fill-d: #3a17a8; --on-fill: #fff;   /* filled accents (a selected row, the main button) and the text on them */
-  --hi: #fff;                               /* the light edge of a bevel */
-  --mine: #f0d1f1;                          /* your own messages */
-  --note-bg: #fffbe8;                       /* side notes (/btw) */
-  --deep: #241640; --veil: rgba(42, 31, 94, .35); --press: #e0cff1;   /* behind everything; behind a dialog; a pressed button */
-  --halo: #fff;                             /* the outline that keeps a label readable on the wallpaper */
-  --wall-veil: transparent;                 /* a wash over the wallpaper (the dark schemes dim it) */
-  /* the other look (Windows 标准) is css/theme-win98.css, switched by html[data-theme]; shades of both by html[data-shade] */
-  --tbh: 40px;                              /* taskbar */
-  --sab: env(safe-area-inset-bottom, 0px);  /* a phone's gesture bar under the page (viewport-fit=cover) */
-  --tbb: calc(var(--tbh) + var(--sab));     /* the taskbar block: bar + that space below it */
-  --npw: 250px;                             /* network panel */
-  --wt: 32px; --wr: 10px; --wb: 16px; --wl: 6px;   /* window frame bands (9-slice widths) */
-}
+/* tokens (colours, type, spacing, bevels, layers) are in css/tokens.css, loaded first */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
-body { background: var(--deep); color: var(--ink); font: 13px/1.35 "PixelMplus", "Microsoft YaHei UI", system-ui, sans-serif; }
+body { background: var(--deep); color: var(--ink); font: var(--fs-body)/var(--lh-ui) var(--font-ui); }
 button { font: inherit; color: inherit; cursor: pointer; }
 select, input, textarea { background: var(--surface); color: var(--ink); }     /* (fields without a class of their own follow the shade too) */
 img { image-rendering: pixelated; }
@@ -36,7 +12,7 @@ img { image-rendering: pixelated; }
 
 /* ---------- desktop ---------- */
 #desktop { position: absolute; left: 0; top: 0; right: var(--npw); bottom: var(--tbb); overflow: hidden;
-  background: #f7e1fb url(/wall/pc_wallpaper.png) center top / cover no-repeat; }
+  background: var(--bg-desk) url(/wall/pc_wallpaper.png) center top / cover no-repeat; }
 /* a wash over the wallpaper (--wall-veil: the dark shades dim it; none otherwise) */
 #desktop::before { content: ""; position: absolute; inset: 0; background: var(--wall-veil); pointer-events: none; }
 #icons { position: absolute; left: 12px; top: 12px; bottom: 12px; display: grid; grid-auto-flow: column;
@@ -44,7 +20,7 @@ img { image-rendering: pixelated; }
 .dicon { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border: 1px dotted transparent;
   background: none; color: inherit; user-select: none; -webkit-tap-highlight-color: transparent; }
 .dicon img { width: 32px; height: 32px; }
-.dicon span { max-width: 100%; padding: 0 3px; font-size: 12px; font-weight: bold; color: var(--border); text-align: center; line-height: 1.15;
+.dicon span { max-width: 100%; padding: 0 3px; font-size: var(--fs-ui); font-weight: bold; color: var(--border); text-align: center; line-height: 1.15;
   text-shadow: 1px 1px 0 var(--halo), -1px -1px 0 var(--halo), 1px -1px 0 var(--halo), -1px 1px 0 var(--halo); overflow-wrap: anywhere; }
 .dicon.sel { border-color: var(--border); }
 .dicon.sel span { background: var(--fill); color: var(--on-fill); text-shadow: none; }
@@ -52,8 +28,8 @@ img { image-rendering: pixelated; }
 .dicon.off { opacity: .55; }
 #mark { position: absolute; right: 14px; bottom: 10px; text-align: right; color: var(--border); pointer-events: none;
   text-shadow: 1px 1px 0 var(--halo), -1px -1px 0 var(--halo), 1px -1px 0 var(--halo), -1px 1px 0 var(--halo); }
-#mark b { display: block; font-size: 22px; }
-#mark small { font-size: 12px; }
+#mark b { display: block; font-size: var(--fs-display); }
+#mark small { font-size: var(--fs-ui); }
 
 /* ---------- windows ---------- */
 /* (z-index: the windows stack among themselves in here. Each one brought to the front gets a number one higher,
@@ -62,7 +38,7 @@ img { image-rendering: pixelated; }
 .win { position: absolute; pointer-events: auto; min-width: 240px; min-height: 160px;
   border-style: solid; border-width: var(--wt) var(--wr) var(--wb) var(--wl);
   border-image: url(/img/windowbase_active_clean.png) 42 14 22 8 fill;
-  filter: drop-shadow(4px 4px 0 rgba(20, 10, 90, .35)); }
+  filter: drop-shadow(var(--shadow-pop)); }
 .win.inactive { border-image-source: url(/img/windowbase_inactive_clean.png); }
 .win.minimized { display: none; }
 .win .titlebar { position: absolute; top: calc(-1 * var(--wt)); left: calc(-1 * var(--wl)); right: calc(-1 * var(--wr)); height: var(--wt);
@@ -107,14 +83,14 @@ img { image-rendering: pixelated; }
 .mach img { flex: none; width: 32px; height: 32px; }
 .mach.off img { filter: grayscale(1); opacity: .5; }
 .mach .mn { font-weight: bold; color: var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mach .mi { font-size: 11.5px; color: var(--muted); }
-.mach .mb { display: inline-block; margin-top: 2px; padding: 0 4px; font-size: 10.5px; color: var(--on-fill); background: var(--warn); }
+.mach .mi { font-size: var(--fs-meta); color: var(--muted); }
+.mach .mb { display: inline-block; margin-top: 2px; padding: 0 4px; font-size: var(--fs-meta); color: var(--on-fill); background: var(--warn); }
 .mach:hover { background: var(--hover); border-color: var(--edge); }
 .mach.sel { background: var(--fill); border-color: var(--border); }
 .mach.sel .mn, .mach.sel .mi { color: var(--on-fill); }
 .mach .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; background: var(--off); vertical-align: middle; }
 .mach.on .dot { background: var(--ok); }
-#machines .empty { padding: 14px 8px; color: var(--faint); font-size: 12px; }
+#machines .empty { padding: 14px 8px; color: var(--faint); font-size: var(--fs-ui); }
 
 /* ---------- taskbar ---------- */
 /* the gesture bar's space is extra height under the buttons (it used to be taken out of the 40 px, squeezing the
@@ -129,25 +105,36 @@ img { image-rendering: pixelated; }
 #dock { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 4px; overflow-x: auto; scrollbar-width: none; }
 #dock::-webkit-scrollbar { display: none; }
 .dockbtn { flex: 0 1 170px; min-width: 60px; height: 28px; display: flex; align-items: center; gap: 5px; padding: 0 8px 0 6px;
-  border: 2px solid var(--border); background: var(--gamepink); color: var(--border); font-weight: bold; font-size: 12px;
-  box-shadow: inset -2px -2px 0 rgba(77, 35, 207, .15), inset 2px 2px 0 rgba(255, 255, 255, .65); }
+  border: 2px solid var(--border); background: var(--gamepink); color: var(--border); font-weight: bold; font-size: var(--fs-ui);
+  box-shadow: var(--raised); }
 .dockbtn img { width: 16px; height: 16px; flex: none; }
 .dockbtn span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dockbtn.active { background: var(--surface); box-shadow: inset 2px 2px 0 rgba(77, 35, 207, .35); }
+.dockbtn.active { background: var(--surface); box-shadow: var(--pressed); }
 .dockbtn.min { opacity: .6; }
 #tray { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-left: 2px solid var(--border); color: var(--border); font-weight: bold; }
-#conn { font-size: 11px; position: relative; cursor: pointer; }
+#conn { font-size: var(--fs-meta); position: relative; cursor: pointer; }
 #conn::after { content: ""; position: absolute; inset: -10px -8px; }      /* a larger place to click / tap (on a phone it is a 9 px dot) */
 #conn.busy { animation: connblink .3s steps(2) 3; }
 @keyframes connblink { 50% { opacity: .25; } }
 #conn.bad { color: var(--bad); }
 #netbtn { display: none; border: 0; background: none; padding: 0; }
 #soundbtn { border: 0; background: none; padding: 0; display: flex; }
+/* D4: something waits for you (permissions, questions, alerts): a button in the tray, warn-coloured, blinking in pixel steps
+   (js adds <button class="tray-urgent"><img><b>n</b></button>); it calms down once seen (.seen) and on reduced motion */
+#tray .tray-urgent { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px 0 4px; font: inherit; font-size: var(--fs-meta);
+  font-weight: bold; color: var(--warn-fg); background: var(--warn-bg); border: 2px solid var(--warn-line); cursor: pointer; animation: trayurgent 1.2s steps(2) infinite; }
+#tray .tray-urgent img { width: 16px; height: 16px; }
+#tray .tray-urgent b { min-width: 14px; padding: 0 2px; text-align: center; color: var(--on-solid); background: var(--warn-solid); }
+#tray .tray-urgent:hover { background: var(--bg-raised); }
+#tray .tray-urgent.seen { animation: none; }
+@keyframes trayurgent { 50% { background: var(--warn-solid); color: var(--on-solid); border-color: var(--warn-solid); } }
+@media (prefers-reduced-motion: reduce) { #tray .tray-urgent { animation: none; } }
+html[data-theme="win98"] #tray .tray-urgent { border: 0; box-shadow: var(--raised); background: var(--warn-bg); }
 /* the old tray volume popup: raised panel, vertical slider in a sunken groove with ticks, a mute box */
 #volpop { position: absolute; right: 8px; bottom: calc(var(--tbb) + 4px); z-index: 70; width: 86px; padding: 6px 8px 8px;
   display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--gamepink);
-  border: 2px solid; border-color: var(--hi) var(--border) var(--border) var(--hi); box-shadow: 3px 3px 0 rgba(20, 10, 90, .35); }
-#volpop .vt { font-size: 12px; font-weight: bold; color: var(--border); }
+  border: 2px solid; border-color: var(--hi) var(--border) var(--border) var(--hi); box-shadow: var(--shadow-pop); }
+#volpop .vt { font-size: var(--fs-ui); font-weight: bold; color: var(--border); }
 #volpop .vtrack { position: relative; width: 44px; height: 108px; cursor: pointer; touch-action: none; }
 #volpop .vgroove { position: absolute; left: 22px; top: 4px; bottom: 4px; width: 4px;
   border: 1px solid; border-color: var(--border) var(--hi) var(--hi) var(--border); background: var(--press); }
@@ -156,7 +143,7 @@ img { image-rendering: pixelated; }
 #volpop .vthumb { position: absolute; left: 13px; width: 22px; height: 11px; margin-top: -5px; outline: none;
   background: var(--gamepink); border: 2px solid; border-color: var(--hi) var(--border) var(--border) var(--hi); }
 #volpop .vthumb:focus-visible { box-shadow: 0 0 0 1px var(--pink); }
-#volpop .vmute { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink); cursor: pointer; }
+#volpop .vmute { display: flex; align-items: center; gap: 4px; font-size: var(--fs-ui); color: var(--ink); cursor: pointer; }
 #soundbtn img { width: 16px; height: 16px; }
 .sounds { padding: 10px 14px; }
 .sounds label { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--edge); }
@@ -166,9 +153,9 @@ img { image-rendering: pixelated; }
 
 /* ---------- start menu ---------- */
 #startmenu { position: absolute; left: 4px; bottom: calc(var(--tbb) + 2px); z-index: 60; width: 240px; display: flex;
-  background: var(--body); border: 3px solid var(--border); box-shadow: 5px 5px 0 rgba(20, 10, 90, .45); }
-#startmenu .band { flex: 0 0 28px; background: linear-gradient(180deg, #7a3ff0, #4d23cf); display: flex; align-items: flex-end; justify-content: center; padding: 8px 0; }
-#startmenu .band span { writing-mode: vertical-rl; transform: rotate(180deg); color: var(--on-fill); font-weight: bold; font-size: 16px; letter-spacing: 2px; }
+  background: var(--body); border: 3px solid var(--border); box-shadow: var(--shadow-pop); }
+#startmenu .band { flex: 0 0 28px; background: linear-gradient(180deg, var(--band-top), var(--fill)); display: flex; align-items: flex-end; justify-content: center; padding: 8px 0; }
+#startmenu .band span { writing-mode: vertical-rl; transform: rotate(180deg); color: var(--on-fill); font-weight: bold; font-size: var(--fs-title); letter-spacing: 2px; }
 #startmenu .items { flex: 1; padding: 4px 0; }
 .smi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; border: 0; background: none; text-align: left; }
 .smi img { width: 24px; height: 24px; }
@@ -177,7 +164,7 @@ img { image-rendering: pixelated; }
 .smsep { height: 2px; margin: 4px 8px; background: var(--edge); }
 
 /* ---------- common controls inside windows ---------- */
-.btn { font: inherit; font-size: 12.5px; padding: 3px 12px; cursor: pointer; border: 1px solid var(--border); background: var(--title); color: var(--border); }
+.btn { font: inherit; font-size: var(--fs-ui); padding: 3px 12px; cursor: pointer; border: 1px solid var(--border); background: var(--title); color: var(--border); }
 .btn:hover:not(:disabled) { background: var(--surface); }
 .btn.go { background: var(--fill); color: var(--on-fill); }
 .btn.no { border-color: var(--bad); color: var(--bad); background: var(--surface); }
@@ -187,13 +174,13 @@ img { image-rendering: pixelated; }
 
 /* ---------- step-up dialog ---------- */
 #gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--veil); }
-#gate form { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: 6px 6px 0 rgba(77, 35, 207, .3); }
+#gate form { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: var(--shadow-pop); }
 #gate .gt { padding: 5px 10px; font-weight: bold; color: var(--border); background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
 #gate .gb { padding: 12px 14px 14px; }
-#gate p { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
-#gate input { width: 100%; padding: 7px; font: inherit; font-size: 20px; letter-spacing: 6px; text-align: center; border: 1px solid var(--border); color: var(--ink); }
+#gate p { margin: 0 0 10px; font-size: var(--fs-ui); color: var(--muted); }
+#gate input { width: 100%; padding: 7px; font: inherit; font-size: var(--fs-display); letter-spacing: 6px; text-align: center; border: 1px solid var(--border); color: var(--ink); }
 #gate .ga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
-#gate .gm { min-height: 16px; margin-top: 6px; font-size: 12px; color: var(--bad); }
+#gate .gm { min-height: 16px; margin-top: 6px; font-size: var(--fs-ui); color: var(--bad); }
 
 /* ---------- 添加电脑 ---------- */
 .computers { padding-bottom: 10px; }
@@ -201,30 +188,30 @@ img { image-rendering: pixelated; }
 .cmplist { padding: 0 12px; }
 .cmp { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--edge); }
 .cmp img { width: 16px; height: 16px; } .cmp img.off { filter: grayscale(1); opacity: .5; }
-.cmp .cmpi { flex: 1; font-size: 12px; color: var(--muted); }
+.cmp .cmpi { flex: 1; font-size: var(--fs-ui); color: var(--muted); }
 .cmp .btn { padding: 1px 10px; }
 .cmpresult { margin: 0 12px; padding: 8px 10px; border: 2px solid var(--pink); background: var(--surface); }
-.cmpresult p { margin: 4px 0; font-size: 12px; }
-.cmpcmd { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.cmpresult p { margin: 4px 0; font-size: var(--fs-ui); }
+.cmpcmd { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: var(--fs-ui); }
 .cmpcmd > span { flex: none; width: 120px; color: var(--border); }
-.cmpcmd .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 11.5px Consolas, monospace; background: var(--tint); padding: 2px 6px; user-select: all; }
-#netpanel .ptitle .padd { margin-left: auto; padding: 0 7px; font-size: 12px; line-height: 18px; border: 1px solid var(--border); background: var(--surface); color: var(--border); }
+.cmpcmd .rcmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: var(--fs-meta) var(--font-mono); background: var(--tint); padding: 2px 6px; user-select: all; }
+#netpanel .ptitle .padd { margin-left: auto; padding: 0 7px; font-size: var(--fs-ui); line-height: 18px; border: 1px solid var(--border); background: var(--surface); color: var(--border); }
 
 /* ---------- display properties ---------- */
 .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; padding: 12px; }
 .wall { position: relative; padding: 0; border: 2px solid var(--edge); background: var(--surface); text-align: center; }
 .wall .th { height: 66px; background-size: cover; background-position: center; }
-.wall .nm { padding: 3px 4px; font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wall .nm { padding: 3px 4px; font-size: var(--fs-meta); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .wall.sel { border-color: var(--border); box-shadow: 0 0 0 2px var(--pink); }
-.wall .del { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: 1px solid var(--pink-d); background: var(--pink); color: var(--on-fill); font-size: 11px; line-height: 1; }
+.wall .del { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: 1px solid var(--pink-d); background: var(--pink); color: var(--on-fill); font-size: var(--fs-meta); line-height: 1; }
 .wallbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-top: 1px dotted var(--edge); }
 .wallbar .field { flex: 1 1 200px; }
 /* 色调 / 自动切换 / 夜灯 in 显示属性 (js/shade-ui.js) */
 .shadebar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; border-bottom: 1px dotted var(--edge); }
 .shadebar .field { flex: 0 1 130px; min-width: 0; } .shadebar .field.shn { flex: 0 0 76px; } .shadebar input[type=time] { flex: 0 0 96px; }
 .shadebar input[type=range] { flex: 0 1 130px; accent-color: var(--fill); }
-.shadebar .shh { font-size: 12px; color: var(--muted); } .shadebar .shbr { flex-basis: 100%; height: 0; }
-.wallmsg { padding: 0 12px 10px; font-size: 12px; color: var(--border); min-height: 16px; }
+.shadebar .shh { font-size: var(--fs-ui); color: var(--muted); } .shadebar .shbr { flex-basis: 100%; height: 0; }
+.wallmsg { padding: 0 12px 10px; font-size: var(--fs-ui); color: var(--border); min-height: 16px; }
 .wallmsg.bad { color: var(--bad); }
 
 /* a wide screen with the panel put away (netpanel.js): the desktop takes its place, the tray's button brings it back */
@@ -238,10 +225,10 @@ img { image-rendering: pixelated; }
 /* ---------- narrow screens (phones): windows fill the desktop, the panel becomes a sheet ---------- */
 @media (max-width: 700px) {
   :root { --npw: 0px; }
-  #netpanel { width: min(300px, 86vw); z-index: 55; display: none; box-shadow: -4px 0 0 rgba(20, 10, 90, .3); }
+  #netpanel { width: min(300px, 86vw); z-index: 55; display: none; box-shadow: -4px 0 0 var(--shadow-c); }
   #netpanel.open { display: flex; }
   #netbtn { display: block; }
-  #mark b { font-size: 18px; }
+  #mark b { font-size: var(--fs-title); }
   /* a compact taskbar: the start button's logo only, window buttons as icons, the connection as a dot */
   #startbtn { padding: 0 6px; } #startbtn span { display: none; }
   #dock { gap: 3px; padding: 0 3px; }

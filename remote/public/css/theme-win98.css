@@ -2,12 +2,12 @@
    Everything is under html[data-theme="win98"] (set by js/theme-boot.js before the page paints); the tokens in
    desktop.css are redefined first, then the parts drawn differently (window frame, bevels, taskbar, start menu). */
 html[data-theme="win98"] {
-  --border: #000080; --border-d: #000060; --title: #c0c0c0; --title-2: #c0c0c0; --body: #fff;
+  --border: #000080; --border-d: #000060; --title: #c0c0c0; --title-2: #c0c0c0; --body: #c0c0c0;   /* the grey face; white only in fields and lists (--surface) */
   --cyan: #c0c0c0; --cyan-d: #a0a0a0; --pink: #000080; --pink-d: #000060; --ink: #000;
   --gamepink: #c0c0c0; --panel: #c0c0c0; --edge: #808080;
   --muted: #404040; --faint: #808080; --tint: #ececec; --tint-soft: #c0c0c0; --head-bg: #c0c0c0; --hover: rgba(0, 0, 128, .08);
   --accent-muted: #5b5b9b; --accent-wash: rgba(0, 0, 128, .06); --quote-bg: #f4f4f4;
-  --warn: #b04a10; --bad: #a00000; --ok: #008000; --ok-text: #006000; --off: #808080;
+  /* (status colours: css/tokens.css) */
   --surface: #fff; --fill: #000080; --fill-d: #000060; --on-fill: #fff; --hi: #fff; --mine: #ffffe1; --note-bg: #ffffe1;
   --deep: #008080; --veil: rgba(0, 0, 0, .25); --press: #c0c0c0; --wall-veil: transparent;
   --wt: 22px; --wr: 4px; --wb: 4px; --wl: 4px;                 /* 2 px bevel + face; 18 px title bar */
@@ -32,6 +32,8 @@ html[data-theme="win98"] .dash .list::-webkit-scrollbar-thumb, html[data-theme="
 html[data-theme="win98"] ::-webkit-scrollbar-corner { background: #c0c0c0; }
 
 /* ---------- desktop ---------- */
+/* D1: the default wallpaper (ぴんく, js/wallpaper.js "pc") gives way to the classic teal desktop; a wallpaper picked on purpose stays */
+html[data-theme="win98"] #desktop[style*="pc_wallpaper"] { background: var(--bg-desk) !important; }
 html[data-theme="win98"] .dicon span, html[data-theme="win98"] #mark { color: #fff; text-shadow: 1px 1px 0 #000; }
 html[data-theme="win98"] .dicon.sel span { background: #000080; }
 

@@ -1,0 +1,111 @@
+/* Design Tokens v2 (docs/overhaul/05-gui-style-spec.md §5): the one place colours, type, spacing, bevels and layers are
+   defined. Loaded before every other sheet. Two layers:
+     1. the base tokens -- the names the app has always used (--border, --body, --surface ...). The looks and shades
+        (css/theme-win98.css, css/theme-shades.css) redefine only these.
+     2. the semantic tokens (--bg-*, --line-*, --ok-fg ...): most derive from the base layer and so follow every look
+        and shade by themselves; the status families carry their own values per look (all text >= 4.5:1).
+   Component sheets use tokens only -- no hex / rgb literals (brand colours of providers and document content excepted). */
+@font-face { font-family: "PixelMplus"; src: url(/asset/dialog/PixelMplus12-Regular.ttf); }
+
+/* ---------- 1. base tokens: Windose (pink), colours sampled from NEEDY GIRL OVERDOSE (see amedesktop) ---------- */
+:root {
+  --border: #4d23cf; --border-d: #3a17a8; --title: #f0d1f1; --title-2: #f7c9ec; --body: #fff8ff;
+  --cyan: #90f4e4; --cyan-d: #6fd8dd; --pink: #ff7fc4; --pink-d: #e84fa8; --ink: #2a1f5e;
+  --gamepink: #f7e1fb; --panel: #efe6ff; --edge: rgba(77, 35, 207, .3);
+  --muted: #6f6894; --faint: #9893b0;                     /* secondary text (4.9:1) / decoration and disabled only */
+  --tint: rgba(240, 209, 241, .5); --tint-soft: rgba(240, 209, 241, .32); /* code, command and bar backgrounds */
+  --head-bg: #f1e6fb; --hover: rgba(255, 255, 255, .65);
+  --accent-muted: rgba(77, 35, 207, .5); --accent-wash: rgba(77, 35, 207, .08); --quote-bg: rgba(255, 127, 196, .06);
+  --surface: #fff;                          /* raised white: cards, fields, a hovered button */
+  --fill: #4d23cf; --fill-d: #3a17a8; --on-fill: #fff;   /* filled accents (a selected row, the main button) and the text on them */
+  --hi: #fff;                               /* the light edge of a bevel */
+  --lo: rgba(77, 35, 207, .45);             /* the dark edge of a bevel */
+  --mine: #f0d1f1;                          /* your own messages */
+  --note-bg: #fffbe8;                       /* side notes (/btw), tooltips, Clippy's balloon */
+  --deep: #241640; --veil: rgba(42, 31, 94, .35); --press: #e0cff1;   /* behind everything; behind a dialog; a pressed button */
+  --halo: #fff;                             /* the outline that keeps a label readable on the wallpaper */
+  --wall-veil: transparent;                 /* a wash over the wallpaper (the dark schemes dim it) */
+  --tbh: 40px;                              /* taskbar */
+  --sab: env(safe-area-inset-bottom, 0px);  /* a phone's gesture bar under the page (viewport-fit=cover) */
+  --tbb: calc(var(--tbh) + var(--sab));     /* the taskbar block: bar + that space below it */
+  --npw: 250px;                             /* network panel */
+  --wt: 32px; --wr: 10px; --wb: 16px; --wl: 6px;   /* window frame bands (9-slice widths) */
+  --title-hi: var(--title-2);               /* a title bar gradient's far end (Windows 标准: #1084d0) */
+  --band-top: #7a3ff0;                      /* the start menu's side band, top */
+
+  /* ---------- status: 5 families x (fg text / bg wash / line edge / solid fill under --on-solid text) ---------- */
+  --ok-fg: #2c7a64;   --ok-bg: #e4f6ef;   --ok-line: #3caa78;   --ok-solid: #2c7a64;
+  --warn-fg: #a8430f; --warn-bg: #fff0e3; --warn-line: #d0521c; --warn-solid: #a8430f;
+  --bad-fg: #a42d63;  --bad-bg: #fde7f1;  --bad-line: #b4326e;  --bad-solid: #a42d63;
+  --info-fg: #16707c; --info-bg: #e2faf7; --info-line: #3fb7bf; --info-solid: #16707c;
+  --idle-fg: #6f6894; --idle-bg: #f3eef8; --idle-line: #c9bde0; --idle-solid: #6f6894;
+  --on-solid: #fff;
+  /* the old status names, now pointing at the families (text uses -fg, so it reads at 4.5:1) */
+  --ok: var(--ok-line); --ok-text: var(--ok-fg); --warn: var(--warn-fg); --bad: var(--bad-fg); --off: var(--idle-line);
+
+  /* ---------- charts, topology, meters ---------- */
+  --viz-1: #4d23cf; --viz-2: #16707c; --viz-3: #c2307f; --viz-4: #a8430f; --viz-5: #2c7a64; --viz-6: #6f6894;
+  --term-bg: #241640; --term-fg: #f0d1f1;
+  --paper: #fff; --paper-desk: #8a8a96;     /* document content (drawings, figures, PDF / Office pages): the same in every look */
+
+  /* ---------- type: PixelMplus12 for the interface; a vector face for long reading ---------- */
+  --font-ui: "PixelMplus", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "PixelMplus", "Microsoft YaHei UI", monospace;
+  --font-read: "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --fs-xs: 10px; --fs-meta: 11px; --fs-ui: 12px; --fs-body: 13px; --fs-read: 14px; --fs-title: 16px; --fs-display: 24px;
+  --lh-ui: 1.35; --lh-read: 1.7;
+
+  /* ---------- spacing (2 px grid), corners, bevels, shadows, layers ---------- */
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 12px; --sp-6: 16px; --sp-7: 24px;
+  --r: 0; --r-dot: 50%;
+  --raised: inset -1px -1px 0 var(--lo), inset 1px 1px 0 var(--hi);
+  --raised-outer: inset -1px -1px 0 var(--lo), inset 1px 1px 0 var(--hi);
+  --pressed: inset 1px 1px 0 var(--lo), inset -1px -1px 0 var(--hi);
+  --sunken: inset 1px 1px 0 var(--lo), inset -1px -1px 0 var(--hi);
+  --shadow-c: rgba(20, 10, 90, .3); --shadow-pop: 4px 4px 0 rgba(20, 10, 90, .35); --shadow-pop-sm: 3px 3px 0 rgba(20, 10, 90, .2);
+  --z-widget: 5; --z-windows: 10; --z-netpanel: 20; --z-taskbar: 50; --z-menu: 60; --z-popover: 70; --z-gate: 100;
+}
+
+/* ---------- 2. semantic surfaces and lines (derived: they follow every look and shade) ---------- */
+:root {
+  --bg-desk: var(--gamepink); --bg-window: var(--body); --bg-panel: var(--head-bg); --bg-raised: var(--surface);
+  --bg-well: var(--surface); --bg-tint: var(--tint); --bg-term: var(--term-bg); --fg-term: var(--term-fg);
+  --line: var(--edge); --line-strong: var(--border); --line-soft: color-mix(in srgb, var(--edge) 60%, transparent);
+  --link: var(--border); --accent: var(--pink-d);
+  --meter-track: var(--tint); --meter-ok: var(--ok-line); --meter-warn: var(--warn-line); --meter-bad: var(--bad-line);
+  --node-master: var(--line-strong); --node-worker: var(--info-line); --node-verifier: var(--viz-3); --node-off: var(--idle-line);
+}
+
+/* ---------- the dark Windose shades (深夜, 梅子): status families for a dark page ---------- */
+html[data-shade="night"], html[data-shade="plum"] {
+  --ok-fg: #7fe6bd;   --ok-bg: #1f3a3a;   --ok-line: #4fc79a;   --ok-solid: #22735a;
+  --warn-fg: #ffb37a; --warn-bg: #3f2a2a; --warn-line: #e8925a; --warn-solid: #9a4a18;
+  --bad-fg: #ff9cc4;  --bad-bg: #43213f;  --bad-line: #e86aa0;  --bad-solid: #a3305f;
+  --info-fg: #7ef0e0; --info-bg: #1d3646; --info-line: #58cfc6; --info-solid: #1b6670;
+  --idle-fg: #b9afd0; --idle-bg: #2f2556; --idle-line: #6a5f8e; --idle-solid: #5a4f80;
+  --ok: var(--ok-line); --ok-text: var(--ok-fg); --warn: var(--warn-fg); --bad: var(--bad-fg); --off: var(--idle-line);
+  --viz-1: #a890ff; --viz-2: #7ef0e0; --viz-3: #ff8fd0; --viz-4: #ffb37a; --viz-5: #7fe6bd; --viz-6: #b9afd0;
+  --term-bg: #0e0820; --term-fg: #e6dcff; --lo: rgba(0, 0, 0, .55); --link: #9fd8ff;
+  --shadow-c: rgba(0, 0, 0, .45); --shadow-pop: 4px 4px 0 rgba(0, 0, 0, .45); --shadow-pop-sm: 3px 3px 0 rgba(0, 0, 0, .35);
+}
+
+/* ---------- Windows 标准 (classic grey): deeper status colours, so they read on the #c0c0c0 face too (>= 5.6:1) ---------- */
+html[data-theme="win98"] {
+  --ok-fg: #004d00;   --ok-bg: #e0f0e0;   --ok-line: #008000;   --ok-solid: #006000;
+  --warn-fg: #6b2d00; --warn-bg: #fff0d0; --warn-line: #b04a10; --warn-solid: #8a3a00;
+  --bad-fg: #800000;  --bad-bg: #ffe0e0;  --bad-line: #a00000;  --bad-solid: #a00000;
+  --info-fg: #000080; --info-bg: #e0e8ff; --info-line: #000080; --info-solid: #000080;
+  --idle-fg: #404040; --idle-bg: #ececec; --idle-line: #808080; --idle-solid: #505050;
+  --ok: var(--ok-line); --ok-text: var(--ok-fg); --warn: var(--warn-fg); --bad: var(--bad-fg); --off: var(--idle-line);
+  --viz-1: #000080; --viz-2: #008080; --viz-3: #800080; --viz-4: #808000; --viz-5: #008000; --viz-6: #404040;
+  --term-bg: #000; --term-fg: #c0c0c0; --lo: #808080; --link: #0000ff; --accent: #000080;
+  --bg-desk: #008080; --line-soft: #dfdfdf; --title-hi: #1084d0; --band-top: #1084d0;
+  --shadow-c: rgba(0, 0, 0, .3); --shadow-pop: none; --shadow-pop-sm: 2px 2px 0 rgba(0, 0, 0, .3);
+}
+html[data-theme="win98"][data-shade="green"] {
+  --ok-fg: #005000; --ok-bg: #b8dcb8; --warn-fg: #7a3300; --warn-bg: #ecdcb0; --bad-fg: #900000; --bad-bg: #ecc8c0;
+  --info-bg: #c0d4e4; --idle-bg: #bedabe; --line-soft: #a8c8a8;
+}
+html[data-theme="win98"][data-shade="desert"] {
+  --ok-bg: #dce6c4; --warn-bg: #f2dcac; --bad-bg: #f0d0c4; --info-bg: #d4dcec; --idle-bg: #dccfb0; --line-soft: #c8b896;
+}

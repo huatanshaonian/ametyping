@@ -2,26 +2,26 @@
 .explorer, .viewer { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .xbar, .vbar { flex: none; display: flex; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--edge); background: var(--gamepink); }
 .xbar .btn { padding: 2px 9px; }
-.xbar .addr { flex: 1; font-size: 12px; }
+.xbar .addr { flex: 1; font-size: var(--fs-ui); }
 /* the computer switch (apps/explorer.js) */
-.xbar .xpc { flex: 0 1 auto; max-width: 160px; font-size: 12px; padding: 2px 4px; }
+.xbar .xpc { flex: 0 1 auto; max-width: 160px; font-size: var(--fs-ui); padding: 2px 4px; }
 .xbar .xpci { width: 16px; height: 16px; flex: none; }
 .xbody { flex: 1; overflow: auto; outline: none; }
 .xlaunch { flex: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); }
-.xlaunch .xlh { font-size: 12px; color: var(--border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xlaunch .xlh { font-size: var(--fs-ui); color: var(--border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xlaunch .field { flex: 1 1 200px; }
 .xlaunch .xtool { flex: none; }
 @media (max-width: 700px) { .xbar .addr { flex-basis: 100%; order: 5; } .xbar { flex-wrap: wrap; } }
-.xstatus { flex: none; padding: 3px 10px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--edge); background: var(--gamepink); }
-.xstatus .xact { font-size: 11.5px; padding: 1px 8px; margin: 1px 0; }
-.explorer.xdrop .xbody { outline: 2px dashed var(--accent, #c06); outline-offset: -6px; }   /* files dragged over: 上传 here */
+.xstatus { flex: none; padding: 3px 10px; font-size: var(--fs-meta); color: var(--muted); border-top: 1px solid var(--edge); background: var(--gamepink); }
+.xstatus .xact { font-size: var(--fs-meta); padding: 1px 8px; margin: 1px 0; }
+.explorer.xdrop .xbody { outline: 2px dashed var(--accent); outline-offset: -6px; }   /* files dragged over: 上传 here */
 .xroots { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; }
 .xroot { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border: 1px dotted transparent; cursor: default; outline: none; }
 .xroot img { width: 32px; height: 32px; }
-.xroot span { font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.xroot span { font-size: var(--fs-ui); text-align: center; overflow-wrap: anywhere; }
 .xroot.sel { border-color: var(--border); }
 .xroot.sel span { background: var(--fill); color: var(--on-fill); }
-.xlist { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.xlist { width: 100%; border-collapse: collapse; font-size: var(--fs-ui); }
 .xlist th { position: sticky; top: 0; text-align: left; font-weight: normal; padding: 3px 8px; background: var(--head-bg); border-bottom: 1px solid var(--edge); color: var(--border); }
 .xlist td { padding: 2px 8px; white-space: nowrap; cursor: default; }
 .xlist tr { outline: none; }
@@ -36,7 +36,7 @@
 .xlist tr.sel .xt { color: var(--on-fill); }
 @media (max-width: 700px) { .xlist .xt { display: none; } }
 
-.vbar .vpath { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.vbar .vpath { flex: 1; min-width: 0; font-size: var(--fs-meta); color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .vbar .btn { padding: 2px 10px; text-decoration: none; }
 .vbody { flex: 1; overflow: auto; position: relative; }
 .vnote { padding: 16px; color: var(--muted); }
@@ -44,14 +44,14 @@
 .vprog div { height: 100%; width: 0; background: repeating-linear-gradient(90deg, var(--border) 0 8px, transparent 8px 10px); }
 .vimg { display: block; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; cursor: zoom-in; image-rendering: auto; }
 .vimg.actual { max-width: none; max-height: none; cursor: zoom-out; }
-.vtext { margin: 0; padding: 10px 12px; font: 12.5px/1.5 Consolas, "Microsoft YaHei UI", monospace; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+.vtext { margin: 0; padding: 10px 12px; font: var(--fs-ui)/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-all; color: var(--ink); }
 .vtools { flex: none; display: flex; gap: 6px; align-items: center; }
 .vtools:empty { display: none; }
-.vinfo { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.vinfo { font-size: var(--fs-meta); color: var(--muted); white-space: nowrap; }
 
 /* a CSV as a table (csv-view.js): the heads and the row numbers stay in sight */
 .csvwrap { display: inline-block; min-width: 100%; }
-.csv { border-collapse: separate; border-spacing: 0; font: 12.5px/1.45 Consolas, "Microsoft YaHei UI", monospace; color: var(--ink); }
+.csv { border-collapse: separate; border-spacing: 0; font: var(--fs-ui)/1.45 var(--font-mono); color: var(--ink); }
 .csv th, .csv td { max-width: 320px; padding: 3px 8px; border-right: 1px solid var(--edge); border-bottom: 1px solid var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .csv th { position: sticky; top: 0; z-index: 1; background: var(--gamepink); font-weight: bold; border-bottom: 2px solid var(--border); }
 .csv .rn { position: sticky; left: 0; background: var(--gamepink); color: var(--muted); text-align: right; font-weight: normal; min-width: 2.5em; }
@@ -61,7 +61,7 @@
 .csvmore { padding: 10px 12px; }
 
 /* rendered Markdown */
-.md { padding: 14px 18px 24px; line-height: 1.65; font-family: "Microsoft YaHei UI", system-ui, sans-serif; font-size: 14px; color: var(--ink); max-width: 860px; }
+.md { padding: 14px 18px 24px; line-height: 1.65; font-family: var(--font-read); font-size: var(--fs-read); color: var(--ink); max-width: 860px; }
 .md h1, .md h2, .md h3, .md h4 { color: var(--border); line-height: 1.3; margin: 1.1em 0 .5em; }
 .md h1 { font-size: 1.6em; border-bottom: 2px solid var(--edge); padding-bottom: .2em; }
 .md h2 { font-size: 1.35em; border-bottom: 1px solid var(--edge); padding-bottom: .15em; }
@@ -77,24 +77,24 @@
 .md th { background: var(--head-bg); }
 .md a { color: var(--border); }
 .md hr { border: 0; border-top: 2px dashed var(--edge); }
-.mdimg-note { display: inline-block; padding: 2px 6px; font-size: 12px; color: var(--muted); background: var(--head-bg); border: 1px dashed var(--edge); }
+.mdimg-note { display: inline-block; padding: 2px 6px; font-size: var(--fs-ui); color: var(--muted); background: var(--head-bg); border: 1px dashed var(--edge); }
 .md .mathblock { overflow-x: auto; overflow-y: hidden; margin: .6em 0; text-align: center; } .md .mathph[title] { cursor: help; }   /* LaTeX formulas (md-math.js) */
 /* the lines a link pointed at (a.js:120 from the dashboard) */
 .vtext mark.vline { background: rgba(255, 210, 0, .38); color: inherit; }
 .vinfo.bad { color: var(--bad); }
 
 /* Dual-track folder annotations (我的备注 + AI备注 + 角色标签) in 我的电脑 */
-.xnote-banner { flex: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); font-size: 12px; }
-.xnote-banner .xact { margin-left: auto; padding: 1px 8px; font-size: 11.5px; }
-.xtag { display: inline-block; padding: 0 5px; font-size: 11px; background: var(--fill); color: var(--on-fill); border: 1px solid var(--border); }
-.xunote { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink); background: var(--tint); padding: 0 5px; border: 1px solid var(--edge); }
-.xainote { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); background: var(--surface); padding: 0 5px; border: 1px dashed var(--edge); }
+.xnote-banner { flex: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--edge); background: var(--head-bg); font-size: var(--fs-ui); }
+.xnote-banner .xact { margin-left: auto; padding: 1px 8px; font-size: var(--fs-meta); }
+.xtag { display: inline-block; padding: 0 5px; font-size: var(--fs-meta); background: var(--fill); color: var(--on-fill); border: 1px solid var(--border); }
+.xunote { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); color: var(--ink); background: var(--tint); padding: 0 5px; border: 1px solid var(--edge); }
+.xainote { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); color: var(--muted); background: var(--surface); padding: 0 5px; border: 1px dashed var(--edge); }
 .xlist .xrem { width: 220px; max-width: 220px; }
 .xrem-box { display: flex; gap: 4px; align-items: center; overflow: hidden; }
 .xlist tr.sel .xunote, .xlist tr.sel .xainote { color: var(--on-fill); background: rgba(255,255,255,.15); border-color: var(--on-fill); }
 @media (max-width: 700px) { .xlist .xrem { display: none; } }
 .xnote-dlg { width: min(460px, 94vw); }
-.xnote-path { font-size: 12px; font-weight: bold; color: var(--border); word-break: break-all; margin-bottom: 6px; }
-.xnote-lbl { display: block; font-size: 12px; margin: 6px 0 3px; color: var(--ink); }
-.xnote-ta { width: 100%; box-sizing: border-box; resize: vertical; font: 12.5px/1.45 "Microsoft YaHei UI", sans-serif; padding: 4px 6px; }
-.xnote-snap { margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.xnote-path { font-size: var(--fs-ui); font-weight: bold; color: var(--border); word-break: break-all; margin-bottom: 6px; }
+.xnote-lbl { display: block; font-size: var(--fs-ui); margin: 6px 0 3px; color: var(--ink); }
+.xnote-ta { width: 100%; box-sizing: border-box; resize: vertical; font: var(--fs-ui)/1.45 "Microsoft YaHei UI", sans-serif; padding: 4px 6px; }
+.xnote-snap { margin-top: 6px; font-size: var(--fs-meta); color: var(--muted); }

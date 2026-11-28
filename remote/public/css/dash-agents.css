@@ -1,6 +1,6 @@
 /* the subagents of a session (js/apps/dash-agents.js): a tag on its card, a foldable list over its conversation */
-.dash .card .agb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; color: var(--ok-text); border: 1px solid var(--ok-text); }
-.dash .agents { border-bottom: 1px dotted var(--edge); font-size: 11.5px; flex: none; }
+.dash .card .agb { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: var(--fs-xs); color: var(--ok-text); border: 1px solid var(--ok-text); }
+.dash .agents { border-bottom: 1px dotted var(--edge); font-size: var(--fs-meta); flex: none; }
 .dash .agents .ag-sum { display: block; width: 100%; padding: 4px 12px; text-align: left; background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; }
 .dash .agents .ag-sum:hover { background: var(--hover); }
 .dash .agents .ag-sum.busy { color: var(--ok-text); }
@@ -13,7 +13,7 @@
 .dash .agents .ag-l1 { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
 .dash .agents .ag-l1 b { font-weight: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dash .agents .ag.done .ag-l1 b { color: var(--muted); }
-.dash .agents .ag-bg { flex: none; padding: 0 3px; font-size: 10px; color: var(--muted); border: 1px dotted var(--muted); }
+.dash .agents .ag-bg { flex: none; padding: 0 3px; font-size: var(--fs-xs); color: var(--muted); border: 1px dotted var(--muted); }
 .dash .agents .ag-l2 { color: var(--faint); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dash .agents .ag.run .ag-l2 { color: var(--muted); }
 @keyframes ag-pulse { 50% { opacity: .35; } }

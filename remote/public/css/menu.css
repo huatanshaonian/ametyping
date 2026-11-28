@@ -1,39 +1,39 @@
 /* right-click menus (js/ctxmenu.js) and the dialogs (js/dialog.js: one line of text, message boxes); the Windows 标准 look is at the end */
 .ctxm { position: fixed; z-index: 120; min-width: 150px; padding: 3px; background: var(--body); border: 2px solid var(--border);
-  box-shadow: 4px 4px 0 rgba(20, 10, 90, .35); user-select: none; }
-.ctxi { display: flex; align-items: center; width: 100%; padding: 4px 8px 4px 2px; border: 0; background: none; text-align: left; font-size: 12.5px; white-space: nowrap; }
+  box-shadow: var(--shadow-pop); user-select: none; }
+.ctxi { display: flex; align-items: center; width: 100%; padding: 4px 8px 4px 2px; border: 0; background: none; text-align: left; font-size: var(--fs-ui); white-space: nowrap; }
 .ctxi .ck { flex: none; width: 18px; text-align: center; }
 .ctxi .lb { flex: 1; }
-.ctxi .ar { flex: none; margin-left: 14px; font-size: 10px; }
+.ctxi .ar { flex: none; margin-left: 14px; font-size: var(--fs-xs); }
 .ctxi:hover:not(:disabled), .ctxi.open, .ctxi:focus { background: var(--fill); color: var(--on-fill); outline: none; }
 .ctxi:disabled { opacity: .45; cursor: default; }
 .ctxsep { height: 1px; margin: 3px 4px; background: var(--edge); }
 
 .dlg { position: fixed; inset: 0; z-index: 110; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--veil); }
-.dlgbox { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: 6px 6px 0 rgba(77, 35, 207, .3); }
+.dlgbox { width: 300px; max-width: 100%; background: var(--body); border: 3px solid var(--border); box-shadow: var(--shadow-pop); }
 .dlgt { padding: 5px 10px; font-weight: bold; color: var(--border); background: linear-gradient(90deg, var(--title), var(--title-2)); border-bottom: 2px solid var(--border); }
 .dlgb { padding: 12px 14px 14px; }
-.dlgb p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.dlgb p { margin: 0 0 8px; font-size: var(--fs-ui); color: var(--muted); }
 .dlgb .field { width: 100%; }
 .dlga { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
-html[data-theme="win98"] .ctxm { background: #c0c0c0; border: 0; box-shadow: var(--raised-outer); }
-html[data-theme="win98"] .ctxi { color: #000; }
-html[data-theme="win98"] .ctxi:hover:not(:disabled), html[data-theme="win98"] .ctxi.open, html[data-theme="win98"] .ctxi:focus { background: #000080; color: #fff; }
-html[data-theme="win98"] .ctxsep { height: 0; border-top: 1px solid #808080; border-bottom: 1px solid #fff; background: none; }
-html[data-theme="win98"] .dlg { background: rgba(0, 0, 0, .25); }
-html[data-theme="win98"] .dlgbox { background: #c0c0c0; border: 0; padding: 3px; box-shadow: var(--raised-outer); }
-html[data-theme="win98"] .dlgt { color: #fff; background: linear-gradient(90deg, #000080, #1084d0); border-bottom: 0; padding: 2px 4px; }
-html[data-theme="win98"] .dlgb p { color: #000; }
+html[data-theme="win98"] .ctxm { background: var(--panel); border: 0; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .ctxi { color: var(--ink); }
+html[data-theme="win98"] .ctxi:hover:not(:disabled), html[data-theme="win98"] .ctxi.open, html[data-theme="win98"] .ctxi:focus { background: var(--fill); color: var(--on-fill); }
+html[data-theme="win98"] .ctxsep { height: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--hi); background: none; }
+html[data-theme="win98"] .dlg { background: var(--veil); }
+html[data-theme="win98"] .dlgbox { background: var(--panel); border: 0; padding: 3px; box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .dlgt { color: var(--on-fill); background: linear-gradient(90deg, var(--fill), var(--title-hi)); border-bottom: 0; padding: 2px 4px; }
+html[data-theme="win98"] .dlgb p { color: var(--ink); }
 
 /* message boxes (js/dialog.js msgBox: Windose's own confirm / alert) */
 .dlgmsg { width: 360px; }
 .dlgt { display: flex; align-items: center; gap: 8px; } .dlgt > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dlgx { flex: none; width: 20px; height: 18px; padding: 0; line-height: 1; font-size: 14px; font-weight: bold; cursor: pointer; border: 2px solid var(--pink-d); background: var(--pink); color: var(--on-fill); }
+.dlgx { flex: none; width: 20px; height: 18px; padding: 0; line-height: 1; font-size: var(--fs-read); font-weight: bold; cursor: pointer; border: 2px solid var(--pink-d); background: var(--pink); color: var(--on-fill); }
 .dlgm { display: flex; gap: 12px; align-items: flex-start; }
 .dlgm img { flex: none; width: 32px; height: 32px; image-rendering: pixelated; }
-.dlgtx { flex: 1; min-width: 0; padding-top: 2px; font-size: 13px; line-height: 1.6; color: var(--ink); white-space: pre-line; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
+.dlgtx { flex: 1; min-width: 0; padding-top: 2px; font-size: var(--fs-body); line-height: 1.6; color: var(--ink); white-space: pre-line; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
 .dlgmsg .dlga { justify-content: center; } .dlgmsg .dlga .btn { min-width: 76px; }
 .dlgmsg .btn:focus-visible { outline: 1px dotted currentColor; outline-offset: -4px; }
-html[data-theme="win98"] .dlgx { width: 16px; height: 14px; font-size: 11px; border: 0; background: #c0c0c0; color: #000; box-shadow: var(--raised-outer); }
-html[data-theme="win98"] .dlgtx { color: #000; }
+html[data-theme="win98"] .dlgx { width: 16px; height: 14px; font-size: var(--fs-meta); border: 0; background: var(--panel); color: var(--ink); box-shadow: var(--raised-outer); }
+html[data-theme="win98"] .dlgtx { color: var(--ink); }

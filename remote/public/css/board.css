@@ -7,22 +7,22 @@
 .bd-gap { width: 8px; flex: none; }
 .bd-bar .btn.bd-ib { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; min-width: 30px; justify-content: center; }
 .bd-ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-.bd-pick { font: inherit; font-size: 12.5px; max-width: 220px; min-width: 110px; padding: 2px 4px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.bd-pick { font: inherit; font-size: var(--fs-ui); max-width: 220px; min-width: 110px; padding: 2px 4px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
 .bd-sw { width: 20px; height: 20px; padding: 0; flex: none; border: 1px solid var(--edge); border-radius: 50%; cursor: pointer; }
 .bd-sw.sel { outline: 2px solid var(--border); outline-offset: 1px; }
 .bd-width { width: 90px; accent-color: var(--fill); }
 .bd-zoom { min-width: 52px; }
-.bd-st { font-size: 12px; color: var(--muted); margin-left: 4px; } .bd-st.bad { color: var(--bad); }
-.bd-surface { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #fff; touch-action: none; outline: none; cursor: crosshair;
+.bd-st { font-size: var(--fs-ui); color: var(--muted); margin-left: 4px; } .bd-st.bad { color: var(--bad); }
+.bd-surface { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--paper); touch-action: none; outline: none; cursor: crosshair;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .bd-surface[data-tool="hand"] { cursor: grab; }
 .bd-surface[data-tool="eraser"] { cursor: cell; }
 .bd-base, .bd-live { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; pointer-events: none; }
 .bd-surface[data-tool="lasso"] { cursor: crosshair; }
 .bd-surface.bd-over { cursor: move; }
-.bd-sel { position: absolute; border: 1.5px dashed #4d23cf; background: rgba(77, 35, 207, .05); pointer-events: none; box-sizing: border-box; }
+.bd-sel { position: absolute; border: 1.5px dashed var(--line-strong); background: var(--accent-wash); pointer-events: none; box-sizing: border-box; }
 .bd-lasso { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
-.bd-lasso polygon { fill: rgba(77, 35, 207, .07); stroke: #4d23cf; stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; }
+.bd-lasso polygon { fill: var(--accent-wash); stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; }
 .bd-sel[hidden], .bo-state[hidden], .bo-design[hidden] { display: none; }
 
 /* the gallery of all the boards: it takes the sheet's place (and the tools' row goes) */
@@ -33,23 +33,23 @@
 .bg-card { display: flex; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--edge); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; font: inherit; min-width: 0; }
 .bg-card:hover { border-color: var(--border); }
 .bg-card.sel { outline: 2px solid var(--border); outline-offset: 1px; }
-.bg-pic { aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--edge); overflow: hidden; }
+.bg-pic { aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: var(--paper); border: 1px solid var(--edge); overflow: hidden; }
 .bg-pic canvas { max-width: 100%; max-height: 100%; }
-.bg-none { font-size: 12px; color: #aaa; }
+.bg-none { font-size: var(--fs-ui); color: var(--muted); }
 .bg-new .bg-pic { background: none; border-style: dashed; } .bg-plus { font-size: 34px; color: var(--muted); }
-.bg-name { font-size: 13px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bg-info { font-size: 11.5px; color: var(--muted); white-space: pre; }
+.bg-name { font-size: var(--fs-body); font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bg-info { font-size: var(--fs-meta); color: var(--muted); white-space: pre; }
 
 .bo { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .bo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 8px; background: var(--gamepink); border-bottom: 1px solid var(--edge); }
 .bo-bar .bd-gap { flex: 1; }
-.bo-state { flex: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 5px 10px; font-size: 12.5px; color: var(--muted); background: var(--tint-soft); border-bottom: 1px solid var(--edge); }
+.bo-state { flex: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 5px 10px; font-size: var(--fs-ui); color: var(--muted); background: var(--tint-soft); border-bottom: 1px solid var(--edge); }
 .bo-state .bad { color: var(--bad); }
 .bo-work { color: var(--border); }
 .bo-unsure { flex-basis: 100%; } .bo-unsure summary { cursor: pointer; color: var(--warn); } .bo-unsure ul { margin: 4px 0 2px; padding-left: 20px; color: var(--ink); }
 .bo-body { flex: 1; min-height: 0; position: relative; overflow: auto; background: var(--body); }
-.bo-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-.bo-shot { padding: 10px; text-align: center; } .bo-shot img { max-width: 100%; border: 1px solid var(--edge); background: #fff; }
+.bo-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--paper); }
+.bo-shot { padding: 10px; text-align: center; } .bo-shot img { max-width: 100%; border: 1px solid var(--edge); background: var(--paper); }
 .bo-md { background: var(--surface); min-height: 100%; }
 .bo-design { flex: none; display: flex; gap: 6px; padding: 6px 8px; background: var(--gamepink); border-top: 1px solid var(--edge); }
 .bo-wish { flex: 1; min-width: 0; }

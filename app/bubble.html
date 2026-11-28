@@ -5,37 +5,56 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self'; font-src 'self'">
 <style>
   /* Claude panel in the game-original Windose window style (AmeDesk promo): 9-slice 40/12/24/12, pixelated.
-     Left: one card per session (name, one-line summary, red dot = unread). Right: the selected session's log. */
-  @font-face { font-family: "zpix"; src: url(assets/dialog/zpix.ttf); }
+     Left: one card per session (name, one-line summary, red dot = unread). Right: the selected session's log.
+     Colours are the Windose desktop's tokens (remote/public/css/tokens.css: same names, same values), so the pet and the
+     web desktop read as one family; html[data-shade="night"|"plum"] carries the dark shades' values (the frame bitmap
+     stays pink, as the web windows' frames do). Type: PixelMplus12 only, as on the desktop. */
   @font-face { font-family: "PixelMplus"; src: url(assets/dialog/PixelMplus12-Regular.ttf); }
-  :root { --ink: rgb(58, 34, 84); --blue: rgb(77, 35, 207); --pink: rgb(240, 209, 241); }
+  :root {
+    --ink: #2a1f5e; --muted: #6f6894; --faint: #9893b0; --line-strong: #4d23cf; --line: rgba(77, 35, 207, .3); --line-soft: rgba(77, 35, 207, .18);
+    --title: #f0d1f1; --bg-window: transparent; --bg-raised: #fff; --bg-well: #fff; --bg-tint: rgba(240, 209, 241, .5); --bg-list: rgba(240, 209, 241, .35);
+    --hover: rgba(255, 255, 255, .7); --mine: #f0d1f1; --note-bg: #fffbe8; --on-fill: #fff; --fill: #4d23cf; --unread: #eb2850;
+    --ok-fg: #2c7a64; --warn-fg: #a8430f; --warn-bg: #fff0e3; --warn-line: #d0521c; --bad-fg: #a42d63; --info-fg: #16707c; --idle-fg: #6f6894;
+    --font-ui: "PixelMplus", "Microsoft YaHei UI", sans-serif; --font-mono: "Cascadia Mono", Consolas, "PixelMplus", "Microsoft YaHei UI", monospace;
+    --fs-xs: 10px; --fs-meta: 11px; --fs-ui: 12px; --fs-body: 13px;
+    --blue: var(--line-strong); --pink: var(--title);   /* the old names */
+  }
+  html[data-shade="night"], html[data-shade="plum"] {
+    --ink: #f1e6ff; --muted: #b9afd0; --faint: #8a7fa8; --line-strong: #a890ff; --line: rgba(168, 144, 255, .38); --line-soft: rgba(168, 144, 255, .22);
+    --bg-window: #261a47; --bg-raised: #2f2156; --bg-well: #1d1438; --bg-tint: rgba(168, 144, 255, .16); --bg-list: #2b1d50;
+    --hover: rgba(255, 255, 255, .09); --mine: #4a2b73; --note-bg: rgba(255, 214, 102, .13); --fill: #6a4be0;
+    --ok-fg: #7fe6bd; --warn-fg: #ffb37a; --warn-bg: #3f2a2a; --warn-line: #e8925a; --bad-fg: #ff9cc4; --info-fg: #7ef0e0; --idle-fg: #b9afd0;
+    color-scheme: dark;
+  }
+  html[data-shade="plum"] { --bg-window: #2f1c3d; --bg-raised: #392348; --bg-list: #341f43; --line-strong: #e0a0f0; --fill: #9a48b4; }
   html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; user-select: none; }
   #box { position: absolute; left: 0; right: 0; top: 0; bottom: 0; box-sizing: border-box;
     border-style: solid; border-width: 40px 12px 24px 12px;
     border-image: url(assets/dialog/windowbase_active.png) 40 12 24 12 fill stretch; image-rendering: pixelated;
-    font-family: "zpix", "PixelMplus", "Microsoft YaHei UI", sans-serif; font-size: 13px; line-height: 19px; color: var(--ink); }
+    font-family: var(--font-ui); font-size: var(--fs-body); line-height: 19px; color: var(--ink); }
+  /* the title bar is drawn on the pink bitmap in every shade: its ink stays the bitmap's */
   #title { position: absolute; left: 3px; right: 6px; top: -31px; height: 20px; display: flex; align-items: center;
-    gap: 8px; color: var(--blue); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: grab; }
+    gap: 8px; color: #4d23cf; font-size: var(--fs-ui); white-space: nowrap; overflow: hidden; cursor: grab; }
   #who { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  #meta { color: rgba(77, 35, 207, .6); }
-  #close, #fold { width: 16px; height: 16px; line-height: 14px; text-align: center; border: 1px solid var(--blue);
-    background: var(--pink); cursor: pointer; font-size: 12px; flex: none; }
+  #meta { color: rgba(77, 35, 207, .7); }
+  #close, #fold { width: 16px; height: 16px; line-height: 14px; text-align: center; border: 1px solid #4d23cf;
+    background: #f0d1f1; color: #4d23cf; cursor: pointer; font-size: var(--fs-ui); flex: none; }
   #close:hover, #fold:hover { background: #fff; }
   /* collapsed: only the title bar (window is 42px tall); the unread badge is a red square + count */
-  #ub { display: none; align-items: center; gap: 4px; color: rgb(235, 40, 80); flex: none; }
-  #ub i { width: 7px; height: 7px; background: rgb(235, 40, 80); box-shadow: 0 0 0 1px #fff; }
+  #ub { display: none; align-items: center; gap: 4px; color: var(--unread); flex: none; }
+  #ub i { width: 7px; height: 7px; background: var(--unread); box-shadow: 0 0 0 1px #fff; }
   body.collapsed #ub.on { display: flex; }
   body.collapsed #wrap, body.collapsed #grip { display: none; }
   body.collapsed #box { border-width: 42px 12px 0 12px; border-image-slice: 42 12 0 12 fill; }   /* top 42 rows of the frame = bar + closing line */
   body.collapsed #title { top: -33px; }
-  #wrap { display: flex; height: 100%; }
+  #wrap { display: flex; height: 100%; background: var(--bg-window); }
   #right { position: relative; }
-  #list { width: 150px; flex: none; overflow-y: auto; border-right: 2px solid var(--blue); background: rgba(240, 209, 241, .35); }
-  #list::-webkit-scrollbar, #log::-webkit-scrollbar { width: 6px; }
-  #list::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb { background: var(--blue); }
-  .card { position: relative; padding: 5px 8px 6px 9px; border-bottom: 1px dotted rgba(77, 35, 207, .35); cursor: pointer; }
-  .card:hover { background: rgba(255, 255, 255, .7); }
-  .card.sel { background: #fff; box-shadow: inset 3px 0 0 var(--blue); }
+  #list { width: 150px; flex: none; overflow-y: auto; border-right: 2px solid var(--line-strong); background: var(--bg-list); }
+  #list::-webkit-scrollbar, #log::-webkit-scrollbar { width: 8px; }
+  #list::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb { background: var(--fill); }
+  .card { position: relative; padding: 5px 8px 6px 9px; border-bottom: 1px dotted var(--line); cursor: pointer; }
+  .card:hover { background: var(--hover); }
+  .card.sel { background: var(--bg-raised); box-shadow: inset 3px 0 0 var(--line-strong); }
   /* whose session: the mark of Codex (OpenAI's) or of Claude Code, drawn through a mask in the colour given here */
   .card .nm .prov { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; background: currentColor;
     -webkit-mask: url(assets/provider/openai.svg) center / contain no-repeat; mask: url(assets/provider/openai.svg) center / contain no-repeat; }
@@ -79,98 +98,117 @@
   .card .nm .prov.ai.ai-amazon-bedrock { color: #FF9900; -webkit-mask-image: url(assets/provider/ai/amazon-bedrock.svg); mask-image: url(assets/provider/ai/amazon-bedrock.svg); }
   .card .nm .prov.ai.ai-anthropic { color: #D97757; -webkit-mask-image: url(assets/provider/claude.svg); mask-image: url(assets/provider/claude.svg); }
   .card .nm .prov.ai.ai-openai { color: inherit; -webkit-mask-image: url(assets/provider/openai.svg); mask-image: url(assets/provider/openai.svg); }
-  .card .nm { color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
-  .card .sm { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .card .st { font-size: 10px; line-height: 13px; }
-  .st.working { color: rgb(60, 140, 120); } .st.waiting { color: rgb(208, 82, 28); } .st.done { color: rgb(180, 50, 110); } .st.idle { color: rgba(58, 34, 84, .4); }
-  .dot { position: absolute; right: 6px; top: 8px; width: 7px; height: 7px; background: rgb(235, 40, 80);
+  .card .nm { color: var(--line-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
+  .card .sm { font-size: var(--fs-meta); line-height: 15px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .st { font-size: var(--fs-xs); line-height: 13px; }
+  /* states, as on the web dashboard: 进行中 info, 等你 warn, 完成 ok, the rest idle */
+  .st.working { color: var(--info-fg); } .st.waiting { color: var(--warn-fg); } .st.done { color: var(--ok-fg); } .st.idle { color: var(--idle-fg); }
+  .dot { position: absolute; right: 6px; top: 8px; width: 7px; height: 7px; background: var(--unread);
     box-shadow: 0 0 0 1px #fff; display: none; }
   .card.unread .dot { display: block; }
   #right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  #head { padding: 4px 10px; border-bottom: 1px dotted rgba(77, 35, 207, .35); color: var(--blue); font-size: 12px;
-    display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
-  #head span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  #head { padding: 4px 10px; border-bottom: 1px dotted var(--line); color: var(--line-strong); font-size: var(--fs-ui);
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #head span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #hmeta { flex: none; }
+  /* jump to the web desktop (bubble.js binds them and shows them when there is somewhere to go) */
+  .hlink { flex: none; height: 16px; padding: 0 5px; font: inherit; font-size: var(--fs-meta); line-height: 14px; cursor: pointer;
+    color: var(--line-strong); background: var(--bg-raised); border: 1px solid var(--line-strong); }
+  .hlink:hover { color: var(--on-fill); background: var(--fill); }
+  .hlink:active { transform: translate(1px, 1px); }
+  .hlink[hidden] { display: none; }
   #log { flex: 1; overflow-y: auto; padding: 4px 10px 6px; }
-  .ln { color: rgba(58, 34, 84, .55); word-break: break-all; }
-  .ln .tm { color: rgba(77, 35, 207, .45); font-size: 11px; margin-right: 5px; }
+  .ln { color: var(--muted); word-break: break-all; }
+  .ln .tm { color: var(--faint); font-size: var(--fs-meta); margin-right: 5px; }
   .ln.last { color: var(--ink); }
-  .ln.done { color: rgb(180, 50, 110); } .ln.waiting { color: rgb(208, 82, 28); } .ln.error { color: rgb(150, 100, 0); }
-  .ln.message { color: var(--blue); }
-  .sep { border-top: 1px dashed rgba(77, 35, 207, .3); margin: 5px 0 3px; }
-  .caret { display: inline-block; width: 7px; height: 11px; margin-left: 2px; background: var(--blue); vertical-align: -1px;
+  .ln.done { color: var(--ok-fg); } .ln.waiting { color: var(--warn-fg); } .ln.error { color: var(--bad-fg); }
+  .ln.message { color: var(--line-strong); }
+  .sep { border-top: 1px dashed var(--line); margin: 5px 0 3px; }
+  .caret { display: inline-block; width: 7px; height: 11px; margin-left: 2px; background: var(--line-strong); vertical-align: -1px;
     animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  /* resize grip in the bottom status bar, right corner */
+  /* resize grip in the bottom status bar, right corner (on the bitmap) */
   #grip { position: absolute; right: -9px; bottom: -22px; width: 20px; height: 20px; cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 0 45%, var(--blue) 45% 53%, transparent 53% 63%, var(--blue) 63% 71%, transparent 71% 81%, var(--blue) 81% 89%, transparent 89%); }
+    background: linear-gradient(135deg, transparent 0 45%, #4d23cf 45% 53%, transparent 53% 63%, #4d23cf 63% 71%, transparent 71% 81%, #4d23cf 81% 89%, transparent 89%); }
   #grip:hover { filter: brightness(1.6); }
   /* ---- chat mode (常驻对话): full conversation + reply box ---- */
   #chat, #compose, #note { display: none; }
   body.chat #log { display: none; }
   body.chat #chat, body.chat #compose { display: block; }
   #chat { flex: 1; overflow-y: auto; padding: 6px 10px; user-select: text; }
-  #chat::-webkit-scrollbar { width: 6px; }
-  #chat::-webkit-scrollbar-thumb { background: var(--blue); }
+  #chat::-webkit-scrollbar { width: 8px; }
+  #chat::-webkit-scrollbar-thumb { background: var(--fill); }
   .m { margin: 4px 0 8px; max-width: 92%; word-break: break-word; }
-  .m.user { margin-left: auto; width: fit-content; background: var(--pink); border: 1px solid rgba(77, 35, 207, .45);
+  .m.user { margin-left: auto; width: fit-content; background: var(--mine); border: 1px solid var(--line);
     padding: 3px 8px; white-space: pre-wrap; }
-  .m.assistant { background: #fff; border: 1px solid rgba(77, 35, 207, .25); padding: 4px 9px; }
-  .m.btw { background: #fffbe8; border: 1px dashed rgba(208, 82, 28, .6); padding: 4px 9px; } .m.btw p { margin: 0 0 5px; white-space: pre-wrap; } .m.btw .btwh { display: block; font-size: 11px; color: rgb(208, 82, 28); font-weight: normal; }
+  .m.assistant { background: var(--bg-raised); border: 1px solid var(--line-soft); padding: 4px 9px; }
+  .m.btw { background: var(--note-bg); border: 1px dashed var(--warn-line); padding: 4px 9px; } .m.btw p { margin: 0 0 5px; white-space: pre-wrap; } .m.btw .btwh { display: block; font-size: var(--fs-meta); color: var(--warn-fg); font-weight: normal; }
   .m.assistant p { margin: 0 0 5px; white-space: pre-wrap; } .m.assistant p:last-child { margin: 0; }
-  .m pre { margin: 4px 0; padding: 4px 6px; background: rgba(240, 209, 241, .45); border-left: 2px solid var(--blue);
-    white-space: pre-wrap; font: 12px/16px "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace; }
-  .m code { font: 12px "Cascadia Mono", Consolas, monospace; background: rgba(240, 209, 241, .6); padding: 0 2px; }
-  .m.tool { font-size: 11.5px; line-height: 15px; color: rgba(58, 34, 84, .5); margin: 2px 0 6px; }
-  .m.tool b { color: rgba(77, 35, 207, .55); font-weight: normal; }
-  .m.sys { font-size: 11px; color: rgba(58, 34, 84, .45); text-align: center; max-width: none; }
+  .m pre { margin: 4px 0; padding: 4px 6px; background: var(--bg-tint); border-left: 2px solid var(--line-strong);
+    white-space: pre-wrap; font: var(--fs-ui)/16px var(--font-mono); }
+  .m code { font: var(--fs-ui) var(--font-mono); background: var(--bg-tint); padding: 0 2px; }
+  .m.tool { font-size: var(--fs-meta); line-height: 15px; color: var(--muted); margin: 2px 0 6px; }
+  .m.tool b { color: var(--line-strong); font-weight: normal; }
+  .m.sys { font-size: var(--fs-meta); color: var(--faint); text-align: center; max-width: none; }
   /* what a slash command printed in the terminal (/context, /model ...); a long one folded, a click unfolds it */
-  .m.cmd { max-width: 100%; background: rgba(240, 209, 241, .3); border: 1px dotted var(--blue); padding: 3px 8px 4px; }
-  .m.cmd .ch { font-size: 11px; color: rgba(77, 35, 207, .55); }
+  .m.cmd { max-width: 100%; background: var(--bg-tint); border: 1px dotted var(--line-strong); padding: 3px 8px 4px; }
+  .m.cmd .ch { font-size: var(--fs-meta); color: var(--muted); }
   .m.cmd pre { margin: 2px 0 0; padding: 0; background: none; border: 0; overflow-x: auto; white-space: pre; }
-  .m.cmd .cmore { font-size: 11px; color: var(--blue); text-decoration: underline; cursor: pointer; }
-  .m .tm { font-size: 10px; color: rgba(77, 35, 207, .4); margin-left: 6px; }
-  #sendb { font: inherit; font-size: 12px; color: var(--blue); background: var(--pink); border: 1px solid var(--blue);
+  .m.cmd .cmore { font-size: var(--fs-meta); color: var(--line-strong); text-decoration: underline; cursor: pointer; }
+  .m .tm { font-size: var(--fs-xs); color: var(--faint); margin-left: 6px; }
+  #sendb { font: inherit; font-size: var(--fs-ui); color: var(--line-strong); background: var(--title); border: 1px solid var(--line-strong);
     padding: 0 7px; height: 20px; cursor: pointer; }
-  #sendb:hover { background: #fff; }
-  #sendb:active { background: var(--blue); color: #fff; }
-  #compose { border-top: 2px solid var(--blue); position: relative; background: #fff; }
+  #sendb:hover { background: var(--bg-raised); }
+  #sendb:active { background: var(--fill); color: var(--on-fill); }
+  #compose { border-top: 2px solid var(--line-strong); position: relative; background: var(--bg-well); }
   #input { display: block; width: 100%; box-sizing: border-box; height: 52px; resize: none; border: 0; outline: 0; padding: 4px 64px 4px 8px;
     font: inherit; color: var(--ink); background: transparent; user-select: text; }
-  #input:disabled { background: rgba(240, 209, 241, .3); }
+  #input::placeholder { color: var(--faint); }
+  #input:disabled { background: var(--bg-tint); }
   #sendb { position: absolute; right: 6px; bottom: 6px; height: 22px; }
-  #note { padding: 1px 8px; font-size: 11.5px; line-height: 17px; background: rgb(255, 244, 214);
-    border-bottom: 1px solid rgb(208, 82, 28); color: rgb(150, 60, 10); }
+  #note { padding: 1px 8px; font-size: var(--fs-meta); line-height: 17px; background: var(--warn-bg);
+    border-bottom: 1px solid var(--warn-line); color: var(--warn-fg); }
   #note.show { display: block; }
   #permissions { flex: none; max-height: 65%; overflow: auto; }
   #permissions:empty { display: none; }
-  .permission { margin: 5px 8px; padding: 6px; border: 2px solid var(--blue); background: #fff3ff; }
-  .permission-title { color: var(--blue); font-weight: bold; overflow-wrap: anywhere; }
+  /* a permission: the same card as the web dashboard's -- warn edge, the main answer filled, 拒绝 in the bad colour */
+  .permission { margin: 5px 8px; padding: 6px; border: 2px solid var(--warn-line); background: var(--bg-raised); }
+  .permission-title { color: var(--warn-fg); font-weight: bold; overflow-wrap: anywhere; }
   .permission pre { margin: 4px 0; max-height: 105px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
-    user-select: text; font: 12px/16px Consolas, "Microsoft YaHei UI", monospace; }
+    user-select: text; font: var(--fs-ui)/16px var(--font-mono); color: var(--ink); background: var(--bg-tint); padding: 3px 5px; }
   .permission-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .permission button { font: inherit; color: var(--blue); background: var(--pink); border: 1px solid var(--blue); cursor: pointer; }
-  .permission button:hover { background: #fff; }
+  .permission button { font: inherit; color: var(--line-strong); background: var(--title); border: 1px solid var(--line-strong); padding: 0 8px; cursor: pointer; }
+  .permission button:hover { background: var(--bg-raised); }
+  .permission button[data-choice="allow"], .permission button[data-choice="answer"] { color: var(--on-fill); background: var(--fill); border-color: var(--fill); }
+  .permission button[data-choice="deny"] { color: var(--bad-fg); background: var(--bg-raised); border-color: var(--bad-fg); }
   .permission button:disabled { opacity: .5; cursor: default; }
-  .permission-status { font-size: 11px; }
+  .permission-status { font-size: var(--fs-meta); color: var(--muted); }
   /* Claude asking you something: the questions and their options instead of 允许 / 拒绝 */
+  .permission.ask { border-color: var(--line-strong); }
+  .permission.ask .permission-title { color: var(--line-strong); }
   .permission.ask .ask-q { margin: 5px 0 7px; }
   .permission.ask .ask-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; margin-bottom: 4px; overflow-wrap: anywhere; }
-  .permission.ask .ask-t { padding: 0 5px; font-size: 11px; color: #fff; background: var(--blue); }
-  .permission.ask .ask-h i { font-style: normal; font-size: 11px; opacity: .6; }
+  .permission.ask .ask-t { padding: 0 5px; font-size: var(--fs-meta); color: var(--on-fill); background: var(--fill); }
+  .permission.ask .ask-h i { font-style: normal; font-size: var(--fs-meta); color: var(--muted); }
   .permission.ask .ask-o { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
-  .permission.ask .ask-opt { flex: 1 1 120px; max-width: 100%; text-align: left; padding: 2px 7px 3px; color: inherit; }
-  .permission.ask .ask-opt b { display: block; font-weight: normal; color: var(--blue); }
-  .permission.ask .ask-opt span { display: block; font-size: 11px; opacity: .7; }
-  .permission.ask .ask-opt.on { background: var(--blue); }
-  .permission.ask .ask-opt.on b, .permission.ask .ask-opt.on span { color: #fff; opacity: 1; }
-  .permission.ask .ask-own { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 1px 5px; border: 1px solid var(--blue); background: #fff; user-select: text; }
+  .permission.ask .ask-opt { flex: 1 1 120px; max-width: 100%; text-align: left; padding: 2px 7px 3px; color: inherit; background: var(--title); }
+  .permission.ask .ask-opt b { display: block; font-weight: normal; color: var(--line-strong); }
+  .permission.ask .ask-opt span { display: block; font-size: var(--fs-meta); color: var(--muted); }
+  .permission.ask .ask-opt.on { background: var(--fill); }
+  .permission.ask .ask-opt.on b, .permission.ask .ask-opt.on span { color: var(--on-fill); opacity: 1; }
+  .permission.ask .ask-own { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: var(--fs-ui); padding: 1px 5px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--bg-well); user-select: text; }
+  /* the dark shades: the pink buttons become the wash, so their indigo / light ink still reads */
+  html[data-shade="night"] #sendb, html[data-shade="night"] .permission button:not([data-choice="allow"]):not([data-choice="answer"]):not([data-choice="deny"]),
+  html[data-shade="night"] .permission.ask .ask-opt:not(.on),
+  html[data-shade="plum"] #sendb, html[data-shade="plum"] .permission button:not([data-choice="allow"]):not([data-choice="answer"]):not([data-choice="deny"]),
+  html[data-shade="plum"] .permission.ask .ask-opt:not(.on) { background: var(--bg-tint); }
 </style>
 </head>
 <body>
 <div id="box">
   <div id="title"><span id="who">Claude / Codex / OpenCode</span><span id="meta"></span><span id="ub"><i></i><b id="ubn"></b></span><span id="fold" title="收成 P 酱">&minus;</span><span id="close" title="收起">×</span></div>
   <div id="grip" title="拖动调整大小"></div>
-  <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><span id="hmeta"></span></div><div id="log"></div>
+  <div id="wrap"><div id="list"></div><div id="right"><div id="head"><span id="hname"></span><button id="hopen" class="hlink" type="button" hidden title="在糖糖看板打开">↗ 看板</button><button id="htopo" class="hlink" type="button" hidden title="在项目拓扑打开">↗ 拓扑</button><span id="hmeta"></span></div><div id="log"></div>
     <div id="permissions" aria-live="polite"></div>
     <div id="chat"></div>
     <div id="compose"><div id="note"></div><textarea id="input" placeholder="回复（Enter 发送，Shift+Enter 换行）"></textarea><button id="sendb">发送</button></div></div></div>
