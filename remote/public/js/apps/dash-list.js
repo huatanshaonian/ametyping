@@ -113,12 +113,12 @@ export function createList({ el, current, selected, onSelect, onNote }) {
     const key = text + '|' + (proj ? proj.id : '');
     if (hd.dataset.t === key) return;
     hd.dataset.t = key;
-    hd.replaceChildren(
+    hd.replaceChildren(...[
       h('span', { class: 'fd', text: '' }),
       h('span', { class: mark }),
       h('span', { class: 'mct', text }),
       proj ? h('button', { class: 'pm-jump', type: 'button', dataset: { proj: proj.id }, title: `在「项目管理」中查看 ${proj.name} 拓扑`, text: '🌐 拓扑' }) : null
-    );
+    ].filter(Boolean));
   }
   // running subagents of the session (dash-agents.js)
   const agentHtml = (s) => { const t = agentTag(s); return t ? `<span class="agb" title="${esc(t.title)}">${esc(t.text)}</span>` : ''; };
