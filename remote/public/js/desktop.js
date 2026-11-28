@@ -1,6 +1,7 @@
 // The desktop of the current computer: its icons (click selects, double-click opens; a tap opens on touch screens)
 // and the name / state of the computer in the corner.
 import { $, h } from './util.js';
+import * as sound from './sound.js';
 
 const box = $('#icons'), mark = $('#mark');
 const touch = matchMedia('(pointer: coarse)').matches;
@@ -10,9 +11,9 @@ export function setIcons(icons) {
   box.replaceChildren(...icons.map((it) => {
     const el = h('button', { class: 'dicon' + (it.disabled ? ' off' : ''), type: 'button', role: 'listitem', title: it.hint || it.label, dataset: { id: it.id } },
       h('img', { src: it.icon, alt: '' }), h('span', { text: it.label }));
-    el.addEventListener('click', (e) => { e.stopPropagation(); select(el); if (touch) it.open(); });
-    el.addEventListener('dblclick', () => it.open());
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') it.open(); });
+    el.addEventListener('click', (e) => { e.stopPropagation(); select(el); if (touch) { sound.play('start'); it.open(); } });
+    el.addEventListener('dblclick', () => { sound.play('start'); it.open(); });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { sound.play('start'); it.open(); } });
     return el;
   }));
 }

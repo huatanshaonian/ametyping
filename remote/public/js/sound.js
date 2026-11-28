@@ -8,16 +8,22 @@ import { prefs } from './util.js';
 import { once } from './sound-once.js';
 
 export const EVENTS = [
-  ['startup', '启动（登录后进入桌面）', 'startup'],
-  ['shutdown', '注销', 'shutdown'],
-  ['perm', '出现新的待确认', 'notify'],
-  ['done', '会话完成', 'chimes'],
-  ['mail', '邮件提醒（要办的通知、推荐文献）', 'notify'],
-  ['error', '操作失败', 'chord'],
-  ['recycle', '删除壁纸', 'recycle'],
+  ['startup', '启动（登录后进入桌面）', 'startup.wav', 1],
+  ['shutdown', '注销', 'shutdown.wav', 1],
+  ['start', '菜单与桌面导航（点开开始菜单 / 图标）', 'start.mp3', 0.5],
+  ['perm', '出现新的待确认（权限审批）', 'notify.wav', 1],
+  ['ringin', '协作来电（AI 向你提问 / 协同告警与 @点名）', 'ringin.mp3', 1],
+  ['ringout', '外呼派单（派生远端节点 / 投递算力作业）', 'ringout.mp3', 0.9],
+  ['done', '普通会话完成', 'chimes.wav', 1],
+  ['tada', '长任务 / 算力作业 / 协同项目全绿凯旋', 'tada.mp3', 1],
+  ['ding', '后台轻量完成（跨机摆渡 / 日报草稿生成）', 'ding.mp3', 0.9],
+  ['mail', '邮件提醒（要办的通知、推荐文献）', 'notify.wav', 1],
+  ['error', '操作失败', 'chord.wav', 1],
+  ['recycle', '删除壁纸', 'recycle.wav', 1],
 ];
 // (the events every page hears of from the server at the same moment)
-const SHARED = new Set(['perm', 'done', 'mail']);
+const SHARED = new Set(['perm', 'ringin', 'done', 'tada', 'ding', 'mail']);
+const activeAudio = new Map();
 const listeners = new Set();
 let pending = null;
 
@@ -50,11 +56,18 @@ export function play(ev, { force = false } = {}) {
 }
 function sounded(e, ev) {
   return new Promise((resolve) => {
-    const a = new Audio(`/sounds/${e[2]}.wav`);
-    a.volume = volume();
-    a.onended = () => resolve();
-    a.onerror = () => resolve();
-    a.play().catch(() => { if (ev === 'startup') pending = ev; resolve(); });
+    if (ev === 'ringout' && activeAudio.has(ev)) {
+      try { const prev = activeAudio.get(ev); prev.pause(); prev.currentTime = 0; } catch {}
+      activeAudio.delete(ev);
+    }
+    const file = e[2].includes('.') ? e[2] : `${e[2]}.wav`;
+    const a = new Audio(`/sounds/${file}`);
+    a.volume = Math.min(1, Math.max(0, volume() * (e[3] ?? 1)));
+    if (ev === 'ringout') activeAudio.set(ev, a);
+    const fin = () => { if (activeAudio.get(ev) === a) activeAudio.delete(ev); resolve(); };
+    a.onended = fin;
+    a.onerror = fin;
+    a.play().catch(() => { if (ev === 'startup') pending = ev; fin(); });
   });
 }
 const later = () => { if (pending) { const ev = pending; pending = null; play(ev); } };

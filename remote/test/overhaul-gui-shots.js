@@ -211,7 +211,12 @@ const viewport = (width, height, mobile = false, scale = 1) => call('Emulation.s
 const q = (s) => JSON.stringify(s);
 const closeAll = () => evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())").then(() => sleep(400));
 const openIcon = async (idOrLabel) => {
-  const ok = await evalJs(`(() => { const b = document.querySelector('.dicon[data-id=' + ${q(idOrLabel)} + ']') || [...document.querySelectorAll('.dicon')].find(x => x.textContent.includes(${q(idOrLabel)})); if (!b) return false; b.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()`);
+  const ok = await evalJs(`(() => {
+    const b = document.querySelector('.dicon[data-id=' + ${q(idOrLabel)} + ']') || [...document.querySelectorAll('.dicon')].find(x => x.textContent.includes(${q(idOrLabel)}));
+    if (b) { b.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; }
+    location.hash = '#' + ${q(idOrLabel)};
+    return true;
+  })()`);
   if (!ok) throw new Error('no desktop icon ' + idOrLabel);
   await sleep(1400);
 };
@@ -355,7 +360,7 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
       ['mail', '54-mail', '邮件', async () => { await evalJs("(() => { const r = document.querySelector('.ml-row, .mail-row, .ml-list > *'); r && r.click(); })()"); await sleep(800); }],
       ['calendar', '55-calendar', '日历', null],
       ['mycomputer', '56-mycomputer', '我的电脑（当前电脑没开放文件浏览时的说明窗）', null],
-      ['magpie', '57-magpie', 'Magpie 用量', null],
+      ['ai', '57-ai-hub', 'AI 与额度（5-Tab 中枢首屏：额度与顾问）', null],
       ['notepad', '58-notepad', '记事本', null],
     ];
     for (const [icon, name, what, after] of W) {
@@ -370,32 +375,41 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
         await shot(`${name}-max.png`, what + '（最大化）');
       });
     }
-    // projects: every tab, the selected project
+    // projects: every tab (roles deduplicated into AI 与额度 per IA 3-A)
     where = 'projects-tabs';
     await step('projects tabs', async () => {
       await closeAll(); await openIcon('projects'); await maxTop();
       await evalJs("(() => { const i = [...document.querySelectorAll('.pm-item')].find(x => x.textContent.includes('Overhaul')); i && i.click(); })()"); await sleep(1000);
-      const tabs = [['研究与计算', '21-projects-research'], ['黑板与任务', '22-projects-board'], ['协同拓扑', '23-projects-topo'], ['角色与模型池', '24-projects-roles'], ['跨机目录', '25-projects-vfs'], ['触发器', '26-projects-events']];
+      const tabs = [['研究与计算', '21-projects-research'], ['黑板与任务', '22-projects-board'], ['协同拓扑', '23-projects-topo'], ['跨机目录', '25-projects-vfs'], ['触发器', '26-projects-events']];
       for (const [label, name] of tabs) {
         await step(name, async () => { await clickText('.pm-tab', label); await sleep(700); await shot(name + '.png', '项目管理 › ' + label); });
       }
-      // the topology: the graph view if the overview offers one
       await step('23b-projects-topo-graph', async () => {
         await clickText('.pm-tab', '协同拓扑');
         const sw = await evalJs("(() => { const b = [...document.querySelectorAll('button')].find(x => /拓扑图|关系图|图谱|画布/.test(x.textContent)); if (!b) return false; b.click(); return b.textContent; })()");
         if (sw) { await sleep(900); await shot('23b-projects-topo-graph.png', '项目管理 › 协同拓扑：切到图（' + sw + '）'); }
       });
     });
-    // infra: a node's details, the compute panel
+    // infra 4-Tab hub: topology, compute, fleet, agents
     where = 'infra';
     await step('infra details', async () => {
       await closeAll(); await openIcon('infra'); await maxTop();
       await evalJs("(() => { const n = [...document.querySelectorAll('.inf-node')].find(x => x.textContent.includes('dell97')); n && n.click(); })()"); await sleep(900);
-      await shot('31-infra-node.png', '网络与设备：选中 dell97（GPU、容器、升级失败红标）');
+      await shot('31-infra-node.png', '设备与算力：选中 dell97（GPU、容器、升级失败红标）');
       await evalJs("(() => { const n = [...document.querySelectorAll('.inf-node')].find(x => x.textContent.includes('群晖')); n && n.click(); })()"); await sleep(900);
-      await shot('31b-infra-nas.png', '网络与设备：选中 NAS（容器列表）');
+      await shot('31b-infra-nas.png', '设备与算力：选中 NAS（容器列表）');
       await clickText('button', '算力'); await sleep(1500);
-      await shot('32-infra-compute.png', '网络与设备 › 算力调度面板（GPU 卡片、NUMA、作业队列、Colab/曙光 Provider）');
+      await shot('32-infra-compute.png', '设备与算力 › 算力与作业（Mini-Slurm、唯一机器画像、作业队列）');
+      await step('33-infra-fleet', async () => { await clickText('button', '设备与 Harness'); await sleep(900); await shot('33-infra-fleet.png', '设备与算力 › 设备与 Harness（Fleet 升级与 NAS CLI）'); });
+      await step('34-infra-agents', async () => { await clickText('button', '设备接入'); await sleep(900); await shot('34-infra-agents.png', '设备与算力 › 设备接入与令牌'); });
+    });
+    // AI 与额度 5-Tab hub
+    where = 'ai-hub';
+    await step('ai-hub tabs', async () => {
+      await closeAll(); await openIcon('ai'); await maxTop();
+      for (const [label, name] of [['模型路由', '57b-ai-pools'], ['Skill 与角色', '57c-ai-skills'], ['MCP 工具', '57d-ai-mcp'], ['客户端配置', '57e-ai-clients']]) {
+        await step(name, async () => { await clickText('button', label); await sleep(1000); await shot(name + '.png', 'AI 与额度 › ' + label); });
+      }
     });
     // literature tabs
     where = 'literature';
@@ -413,19 +427,21 @@ async function load(prefs = {}, w = 1440, hgt = 900, mobile = false) {
       await shot('11-dashboard-permission.png', '糖糖看板：等待确认的会话（权限卡片）');
     });
 
-    // ===== 3. the control panel =====
+    // ===== 3. the streamlined 6-item control panel =====
     where = 'control';
     await step('control', async () => {
       await closeAll(); await openIcon('control');
       await evalJs("(() => { const b = document.querySelector('.cp-back'); b && getComputedStyle(b).display !== 'none' && b.click(); })()"); await sleep(500);
-      await shot('60-control-home.png', '控制面板首页（11 项及图标）');
+      await shot('60-control-home.png', '控制面板首页（精简后 6 项纯净系统设置及双中心跳转条）');
       await maxTop();
-      for (const [label, name] of [['显示属性', '61-control-display'], ['AI 模型', '62-control-ai'], ['MCP', '63-control-mcp'], ['电脑', '64-control-computers'], ['通知', '65-control-notify']]) {
-        await step(name, async () => { await clickText('.cp-item', label); await sleep(800); await shot(name + '.png', '控制面板 › ' + label); });
-      }
-      await clickText('.cp-item', 'Skill 与协同');
-      for (const [tabId, label, n] of [['skills', 'Skill 管理', '66a'], ['roles', '角色提示词', '66b'], ['pools', '全局模型池', '66c'], ['machines', '机器角色备忘', '66d'], ['fleet', '设备与 Harness', '66e']]) {
-        await step(n, async () => { await evalJs(`document.querySelector('.skp-tab[data-tab=${tabId}]').click()`); await sleep(1100); await shot(`${n}-control-skills-${tabId}.png`, '控制面板 › Skill 与协同 › ' + label); });
+      for (const [label, name] of [['显示属性', '61-control-display'], ['声音', '62-control-sounds'], ['通知', '65-control-notify'], ['Google', '66-control-google'], ['邮箱', '67-control-mail'], ['文献推送', '68-control-lit']]) {
+        await step(name, async () => {
+          await evalJs("(() => { const b = document.querySelector('.cp-back'); b && getComputedStyle(b).display !== 'none' && b.click(); })()");
+          await sleep(300);
+          await clickText('.cp-item', label);
+          await sleep(800);
+          await shot(name + '.png', '控制面板 › ' + label);
+        });
       }
     });
 

@@ -1,6 +1,7 @@
 // AmeMesh client store: collaborative projects, session topology nodes & edges, workspace grants, and file transfer handoffs.
 // Subscribes to the server's `mesh` websocket broadcast and provides step-up TOTP retry for remote actions.
 import * as net from './net.js';
+import * as sound from './sound.js';
 import { askCode } from './gate.js';
 
 let projects = [], loaded = false;
@@ -66,7 +67,7 @@ export const upsertNode = (projectId, d) => post('node', { projectId, ...d });
 export const removeNode = (projectId, nodeId) => post('node', { op: 'delete', projectId, nodeId });
 export const addEdge = (projectId, from, to, type = 'cowork') => post('edge', { projectId, from, to, type });
 export const removeEdge = (projectId, from, to) => post('edge', { op: 'delete', projectId, from, to });
-export const spawnWorker = (d) => post('spawn', d);
+export const spawnWorker = (d) => { sound.play('ringout'); return post('spawn', d); };
 export const sendMessage = (d) => post('send', d);
 export const reportResult = (d) => post('report', d);
 export const reviewNode = (projectId, nodeId, action = 'approve', note = '', closeTerminal = false) => post('review', { projectId, nodeId, action, note, ...(closeTerminal ? { closeTerminal: true } : {}) });

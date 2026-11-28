@@ -57,6 +57,7 @@ export function createComputeView({ say = () => {} } = {}) {
   }
 
   async function postQueue(payload, okMsg) {
+    if (payload && (!payload.op || payload.op === 'submit')) import('../sound.js').then((s) => s.play('ringout')).catch(() => {});
     const r = await net.post('/api/mesh/queue', payload);
     if (!r || !r.ok) {
       say((r && r.msg) || '操作失败');

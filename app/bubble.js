@@ -2,8 +2,10 @@
 // something new you have not looked at). Right: the selected session's log, newest line typed out.
 'use strict';
 const $ = (id) => document.getElementById(id);
-const list = $('list'), log = $('log'), se = $('se');
+const list = $('list'), log = $('log'), se = $('se'), seTada = $('se-tada'), seRingin = $('se-ringin');
 se.volume = 0.45;
+if (seTada) seTada.volume = 0.55;
+if (seRingin) seRingin.volume = 0.5;
 let data = [], selected = null, pinned = false, typeTimer = null, lastTypedKey = '', collapsed = false, sentUnread = -1;
 let localMachine = '';
 const seen = {};                       // session id -> last activity time the user has looked at
@@ -297,44 +299,84 @@ if (hopenBtn) hopenBtn.addEventListener('click', (e) => { if (e.detail === 0) op
 if (htopoBtn) htopoBtn.addEventListener('click', (e) => { if (e.detail === 0) openTopoInWeb(); });
 
 const WAIT_SOUND_GRACE_MS = 1500;
+const LONG_ACTIVE_MS = 180_000;
+const LONG_MIN_DELTA_STEPS = 8;
+const MAX_TICK_GAP_MS = 30_000;
 const waitSoundTimers = new Map();
+const bubbleWork = new Map();
 function cancelWaitSound(id) {
   const t = waitSoundTimers.get(id);
   if (t) { clearTimeout(t); waitSoundTimers.delete(id); }
+}
+function playClip(aud) {
+  const el = aud || se;
+  if (!el) return;
+  try { el.currentTime = 0; el.play(); } catch {}
 }
 
 window.bubble.onState(({ sessions, changedId, mode, sound = true, machine = '', shade = '' }) => {
   if (machine) localMachine = machine;
   applyShade(shade);
-  const prev = data.find((s) => s.id === changedId);
+  const nowTs = Date.now();
+  const prev = data.find((x) => x.id === changedId);
   data = sessions;
+  const activeIds = new Set();
+  for (const x of data) {
+    const steps = Number(x.steps) || 0;
+    if (WORKING.has(x.state)) {
+      activeIds.add(x.id);
+      const rec = bubbleWork.get(x.id);
+      if (!rec) bubbleWork.set(x.id, { activeMs: 0, lastTickAt: nowTs, startSteps: steps, maxSteps: steps });
+      else {
+        rec.activeMs += Math.max(0, Math.min(nowTs - rec.lastTickAt, MAX_TICK_GAP_MS));
+        rec.lastTickAt = nowTs;
+        if (steps > rec.maxSteps) rec.maxSteps = steps;
+      }
+    } else if (x.state === 'waiting' && bubbleWork.has(x.id)) {
+      activeIds.add(x.id);
+      const rec = bubbleWork.get(x.id);
+      rec.lastTickAt = nowTs;
+      if (steps > rec.maxSteps) rec.maxSteps = steps;
+    }
+  }
   for (const id of [...waitSoundTimers.keys()]) {
-    const s = data.find((x) => x.id === id);
-    if (!s || s.state !== 'waiting') cancelWaitSound(id);
+    const x = data.find((it) => it.id === id);
+    if (!x || x.state !== 'waiting') cancelWaitSound(id);
   }
   setMode(mode);
-  if (!data.find((s) => s.id === selected)) { selected = null; pinned = false; }
-  const changed = data.find((s) => s.id === changedId);
-  const cur = data.find((s) => s.id === selected);
+  if (!data.find((x) => x.id === selected)) { selected = null; pinned = false; }
+  const changed = data.find((x) => x.id === changedId);
+  const cur = data.find((x) => x.id === selected);
   if (changed && (!cur || changed.state === 'waiting' || (!pinned && !WORKING.has(cur.state) && cur.state !== 'waiting'))) selected = changedId;
   if (!selected && data.length) selected = data[0].id;
-  const sel = data.find((s) => s.id === selected);
+  const sel = data.find((x) => x.id === selected);
   if (sel && !collapsed) seen[sel.id] = sel.last;
   renderAll(changedId === selected);
   if (changed && (!prev || prev.state !== changed.state)) {
     if (changed.state === 'waiting') {
       if (sound && !waitSoundTimers.has(changed.id)) {
         const sid = changed.id;
+        const hasAsk = (changed.permissions || []).some((p) => Boolean(askQuestions(p)));
         waitSoundTimers.set(sid, setTimeout(() => {
           waitSoundTimers.delete(sid);
-          const now = data.find((x) => x.id === sid);
-          if (now && now.state === 'waiting') { try { se.currentTime = 0; se.play(); } catch {} }
-        }, WAIT_SOUND_GRACE_MS));
+          const now = data.find((it) => it.id === sid);
+          if (now && now.state === 'waiting') playClip(hasAsk ? seRingin : se);
+        }, hasAsk ? 300 : WAIT_SOUND_GRACE_MS));
       }
-    } else if (['message', 'done'].includes(changed.state)) {
-      if (sound) { try { se.currentTime = 0; se.play(); } catch {} }
+    } else if (changed.state === 'done') {
+      const rec = bubbleWork.get(changed.id);
+      let isLong = false;
+      if (rec) {
+        rec.activeMs += Math.max(0, Math.min(nowTs - rec.lastTickAt, MAX_TICK_GAP_MS));
+        const maxSteps = Math.max(Number(changed.steps) || 0, rec.maxSteps);
+        isLong = rec.activeMs >= LONG_ACTIVE_MS && (maxSteps - rec.startSteps) >= LONG_MIN_DELTA_STEPS;
+      }
+      if (sound) playClip(isLong ? seTada : se);
+    } else if (changed.state === 'message') {
+      if (sound) playClip(se);
     }
   }
+  for (const id of [...bubbleWork.keys()]) if (!activeIds.has(id)) bubbleWork.delete(id);
   if (chatOn) { selectChat(); composeState(); }
 });
 window.bubble.onHide(() => {});

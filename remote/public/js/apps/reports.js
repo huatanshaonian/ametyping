@@ -109,7 +109,10 @@ function mount(first) {
     renderList(); renderStatus();
     if (!sel) { const f = listEl.querySelector('.ri'); if (f) load(f.dataset.date, false); }
     else if (!view.dataset.loaded) { view.dataset.loaded = '1'; load(sel); }
-    else if (wasRunning && !data.status.running && sel) load(sel, false);
+    else if (wasRunning && !data.status.running) {
+      if (!data.status.lastError) import('../sound.js').then((s) => s.play('ding')).catch(() => {});
+      if (sel) load(sel, false);
+    }
     clearTimeout(poll);
     if (data.status.running) poll = setTimeout(refresh, 5000);
   }

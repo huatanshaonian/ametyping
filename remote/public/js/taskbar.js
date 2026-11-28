@@ -2,6 +2,7 @@
 import { $, h, narrow } from './util.js';
 import * as wm from './wm.js';
 import * as net from './net.js';
+import * as sound from './sound.js';
 
 const dock = $('#dock'), startBtn = $('#startbtn'), menu = $('#startmenu'), items = $('.items', menu);
 const conn = $('#conn'), clock = $('#clock');
@@ -51,7 +52,7 @@ function buildLeaf(it) {
     type: 'button',
     disabled: !!it.disabled,
     title: it.hint || null,
-    onclick: () => { closeMenu(); if (it.action) it.action(); },
+    onclick: () => { sound.play('start'); closeMenu(); if (it.action) it.action(); },
   }, h('img', { src: it.icon, alt: '' }), h('span', { text: it.label }));
 }
 
@@ -116,6 +117,7 @@ startBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   if (!menu.hidden) closeMenu();
   else {
+    sound.play('start');
     closeAllSubs();
     menu.hidden = false;
     startBtn.classList.add('on');
