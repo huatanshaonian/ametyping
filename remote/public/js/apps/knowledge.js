@@ -1,24 +1,39 @@
 import {h, icon} from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
+import * as mesh from '../mesh.js';
 import { createReviewPanel } from './knowledge-review.js';
+import { renderCiteNodes } from './cite-link.js';
 
 const ICON = icon('memory', true);
 let app = null;
 
-export function open(tab) {
-  if (app) { wm.open({ id: 'knowledge' }); if (tab) app.show(tab); return; }
-  app = panel(tab);
+function normOpenArg(arg) {
+  if (!arg) return {};
+  if (typeof arg === 'string') return { tab: arg };
+  if (typeof arg === 'object') return arg;
+  return {};
+}
+
+export function open(arg) {
+  const opts = normOpenArg(arg);
+  if (app) {
+    wm.open({ id: 'knowledge' });
+    app.applyOpts(opts);
+    return;
+  }
+  app = panel(opts);
   wm.open({ id: 'knowledge', title: '记忆与存档', icon: ICON, content: app.root, width: 960, height: 680, onClose: () => { app.destroy(); app = null; } });
 }
 
 const fmtBytes = b => b >= 1048576 ? (b / 1048576).toFixed(2) + ' MB' : b >= 1024 ? (b / 1024).toFixed(1) + ' KB' : (b || 0) + ' B';
 
-export function panel(initialMode='memory'){
+export function panel(initialArg='memory'){
+  const initOpts=normOpenArg(initialArg);
   const root=h('div',{class:'aim knowledge'}),note=h('p',{class:'gnote'}),stats=h('p',{class:'ghint knowledge-stats-line'});
   const kpiBar=h('div',{class:'knowledge-kpis'});
   const tabs=h('div',{class:'capi-btns knowledge-tabs'}),content=h('div',{class:'knowledge-body-wrap'}),refresh=h('button',{class:'btn',text:'刷新',onclick:()=>load()});
-  let data=null,dead=false,mode=initialMode||'memory',page=0,seq=0,reviewPanel=null,scopeFilter='all';
+  let data=null,dead=false,mode=initOpts.tab||'memory',page=0,seq=0,reviewPanel=null,scopeFilter=initOpts.scope||'all',ownerFilter=initOpts.owner||'',pendingCompose=initOpts.compose||null;
   const selected=new Map();
   const selection=h('span',{class:'knowledge-sel-pill',text:'已选 0 条'});
   const selectionChanged=()=>{
@@ -77,27 +92,67 @@ export function panel(initialMode='memory'){
     }catch(e){say(e.message,true);}
   }
 
+  function resolveMeshProjectId(ownerId){
+    if(!ownerId)return '';
+    const mList=mesh.list();
+    const direct=mList.find(p=>p.id===ownerId||p.name===ownerId);
+    if(direct)return direct.id;
+    const kp=(data&&data.projects||[]).find(p=>p.id===ownerId&&p.mesh);
+    if(kp&&kp.mesh)return kp.mesh;
+    return '';
+  }
+
+  function jumpToMeshProject(meshId){
+    if(!meshId)return;
+    try{location.hash='#proj='+encodeURIComponent(meshId)+'&tab=research';}catch{}
+    import('./projects.js').then(m=>m.open(meshId,{tab:'research'})).catch(()=>{});
+  }
+
   function editor(item={scope:'global',owner:'',name:'',body:'',enabled:1},source=null){
     const scope=h('select',{class:'field'},...['global','machine','project'].map((v,i)=>h('option',{value:v,text:['共享全局','指定机器','指定项目'][i]})));
-    scope.value=item.scope;
+    scope.value=item.scope||'global';
     const owner=h('input',{class:'field',value:item.owner||'',placeholder:'机器名或项目 ID（共享全局留空）'});
+    const projPick=h('select',{class:'field',style:'margin-top:4px',hidden:scope.value!=='project'});
+    const fillProjPick=()=>{
+      const seen=new Set();
+      const opts=[h('option',{value:'',text:'— 快速选择协同项目或已映射项目 —'})];
+      for(const mp of mesh.list()){
+        if(seen.has(mp.id))continue;seen.add(mp.id);
+        opts.push(h('option',{value:mp.id,text:`[协同项目] ${mp.name} (${mp.id})`,selected:mp.id===owner.value}));
+      }
+      for(const kp of (data&&data.projects)||[]){
+        if(!kp.id||seen.has(kp.id))continue;seen.add(kp.id);
+        opts.push(h('option',{value:kp.id,text:`[记忆目录] ${kp.name||kp.id} (${kp.id})`,selected:kp.id===owner.value}));
+      }
+      projPick.replaceChildren(...opts);
+    };
+    fillProjPick();
+    if(!mesh.list().length)mesh.load().then(()=>{if(!dead)fillProjPick();}).catch(()=>{});
+    projPick.addEventListener('change',()=>{if(projPick.value)owner.value=projPick.value;});
+    scope.addEventListener('change',()=>{projPick.hidden=scope.value!=='project';});
     const name=h('input',{class:'field',value:item.name||'',placeholder:'记忆名称'}),body=h('textarea',{class:'field knowledge-body'});
     body.value=item.body||'';
-    const enabled=h('input',{type:'checkbox',checked:!!item.enabled});
+    const enabled=h('input',{type:'checkbox',checked:item.enabled===undefined?true:!!item.enabled});
     const adopt=h('input',{type:'checkbox',checked:false});
     const form=h('form',{class:'knowledge-editor knowledge-card'},
       h('h3',{class:'knowledge-section-title',text:source?'导入来源并发布记忆':(item.id?'编辑记忆：'+item.name:'新增统一记忆')}),
       h('div',{class:'knowledge-editor-grid'},
         h('label',{},h('span',{class:'knowledge-field-lbl',text:'作用域范围'}),scope),
-        h('label',{},h('span',{class:'knowledge-field-lbl',text:'归属机器/项目'}),owner),
+        h('label',{},h('span',{class:'knowledge-field-lbl',text:'归属机器/项目'}),owner,projPick),
         h('label',{class:'knowledge-span-2'},h('span',{class:'knowledge-field-lbl',text:'记忆名称'}),name)
       ),
       h('label',{class:'knowledge-editor-body-lbl'},h('span',{class:'knowledge-field-lbl',text:'记忆正文 (Markdown)'}),body),
       h('label',{class:'knowledge-check-lbl'},enabled,'启用并自动下发同步'),
       ...(source?[h('label',{class:'knowledge-check-lbl'},adopt,'接管来源：备份原文后移入托管区块，后续以 NAS 为准（确认记忆发布快照不会改写）')]:[]),
       h('div',{class:'capi-btns'},h('button',{class:'btn go',type:'submit',text:source?'导入并发布':'保存并发布'}),button('取消',draw)));
-    form.addEventListener('submit',async e=>{e.preventDefault();const d={...item,scope:scope.value,owner:scope.value==='global'?'':owner.value.trim(),name:name.value.trim(),body:body.value,enabled:enabled.checked};
+    form.addEventListener('submit',async e=>{e.preventDefault();const ownerVal=scope.value==='global'?'':owner.value.trim();
+      const d={...item,scope:scope.value,owner:ownerVal,name:name.value.trim(),body:body.value,enabled:enabled.checked};
       if(source){delete d.id;delete d.revision;Object.assign(d,{machine:source.machine,path:source.path,sha256:source.sha256,adopt:adopt.checked});}
+      if(d.scope==='project'&&ownerVal){
+        const mp=mesh.list().find(p=>p.id===ownerVal);
+        const already=(data&&data.projects||[]).some(p=>p.id===ownerVal);
+        if(mp&&!already){try{await net.post('/api/knowledge/project',{id:mp.id,name:mp.name,mesh:mp.id,paths:[]});}catch{}}
+      }
       await post(source?'promote':'save',d);});
     content.replaceChildren(form);
   }
@@ -111,7 +166,7 @@ export function panel(initialMode='memory'){
     const scopeText=(m.scope==='global'?'共享全局':m.scope==='machine'?'机器：':'项目：')+(m.owner||'')+' · v'+m.revision+(m.enabled?'':' · 已停用');
     const scopeCls=m.enabled?'scope-'+m.scope:'scope-disabled';
     const isLong=m.body.length>140||m.body.split('\n').length>3;
-    const bodyBox=h('pre',{class:'knowledge-preview'+(isLong?' is-collapsed':''),text:m.body});
+    const bodyBox=h('pre',{class:'knowledge-preview'+(isLong?' is-collapsed':'')},...renderCiteNodes(m.body));
     const toggleBtn=isLong?h('button',{class:'knowledge-expand-btn',type:'button',text:'展开全文 ('+m.body.length+' 字) ▾',onclick:()=>{
       const collapsed=bodyBox.classList.toggle('is-collapsed');
       bodyBox.classList.toggle('is-expanded',!collapsed);
@@ -139,8 +194,12 @@ export function panel(initialMode='memory'){
       const countBadge=h('small',{class:'ghint'});
       const selectAllBtn=button('勾选当前列表',()=>{});
       const unselectAllBtn=button('取消全选',()=>{});
+      const ownerPill=ownerFilter?h('span',{class:'knowledge-sel-pill has-sel'},
+        '归属：'+ownerFilter+' ',
+        h('button',{type:'button',class:'btn',style:'padding:0 4px;margin-left:4px',text:'×',title:'清除归属筛选',onclick:()=>{ownerFilter='';draw();}})
+      ):null;
       const topBar=h('div',{class:'knowledge-toolbar knowledge-filter-bar'},
-        search,scope,countBadge,selectAllBtn,unselectAllBtn,button('新增记忆',()=>editor(),'go'));
+        search,scope,ownerPill,countBadge,selectAllBtn,unselectAllBtn,button('新增记忆',()=>editor(ownerFilter?{scope:scopeFilter==='machine'?'machine':'project',owner:ownerFilter,name:'',body:'',enabled:1}:undefined),'go'));
       const groupsWrap=h('div',{class:'knowledge-groups'});
       content.append(
         ...(data.pendingReviews?[h('div',{class:'knowledge-banner',style:'border-left-color:#c97a10;background:#fff8eb'},
@@ -153,7 +212,23 @@ export function panel(initialMode='memory'){
       const filter=()=>{
         scopeFilter=scope.value;
         const q=search.value.trim().toLocaleLowerCase();
-        const list=data.memories.filter(m=>(scope.value==='all'?true:(scope.value==='disabled'?!m.enabled:(m.enabled&&m.scope===scope.value)))&&(!q||[m.name,m.body,m.owner,m.source].join(' ').toLocaleLowerCase().includes(q)));
+        const ownerLow=ownerFilter.trim().toLocaleLowerCase();
+        const linkedIds=new Set();
+        if(ownerLow){
+          linkedIds.add(ownerLow);
+          for(const p of data.projects||[]){
+            if(String(p.id||'').toLowerCase()===ownerLow||String(p.mesh||'').toLowerCase()===ownerLow){
+              if(p.id)linkedIds.add(String(p.id).toLowerCase());
+              if(p.mesh)linkedIds.add(String(p.mesh).toLowerCase());
+            }
+          }
+        }
+        const list=data.memories.filter(m=>{
+          const scopeOk=scope.value==='all'?true:(scope.value==='disabled'?!m.enabled:(m.enabled&&m.scope===scope.value));
+          const ownerOk=!ownerLow||linkedIds.has(String(m.owner||'').toLowerCase());
+          const qOk=!q||[m.name,m.body,m.owner,m.source].join(' ').toLocaleLowerCase().includes(q);
+          return scopeOk&&ownerOk&&qOk;
+        });
         countBadge.textContent=list.length+' 条记忆';
         selectAllBtn.onclick=()=>{for(const m of list)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();};
         unselectAllBtn.onclick=()=>{selected.clear();selectionChanged();filter();};
@@ -170,9 +245,12 @@ export function panel(initialMode='memory'){
               map.get(k).push(item);
             }
             for(const [subKey,subItems] of map){
+              const rawOwner=subKey.startsWith('项目：')?subKey.slice(3):'';
+              const meshId=rawOwner?resolveMeshProjectId(rawOwner):'';
               const subHeader=h('div',{class:'knowledge-subgroup-head'},
                 h('b',{text:subKey}),
                 h('small',{class:'ghint',text:subItems.length+' 条'}),
+                meshId?button('↗ 打开项目管理',()=>jumpToMeshProject(meshId)):null,
                 button('勾选 '+subKey,()=>{for(const m of subItems)selected.set('m:'+m.id,{kind:'memory',id:m.id});selectionChanged();filter();}),
                 button('取消',()=>{for(const m of subItems)selected.delete('m:'+m.id);selectionChanged();filter();}));
               const subGrid=h('div',{class:'knowledge-card-grid'},...subItems.map(renderMemoryCard));
@@ -318,6 +396,7 @@ export function panel(initialMode='memory'){
           h('div',{class:'capi-btns'},pick,linked?h('small',{class:'ghint',text:'项目管理：'+(linked.workspaces||[]).map(w=>w.machine+':'+w.path+(w.snapshot?.gitBranch?' ['+w.snapshot.gitBranch+']':'')).join('，')||'暂无工作区'}):null),
           ...rows,
           h('div',{class:'capi-btns'},
+            linked?button('↗ 打开项目管理',()=>jumpToMeshProject(linked.id),'go'):null,
             button('改 ID',()=>{const to=prompt('新的项目 ID（记忆和目录一起迁移，旧 ID 的托管区块会被清理）',p.id);if(to&&to!==p.id)post('project',{op:'rename',id:p.id,to:to.trim(),name:prompt('项目名称',p.name)||p.name});}),
             button('删除项目',()=>{if(confirm('删除项目 '+p.id+'？项目下有启用的记忆时会拒绝删除。'))post('project',{op:'delete',id:p.id});}))));
       }
@@ -372,12 +451,23 @@ export function panel(initialMode='memory'){
       }catch(e){say(e.message,true);}
     }
   }
-  async function load(){try{const d=await get('');if(dead)return;data=d;stats.textContent='NAS SQLite：'+d.stats.versions+' 个原生会话归档文件，'+(d.stats.bytes/1048576).toFixed(1)+' MB；'+d.memories.length+' 条统一记忆。';renderKpis();await draw();}catch(e){say(e.message,true);}}
+  async function load(){try{const d=await get('');if(dead)return;data=d;stats.textContent='NAS SQLite：'+d.stats.versions+' 个原生会话归档文件，'+(d.stats.bytes/1048576).toFixed(1)+' MB；'+d.memories.length+' 条统一记忆。';renderKpis();if(pendingCompose){const c=pendingCompose;pendingCompose=null;mode='memory';syncTabBtns();editor({scope:c.scope||'project',owner:c.owner||'',name:c.name||'',body:c.body||'',enabled:1});}else{await draw();}}catch(e){say(e.message,true);}}
   const tabBtns=[];
   const syncTabBtns=()=>{for(const b of tabBtns)b.classList.toggle('go',b.dataset.tab===mode);};
   const show=id=>{mode=id;seq++;syncTabBtns();draw();};
+  const applyOpts=(opts={})=>{
+    if(opts.scope)scopeFilter=opts.scope;
+    if(opts.owner!==undefined)ownerFilter=opts.owner||'';
+    if(opts.compose){
+      mode='memory';seq++;syncTabBtns();
+      if(data)editor({scope:opts.compose.scope||'project',owner:opts.compose.owner||'',name:opts.compose.name||'',body:opts.compose.body||'',enabled:1});
+      else pendingCompose=opts.compose;
+      return;
+    }
+    show(opts.tab||mode||'memory');
+  };
   for(const [id,title]of [['memory','统一记忆'],['sources','记忆来源'],['review','对齐与智能整理'],['projects','项目目录'],['sync','同步状态'],['archive','完整会话']]){
-    const b=button(title,()=>{if(id==='memory'&&mode!=='memory')scopeFilter='all';show(id);});b.dataset.tab=id;tabBtns.push(b);tabs.append(b);
+    const b=button(title,()=>{if(id==='memory'&&mode!=='memory'){scopeFilter='all';ownerFilter='';}show(id);});b.dataset.tab=id;tabBtns.push(b);tabs.append(b);
   }
   syncTabBtns();
   const headerBar=h('div',{class:'knowledge-top-bar'},
@@ -387,5 +477,5 @@ export function panel(initialMode='memory'){
       button('对齐所选',()=>show('review')),
       button('清空选择',()=>{selected.clear();selectionChanged();draw();}),
       refresh));
-  root.append(kpiBar,headerBar,note,stats,content);load();return{root,show,destroy(){dead=true;seq++;reviewPanel?.destroy();}};
+  root.append(kpiBar,headerBar,note,stats,content);load();return{root,show,applyOpts,destroy(){dead=true;seq++;reviewPanel?.destroy();}};
 }

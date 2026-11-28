@@ -24,13 +24,32 @@ import * as reviewTab from './lit-review.js';
 import { openReader } from './lit-reader.js';
 import { open as openControl } from './control.js';
 
-const ICON = icon('help_book_big', true);
+const ICON = () => icon(document.querySelector('img[src*="catalog"]') ? 'catalog' : 'help_book_big', true);
 let app = null;
 
-export function open(tab) {
-  if (app) { wm.open({ id: 'literature' }); if (tab) app.show(tab); return; }
-  app = mount(tab || 'feed');
-  wm.open({ id: 'literature', title: '文献', icon: ICON, content: app.root, width: 980, height: 640, onClose: () => { app.destroy(); app = null; } });
+function normOpenArg(arg) {
+  if (!arg) return {};
+  if (typeof arg === 'string') return { tab: arg };
+  if (typeof arg === 'object') return arg;
+  return {};
+}
+
+export function open(arg) {
+  const opts = normOpenArg(arg);
+  const targetTab = opts.tab || (opts.citekey || opts.doi || opts.q ? 'library' : null);
+  if (app) {
+    wm.open({ id: 'literature' });
+    if (targetTab) app.show(targetTab);
+    app.applyOpts(opts);
+    return;
+  }
+  app = mount(targetTab || 'feed');
+  wm.open({ id: 'literature', title: '文献', icon: ICON(), content: app.root, width: 980, height: 640, onClose: () => { app.destroy(); app = null; } });
+  app.applyOpts(opts);
+}
+
+export function openCitekey(citekey, page) {
+  open({ tab: 'library', citekey, page });
 }
 
 function mount(first) {
@@ -46,11 +65,29 @@ function mount(first) {
   let cur = null;
   const ctx = {
     openReader, show,
-    // a card by its citation key ([[citekey]] links): the library, that paper
-    openCitekey: (k) => { show('library'); mounted.get('library').select({ citekey: k }); },
+    // a card by its citation key ([[citekey]] links): the library, that paper (or reader at page)
+    openCitekey: (k, page) => {
+      show('library');
+      const lib = mounted.get('library');
+      if (lib && lib.select) lib.select({ citekey: k, page });
+    },
     openItem: (key) => { show('library'); mounted.get('library').select({ key }); },
     refreshStatus,
   };
+
+  function applyOpts(opts = {}) {
+    if (opts.citekey) {
+      ctx.openCitekey(opts.citekey, opts.page);
+    } else if (opts.doi) {
+      show('library');
+      const lib = mounted.get('library');
+      if (lib && lib.prefillDoi) lib.prefillDoi(opts.doi);
+    } else if (opts.q) {
+      show('library');
+      const lib = mounted.get('library');
+      if (lib && lib.search) lib.search(opts.q);
+    }
+  }
 
   function show(id) {
     if (!TABS.some((t) => t[0] === id)) id = 'feed';
@@ -98,5 +135,5 @@ function mount(first) {
   ro.observe(root);
   refreshStatus();
   show(first);
-  return { root, show, destroy() { off(); ro.disconnect(); clearTimeout(authT); for (const v of mounted.values()) if (v.destroy) v.destroy(); } };
+  return { root, show, applyOpts, destroy() { off(); ro.disconnect(); clearTimeout(authT); for (const v of mounted.values()) if (v.destroy) v.destroy(); } };
 }

@@ -71,11 +71,20 @@ function mount() {
     if (r.ok) { text.value = ''; due.value = ''; if (r.item) { open.add(r.item.id); render(); } }
   });
   text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
-  const off = todos.subscribe(() => render());
+  let pendingPlan = null;
+  const off = todos.subscribe(() => {
+    render();
+    if (pendingPlan && todos.list().some((x) => x.id === pendingPlan)) {
+      const id = pendingPlan;
+      pendingPlan = null;
+      show(id);
+    }
+  });
   // a plan to show: its list, opened, scrolled to
   const show = (id) => {
     const t = todos.list().find((x) => x.id === id);
-    if (!t) return;
+    if (!t) { pendingPlan = id; return; }
+    pendingPlan = null;
     if (!(view() && view().has(t)) && todos.listOf(t) !== current) current = todos.listOf(t);
     open.add(id); if (t.done) showDone = true;
     render();
@@ -85,8 +94,9 @@ function mount() {
   return { root, show, destroy: off };
 }
 
-// open the app; plan: the id of one plan to show opened
-export function open({ plan } = {}) {
+// open the app; plan: the id of one plan to show opened (supports string planId or { plan })
+export function open(arg = {}) {
+  const plan = typeof arg === 'string' ? arg : (arg && arg.plan);
   if (!app) {
     app = mount();
     wm.open({ id: 'todo', title: '重要计划', icon: '/icons/sched_task-16.png', content: app.root, width: 760, height: 520,

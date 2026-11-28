@@ -178,14 +178,16 @@ function renderSnapshotTree(machine, rootPath, snap) {
   );
 }
 
-export function renderVfsTab(mainBody, proj, { say, expandedTreeKey, onToggleTreeKey, openAddWorkspaceDialog, openManualWorkspaceDialog }) {
+export function renderVfsTab(mainBody, proj, { say, expandedTreeKey, onToggleTreeKey, openAddWorkspaceDialog, openManualWorkspaceDialog, openNewTransferDialog }) {
   const allCat = catalog.list();
   const wsList = proj.workspaces || [];
+  const xfers = proj.transfers || [];
 
   const addBar = h('div', { class: 'pm-act-bar' },
     h('button', { class: 'btn go', type: 'button', text: '＋ 从已备注目录添加授权工作区…', onclick: () => openAddWorkspaceDialog(proj, allCat) }),
     h('button', { class: 'btn', type: 'button', text: '＋ 手动输入跨机路径授权…', onclick: () => openManualWorkspaceDialog(proj) }),
-    h('span', { class: 'pm-hint', text: '说明：此处汇总本项目散落在各台电脑上的代码分支（Git Worktree）与数据目录，作为 Agent 跨机派活的访问边界；点「展开结构树」无需拉取实际文件即可查看目录前 3 层结构与剩余空间。' })
+    openNewTransferDialog ? h('button', { class: 'btn', type: 'button', text: '＋ 登记大文件摆渡…', onclick: () => openNewTransferDialog(proj) }) : null,
+    h('span', { class: 'pm-hint', text: '说明：此处管理本项目跨机目录围栏权限（RW/RO）与大文件人工拷盘摆渡；目录工作总结与结构树也可在「研究与计算」卡片直接展开。' })
   );
 
   const rows = wsList.map((w) => {
@@ -252,12 +254,56 @@ export function renderVfsTab(mainBody, proj, { say, expandedTreeKey, onToggleTre
     ))
   ) : null;
 
+  const xferSection = h('section', { style: 'margin-top:12px' },
+    h('div', { class: 'pm-sec-title', text: `大文件跨机传输与人工摆渡（${xfers.length}）：` }),
+    xfers.length
+      ? h('div', { class: 'pm-ws-list' }, ...xfers.map((t) => buildTransferCard(proj, t, { say })))
+      : h('div', { class: 'pm-empty', text: '暂无跨机文件传输或大文件人工摆渡请求。' })
+  );
+
   mainBody.replaceChildren(
     ...[
       addBar,
       rows.length ? h('div', { class: 'pm-ws-list' }, ...rows) : h('div', { class: 'pm-empty', text: '尚未给该项目分配专属文件夹。' }),
       unboundBox,
+      xferSection,
     ].filter(Boolean)
+  );
+}
+
+function buildTransferCard(proj, t, { say }) {
+  const isTransferring = t.status === 'transferring';
+  const isPending = t.status === 'pending';
+  const canConfirm = isPending || isTransferring;
+  const badgeClass = isTransferring ? 'run' : (isPending ? 'wait' : 'done');
+  const badgeText = isTransferring ? '正在自动传输…' : (isPending ? '等待拷贝就位' : '已就位完成');
+  return h('div', { class: `pm-xfer-card ${t.status === 'completed' ? 'done' : 'pending'}` },
+    h('div', { class: 'pm-xfer-head' },
+      h('img', { src: icon('handoff', true), alt: '' }),
+      h('b', { text: t.mode === 'manual_disk' ? '📦 需移动硬盘人工摆渡 (Sneakernet)' : '⚡ 跨机文件传输' }),
+      t.size ? h('span', { class: 'pm-xfer-size', text: size(t.size) }) : null,
+      h('span', { class: `pm-rev-badge ${badgeClass}`, text: badgeText }),
+      h('span', { class: 'pm-xfer-time', text: ago(t.createdAt) })
+    ),
+    h('div', { class: 'pm-xfer-paths' },
+      h('div', {}, h('b', { text: '源位置：' }), h('code', { text: `${t.fromMachine} : ${t.fromPath}` })),
+      h('div', {}, h('b', { text: '目标位置：' }), h('code', { text: `${t.toMachine} : ${t.toPath}` }))
+    ),
+    t.note ? h('div', { class: 'pm-xfer-note', text: `说明：${t.note}` }) : null,
+    t.error ? h('div', { class: 'pm-xfer-note', text: `自动传输提示：${t.error}` }) : null,
+    canConfirm ? h('div', { class: 'pm-node-btns' },
+      h('button', { class: 'btn go', type: 'button', text: '✓ 我已用硬盘拷好，通知并唤醒会话', onclick: async () => {
+        say('正在确认文件就位并唤醒目标会话…');
+        const r = await mesh.confirmTransfer(proj.id, t.id, { wake: true });
+        say(r.ok ? '已确认就位并通知目标会话' : (r.msg || '操作失败'));
+      } }),
+      h('button', { class: 'btn', type: 'button', text: '修改实际拷入路径并确认…', onclick: async () => {
+        const np = await askText({ title: '修改实际目标存放路径', label: `文件在 ${t.toMachine} 上的实际路径：`, value: t.toPath, max: 500 });
+        if (!np) return;
+        const r = await mesh.confirmTransfer(proj.id, t.id, { newToPath: np, wake: true });
+        say(r.ok ? '已更新路径并唤醒目标会话' : (r.msg || '操作失败'));
+      } })
+    ) : null
   );
 }
 
@@ -268,41 +314,7 @@ export function renderTransfersTab(mainBody, proj, { say, openNewTransferDialog 
     h('span', { class: 'pm-hint', text: '当跨机文件过大（>50MB，如全波仿真场数据）或 Tailscale 较慢时，在此挂起人工硬盘拷贝任务；拷贝完成后点击「我已拷好」将自动唤醒对应会话继续工作。' })
   );
 
-  const cards = xfers.map((t) => {
-    const isTransferring = t.status === 'transferring';
-    const isPending = t.status === 'pending';
-    const canConfirm = isPending || isTransferring;
-    const badgeClass = isTransferring ? 'run' : (isPending ? 'wait' : 'done');
-    const badgeText = isTransferring ? '正在自动传输…' : (isPending ? '等待拷贝就位' : '已就位完成');
-    return h('div', { class: `pm-xfer-card ${t.status === 'completed' ? 'done' : 'pending'}` },
-      h('div', { class: 'pm-xfer-head' },
-        h('img', { src: icon('handoff', true), alt: '' }),
-        h('b', { text: t.mode === 'manual_disk' ? '📦 需移动硬盘人工摆渡 (Sneakernet)' : '⚡ 跨机文件传输' }),
-        t.size ? h('span', { class: 'pm-xfer-size', text: size(t.size) }) : null,
-        h('span', { class: `pm-rev-badge ${badgeClass}`, text: badgeText }),
-        h('span', { class: 'pm-xfer-time', text: ago(t.createdAt) })
-      ),
-      h('div', { class: 'pm-xfer-paths' },
-        h('div', {}, h('b', { text: '源位置：' }), h('code', { text: `${t.fromMachine} : ${t.fromPath}` })),
-        h('div', {}, h('b', { text: '目标位置：' }), h('code', { text: `${t.toMachine} : ${t.toPath}` }))
-      ),
-      t.note ? h('div', { class: 'pm-xfer-note', text: `说明：${t.note}` }) : null,
-      t.error ? h('div', { class: 'pm-xfer-note', text: `自动传输提示：${t.error}` }) : null,
-      canConfirm ? h('div', { class: 'pm-node-btns' },
-        h('button', { class: 'btn go', type: 'button', text: '✓ 我已用硬盘拷好，通知并唤醒会话', onclick: async () => {
-          say('正在确认文件就位并唤醒目标会话…');
-          const r = await mesh.confirmTransfer(proj.id, t.id, { wake: true });
-          say(r.ok ? '已确认就位并通知目标会话' : (r.msg || '操作失败'));
-        } }),
-        h('button', { class: 'btn', type: 'button', text: '修改实际拷入路径并确认…', onclick: async () => {
-          const np = await askText({ title: '修改实际目标存放路径', label: `文件在 ${t.toMachine} 上的实际路径：`, value: t.toPath, max: 500 });
-          if (!np) return;
-          const r = await mesh.confirmTransfer(proj.id, t.id, { newToPath: np, wake: true });
-          say(r.ok ? '已更新路径并唤醒目标会话' : (r.msg || '操作失败'));
-        } })
-      ) : null
-    );
-  });
+  const cards = xfers.map((t) => buildTransferCard(proj, t, { say }));
 
   mainBody.replaceChildren(
     bar,

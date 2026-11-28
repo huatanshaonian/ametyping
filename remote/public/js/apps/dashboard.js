@@ -186,7 +186,7 @@ function mount(current) {
     const roleLbl = node.role === 'master' ? 'Master' : node.role === 'verifier' ? 'Verifier' : node.role === 'peer' ? 'Peer' : 'Worker';
     const modelTxt = [node.tool, node.model].filter(Boolean).join(':');
     meshBar.hidden = false;
-    meshBar.replaceChildren(
+    meshBar.replaceChildren(...[
       h('span', { class: `mrole ${node.role || 'worker'}`, text: roleLbl }),
       h('b', { class: 'dmb-proj', text: project.name }),
       modelTxt ? h('span', { class: 'mrole mdl', text: modelTxt }) : null,
@@ -207,8 +207,8 @@ function mount(current) {
           text: '打开项目拓扑/黑板',
           onclick: () => projects.open(project.id),
         })
-      )
-    );
+      ),
+    ].filter(Boolean));
   }
   const right = h('div', { class: 'right' }, h('div', { class: 'head' }, h('span', { style: 'min-width:0;display:flex;align-items:center' }, back, hname), h('span', { class: 'hr' }, hmeta, notesBtn)),
     meshBar, resume, agents.el, notes.el, convEl, btw.el, permsEl, note, term.el, keys, compose);

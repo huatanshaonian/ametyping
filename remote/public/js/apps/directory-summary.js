@@ -1,7 +1,11 @@
-import {h} from '../util.js';
+import {h,ago} from '../util.js';
 import {post} from '../net.js';
+import * as mesh from '../mesh.js';
+import * as catalog from '../fs-catalog.js';
+import {size} from '../filetypes.js';
 import {alertBox} from '../dialog.js';
-import {open as openExplorer} from './explorer.js';
+import {open as openExplorer, openNoteDialog} from './explorer.js';
+import {renderCiteNodes} from './cite-link.js';
 
 const norm=p=>String(p||'').replace(/\\/g,'/').replace(/\/+$/,'');
 const canon=p=>/^[A-Za-z]:/.test(norm(p))?norm(p).toLowerCase():norm(p);
@@ -14,8 +18,45 @@ const shortName=(p,parentPath='')=>{
 
 export function directoryPanel(onChanged=()=>{}){
   const root=h('div',{class:'rd-root'});
-  let project=null,closed=false,requestId=0,viewMode='graph',lastItems=[];
+  let project=null,closed=false,requestId=0,viewMode='graph',lastItems=[],expandedTreeKey=null;
   const say=h('p',{class:'pm-status'});
+
+  function findWorkspace(item){
+    const proj=mesh.get(project);
+    if(!proj)return null;
+    const pKey=canon(item.path);
+    return (proj.workspaces||[]).find(w=>w.machine===item.machine&&canon(w.path)===pKey)||null;
+  }
+
+  async function setWorkspaceMode(item,mode){
+    const proj=mesh.get(project);
+    if(!proj)return;
+    const cur=proj.workspaces||[];
+    const pKey=canon(item.path);
+    const exists=cur.some(w=>w.machine===item.machine&&canon(w.path)===pKey);
+    const next=exists
+      ? cur.map(w=>(w.machine===item.machine&&canon(w.path)===pKey?{...w,mode}:w))
+      : [...cur,{machine:item.machine,path:item.path,mode}];
+    await mesh.saveProject({id:proj.id,name:proj.name,workspaces:next});
+    say.textContent=`已更新 ${item.machine}:${norm(item.path)} 权限为 ${mode==='ro'?'只读 (RO)':'读写 (RW)'}`;
+    render();
+  }
+
+  function renderCachedTree(snap){
+    if(!snap||!Array.isArray(snap.tree)){
+      return h('div',{class:'pm-tree-box',text:'群晖尚无该目录的结构树快照，请点击「刷新树」（需目标电脑在线）。'});
+    }
+    const build=(items)=>h('ul',{class:'pm-tree-ul'},...items.map(it=>h('li',{class:'pm-tree-li'},
+      h('span',{class:it.dir?'pm-tree-dir':'pm-tree-file',text:(it.dir?'📁 ':'📄 ')+it.name}),
+      !it.dir?h('small',{text:` (${size(it.size)})`}):null,
+      it.skipped?h('small',{class:'pm-tree-skip',text:' [已折叠依赖/构建目录]'}):null,
+      it.children&&it.children.length?build(it.children):null
+    )));
+    return h('div',{class:'pm-tree-box'},
+      h('div',{class:'pm-tree-meta',text:`快照时间：${ago(snap.scannedAt)} · 共记录 ${snap.count} 个条目${snap.truncated?'（已截断）':''}`}),
+      snap.tree.length?build(snap.tree):h('div',{text:'（空文件夹）'})
+    );
+  }
 
   async function load(id){
     project=id;const request=++requestId;
@@ -57,6 +98,13 @@ export function directoryPanel(onChanged=()=>{}){
       if(!machine||!dirPath){feedback.textContent='请填写电脑名称和文件夹路径';return;}
       const r=await post('/api/research/directory',{project,action:'add',machine,path:dirPath,branch});
       if(!r.ok){feedback.textContent=r.msg||'添加目录失败';return;}
+      const proj=mesh.get(project);
+      if(proj){
+        const cur=proj.workspaces||[];
+        if(!cur.some(w=>w.machine===machine&&canon(w.path)===canon(dirPath))){
+          await mesh.saveProject({id:proj.id,name:proj.name,workspaces:[...cur,{machine,path:dirPath,mode:'rw',branch}]});
+        }
+      }
       dlg.close();
       say.textContent=`已添加目录 ${machine}:${dirPath}`;
       await load(project);
@@ -162,12 +210,14 @@ export function directoryPanel(onChanged=()=>{}){
       h('p',{text:'会话 '+e.session+' · 记录 '+e.line}),
       h('blockquote',{text:ref.quote}),
       h('pre',{text:e.text}),
-      h('button',{class:'btn',text:'关闭',onclick:()=>d.close()})
+      h('div',{class:'pr-toolbar',style:'margin-top:8px;justify-content:flex-end'},
+        e.machine&&e.session?h('button',{class:'btn go',type:'button',text:'💬 在糖糖看板打开该会话',onclick:()=>{d.close();import('./dashboard.js').then(m=>m.openSession(e.machine,e.session)).catch(()=>{});}}):null,
+        h('button',{class:'btn',type:'button',text:'关闭',onclick:()=>d.close()}))
     );
     d.addEventListener('close',()=>d.remove());root.append(d);d.showModal();
   }
 
-  const lines=(title,values)=>values?.length?h('section',{},h('b',{text:title}),h('ul',{},...values.map(text=>h('li',{text})))):null;
+  const lines=(title,values)=>values?.length?h('section',{},h('b',{text:title}),h('ul',{},...values.map(text=>h('li',{},...renderCiteNodes(text))))):null;
 
   // Compute cross-directory & cross-machine relationships for an item
   function computeRelations(item,allItems,parentItem,childItems){
@@ -215,11 +265,11 @@ export function directoryPanel(onChanged=()=>{}){
         rels.length?h('div',{class:'rd-rels'},...rels.map(r=>h('span',{class:'rd-rel-pill '+r.kind,text:r.text}))):null
       ),
       b?h('div',{class:'rd-summary'},
-        h('section',{class:'rd-sec-box'},h('b',{text:'目录定位与总览'}),h('p',{class:'rd-overview',text:b.overview})),
+        h('section',{class:'rd-sec-box'},h('b',{text:'目录定位与总览'}),h('p',{class:'rd-overview'},...renderCiteNodes(b.overview))),
         h('b',{text:`工作主线（共 ${b.work.length} 条）`}),
         ...b.work.map(w=>h('section',{class:'rd-work'},
           h('h4',{text:'▸ '+w.title}),
-          h('p',{text:w.description}),
+          h('p',{},...renderCiteNodes(w.description)),
           lines('结果与验证指标',w.results),
           lines('产物与代码路径',w.outputs),
           lines('未决问题',w.questions),
@@ -255,6 +305,20 @@ export function directoryPanel(onChanged=()=>{}){
     const rels=computeRelations(item,allItems,parentItem,childItems);
     const aiBtn=h('button',{class:'btn',text:b?'重总结':'生成总结',onclick:(e)=>{e.stopPropagation();aiSummarize(item,aiBtn);}});
     const displayPath=parentItem?`↳ ${shortName(item.path,parentItem.path)}`:norm(item.path);
+    const ws=findWorkspace(item);
+    const catInfo=catalog.get(item.machine,item.path);
+    const snap=(ws&&ws.snapshot)||(catInfo&&catInfo.snapshot)||null;
+    const treeKey=`${item.machine}|${canon(item.path)}`;
+    const isExp=expandedTreeKey===treeKey;
+    const modeSel=h('select',{
+      class:'field pm-ws-mode',
+      style:'width:auto;padding:0 4px;font-size:11px',
+      title:'切换该目录对协同 Agent 的读写围栏权限',
+      onchange:(e)=>{e.stopPropagation();setWorkspaceMode(item,e.target.value);},
+    },
+      h('option',{value:'rw',text:'RW',selected:!ws||ws.mode!=='ro'}),
+      h('option',{value:'ro',text:'RO',selected:!!ws&&ws.mode==='ro'})
+    );
 
     return h('article',{
       class:`pr-card rd-card rd-node ${isHub?'rd-is-hub':''} ${parentItem?'rd-is-child':''}`,
@@ -264,10 +328,12 @@ export function directoryPanel(onChanged=()=>{}){
         h('span',{class:'rd-role-icon',text:isHub?'母工作区':parentItem?'子工作树':'独立工作区'}),
         h('code',{class:'rd-node-path',title:norm(item.path),text:displayPath}),
         item.branch?h('span',{class:'pm-ws-git rd-branch-pill',text:'Git: '+item.branch}):null,
+        modeSel,
+        snap&&snap.freeBytes!=null?h('span',{class:'pm-ws-free',text:`可用 ${size(snap.freeBytes)}`}):null,
         h('span',{class:'rd-sess-pill',text:isHub?`本目录 ${item.sessions} 份会话（全工作区共 ${item.sessions+totalChildSessions} 份）`:`${item.sessions} 份会话`}),
         h('span',{class:'rr-badge '+(item.status==='confirmed'?'confirmed':''),text:b?(item.status==='confirmed'?'已确认':'待核对'):'待整理'})
       ),
-      b?h('p',{class:'rd-overview rd-overview-clamp',title:b.overview,onclick:()=>openDetail(item,allItems,parentItem,childItems),text:b.overview})
+      b?h('p',{class:'rd-overview rd-overview-clamp',title:b.overview,onclick:()=>openDetail(item,allItems,parentItem,childItems)},...renderCiteNodes(b.overview))
        :h('p',{class:'rd-overview rd-empty-hint',text:'目录工作总结待整理（点击下方「生成总结」生成）。'}),
       b&&b.work?.length?h('div',{class:'rd-work-pills'},
         ...b.work.map(w=>h('span',{
@@ -292,10 +358,21 @@ export function directoryPanel(onChanged=()=>{}){
         b&&item.status!=='confirmed'?h('button',{class:'btn',text:'确认目录总结',onclick:()=>change(item,'confirm')}):null,
         b?h('button',{class:'btn',text:'修改目录总结',onclick:()=>edit(item)}):null,
         b&&item.status==='confirmed'?h('button',{class:'btn',text:'恢复待核对',onclick:()=>change(item,'restore')}):null,
+        h('button',{class:'btn',type:'button',text:isExp?'▾ 收起结构树':'▸ 结构树',onclick:()=>{expandedTreeKey=isExp?null:treeKey;render();}}),
+        h('button',{class:'btn',type:'button',text:'刷新树',onclick:async()=>{
+          say.textContent=`正在同步 ${item.machine}:${item.path} 的目录结构…`;
+          const r=await catalog.syncTree(item.machine,item.path);
+          await mesh.load();
+          say.textContent=r&&r.ok?'目录结构树已更新':((r&&r.msg)||'同步失败');
+          expandedTreeKey=treeKey;
+          render();
+        }}),
+        h('button',{class:'btn',type:'button',text:'编辑备注',onclick:async()=>{await openNoteDialog(item.machine,item.path);await mesh.load();render();}}),
         h('button',{class:'btn',text:'查看目录',onclick:()=>openExplorer(item.machine,item.path)}),
         aiBtn,
         h('button',{class:'btn',title:'从当前项目中移除此目录',text:'删除目录',onclick:(e)=>{e.stopPropagation();openDeleteDialog(item);}})
-      )
+      ),
+      isExp?renderCachedTree(snap):null
     );
   }
 
@@ -399,11 +476,11 @@ export function directoryPanel(onChanged=()=>{}){
         h('button',{class:'btn '+(viewMode==='list'?'go':''),type:'button',text:'展开详细列表',onclick:()=>{viewMode='list';render();}})
       )
     );
-    root.replaceChildren(
+    root.replaceChildren(...[
       say,
       project?bar:null,
-      viewMode==='graph'?renderGraphView(items):h('div',{},...items.map(renderListCard))
-    );
+      viewMode==='graph'?renderGraphView(items):h('div',{},...items.map(renderListCard)),
+    ].filter(Boolean));
   }
 
   function edit(item){

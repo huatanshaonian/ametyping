@@ -8,6 +8,7 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import * as todos from '../todos.js';
 import { confirmBox } from '../dialog.js';
 import * as settings from './mail-accounts.js';
 import { kindOf, due, show as showAlerts } from './mail-alerts.js';      // (also puts the bell in the tray)
@@ -158,7 +159,7 @@ function mount(first) {
     for (const el of listEl.querySelectorAll('.ml-i')) el.classList.toggle('sel', el.dataset.key === key);
     const a = accOf(m.acc);
     const line = (k, v) => (v ? h('div', { class: 'ml-hl' }, h('b', { text: k }), h('span', { text: v })) : null);
-    view.replaceChildren(h('div', { class: 'ml-head' },
+    view.replaceChildren(...[h('div', { class: 'ml-head' },
       h('h3', { text: m.subject || '（无主题）' }),
       line('发件人', who(m.from)),
       line('收件人', (m.to || []).map(who).join('，')),
@@ -175,8 +176,8 @@ function mount(first) {
         h('button', { class: 'btn', type: 'button', text: '转发', onclick: () => compose({ mode: 'forward', key: m.key }) }),
         h('button', { class: 'btn', type: 'button', text: unread ? '标为已读' : '标为未读',
           onclick: () => mark(copies.map((c) => c.key), unread) }))),
-    m.t ? judged(m.t) : null,
-    h('pre', { class: 'ml-text' }, ...(m.text ? linked(m.text) : [document.createTextNode('（没有正文）')])));
+    m.t ? judged(m.t, m) : null,
+    h('pre', { class: 'ml-text' }, ...(m.text ? linked(m.text) : [document.createTextNode('（没有正文）')]))].filter(Boolean));
     if (!quiet) view.scrollTop = 0;
     root.classList.add('reading');
   }
@@ -191,15 +192,56 @@ function mount(first) {
     } });
   }
   // what the model made of it, above the text
-  function judged(t) {
+  const extractDoi = (p) => {
+    const raw = String((p && (p.doi || p.url || p.title)) || '');
+    const m = raw.match(/10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/i);
+    return m ? m[0].replace(/[.,;)]+$/, '') : '';
+  };
+  function judged(t, m) {
     const k = kindOf(t.important || t.kind === 'reading' ? t.kind : '');
+    const canTodo = !!(t.todo || (t.important && t.kind !== 'reading'));
+    const todoBtn = canTodo ? h('button', {
+      class: 'btn go',
+      type: 'button',
+      text: t.deadline ? `＋ 加入重要计划（${t.deadline.slice(5)} 截止）` : '＋ 加入重要计划',
+      onclick: async (e) => {
+        const b = e.currentTarget;
+        b.disabled = true;
+        const r = await todos.add(t.todo || t.summary || (m && m.subject) || '邮件待办', { due: t.deadline || '' });
+        if (r && r.ok) { b.textContent = '✓ 已加入重要计划'; }
+        else { b.disabled = false; b.textContent = (r && r.msg) || '加入失败'; }
+      },
+    }) : null;
     return h('div', { class: 'ml-judge' },
       h('div', {}, h('b', { text: 'GPT：' }), k ? h('i', { class: 'tag ' + k[1], text: k[0] }) : h('i', { class: 'tag', text: t.kind === 'notice' ? '通知（与你关系不大）' : '不用管' }), ' ' + (t.summary || '')),
       t.todo ? h('div', {}, h('b', { text: '要做：' }), t.todo) : null,
       t.deadline ? h('div', {}, h('b', { text: '截止：' }), due(t.deadline), t.deadlineText ? h('q', { text: t.deadlineText }) : null) : null,
-      t.picks && t.picks.length ? h('ul', { class: 'mal-picks' }, ...t.picks.map((p) => h('li', {},
-        p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('span', { text: p.title }),
-        p.fun ? h('i', { class: 'tag fun', text: '有趣' }) : null, h('small', { text: ' ' + p.why })))) : null);
+      todoBtn ? h('div', { class: 'gbtns', style: 'margin-top:4px' }, todoBtn) : null,
+      t.picks && t.picks.length ? h('ul', { class: 'mal-picks' }, ...t.picks.map((p) => {
+        const doi = extractDoi(p);
+        return h('li', {},
+          p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: p.title }) : h('span', { text: p.title }),
+          p.fun ? h('i', { class: 'tag fun', text: '有趣' }) : null,
+          h('small', { text: ' ' + (p.why || '') }),
+          ' ',
+          h('button', {
+            class: 'btn',
+            type: 'button',
+            style: 'margin-left:4px',
+            text: '📥 送入文献库',
+            title: doi ? `打开文献库并预填 DOI (${doi})` : '在文献库中检索这篇论文',
+            onclick: () => {
+              if (doi) {
+                try { location.hash = '#lit?tab=library&doi=' + encodeURIComponent(doi); } catch {}
+                import('./literature.js').then((mod) => mod.open({ tab: 'library', doi })).catch(() => {});
+              } else {
+                try { location.hash = '#lit?tab=library'; } catch {}
+                import('./literature.js').then((mod) => mod.open({ tab: 'library', q: p.title || '' })).catch(() => {});
+              }
+            },
+          })
+        );
+      })) : null);
   }
   listEl.addEventListener('click', (e) => { const it = e.target.closest('.ml-i'); if (it) show(it.dataset.key); });
   accSel.addEventListener('change', () => { cur = null; view.replaceChildren(); showStatus(); loadList(); });

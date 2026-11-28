@@ -267,12 +267,12 @@ export function createTopologyView(proj, { nodeCard, openSpawnDialog, openBindSe
 
   function renderActBar() {
     const nodes = curProj.nodes || [];
-    actBar.replaceChildren(
+    actBar.replaceChildren(...[
       h('button', { class: 'btn go', type: 'button', onclick: () => openSpawnDialog(curProj) },
         h('img', { src: icon('console_prompt', true), alt: '', style: 'vertical-align:-3px;margin-right:4px' }), '在指定电脑派生新节点 (Spawn)'),
       h('button', { class: 'btn', type: 'button', text: '＋ 挂载已有会话到拓扑…', onclick: () => openBindSessionDialog(curProj) }),
-      nodes.length >= 2 ? h('button', { class: 'btn', type: 'button', text: '⇄ 建立节点连线 (Master/Cowork)…', onclick: () => openLinkDialog(curProj) }) : null
-    );
+      nodes.length >= 2 ? h('button', { class: 'btn', type: 'button', text: '⇄ 建立节点连线 (Master/Cowork)…', onclick: () => openLinkDialog(curProj) }) : null,
+    ].filter(Boolean));
   }
 
   function allRenderNodes() {
@@ -797,6 +797,7 @@ export function createTopologyView(proj, { nodeCard, openSpawnDialog, openBindSe
   return {
     projectId: proj.id,
     root: rootEl,
+    focusNode,
     update(nextProj) {
       curProj = nextProj;
       resolvedCache = null;

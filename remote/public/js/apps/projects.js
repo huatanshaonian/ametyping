@@ -15,7 +15,6 @@ import { confirmBox, askText } from '../dialog.js';
 import { researchTab } from './project-research.js';
 import { createBoardTab } from './proj-board.js';
 import { createTopologyView } from './proj-topo.js';
-import { createRolesTab } from './proj-roles.js';
 import { renderNodeCard, renderVfsTab, renderTransfersTab, renderEventsTab } from './proj-panels.js';
 import {
   openWatchdogConfigDialog,
@@ -31,13 +30,23 @@ import {
 
 let inst = null;
 
-export function open(projectId = null) {
+export function open(projectId = null, opts = {}) {
+  let pid = projectId;
+  let options = opts || {};
+  if (pid && typeof pid === 'object') {
+    options = pid;
+    pid = options.projectId || options.id || null;
+  }
+  if (options.tab === 'roles') {
+    location.hash = '#ai?tab=models';
+    return;
+  }
   if (inst) {
-    if (projectId) inst.select(projectId);
+    inst.navigate(pid, options);
     wm.open({ id: 'projects' });
     return;
   }
-  inst = mount(projectId);
+  inst = mount(pid, options);
   wm.open({
     id: 'projects',
     title: '项目管理 — 跨机协同与拓扑中心',
@@ -49,15 +58,53 @@ export function open(projectId = null) {
   });
 }
 
-function mount(initialProjectId) {
+function mount(initialProjectId, initialOpts = {}) {
   let selId = initialProjectId;
-  let activeTab = 'research';
+  let activeTab = normalizeTab(initialOpts.tab || (initialOpts.node ? 'topo' : initialOpts.seq ? 'board' : 'research'));
+  let pendingNode = initialOpts.node || null;
+  let pendingSeq = initialOpts.seq || null;
   let researchView = null;
   let boardView = null;
   let topoView = null;
-  let rolesView = null;
   let expandedTreeKey = null;
   const boardDrafts = new Map();
+  let memCounts = new Map();
+  let queueJobs = [];
+  let destroyed = false;
+
+  function normalizeTab(t) {
+    if (t === 'xfer') return 'vfs';
+    return ['research', 'board', 'topo', 'vfs', 'events'].includes(t) ? t : 'research';
+  }
+
+  async function refreshAuxStats() {
+    try {
+      const [kRes, qRes] = await Promise.all([
+        fetch('/api/knowledge', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/mesh/queue', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      ]);
+      if (destroyed) return;
+      if (kRes && Array.isArray(kRes.memories)) {
+        const next = new Map();
+        const projLinks = new Map();
+        for (const p of kRes.projects || []) {
+          if (p && p.mesh) projLinks.set(p.id, p.mesh);
+        }
+        for (const m of kRes.memories) {
+          if (!m || !m.enabled || m.scope !== 'project' || !m.owner) continue;
+          const k1 = m.owner;
+          next.set(k1, (next.get(k1) || 0) + 1);
+          const linked = projLinks.get(k1);
+          if (linked && linked !== k1) next.set(linked, (next.get(linked) || 0) + 1);
+        }
+        memCounts = next;
+      }
+      if (qRes) {
+        queueJobs = Array.isArray(qRes.jobs) ? qRes.jobs : (Array.isArray(qRes.items) ? qRes.items : []);
+      }
+      renderMainHeadOnly();
+    } catch {}
+  }
 
   const sideList = h('div', { class: 'pm-side-list' });
   const mainHead = h('div', { class: 'pm-main-head' });
@@ -128,14 +175,15 @@ function mount(initialProjectId) {
   function renderTabs(proj) {
     const reviewCount = (proj.nodes || []).filter((n) => n.reviewStatus === 'waiting_review').length;
     const taskCount = (proj.tasks || []).length;
+    const activeXfers = (proj.transfers || []).filter((t) => t.status === 'pending' || t.status === 'transferring').length;
     const boardSuffix = proj.boardSeq ? ` (#${proj.boardSeq})` : (taskCount ? ` (${taskCount})` : '');
+    const vfsSuffix = ` (${(proj.workspaces || []).length}${activeXfers ? ` · 摆渡${activeXfers}` : ''})`;
     const tabs = [
-      ['research', '研究与计算', icon('projects', true), ''],
-      ['board', '黑板与任务', icon('projects', true), boardSuffix],
+      ['research', '研究与计算', icon('magnifying_glass', true), ''],
+      ['board', '黑板与任务', icon('notepad_file', true), boardSuffix],
       ['topo', '协同拓扑与契约', icon('projects', true), reviewCount ? ` (${reviewCount})` : ''],
-      ['roles', '角色与模型池', icon('projects', true), ''],
-      ['vfs', '跨机目录与结构树', icon('tree', true), ` (${(proj.workspaces || []).length})`],
-      ['events', '⚡ 触发器与看门狗', icon('clock', true), (proj.triggers || []).length ? ` (${(proj.triggers || []).length})` : ''],
+      ['vfs', '目录权限与摆渡', icon('tree', true), vfsSuffix],
+      ['events', '触发器与看门狗', icon('clock', true), (proj.triggers || []).length ? ` (${(proj.triggers || []).length})` : ''],
     ];
     tabBar.replaceChildren(...tabs.map(([k, label, ic, suffix]) =>
       h('button', {
@@ -146,41 +194,50 @@ function mount(initialProjectId) {
     ));
   }
 
-  function renderMain() {
+  function renderMainHeadOnly() {
     const proj = currentProject();
-    if (researchView && (!proj || activeTab !== 'research' || researchView.projectId !== proj.id)) { researchView.destroy(); researchView = null; }
-    if (boardView && (!proj || activeTab !== 'board' || boardView.projectId !== proj.id)) { boardView.destroy(); boardView = null; }
-    if (topoView && (!proj || activeTab !== 'topo' || topoView.projectId !== proj.id)) { topoView.destroy(); topoView = null; }
-    if (rolesView && (!proj || activeTab !== 'roles')) { rolesView.destroy(); rolesView = null; }
-    if (!proj) {
-      mainHead.replaceChildren(h('b', { text: '尚未选择项目' }));
-      tabBar.replaceChildren();
-      mainBody.replaceChildren(h('div', { class: 'pm-empty', text: '请先在左侧点击「＋ 新建项目」，或者在任意会话中使用 ame-mesh 工具自动创建。' }));
-      return;
-    }
-    const activeXfers = (proj.transfers || []).filter((t) => t.status === 'pending' || t.status === 'transferring').length;
-    const xferBtn = h('button', {
-      class: 'btn pm-xfer-btn' + (activeTab === 'xfer' ? ' active' : ''),
-      type: 'button',
-      title: '查看跨机文件协同与硬盘摆渡任务',
-      onclick: () => { activeTab = 'xfer'; renderMain(); },
-    },
-      '传输/摆渡',
-      activeXfers ? h('span', { class: 'pm-xfer-badge', text: String(activeXfers) }) : null
-    );
+    if (!proj) return;
+    const memN = memCounts.get(proj.id) || memCounts.get(proj.name) || 0;
+    const myJobs = queueJobs.filter((j) => j && j.projectId === proj.id);
+    const runN = myJobs.filter((j) => /run|exec|active/i.test(String(j.status || j.state || ''))).length;
+    const pendN = myJobs.filter((j) => /queue|pend|wait/i.test(String(j.status || j.state || ''))).length;
+    const compLabel = (runN || pendN) ? `⚡ 算力作业: 运行 ${runN} / 排队 ${pendN}` : '⚡ 算力作业';
     mainHead.replaceChildren(
       h('div', { class: 'pm-title-row' },
         h('img', { src: icon('projects', true), alt: '' }),
         h('b', { text: proj.name }),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          title: '查看并管理本项目专属记忆（记忆与存档）',
+          text: memN ? `🧠 项目记忆 (${memN})` : '🧠 项目记忆',
+          onclick: () => {
+            try { location.hash = '#knowledge?tab=memory&scope=project&owner=' + encodeURIComponent(proj.id); } catch {}
+            import('./knowledge.js').then((m) => m.open({ tab: 'memory', scope: 'project', owner: proj.id })).catch(() => {});
+          },
+        }),
+        h('button', {
+          class: 'btn' + (runN || pendN ? ' go' : ''),
+          type: 'button',
+          title: '前往设备与算力中心查看本项目算力作业或提交新算例',
+          text: compLabel,
+          onclick: () => { location.hash = '#infra?tab=compute&project=' + encodeURIComponent(proj.id); },
+        }),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          title: '前往 AI 与额度中心管理全局模型池与角色模板',
+          text: '⚙ 模型池与角色',
+          onclick: () => { location.hash = '#ai?tab=models'; },
+        }),
         h('label', { class: 'pm-chk', style: 'margin-left:auto' },
           h('input', {
             type: 'checkbox',
             checked: proj.autoResumeMaster !== false,
             onchange: (e) => mesh.saveProject({ id: proj.id, name: proj.name, autoResumeMaster: e.target.checked }),
           }),
-          'Worker 汇报时若主会话已关闭则自动后台唤醒'
+          '自动唤醒主会话'
         ),
-        xferBtn,
         h('button', { class: 'btn', type: 'button', text: '重命名', onclick: async () => {
           const n = await askText({ title: '重命名项目', value: proj.name, max: 50 });
           if (n && n !== proj.name) await mesh.saveProject({ id: proj.id, name: n });
@@ -194,6 +251,20 @@ function mount(initialProjectId) {
         } })
       )
     );
+  }
+
+  function renderMain() {
+    const proj = currentProject();
+    if (researchView && (!proj || activeTab !== 'research' || researchView.projectId !== proj.id)) { researchView.destroy(); researchView = null; }
+    if (boardView && (!proj || activeTab !== 'board' || boardView.projectId !== proj.id)) { boardView.destroy(); boardView = null; }
+    if (topoView && (!proj || activeTab !== 'topo' || topoView.projectId !== proj.id)) { topoView.destroy(); topoView = null; }
+    if (!proj) {
+      mainHead.replaceChildren(h('b', { text: '尚未选择项目' }));
+      tabBar.replaceChildren();
+      mainBody.replaceChildren(h('div', { class: 'pm-empty', text: '请先在左侧点击「＋ 新建项目」，或者在任意会话中使用 ame-mesh 工具自动创建。' }));
+      return;
+    }
+    renderMainHeadOnly();
     renderTabs(proj);
     if (activeTab === 'research') {
       if (!researchView) { researchView = researchTab(proj); mainBody.replaceChildren(researchView.root); }
@@ -203,6 +274,11 @@ function mount(initialProjectId) {
         mainBody.replaceChildren(boardView.root);
       } else {
         boardView.update(proj);
+      }
+      if (pendingSeq != null) {
+        const s = pendingSeq;
+        pendingSeq = null;
+        boardView.jumpToSeq(s);
       }
     } else if (activeTab === 'topo') {
       if (!topoView) {
@@ -216,10 +292,10 @@ function mount(initialProjectId) {
       } else {
         topoView.update(proj);
       }
-    } else if (activeTab === 'roles') {
-      if (!rolesView) {
-        rolesView = createRolesTab({ say });
-        mainBody.replaceChildren(rolesView.root);
+      if (pendingNode) {
+        const nd = pendingNode;
+        pendingNode = null;
+        topoView.focusNode(nd);
       }
     } else if (activeTab === 'vfs') {
       renderVfsTab(mainBody, proj, {
@@ -228,6 +304,7 @@ function mount(initialProjectId) {
         onToggleTreeKey: (k) => { expandedTreeKey = k; renderMain(); },
         openAddWorkspaceDialog: (p, allCat) => openAddWorkspaceDialog(p, allCat, dialogDeps),
         openManualWorkspaceDialog: (p) => openManualWorkspaceDialog(p, dialogDeps),
+        openNewTransferDialog: (p) => openNewTransferDialog(p, dialogDeps),
       });
     } else if (activeTab === 'events') {
       renderEventsTab(mainBody, proj, {
@@ -250,15 +327,28 @@ function mount(initialProjectId) {
   const offMesh = mesh.subscribe(render);
   const offCat = catalog.subscribe(render);
   const offSess = net.on('sessions', render);
+  refreshAuxStats();
+  const auxTimer = setInterval(() => { if (!destroyed && root.isConnected) refreshAuxStats(); }, 30000);
 
   return {
     root,
     select(id) { selId = id; render(); },
+    navigate(id, opts = {}) {
+      if (id) selId = id;
+      if (opts.tab) activeTab = normalizeTab(opts.tab);
+      else if (opts.node) activeTab = 'topo';
+      else if (opts.seq) activeTab = 'board';
+      if (opts.node) pendingNode = opts.node;
+      if (opts.seq) pendingSeq = opts.seq;
+      render();
+      refreshAuxStats();
+    },
     destroy() {
+      destroyed = true;
+      clearInterval(auxTimer);
       if (researchView) researchView.destroy();
       if (boardView) boardView.destroy();
       if (topoView) topoView.destroy();
-      if (rolesView) rolesView.destroy();
       offMesh();
       offCat();
       offSess();

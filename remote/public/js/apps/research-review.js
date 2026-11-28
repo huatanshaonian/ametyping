@@ -5,6 +5,7 @@ import * as wm from '../wm.js';
 import * as mesh from '../mesh.js';
 import {directoryPanel} from './directory-summary.js';
 import {attachClippy} from './clippy.js';
+import {renderCiteNodes} from './cite-link.js';
 const states={planned:'计划',started:'进行中',reported_complete:'已完成',reported_failed:'失败',unknown:'待整理'};
 const kinds={calculation:'计算',validation:'验证',exploration:'analysis',analysis:'分析',implementation:'实现',other:'其他'};
 const reviews={pending:'待核对',confirmed:'已确认',ignored:'已忽略',merged:'已合并'};
@@ -63,7 +64,7 @@ export function reviewPanel(initialProject=null){
     const mems=Array.isArray(b.memory_candidates)?b.memory_candidates:[];
 
     const ecoBlock=h('div',{class:'ro-eco'},
-      h('div',{class:'ro-eco-role'},h('b',{text:'跨项目生态定位：'}),h('span',{text:eco.role||''})),
+      h('div',{class:'ro-eco-role'},h('b',{text:'跨项目生态定位：'}),h('span',{},...renderCiteNodes(eco.role||''))),
       Array.isArray(eco.edges)&&eco.edges.length?h('div',{class:'ro-eco-edges'},
         ...eco.edges.map(e=>h('span',{class:'ro-edge-pill'},
           h('b',{text:e.from}),
@@ -81,7 +82,7 @@ export function reviewPanel(initialProject=null){
           h('b',{text:'▸ '+t.title}),
           h('span',{class:'pm-rev-badge '+stCls,text:t.status||'进行中'})
         ),
-        h('p',{class:'ro-track-sum',text:t.summary||''}),
+        h('p',{class:'ro-track-sum'},...renderCiteNodes(t.summary||'')),
         Array.isArray(t.stages)&&t.stages.length?h('div',{class:'ro-stages'},
           ...t.stages.map((s,idx)=>h('span',{
             class:'ro-stage-pill',
@@ -97,7 +98,7 @@ export function reviewPanel(initialProject=null){
           h('b',{text:'关键指标：'}),
           ...t.key_metrics.map(m=>h('span',{class:'ro-metric-pill',text:m}))
         ):null,
-        t.next_action?h('div',{class:'ro-next'},h('b',{text:'下一步规划：'}),h('span',{text:t.next_action})):null
+        t.next_action?h('div',{class:'ro-next'},h('b',{text:'下一步规划：'}),h('span',{},...renderCiteNodes(t.next_action))):null
       );
     });
 
@@ -125,7 +126,7 @@ export function reviewPanel(initialProject=null){
           h('b',{text:m.name}),
           promoteBtn
         ),
-        h('p',{class:'ro-track-sum',text:m.body}),
+        h('p',{class:'ro-track-sum'},...renderCiteNodes(m.body||'')),
         Array.isArray(m.source_dirs)&&m.source_dirs.length?h('small',{class:'ghint',text:'依据目录：'+m.source_dirs.join('、')}):null
       );
     });
@@ -300,7 +301,10 @@ export function reviewPanel(initialProject=null){
     try{const url=ref.pilot?'/api/research/pilot/evidence?id='+encodeURIComponent(ref.pilot)+'&event='+encodeURIComponent(ref.event_id)+'&offset='+(ref.start||0):'/api/research/evidence?project='+encodeURIComponent(ref.project||project)+'&id='+encodeURIComponent(ref.event_id);
       const r=await get(url);if(closed)return;if(!r.ok){say(r.msg);return;}
       const e=r.item,dialog=h('dialog',{class:'pr-evidence'});
-      dialog.append(h('b',{text:e.machine+' · '+e.cwd}),h('p',{text:'会话 '+e.session+' · 记录 '+e.line}),h('blockquote',{text:ref.quote}),h('pre',{text:e.text}),...(e.around||[]).map(a=>h('details',{},h('summary',{text:'附近记录 '+a.line+' · '+a.role}),h('pre',{text:a.text}))),h('button',{class:'btn',text:'关闭',onclick:()=>dialog.close()}));
+      dialog.append(h('b',{text:e.machine+' · '+e.cwd}),h('p',{text:'会话 '+e.session+' · 记录 '+e.line}),h('blockquote',{text:ref.quote}),h('pre',{text:e.text}),...(e.around||[]).map(a=>h('details',{},h('summary',{text:'附近记录 '+a.line+' · '+a.role}),h('pre',{text:a.text}))),
+        h('div',{class:'pr-toolbar',style:'margin-top:8px;justify-content:flex-end'},
+          e.machine&&e.session?h('button',{class:'btn go',type:'button',text:'💬 在糖糖看板打开该会话',onclick:()=>{dialog.close();import('./dashboard.js').then(m=>m.openSession(e.machine,e.session)).catch(()=>{});}}):null,
+          h('button',{class:'btn',type:'button',text:'关闭',onclick:()=>dialog.close()})));
       dialog.addEventListener('close',()=>dialog.remove());root.append(dialog);dialog.showModal();
     }catch{say('读取原文失败');}
   }

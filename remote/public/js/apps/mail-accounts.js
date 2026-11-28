@@ -23,7 +23,21 @@ function mount() {
   const guess = h('div', { class: 'ghint' });
   const extra = h('textarea', { class: 'field mla-int', rows: 3, placeholder: '研究方向补充（可不填），例如：电磁散射、RCS、超表面、FDTD；也想看看机器学习在电磁里的应用' });
   const intMsg = h('span', { class: 'ghint' });
-  const interests = h('div', { class: 'mla-form' }, h('b', { text: '推荐文献按什么判断' }), guess, extra,
+  const interests = h('div', { class: 'mla-form' },
+    h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap' },
+      h('b', { text: '推荐文献按什么判断' }),
+      h('button', {
+        class: 'rs-link',
+        type: 'button',
+        text: '同步自文献研究画像 ↗',
+        title: '打开文献 › 研究画像查看与编辑研究方向',
+        onclick: () => {
+          try { location.hash = '#lit?tab=profile'; } catch {}
+          import('./literature.js').then((m) => m.open({ tab: 'profile' })).catch(() => {});
+        },
+      })
+    ),
+    guess, extra,
     h('div', { class: 'gbtns' }, h('button', { class: 'btn', type: 'button', text: '保存', onclick: async () => {
       const r = await net.post('/api/mail/interests', { text: extra.value });
       intMsg.textContent = r.ok ? '已保存' : r.msg || '没能保存';

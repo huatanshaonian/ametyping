@@ -9,8 +9,8 @@ import { confirmBox } from '../dialog.js';
 import * as todos from '../todos.js';
 import { today, md } from './todo-plan.js';
 
-const openApp = (plan) => import('./todo-app.js').then((m) => m.open({ plan }));
-export const open = () => openApp();
+const openApp = (plan) => import('./todo-app.js').then((m) => m.open(plan ? { plan } : {}));
+export const open = (planId) => openApp(typeof planId === 'object' && planId ? planId.plan : planId);
 
 function mount() {
   const listEl = h('ul', { class: 'td-list' });

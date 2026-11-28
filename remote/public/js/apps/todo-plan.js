@@ -5,6 +5,8 @@
 import { h } from '../util.js';
 import { confirmBox } from '../dialog.js';
 import * as todos from '../todos.js';
+import * as mesh from '../mesh.js';
+import { openDispatchTaskDialog } from './cite-link.js';
 
 export const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 export const md = (d) => `${+d.slice(5, 7)}/${+d.slice(8)}`;
@@ -69,6 +71,17 @@ function details(t, ctx) {
     h('div', { class: 'tda-dl' },
       h('label', { text: '截止 ' }, due),
       h('label', { text: '分类 ' }, sel),
+      h('button', {
+        type: 'button',
+        class: 'btn',
+        text: '🤖 转为项目共享任务',
+        title: '把该计划及其子步骤派发为协同项目共享任务（mesh_task）',
+        onclick: () => {
+          const stepLines = steps.map((s, i) => `${i + 1}. [${s.done ? 'x' : ' '}] ${s.text}`).join('\n');
+          const desc = [t.project ? `关联项目：${t.project}` : '', t.due ? `截止日期：${t.due}` : '', stepLines ? `子步骤：\n${stepLines}` : ''].filter(Boolean).join('\n');
+          openDispatchTaskDialog({ title: t.text, desc, preferredProject: t.project || '' });
+        },
+      }),
       h('button', { type: 'button', class: 'btn tda-del', text: '删除计划', onclick: async () => {
         if (await confirmBox(`删除「${t.text}」${steps.length ? `和它的 ${steps.length} 条具体条目` : ''}？`, { title: '删除计划', ok: '删除', danger: true })) todos.remove(t.id);
       } })));
@@ -78,9 +91,10 @@ export function planRow(t, ctx) {
   const opened = ctx.open.has(t.id);
   const cls = t.done ? ' done' : t.due && t.due < today() ? ' late' : t.due === today() ? ' soon' : '';
   const prog = todos.progress(t);
+  const matchProj = t.project ? mesh.list().find((p) => p.id === t.project || String(p.name || '').toLowerCase() === String(t.project).toLowerCase()) : null;
   const meta = [
     ctx.showList ? todos.listName(todos.listOf(t)) : '',
-    t.project,
+    matchProj ? '' : t.project,
     t.due ? md(t.due) + ' 截止' : '',
     t.done && t.doneBy && t.doneBy.startsWith('report:') ? `日报 ${md(t.doneBy.slice(7))} 判定完成` : '',
   ].filter(Boolean);
@@ -90,7 +104,21 @@ export function planRow(t, ctx) {
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? '标回未完成' : '完成', onchange: (e) => todos.update(t.id, { done: e.target.checked }) }),
     h('div', { class: 'tda-pc' },
       t.done ? h('span', { class: 'tda-pt', text: t.text }) : editable('tda-pt', t.text, (v) => todos.update(t.id, { text: v }), ctx),
-      meta.length || prog ? h('small', { class: 'tda-pm' }, prog ? h('b', { class: 'tda-prog', text: `☰ ${prog}`, title: '具体条目完成了几条' }) : null, meta.join(' · ')) : null,
+      meta.length || prog || matchProj ? h('small', { class: 'tda-pm' },
+        prog ? h('b', { class: 'tda-prog', text: `☰ ${prog}`, title: '具体条目完成了几条' }) : null,
+        matchProj ? h('button', {
+          class: 'rs-link',
+          type: 'button',
+          style: 'margin-right:6px',
+          title: `在「项目管理」中打开 ${matchProj.name}`,
+          text: `↗ ${matchProj.name}`,
+          onclick: (e) => {
+            e.stopPropagation();
+            try { location.hash = '#proj=' + encodeURIComponent(matchProj.id) + '&tab=research'; } catch {}
+            import('./projects.js').then((m) => m.open(matchProj.id, { tab: 'research' })).catch(() => {});
+          },
+        }) : null,
+        meta.join(' · ')) : null,
       t.done && t.evidence ? h('small', { class: 'tda-ev', text: t.evidence }) : null,
       t.lit ? h('button', { class: 'td-lit', type: 'button', text: '打开文献' + (t.lit.page ? ` p.${t.lit.page}` : ''),
         onclick: () => import('./lit-reader.js').then((m) => m.openReader(t.lit.key, t.lit.page || undefined)) }) : null),

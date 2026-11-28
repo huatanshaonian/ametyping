@@ -23,7 +23,7 @@ export function openReader(key, page) {
   if (wm.has(id)) { wm.open({ id }); if (page && readers.get(key)) readers.get(key).goto(page); return; }
   const r = mountReader(key, page);
   readers.set(key, r);
-  wm.open({ id, title: '深读', icon: icon('help_book_big', true), content: r.root, width: notesOn() ? 1420 : 1100, height: 700, onClose: () => { r.destroy(); readers.delete(key); } });
+  wm.open({ id, title: '深读', icon: icon(document.querySelector('img[src*="catalog"]') ? 'search_file_2' : 'help_book_big', true), content: r.root, width: notesOn() ? 1420 : 1100, height: 700, onClose: () => { r.destroy(); readers.delete(key); } });
   r.setTitle = (t) => { const w = wm.get(id); if (w) w.handle.setTitle('深读：' + t); };
 }
 const readers = new Map();

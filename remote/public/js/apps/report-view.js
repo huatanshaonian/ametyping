@@ -4,6 +4,9 @@
 import { h } from '../util.js';
 import * as dashboard from './dashboard.js';
 import * as todos from '../todos.js';
+import * as mesh from '../mesh.js';
+import { openPath } from './explorer.js';
+import { renderCiteNodes } from './cite-link.js';
 
 const CAT = [['research', '科研'], ['personal', '个人小项目'], ['chore', '杂活']];
 const WEEK = '日一二三四五六';
@@ -15,8 +18,36 @@ const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(
 export const minutes = (m) => (m >= 60 ? `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m % 60} 分` : ''}` : `${m} 分钟`);
 
 const list = (title, items, cls) => (items && items.length
-  ? h('div', { class: 'rp-list ' + (cls || '') }, h('div', { class: 'rp-lt', text: title }), h('ul', {}, ...items.map((t) => h('li', { text: t }))))
+  ? h('div', { class: 'rp-list ' + (cls || '') }, h('div', { class: 'rp-lt', text: title }), h('ul', {}, ...items.map((t) => h('li', {}, ...renderCiteNodes(t)))))
   : null);
+
+function findMeshProject(name) {
+  const q = String(name || '').trim().toLowerCase();
+  if (!q) return null;
+  const all = mesh.list();
+  return all.find((p) => String(p.name || '').trim().toLowerCase() === q)
+    || all.find((p) => { const n = String(p.name || '').trim().toLowerCase(); return n && (q.includes(n) || n.includes(q)); })
+    || null;
+}
+
+function projectHeading(name) {
+  const mp = findMeshProject(name);
+  if (!mp) return [h('b', { text: name })];
+  return [
+    h('b', { text: name }),
+    h('button', {
+      class: 'rs-link',
+      type: 'button',
+      style: 'margin-left:6px;font-size:11px',
+      title: `在「项目管理」中打开 ${mp.name}`,
+      text: '↗ 项目',
+      onclick: () => {
+        try { location.hash = '#proj=' + encodeURIComponent(mp.id) + '&tab=research'; } catch {}
+        import('./projects.js').then((m) => m.open(mp.id, { tab: 'research' })).catch(() => {});
+      },
+    }),
+  ];
+}
 
 // ISO week number of a date (weeks start on Monday)
 export function weekNo(date) {
@@ -65,19 +96,19 @@ export function renderWeek(w, { openReport }) {
   const cats = CAT.filter(([k]) => k !== 'chore').map(([k, name]) => {
     const ps = (w.projects || []).filter((p) => p.category === k);
     return ps.length ? sec(`${name} · ${minutes(c[k] || 0)}`, ...ps.map((p) => h('div', { class: 'rp-proj' },
-      h('div', { class: 'rp-ph' }, h('b', { text: p.name })), p.summary ? h('p', { class: 'rp-sum', text: p.summary }) : null, list('进展', p.progress)))) : null;
+      h('div', { class: 'rp-ph' }, ...projectHeading(p.name)), p.summary ? h('p', { class: 'rp-sum' }, ...renderCiteNodes(p.summary)) : null, list('进展', p.progress)))) : null;
   });
   return h('article', { class: 'rp' },
     h('div', { class: 'rp-top' },
       h('div', { class: 'rp-day', text: `第 ${weekNo(w.start)} 周周报 · ${md(w.start)} – ${md(w.end)}` }),
       h('div', { class: 'rp-meta', text: `${minutes(s.minutes || 0)} · 工作 ${s.days || 0} 天 · ${s.sessions || 0} 个会话 · 杂活 ${s.chores || 0} 件${s.artifacts ? ' · 产出物 ' + s.artifacts + ' 个' : ''}` })),
-    h('p', { class: 'rp-head', text: w.headline || '' }),
-    (w.highlights || []).length ? sec('这周最值得记住的', h('ul', {}, ...w.highlights.map((x) => h('li', { text: x })))) : null,
+    h('p', { class: 'rp-head' }, ...renderCiteNodes(w.headline || '')),
+    (w.highlights || []).length ? sec('这周最值得记住的', h('ul', {}, ...w.highlights.map((x) => h('li', {}, ...renderCiteNodes(x))))) : null,
     ...cats,
     (w.todosDone || []).length ? sec('这周完成的重要计划', h('ul', {}, ...w.todosDone.map((t) => h('li', { text: `✓ ${t.text}（${md(t.date)}${t.evidence ? '，' + t.evidence : ''}）` })))) : null,
     (w.open || []).length ? sec('还没完成的重要计划', h('ul', {}, ...w.open.map((o) => h('li', { text: `${o.text}${o.project ? '（' + o.project + '）' : ''}${o.due ? ' · ' + md(o.due) + ' 截止' : ''}` })))) : null,
     (w.artifacts || []).length ? sec(`这周的产出物（${w.artifacts.length}）`, h('ul', {}, ...w.artifacts.map((a) => h('li', {},
-      h('code', { class: 'rp-ap', text: a.path }), h('small', { text: ` · ${a.machine} · ${md(a.date)}` }), a.note ? h('div', { class: 'rp-an', text: a.note }) : null)))) : null,
+      h('button', { class: 'rs-link rp-ap', type: 'button', title: `在 ${a.machine} 上打开`, text: a.path, onclick: () => openPath(a.machine, a.path) }), h('small', { text: ` · ${a.machine} · ${md(a.date)}` }), a.note ? h('div', { class: 'rp-an', text: a.note }) : null)))) : null,
     sec('每天', h('ul', { class: 'rs-list' }, ...(w.days || []).map((d) => h('li', {},
       h('button', { class: 'rs-link', type: 'button', text: dayName(d.date) + (d.brief ? '（补录）' : ''), onclick: () => openReport(d.date) }),
       h('small', { text: ` ${minutes(d.minutes || 0)} · ${d.headline}` }))))));
@@ -94,11 +125,13 @@ export function render(r) {
       onclick: () => dashboard.openSession(s.machine, s.id) });
   };
   const project = (p) => h('div', { class: 'rp-proj' },
-    h('div', { class: 'rp-ph' }, h('b', { text: p.name }), h('span', { class: 'rp-min', text: minutes(p.minutes || 0) })),
-    p.summary ? h('p', { class: 'rp-sum', text: p.summary }) : null,
+    h('div', { class: 'rp-ph' }, ...projectHeading(p.name), h('span', { class: 'rp-min', text: minutes(p.minutes || 0) })),
+    p.summary ? h('p', { class: 'rp-sum' }, ...renderCiteNodes(p.summary)) : null,
     list('做成了', p.done), list('决定', p.decisions), list('没做完', p.unfinished, 'todo'),
     p.files && p.files.length ? h('details', { class: 'rp-files' }, h('summary', { text: `改动的文件（${p.files.length}）` }),
-      h('ul', {}, ...p.files.map((f) => h('li', { text: `${f.path}${f.op === 'write' ? '（新写）' : ''} · ${f.machine}` })))) : null,
+      h('ul', {}, ...p.files.map((f) => h('li', {},
+        h('button', { class: 'rs-link', type: 'button', title: `在 ${f.machine} 上打开`, text: f.path, onclick: () => openPath(f.machine, f.path) }),
+        h('small', { text: `${f.op === 'write' ? '（新写）' : ''} · ${f.machine}` }))))) : null,
     h('div', { class: 'rp-sl' }, ...(p.sessions || []).map(sessLink)));
 
   const sections = [];
@@ -140,7 +173,7 @@ export function render(r) {
       const url = a.backed && a.sha ? `/api/artifact?sha=${a.sha}&name=${encodeURIComponent(name)}` : null;
       const where = a.unchecked ? '电脑离线，未检查' : !a.repo ? '不在任何仓库里' : !a.repo.remote ? '本地仓库（没有远程）' : a.repo.tracked === false ? '在仓库里但没提交' : '';
       return h('li', {},
-        h('div', {}, h('code', { class: 'rp-ap', text: a.path }), h('small', { text: ` · ${a.machine}${a.size ? ' · ' + size(a.size) : ''}${where ? ' · ' + where : ''}` })),
+        h('div', {}, h('button', { class: 'rs-link rp-ap', type: 'button', title: `在 ${a.machine} 上打开`, text: a.path, onclick: () => openPath(a.machine, a.path) }), h('small', { text: ` · ${a.machine}${a.size ? ' · ' + size(a.size) : ''}${where ? ' · ' + where : ''}` })),
         a.note ? h('div', { class: 'rp-an', text: a.note }) : null,
         url && IMG.test(name) ? h('a', { href: url, target: '_blank', rel: 'noopener' }, h('img', { class: 'rp-thumb', src: url, alt: name, loading: 'lazy' })) : null,
         h('div', { class: 'rp-sl' }, url ? h('a', { class: 'rp-sess', href: url, target: '_blank', rel: 'noopener', text: '打开群晖上的副本' }) : null,
@@ -156,7 +189,7 @@ export function render(r) {
     h('div', { class: 'rp-top' },
       h('div', { class: 'rp-day', text: r.draft ? '到现在为止（草稿）' : dayName(r.date) + (r.brief ? '（补录，简略）' : '') }),
       h('div', { class: 'rp-meta', text: `${when(r.from)} – ${when(r.to)} · ${minutes(st.minutes || 0)} · ${st.sessions || 0} 个会话 · ${st.machines || 0} 台电脑` })),
-    h('p', { class: 'rp-head', text: r.headline || '' }),
+    h('p', { class: 'rp-head' }, ...renderCiteNodes(r.headline || '')),
     // a harness with major changes is shown right under the headline, otherwise after the day's work
     hxMajor ? hxBox : null,
     ...sections, doneBox, openBox, plans, artBox, hxMajor ? null : hxBox, kw,

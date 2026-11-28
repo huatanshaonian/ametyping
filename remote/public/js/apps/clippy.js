@@ -113,11 +113,10 @@ function createClippyWidget() {
   const modelBtn = h('button', {
     class: 'clippy-head-btn',
     type: 'button',
-    title: '打开控制面板 → AI 模型设置',
+    title: '打开 AI 与额度中心 → 模型设置',
     text: '⚙',
-    onclick: async () => {
-      const c = await import('./control.js');
-      c.open('ai');
+    onclick: () => {
+      location.hash = '#ai?tab=models&sec=clippy';
     },
   });
   const closeBtn = h('button', {
@@ -274,7 +273,18 @@ function createClippyWidget() {
         h('p', { text: '会话 ' + e.session + ' · 记录 ' + e.line }),
         h('blockquote', { text: ev.quote }),
         h('pre', { text: e.text }),
-        h('button', { class: 'btn', text: '关闭', onclick: () => dlg.close() })
+        h('div', { class: 'pr-toolbar', style: 'margin-top:8px;justify-content:flex-end' },
+          e.machine && e.session ? h('button', {
+            class: 'btn go',
+            type: 'button',
+            text: '💬 在糖糖看板打开该会话',
+            onclick: () => {
+              dlg.close();
+              import('./dashboard.js').then((m) => m.openSession(e.machine, e.session)).catch(() => {});
+            },
+          }) : null,
+          h('button', { class: 'btn', type: 'button', text: '关闭', onclick: () => dlg.close() })
+        )
       );
       dlg.addEventListener('close', () => dlg.remove());
       document.body.append(dlg);
@@ -289,7 +299,7 @@ function createClippyWidget() {
       '查一下全量 npz 落盘和表面电流存储是在哪台电脑哪个分支做的？',
       '目前各工作树还有哪些未决问题和下一步计划？',
     ];
-    bodyArea.replaceChildren(
+    bodyArea.replaceChildren(...[
       ctx.changedCount > 0 && typeof ctx.onUpdateOverview === 'function' ? h('button', {
         class: 'clippy-update-alert',
         type: 'button',
@@ -307,8 +317,8 @@ function createClippyWidget() {
           text: '▸ ' + q,
           onclick: () => submitQuestion(q),
         }))
-      )
-    );
+      ),
+    ].filter(Boolean));
   }
 
   function renderAnswer(res, askedQ) {
@@ -317,7 +327,7 @@ function createClippyWidget() {
     const evs = Array.isArray(res.evidence) ? res.evidence : [];
     const followUps = Array.isArray(res.follow_ups) ? res.follow_ups : [];
 
-    bodyArea.replaceChildren(
+    bodyArea.replaceChildren(...[
       h('div', { class: 'clippy-q-echo' },
         h('span', { text: '问：' + askedQ }),
         h('button', {
@@ -382,8 +392,8 @@ function createClippyWidget() {
             onclick: () => submitQuestion(fq),
           }))
         )
-      ) : null
-    );
+      ) : null,
+    ].filter(Boolean));
   }
 
   async function submitQuestion(rawQ) {

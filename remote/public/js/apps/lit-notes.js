@@ -11,6 +11,7 @@ import { TOOLS } from './board-ink.js';
 import { icon as ico } from './board-icons.js';
 import { confirmBox } from '../dialog.js';
 import * as todos from '../todos.js';
+import { openDispatchTaskDialog } from './cite-link.js';
 
 const COLORS = ['#222222', '#d93025', '#1a73e8', '#188038'];
 const day = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${hhmm(t)}`; };
@@ -131,6 +132,12 @@ export function notesPanel(key, { curPage, selected, goto }) {
           const r = await post('/api/lit/notes/todo', { key, id: n.id });
           if (!r.ok) { flash(n.id, r.msg); e.target.disabled = false; e.target.textContent = '列入待办'; } else { await todos.load(); load(); }
         }, { disabled: rd }),
+        act('🚀 派发项目任务', '将这条深读笔记转化为协同项目的共享任务（mesh_task）', () => {
+          const textBody = (n.text || n.ocr || n.sel || '文献跟进任务').trim();
+          const firstLine = textBody.split('\n')[0].slice(0, 80);
+          const desc = `依据文献 [[${key}${n.page ? ', p.' + n.page : ''}]]：\n${n.sel ? `> ${n.sel}\n` : ''}${textBody}`;
+          openDispatchTaskDialog({ title: firstLine, desc });
+        }),
         act('删', '删掉这条笔记', async () => { if (await confirmBox('删掉这条笔记？', { title: '删除笔记', ok: '删除', danger: true })) { await post('/api/lit/notes/delete', { key, id: n.id }); if (editing && editing.id === n.id) reset(); else load(); } }),
         h('small', { class: 'lit-st ln-msg' })));
   }

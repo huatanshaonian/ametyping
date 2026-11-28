@@ -5,6 +5,8 @@
 import { h } from '../util.js';
 import * as wm from '../wm.js';
 import * as net from '../net.js';
+import * as todos from '../todos.js';
+import { askText } from '../dialog.js';
 import * as reports from './reports.js';
 import * as google from './google.js';
 import { minutes, weekNo } from './report-view.js';
@@ -12,17 +14,28 @@ import { minutes, weekNo } from './report-view.js';
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const hm = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const parseDate = (arg) => {
+  const s = typeof arg === 'string' ? arg : (arg && arg.date);
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
 
 let app = null;
-export function open() {
-  if (app) { wm.open({ id: 'calendar' }); app.load(true); return; }
-  app = mount();
+export function open(dateStr) {
+  const target = parseDate(dateStr);
+  if (app) {
+    wm.open({ id: 'calendar' });
+    if (target) app.gotoDate(target);
+    else app.load(true);
+    return;
+  }
+  app = mount(target);
   wm.open({ id: 'calendar', title: '日历', icon: '/icons/calendar-16.png', content: app.root, width: 900, height: 600, onClose: () => { app.destroy(); app = null; } });
 }
 
-function mount() {
-  let cur = new Date(); cur.setDate(1);
-  let data = null, selDay = null;
+function mount(initialDate = null) {
+  let cur = initialDate ? new Date(initialDate + 'T12:00:00') : new Date();
+  cur.setDate(1);
+  let data = null, selDay = initialDate;
   const title = h('b', { class: 'cal-title' });
   const gstat = h('span', { class: 'cal-g' });
   const grid = h('div', { class: 'cal-grid' });
@@ -94,7 +107,43 @@ function mount() {
         h('p', {}, h('button', { class: 'rs-link', type: 'button', text: d.report.headline || '（打开日报）', onclick: () => reports.open(date) })),
         h('small', { text: minutes(d.report.minutes || 0) + (d.report.brief ? ' · 补录' : '') })) : null,
       week ? h('div', { class: 'cal-sec' }, h('b', { text: '周报' }), h('p', {}, h('button', { class: 'rs-link', type: 'button', text: `第 ${weekNo(week.start)} 周：${week.headline}`, onclick: () => reports.open('week-' + week.start) }))) : null,
-      d.todos.length ? h('div', { class: 'cal-sec' }, h('b', { text: '到期的重要计划' }), h('ul', {}, ...d.todos.map((t) => h('li', { text: (t.done ? '✓ ' : '□ ') + t.text })))) : null,
+      h('div', { class: 'cal-sec' },
+        h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:6px' },
+          h('b', { text: '到期的重要计划' }),
+          h('button', {
+            class: 'btn',
+            type: 'button',
+            text: '＋ 当日计划',
+            title: `新建截止日期为 ${date} 的重要计划`,
+            onclick: async () => {
+              const txt = await askText({ title: `新建 ${date} 当日计划`, label: '计划内容：', max: 300 });
+              if (!txt) return;
+              const r = await todos.add(txt, { due: date });
+              if (r && r.ok) load();
+            },
+          })
+        ),
+        d.todos.length
+          ? h('ul', {}, ...d.todos.map((t) => h('li', { class: t.done ? 'done' : '', style: 'display:flex;align-items:center;gap:4px' },
+            h('input', {
+              type: 'checkbox',
+              checked: !!t.done,
+              title: t.done ? '标回未完成' : '勾选完成',
+              onchange: async (e) => { await todos.update(t.id, { done: e.target.checked }); load(); },
+            }),
+            h('button', {
+              class: 'rs-link',
+              type: 'button',
+              text: t.text,
+              title: '在「重要计划」中打开并查看子步骤',
+              onclick: () => {
+                try { location.hash = '#todo?plan=' + encodeURIComponent(t.id); } catch {}
+                import('./todo-app.js').then((m) => m.open({ plan: t.id })).catch(() => {});
+              },
+            })
+          )))
+          : h('p', { class: 'rp-empty', text: '这天没有到期计划。' })
+      ),
       d.events.length ? h('div', { class: 'cal-sec' }, h('b', { text: 'Google 日历' }), h('ul', {}, ...d.events.map((e) => h('li', {},
         h('span', { text: (e.allDay ? '全天 ' : `${hm(e.start)}–${hm(e.end)} `) + e.title }), e.location ? h('small', { text: ' · ' + e.location }) : null)))) : null,
       d.tasks.length ? h('div', { class: 'cal-sec' }, h('b', { text: 'Google 任务' }), h('ul', {}, ...d.tasks.map((t) => h('li', { class: t.done ? 'done' : '' },
@@ -111,6 +160,12 @@ function mount() {
   offs.push(() => document.removeEventListener('visibilitychange', onVisible));
   const ro = new ResizeObserver(() => root.classList.toggle('narrow', root.clientWidth < 700));
   ro.observe(root);
+  function gotoDate(date) {
+    cur = new Date(date + 'T12:00:00');
+    cur.setDate(1);
+    selDay = date;
+    load(true);
+  }
   load(true);
-  return { root, load, destroy() { for (const off of offs) off(); ro.disconnect(); } };
+  return { root, load, gotoDate, destroy() { for (const off of offs) off(); ro.disconnect(); } };
 }

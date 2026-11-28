@@ -219,6 +219,14 @@ export function openSpawnDialog(proj, { say }) {
       h('label', { class: 'xnote-lbl', text: '首轮具体指令：' }),
       promptIn,
       h('div', { class: 'dlga' },
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          style: 'margin-right:auto',
+          title: '打开 AI 与额度中心配置全局模型池与角色模板',
+          text: '⚙ 模型池与角色',
+          onclick: () => { done(); location.hash = '#ai?tab=models'; },
+        }),
         h('button', { class: 'btn', type: 'button', text: '取消', onclick: done }),
         h('button', { class: 'btn go', type: 'submit', text: '启动并加入拓扑' })
       )

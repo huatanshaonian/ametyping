@@ -9,6 +9,7 @@ import { renderMd } from './lit-md.js';
 import { visionBox } from './lit-vision.js';
 import { pdfqBox } from './lit-pdfq.js';
 import { downloadBox } from './lit-download.js';
+import { openDispatchTaskDialog } from './cite-link.js';
 import * as backnav from '../backnav.js';
 
 export function mount(el, ctx) {
@@ -81,6 +82,10 @@ export function mount(el, ctx) {
       d.card ? btn(meta.starred ? '★ 已星标' : '☆ 星标', '星标 = 进深读清单', async () => { await post('/api/lit/card/meta', { key, starred: !meta.starred }); show(key, true); loadList(); }) : null,
       d.card && d.card.meta.status !== 'none' ? btn(meta.verified ? '✓ 已核对' : '核对过了', '你对照原文检查过这张卡片', async () => { await post('/api/lit/card/meta', { key, verified: !meta.verified }); show(key, true); }) : null,
       d.card ? btn('编辑', '直接改卡片的 Markdown（Obsidian 里改也行）', () => edit(d)) : null,
+      btn('📌 沉淀为项目记忆', '把这篇文献的关键公式、适用边界或核实结论带引用沉淀到项目专属记忆', () => {
+        const body = `来源文献 [[${d.citekey || d.key}]]：\n标题：${d.title || ''}${d.doi ? `\nDOI：${d.doi}` : ''}\n\n核实结论：\n`;
+        import('./knowledge.js').then((m) => m.open({ tab: 'memory', compose: { scope: 'project', name: (d.title || d.citekey || '文献结论').slice(0, 60), body } })).catch(() => {});
+      }),
       !d.pdf && d.pdfVia ? btn('走图书馆通道下载', '用网页桌面里登录着图书馆的浏览器下载这篇的 PDF（排队，一次一篇）', async (e) => { const r = await post('/api/lit/pdfq/add', { key }); if (r.ok) show(key, true); else e.target.textContent = r.msg || '没排上'; }) : null,
       !d.pdf ? upBtn : null, !d.pdf ? pick : null);
     if (vbox && (vbox.key !== key || !quiet)) { vbox.destroy(); vbox = null; }
@@ -96,13 +101,14 @@ export function mount(el, ctx) {
     d.card && d.card.meta.getpdf ? h('div', { class: 'lb-tip', text: '建议找全文：' + d.card.meta.getpdf }) : null,
     d.actions.length ? h('div', { class: 'lb-sec' }, h('h4', { text: '可以采取的行动' }), ...d.actions.map((a) => h('div', { class: 'lb-act' + (a.done ? ' done' : '') },
       h('span', { text: (a.done ? '☑ ' : '☐ ') + a.text }),
-      h('button', { class: 'btn', type: 'button', text: '加入重要计划', onclick: async (e) => { const r = await post('/api/lit/action/todo', { key, text: a.text }); e.target.textContent = r.ok ? '已加入' : (r.msg || '没加上'); e.target.disabled = r.ok; } })))) : null,
+      h('button', { class: 'btn', type: 'button', text: '加入重要计划', onclick: async (e) => { const r = await post('/api/lit/action/todo', { key, text: a.text }); e.target.textContent = r.ok ? '已加入' : (r.msg || '没加上'); e.target.disabled = r.ok; } }),
+      h('button', { class: 'btn', type: 'button', text: '🚀 派发项目任务', title: '将该行动转化为协同项目的共享任务（mesh_task）', onclick: () => openDispatchTaskDialog({ title: a.text, desc: `依据文献 [[${d.citekey || d.key}]]：${d.title || ''}\n行动项：${a.text}` }) })))) : null,
     d.card ? cardBox : h('p', { class: 'lit-empty', text: '还没有卡片：点「速读卡」先看个大概，或「深读」边读边写。' }),
     d.annotations.length ? h('details', { class: 'lb-sec' }, h('summary', { text: `我的批注（${d.annotations.length}）` }),
       h('ul', {}, ...d.annotations.map((a) => h('li', {}, a.type === 'ink' ? h('i', { text: '（手写）' }) : h('span', { text: a.text ? `“${a.text}”` : '' }), a.comment ? h('b', { text: ' ' + a.comment }) : null, a.page ? h('small', { text: ` p.${a.page}` }) : null)))) : null,
     d.abstract ? h('details', { class: 'lb-sec', open: !d.card || absOpen === key, ontoggle: (e) => { absOpen = e.target.open ? key : ''; } }, h('summary', { text: d.abstractTr ? '摘要（中文对照）' : '摘要' }), abstractBody(d.abstract, d.abstractTr),
       !d.abstractTr && d.abstractForeign ? btn('中文对照', '把摘要逐句译成中文，和原文并排', async (e) => { e.target.disabled = true; e.target.textContent = '翻译中…'; absOpen = key; const r = await post('/api/lit/translate', { key }); if (r.ok) show(key, true); else { e.target.disabled = false; e.target.textContent = r.msg || '没译出来'; } }) : null) : null].filter(Boolean));
-    if (d.card) renderMd(cardBox, d.card.text, { onLink: (k) => ctx.openCitekey(k), onPage: (n) => ctx.openReader(key, n) });
+    if (d.card) renderMd(cardBox, d.card.text, { onLink: (k, pg) => ctx.openCitekey(k, pg), onPage: (n) => ctx.openReader(key, n) });
     if (!quiet) view.scrollTop = 0;
     el.classList.add('viewing');
   }
@@ -118,19 +124,34 @@ export function mount(el, ctx) {
       } }), h('button', { class: 'btn', type: 'button', text: '取消', onclick: () => show(d.key) }), msg)), ta);
   }
 
-  async function select({ key, citekey }) {
+  async function select({ key, citekey, page }) {
     if (citekey && !key) {
       const r = await get('/api/lit/library?q=' + encodeURIComponent(citekey));
       const hit = ((r && r.items) || []).find((x) => x.citekey === citekey);
       if (!hit) return;
       key = hit.key;
     }
-    if (key) show(key);
+    if (key) {
+      await show(key);
+      if (page && ctx.openReader) ctx.openReader(key, Number(page) || undefined);
+    }
+  }
+  function prefillDoi(doi) {
+    const inp = dl.el.querySelector('.ldl-in');
+    if (inp) {
+      inp.value = String(doi || '').trim();
+      inp.focus();
+      inp.select();
+    }
+  }
+  function search(text) {
+    q.value = String(text || '').trim();
+    loadList();
   }
   listEl.addEventListener('click', (e) => { const it = e.target.closest('.lb-i'); if (it) show(it.dataset.key); });
   colSel.addEventListener('change', loadList); filt.addEventListener('change', loadList);
   q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(loadList, 250); });
   let first = true;
   async function refresh() { pdfq.refresh(); dl.refresh(); if (first) { first = false; await loadCols(); } await loadList(); }
-  return { refresh, select, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (w === 'pdfq') pdfq.refresh(); if (/^(downloads|pdfq|library)$/.test(w)) dl.refresh(); if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
+  return { refresh, select, prefillDoi, search, onLit: (w) => { if (w === 'library') { loadCols(); loadList(); } if (w === 'pdfq') pdfq.refresh(); if (/^(downloads|pdfq|library)$/.test(w)) dl.refresh(); if (cur && (w === 'card:' + cur || w === 'kb' || w === 'pdfq')) show(cur, true); } };
 }

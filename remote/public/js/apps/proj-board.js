@@ -78,6 +78,7 @@ export function createBoardTab(proj, { say, boardDrafts }) {
   let loading = false;
   let loadToken = 0;
   let destroyed = false;
+  let pendingSeq = null;
 
   const taskStripEl = h('div', { class: 'pm-task-strip' });
   const channelBarEl = h('div', { class: 'pm-channel-bar' });
@@ -368,6 +369,11 @@ export function createBoardTab(proj, { say, boardDrafts }) {
       loadedSeq = typeof r.latestSeq === 'number' ? r.latestSeq : (curProj.boardSeq || 0);
     }
     renderFeed();
+    if (pendingSeq != null) {
+      const target = pendingSeq;
+      pendingSeq = null;
+      setTimeout(() => jumpToSeq(target), 20);
+    }
   }
 
   async function submitPost() {
@@ -408,6 +414,10 @@ export function createBoardTab(proj, { say, boardDrafts }) {
   return {
     projectId: proj.id,
     root: rootEl,
+    jumpToSeq(seqNum) {
+      if (loading && !entries.length) { pendingSeq = seqNum; return; }
+      jumpToSeq(seqNum);
+    },
     update(nextProj) {
       curProj = nextProj;
       renderTasks(nextProj);

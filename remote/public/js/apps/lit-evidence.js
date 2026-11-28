@@ -148,7 +148,7 @@ function tableView(ctx, schema, say) {
       showCell(key, field); panel.querySelector('.lit-st').textContent = '已保存，标为人审确认。';
     } });
     const page = +c.page || 0;
-    panel.replaceChildren(
+    panel.replaceChildren(...[
       h('div', { style: 'display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;' },
         h('b', { style: 'color:var(--border);', text: (f.label || f.key) + '：' }),
         h('span', { style: 'color:var(--ink);', text: it.title || key }),
@@ -160,8 +160,20 @@ function tableView(ctx, schema, say) {
       h('div', { class: 'gbtns', style: 'display:flex;gap:6px;flex-wrap:wrap;margin:4px 0;' },
         h('a', { class: 'btn', href: pdfPageUrl(key, page), target: '_blank', rel: 'noopener', text: page ? `打开 PDF 第 ${page} 页` : '打开 PDF' }),
         ctx.openReader ? h('button', { class: 'btn', type: 'button', text: page ? `深读窗口第 ${page} 页` : '深读窗口', onclick: () => ctx.openReader(key, page || undefined) }) : null,
-        ctx.openItem ? h('button', { class: 'btn', type: 'button', text: '文献库里看这篇', onclick: () => ctx.openItem(key) }) : null),
-      h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;' }, val, unit, save, msg));
+        ctx.openItem ? h('button', { class: 'btn', type: 'button', text: '文献库里看这篇', onclick: () => ctx.openItem(key) }) : null,
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '📌 沉淀为项目记忆',
+          title: '将此条核实证据带文献页码引用沉淀到项目专属记忆',
+          onclick: () => {
+            const cite = it.citekey || key;
+            const body = `来源文献 [[${cite}${page ? ', p.' + page : ''}]]：\n字段：${f.label || f.key} = ${str(c.value)}${c.unit ? ' ' + c.unit : ''}\n${c.quote ? '> ' + c.quote + '\n' : ''}核实结论：\n`;
+            import('./knowledge.js').then((m) => m.open({ tab: 'memory', compose: { scope: 'project', name: `${f.label || f.key} — ${cite}`, body } })).catch(() => {});
+          },
+        })),
+      h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;' }, val, unit, save, msg),
+    ].filter(Boolean));
     panel.hidden = false;
   }
   let t = null;
@@ -222,7 +234,17 @@ function conflictView(ctx, schema, say) {
       h('div', { style: 'display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;' },
         h('button', { class: 'btn go', type: 'button', text: '确认有价值', disabled: stat === 'confirmed', onclick: () => set('confirmed') }),
         h('button', { class: 'btn no', type: 'button', text: '误报忽略', disabled: stat === 'dismissed', onclick: () => set('dismissed') }),
-        stat !== 'pending' ? h('button', { class: 'btn', type: 'button', text: '退回待判断', onclick: () => set('pending') }) : null));
+        stat !== 'pending' ? h('button', { class: 'btn', type: 'button', text: '退回待判断', onclick: () => set('pending') }) : null,
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          text: '📌 沉淀为项目记忆',
+          title: '将该条矛盾或适用边界分析沉淀为项目专属记忆',
+          onclick: () => {
+            const body = `来源：文献证据表（${v}）\n主题：${x.topic || ''}\n${x.summary || ''}\n${Array.isArray(x.claimIds) && x.claimIds.length ? `涉及论断：${x.claimIds.join('、')}\n` : ''}`;
+            import('./knowledge.js').then((m) => m.open({ tab: 'memory', compose: { scope: 'project', name: (x.topic || '文献边界结论').slice(0, 60), body } })).catch(() => {});
+          },
+        })));
   }
   status.addEventListener('change', draw);
   return { el, refresh, reset() { runMsg.textContent = ''; } };
@@ -319,7 +341,7 @@ function matrixView(ctx, schema, say) {
     const gapBox = gaps.length ? h('div', { style: 'margin-top:10px;font-size:12.5px;' },
       h('b', { style: 'color:var(--border);', text: `空白组合（${gaps.length}）：` }),
       h('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;' }, ...gaps.map((g) => h('i', { class: 'tag', style: 'font-size:11.5px;', text: gapText(g) })))) : null;
-    scroll.replaceChildren(table, gapBox);
+    scroll.replaceChildren(...[table, gapBox].filter(Boolean));
   }
   function gapText(g) {
     if (g == null) return '';

@@ -27,12 +27,41 @@ function mount(first) {
   const q = h('input', { class: 'field rq', type: 'search', placeholder: '搜索日报、对话、文件（空格分开多个词）', maxlength: 200 });
   const searchBtn = h('button', { class: 'btn', type: 'button', text: '搜索' });
   const askBtn = h('button', { class: 'btn', type: 'button', text: '问一问', title: '用一句话问（例如「上次画 RCS 图的脚本在哪」），从日报、对话和产出物里找答案' });
+  const memBanner = h('div', { class: 'rbar', hidden: true });
   const root = h('div', { class: 'reports' },
     h('div', { class: 'rbar' }, back, q, searchBtn, askBtn),
     h('div', { class: 'rbar' }, draftBtn, fillBtn, status),
+    memBanner,
     h('div', { class: 'rmain' }, listEl, view));
   let sel = first, data = { items: [], weeks: [], status: {} }, poll = null;
   const md = (d) => d.slice(5).replace('-', '/');
+
+  async function checkPendingMemory() {
+    try {
+      const r = await fetch('/api/knowledge', { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const n = Number(d && d.pendingReviews) || 0;
+      if (n > 0) {
+        memBanner.hidden = false;
+        memBanner.replaceChildren(
+          h('span', { text: `🧠 今日增量记忆审阅有 ${n} 组冲突待裁决` }),
+          h('button', {
+            class: 'btn go',
+            type: 'button',
+            style: 'margin-left:auto',
+            text: '前往裁决 ↗',
+            onclick: () => {
+              try { location.hash = '#knowledge?tab=review'; } catch {}
+              import('./knowledge.js').then((m) => m.open({ tab: 'review' })).catch(() => {});
+            },
+          })
+        );
+      } else {
+        memBanner.hidden = true;
+      }
+    } catch {}
+  }
 
   async function load(date, show = true) {
     sel = date; view.dataset.loaded = '1'; if (show) root.classList.add('viewing');
@@ -135,5 +164,6 @@ function mount(first) {
   backnav.pane(root, 'viewing', () => back.click());                              // (a phone's back gesture: js/backnav.js)
   ro.observe(root);
   refresh();
+  checkPendingMemory();
   return { root, refresh, show: (date) => load(date), destroy() { clearTimeout(poll); clearTimeout(askT); ro.disconnect(); } };
 }

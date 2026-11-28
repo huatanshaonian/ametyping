@@ -1,5 +1,6 @@
 // Shared constants and pure helpers for the AmeMesh Projects app (proj-*.js).
 import { h } from '../util.js';
+import { renderCiteNodes } from './cite-link.js';
 
 export const ROLE_NAMES = {
   master: 'Master 主控',
@@ -60,7 +61,7 @@ export function renderPostBody(text, onJumpSeq) {
     const idx = m.index;
     const tok = m[0];
     if (tok.startsWith('@') && idx > 0 && /[A-Za-z0-9_]/.test(src[idx - 1])) continue;
-    if (idx > last) body.append(document.createTextNode(src.slice(last, idx)));
+    if (idx > last) body.append(...renderCiteNodes(src.slice(last, idx)));
     if (tok.startsWith('@')) {
       body.append(h('span', { class: 'pm-mention', text: tok }));
     } else {
@@ -75,7 +76,7 @@ export function renderPostBody(text, onJumpSeq) {
     }
     last = idx + tok.length;
   }
-  if (last < src.length) body.append(document.createTextNode(src.slice(last)));
+  if (last < src.length) body.append(...renderCiteNodes(src.slice(last)));
   return body;
 }
 

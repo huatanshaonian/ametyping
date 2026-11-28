@@ -16,7 +16,8 @@ export const stripFront = (text) => String(text || '').replace(/^---\r?\n[\s\S]*
 export async function renderMd(el, text, { onLink, onPage } = {}) {
   const src = stripFront(text)
     .replace(/^(\s*)- \[ \] /gm, '$1- ☐ ').replace(/^(\s*)- \[x\] /gim, '$1- ☑ ')
-    .replace(/\[\[([^\]|#\n]+)(?:\|([^\]\n]+))?\]\]/g, (m, k, label) => `[${label || k}](#lit:${encodeURIComponent(k.trim())})`)
+    .replace(/\[\[([^\]|#\n]+?)(?:,\s*p\.?\s*(\d{1,4}))?(?:\|([^\]\n]+))?\]\]/g, (m, k, pg, label) => `[${label || (pg ? `${k.trim()} p.${pg}` : k.trim())}](#lit:${encodeURIComponent(k.trim())}${pg ? `|p=${pg}` : ''})`)
+    .replace(/\[cite:\s*([A-Za-z0-9_.:/-]+?)(?:(?:,\s*|\s+)p\.?\s*(\d{1,4}))?\s*\]/g, (m, k, pg) => `[${pg ? `${k.trim()} p.${pg}` : k.trim()}](#lit:${encodeURIComponent(k.trim())}${pg ? `|p=${pg}` : ''})`)
     .replace(/\[p\.\s?(\d{1,4})\]/g, (m, n) => `[p.${n}](#page:${n})`)
     .replace(/!\[([^\]\n]*)\]\((?:\.\.\/)?(figures\/[^)\s]+\.png)\)/g, (m, alt, rel) => `![${alt}](${figUrl(rel)})`);
   const math = createMath();
@@ -31,7 +32,17 @@ export async function renderMd(el, text, { onLink, onPage } = {}) {
   await drawFlows([...el.querySelectorAll('pre > code.language-mermaid')]);
   for (const a of el.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href');
-    if (href.startsWith('#lit:')) { a.classList.add('wlink'); a.addEventListener('click', (e) => { e.preventDefault(); if (onLink) onLink(decodeURIComponent(href.slice(5))); }); }
+    if (href.startsWith('#lit:')) {
+      a.classList.add('wlink');
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        const raw = href.slice(5);
+        const [encKey, pPart] = raw.split('|p=');
+        const key = decodeURIComponent(encKey);
+        const pg = pPart ? Number(pPart) || undefined : undefined;
+        if (onLink) onLink(key, pg);
+      });
+    }
     else if (href.startsWith('#page:')) { a.classList.add('plink'); a.addEventListener('click', (e) => { e.preventDefault(); if (onPage) onPage(+href.slice(6)); }); }
     else if (/^https?:/i.test(href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
     else a.removeAttribute('href');

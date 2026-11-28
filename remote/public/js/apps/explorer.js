@@ -180,12 +180,12 @@ function create(machine, startPath, startPick) {
     const info = catalog.get(machine, cur);
     if (!info || (!info.tag && !info.userNote && !info.aiNote)) { curBanner.hidden = true; return; }
     curBanner.hidden = false;
-    curBanner.replaceChildren(
+    curBanner.replaceChildren(...[
       info.tag ? h('span', { class: 'xtag', text: info.tagLabel || info.tag }) : null,
       info.userNote ? h('span', { class: 'xunote', text: '我的备注：' + info.userNote }) : null,
       info.aiNote ? h('span', { class: 'xainote', text: 'AI备注：' + info.aiNote }) : null,
-      h('button', { class: 'btn xact', type: 'button', text: '编辑备注', onclick: () => openNoteDialog(machine, cur) })
-    );
+      h('button', { class: 'btn xact', type: 'button', text: '编辑备注', onclick: () => openNoteDialog(machine, cur) }),
+    ].filter(Boolean));
   }
 
   function setTitle() { win.setTitle(`${machine} — ${cur || '我的电脑'}`); addr.value = cur || ''; up.disabled = cur == null; launchBtn.disabled = cur == null; syncUp(); renderBanner(); }

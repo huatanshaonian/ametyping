@@ -32,7 +32,10 @@ export function researchTab(project) {
     const e=r.item,dialog=h('dialog',{class:'pr-evidence'}),raw='/api/research/raw?project='+encodeURIComponent(project.id)+'&id='+encodeURIComponent(e.document);
     dialog.append(h('b',{text:e.machine+' · '+e.session+' · 原始记录位置 '+e.line}),
       ...e.around.map(x=>h('div',{},h('small',{text:x.line+' · '+x.role+' · '+x.kind}),h('pre',{text:x.text}))),
-      h('a',{href:raw,text:'下载对应版本原始存档'}),h('button',{class:'btn',text:'关闭',onclick:()=>dialog.close()}));
+      h('div',{class:'pr-toolbar',style:'margin-top:8px;justify-content:flex-end'},
+        h('a',{class:'btn',href:raw,text:'下载对应版本原始存档'}),
+        e.machine&&e.session?h('button',{class:'btn go',type:'button',text:'💬 在糖糖看板打开该会话',onclick:()=>{dialog.close();import('./dashboard.js').then(m=>m.openSession(e.machine,e.session)).catch(()=>{});}}):null,
+        h('button',{class:'btn',type:'button',text:'关闭',onclick:()=>dialog.close()})));
     dialog.addEventListener('close',()=>dialog.remove());root.append(dialog);dialog.showModal();
   }});}
   function refs(evidence){return h('div',{class:'pr-refs'},...(evidence||[]).map(e=>h('details',{},h('summary',{text:'证据引用'}),h('blockquote',{text:e.quote}),evidenceButton(e.event_id))));}
