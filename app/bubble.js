@@ -5,11 +5,48 @@ const $ = (id) => document.getElementById(id);
 const list = $('list'), log = $('log'), se = $('se');
 se.volume = 0.45;
 let data = [], selected = null, pinned = false, typeTimer = null, lastTypedKey = '', collapsed = false, sentUnread = -1;
+let localMachine = '';
 const seen = {};                       // session id -> last activity time the user has looked at
 
+function applyShade(shade) {
+  if (['dusk', 'night', 'plum', 'desert', 'green'].includes(shade)) document.documentElement.dataset.shade = shade;
+  else delete document.documentElement.dataset.shade;
+}
+if (window.bubble && window.bubble.onShade) window.bubble.onShade(applyShade);
+
+// Ensure #hopen and #htopo exist (uses #hopen/#htopo from bubble.html if present; creates fallback buttons otherwise)
+function ensureHeadBtn(id, text, title) {
+  let b = $(id);
+  if (!b && $('head')) {
+    b = document.createElement('button');
+    b.id = id;
+    b.className = 'hbtn';
+    b.type = 'button';
+    b.hidden = true;
+    b.textContent = text;
+    b.title = title;
+    $('head').appendChild(b);
+  }
+  return b;
+}
+const hopenBtn = ensureHeadBtn('hopen', '↗ 看板', '在网页看板中打开此会话');
+const htopoBtn = ensureHeadBtn('htopo', '🕸 拓扑', '在项目拓扑中打开此节点');
+
+function openSessionInWeb() {
+  const s = data.find((x) => x.id === selected);
+  if (!s || !window.bubble || !window.bubble.openExternal) return;
+  const hash = localMachine ? '#s=' + encodeURIComponent(localMachine + '|' + s.id) : '#dashboard';
+  window.bubble.openExternal(hash);
+}
+
+function openTopoInWeb() {
+  const s = data.find((x) => x.id === selected);
+  if (!s || !s.mesh || !s.mesh.projectId || !window.bubble || !window.bubble.openExternal) return;
+  const hash = '#proj=' + encodeURIComponent(s.mesh.projectId) + '&tab=topo' + (s.mesh.nodeId ? '&node=' + encodeURIComponent(s.mesh.nodeId) : '');
+  window.bubble.openExternal(hash);
+}
+
 const WORKING = new Set(['message', 'thinking', 'reading', 'error']);
-// "waiting" is two things: a permission asked (a card here, or a 确认 line when the card has gone) -- 等你确认; and
-// Claude Code's notice that it has stopped and waits for the next message -- 等你回复
 const confirming = (s) => !!(s.permissions || []).length || /确认/.test(([...(s.lines || [])].reverse().find((l) => !l.sep) || {}).text || '');
 const stateName = (st, s) => (WORKING.has(st) ? ['working', '进行中'] : st === 'waiting' ? ['waiting', s && !confirming(s) ? '等你回复' : '等你确认']
   : st === 'done' ? ['done', '完成'] : st === 'paused' ? ['idle', '已中断'] : st === 'ended' ? ['idle', '已关闭'] : ['idle', '空闲']);
@@ -17,7 +54,6 @@ const ago = (t0) => { const s = Math.round((Date.now() - t0) / 1000); return s <
 const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const lastText = (s) => { for (let i = s.lines.length - 1; i >= 0; i--) if (!s.lines[i].sep) return s.lines[i].text; return '…'; };
 
-// unread = new activity you have not looked at; while collapsed nothing is being looked at, so the selected one counts too
 const isUnread = (s) => (seen[s.id] || 0) < s.last && (collapsed || s.id !== selected);
 
 function header() {
@@ -26,16 +62,20 @@ function header() {
   $('meta').textContent = [running && `${running} 个在跑`, waiting && `${waiting} 个等你`].filter(Boolean).join(' · ') || '都停下了';
   const nUnread = data.filter(isUnread).length;
   $('ub').classList.toggle('on', nUnread > 0); $('ubn').textContent = nUnread;
-  if (nUnread !== sentUnread) { sentUnread = nUnread; window.bubble.unread(nUnread); }   // P-chan's badge (main forwards it to Ame)
+  if (nUnread !== sentUnread) { sentUnread = nUnread; window.bubble.unread(nUnread); }
   const s = data.find((x) => x.id === selected);
   if (s) {
     $('hname').textContent = s.project && s.project !== s.label ? `${s.label}  ─ ${s.project}` : s.label;
     $('hmeta').textContent = `${stateName(s.state, s)[1]}${s.steps ? ` · 第${s.steps}步` : ''} · ${ago(s.t0)}`;
+    if (hopenBtn) hopenBtn.hidden = false;
+    if (htopoBtn) htopoBtn.hidden = !(s.mesh && s.mesh.projectId);
+  } else {
+    if (hopenBtn) hopenBtn.hidden = true;
+    if (htopoBtn) htopoBtn.hidden = true;
   }
 }
 
-// cards are kept and updated in place (rebuilding them on every event swallowed clicks mid-press)
-const cards = new Map();                 // session id -> element
+const cards = new Map();
 function renderList() {
   const ids = new Set(data.map((s) => s.id));
   for (const [id, el] of cards) if (!ids.has(id)) { el.remove(); cards.delete(id); }
@@ -50,7 +90,7 @@ function renderList() {
     if (list.children[i] !== c) list.insertBefore(c, list.children[i] || null);
     const [cls, name] = stateName(s.state, s);
     c.className = 'card' + (s.id === selected ? ' sel' : '') + (isUnread(s) ? ' unread' : '');
-    const nm = c.querySelector('.nm');                               // (后台: Claude Code's background session, no terminal window of its own)
+    const nm = c.querySelector('.nm');
     nm.textContent = s.label + (s.bg ? '（后台）' : '');
     let mark;
     if (s.provider === 'opencode' || s.provider === 'agy' || s.provider === 'kiro') {
@@ -66,15 +106,13 @@ function renderList() {
     } else {
       mark = document.createElement('span'); mark.className = 'prov ' + (s.provider === 'codex' ? 'cdx' : 'cla');
     }
-    nm.prepend(mark);   // whose session
+    nm.prepend(mark);
     c.querySelector('.sm').textContent = lastText(s);
     const st = c.querySelector('.st'); st.className = 'st ' + cls;
     st.textContent = `${s.provider === 'codex' ? 'Codex' : s.provider === 'opencode' ? 'OpenCode' : s.provider === 'agy' ? 'Antigravity' : s.provider === 'kiro' ? 'Kiro' : 'Claude'} · ${name}`;
   });
 }
-// select on press (not click): nothing can swap the element between press and release
-// The panel never takes focus (so typing elsewhere is not interrupted); such windows get no mouse-move
-// messages, so e.target can be the element under the PREVIOUS cursor position. Hit-test the real point.
+
 list.addEventListener('pointerdown', (e) => {
   const hit = document.elementFromPoint(e.clientX, e.clientY);
   const c = hit && hit.closest('.card');
@@ -120,12 +158,10 @@ function renderLog(typeNewest) {
 
 function renderAll(typeNewest) { renderList(); if (!chatOn) renderLog(typeNewest); renderPermissions(); header(); }
 
-// Keep permission cards stable while progress and terminal updates arrive.
 const permissionCards = new Map();
 function renderPermissions() {
   const s = data.find((x) => x.id === selected);
   const requests = s && s.permissions || [];
-  // still asking but the card is gone (its hook gave up after an hour): say where to answer instead of showing nothing
   const lastLine = s && [...s.lines].reverse().find((l) => !l.sep);
   const stale = !!s && s.state === 'waiting' && !requests.length && !!lastLine && /确认/.test(lastLine.text);
   let hint = $('permission-hint');
@@ -138,14 +174,12 @@ function renderPermissions() {
   for (const [id, el] of permissionCards) if (!ids.has(id)) { el.remove(); permissionCards.delete(id); }
   for (const p of requests) {
     if (permissionCards.has(p.id)) continue;
-    // Claude's own questions: answered here, not allowed
     if (p.ask && askQuestions(p)) { const c = askCard(p, askQuestions(p)); permissionCards.set(p.id, c); $('permissions').appendChild(c); continue; }
     const card = document.createElement('div'); card.className = 'permission'; card.dataset.id = p.id;
     const title = document.createElement('div'); title.className = 'permission-title';
     title.textContent = `需要你确认 · ${p.tool}${p.subagent ? ` · ${p.subagent}` : ''}`;
     const details = document.createElement('pre');
     const i = p.input || {};
-    // Show complete parameters (including edits), never interpret tool input as HTML.
     details.textContent = [p.cwd && `工作目录：${p.cwd}`,
       p.provider === 'opencode' && i.message && `说明：${i.message}`,
       p.provider === 'opencode' && Array.isArray(i.resources) && i.resources.length && `对象：${i.resources.join(' · ')}`,
@@ -155,7 +189,7 @@ function renderPermissions() {
       JSON.stringify(i, null, 2)].filter(Boolean).join('\n');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
     const choices = [['allow', '允许'], ['deny', '拒绝']];
-    if (p.always) choices.splice(1, 0, ['always', '总是允许']);       // Claude Code's "don't ask again" (what it adds: the tooltip)
+    if (p.always) choices.splice(1, 0, ['always', '总是允许']);
     if (p.provider === 'codex') choices.push(['defer', '在 Codex 中处理']);
     if (p.provider === 'agy') choices.push(['defer', '在 Antigravity 中处理']);
     for (const [choice, label] of choices) {
@@ -169,10 +203,7 @@ function renderPermissions() {
     permissionCards.set(p.id, card); $('permissions').appendChild(card);
   }
 }
-// Claude asking you something (its AskUserQuestion tool): the questions with their options -- one answer or several,
-// or your own words -- instead of 允许 / 拒绝. They come with the permission request, and the answer goes back the
-// same way: { question: the option's label | labels joined with ", " | your own words }. 先聊聊 is the terminal's
-// "Chat about this". (The dashboard's card: remote/public/js/apps/dash-ask.js.)
+
 function askQuestions(p) {
   const qs = p.input && p.input.questions;
   return Array.isArray(qs) && qs.length && qs.every((q) => q && typeof q.question === 'string' && q.question && Array.isArray(q.options)) ? qs : null;
@@ -231,7 +262,7 @@ function askCard(p, qs) {
 }
 async function decidePermission(button) {
   if (button.disabled) return;
-  if (button.pick) return button.pick();                        // a question's option: chosen, nothing sent yet
+  if (button.pick) return button.pick();
   const card = button.closest('.permission');
   const extra = button.dataset.choice === 'answer' ? { answers: card.answers() } : undefined;
   if (extra && !extra.answers) return;
@@ -249,25 +280,33 @@ async function decidePermission(button) {
 document.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const headAction = hit && hit.closest && hit.closest('#hopen, #htopo');
+  if (headAction) {
+    e.preventDefault();
+    if (headAction.id === 'hopen') openSessionInWeb();
+    else if (headAction.id === 'htopo') openTopoInWeb();
+    return;
+  }
   const button = hit && hit.closest('.permission button');
   if (button) { e.preventDefault(); decidePermission(button); }
 });
-// Keyboard activation remains available without submitting twice after a pointer press.
 $('permissions').addEventListener('click', (e) => {
   if (e.detail === 0 && e.target.matches('button')) decidePermission(e.target);
 });
+if (hopenBtn) hopenBtn.addEventListener('click', (e) => { if (e.detail === 0) openSessionInWeb(); });
+if (htopoBtn) htopoBtn.addEventListener('click', (e) => { if (e.detail === 0) openTopoInWeb(); });
 
 const WAIT_SOUND_GRACE_MS = 1500;
-const waitSoundTimers = new Map();       // session id -> timer (avoids chiming on auto-approved prompts)
+const waitSoundTimers = new Map();
 function cancelWaitSound(id) {
   const t = waitSoundTimers.get(id);
   if (t) { clearTimeout(t); waitSoundTimers.delete(id); }
 }
 
-window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
+window.bubble.onState(({ sessions, changedId, mode, sound = true, machine = '', shade = '' }) => {
+  if (machine) localMachine = machine;
+  applyShade(shade);
   const prev = data.find((s) => s.id === changedId);
-  const prevSel = data.find((s) => s.id === selected);
-  const prevSelState = prevSel && prevSel.state;
   data = sessions;
   for (const id of [...waitSoundTimers.keys()]) {
     const s = data.find((x) => x.id === id);
@@ -275,8 +314,6 @@ window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
   }
   setMode(mode);
   if (!data.find((s) => s.id === selected)) { selected = null; pinned = false; }
-  // stay on the current session while it is still working (others just get a red dot);
-  // move on when it has finished (unless you picked it yourself); a session that needs you always takes over
   const changed = data.find((s) => s.id === changedId);
   const cur = data.find((s) => s.id === selected);
   if (changed && (!cur || changed.state === 'waiting' || (!pinned && !WORKING.has(cur.state) && cur.state !== 'waiting'))) selected = changedId;
@@ -295,19 +332,18 @@ window.bubble.onState(({ sessions, changedId, mode, sound = true }) => {
         }, WAIT_SOUND_GRACE_MS));
       }
     } else if (['message', 'done'].includes(changed.state)) {
-      if (sound) { try { se.currentTime = 0; se.play(); } catch {} }   // tray: 提示音
+      if (sound) { try { se.currentTime = 0; se.play(); } catch {} }
     }
   }
   if (chatOn) { selectChat(); composeState(); }
 });
 window.bubble.onHide(() => {});
-// the main process owns the collapsed flag (window height, settings); this just mirrors it
 window.bubble.onCollapsed((v) => {
   collapsed = !!v;
   document.body.classList.toggle('collapsed', collapsed);
   $('fold').textContent = collapsed ? '□' : '−'; $('fold').title = collapsed ? '展开' : '收成 P 酱';
   const sel = data.find((x) => x.id === selected);
-  if (!collapsed && sel) seen[sel.id] = sel.last;      // expanding = looking at the selected session
+  if (!collapsed && sel) seen[sel.id] = sel.last;
   renderAll(false);
 });
 let lastTitleDown = { t: 0, x: 0, y: 0 };
@@ -320,14 +356,13 @@ const grip = $('grip');
 document.addEventListener('pointerdown', (e) => {
   const hit = document.elementFromPoint(e.clientX, e.clientY);
   if (hit === grip) { grip.setPointerCapture(e.pointerId); window.bubble.gesture('resize-start'); }
-  else if (hit && hit.closest && hit.closest('#title') && hit.id !== 'close' && hit.id !== 'fold') {
-    // double-click on the title bar folds / unfolds (checked by hand: the panel gets no reliable dblclick events)
+  else if (hit && hit.closest && hit.closest('#title') && hit.id !== 'close' && hit.id !== 'fold' && !hit.closest('#hopen') && !hit.closest('#htopo')) {
     const d = lastTitleDown, now = Date.now();
     if (now - d.t < 450 && Math.abs(e.clientX - d.x) < 6 && Math.abs(e.clientY - d.y) < 6) {
       lastTitleDown = { t: 0, x: 0, y: 0 }; window.bubble.collapse(!collapsed);
     } else {
       lastTitleDown = { t: now, x: e.clientX, y: e.clientY };
-      window.bubble.gesture('drag-start');   // drag by the title bar
+      window.bubble.gesture('drag-start');
     }
   }
 });
@@ -372,7 +407,6 @@ function composeState() {
   input.placeholder = s ? PLACEHOLDER[via] : '还没有会话';
 }
 
-// --- tiny markdown: code fences, inline code, bold, headings; everything else is escaped text ---
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function inline(s) {
   return esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
@@ -399,8 +433,6 @@ function msgEl(m) {
   else d.textContent = m.text;
   return d;
 }
-// what a slash command printed in the terminal (/context, /model ...): as it was laid out there; a long one folded
-// (the ones you unfolded stay so while the chat is redrawn)
 const CMD_FOLD = 8, cmdOpen = new Set();
 function cmdEl(d, m) {
   const text = m.text || '', lines = text.split('\n'), key = m.t + ':' + text.length;
@@ -425,12 +457,11 @@ async function send() {
   showNote('发送中…', 20000);
   const r = await window.bubble.send(selected, text);
   if (r.ok) { input.value = ''; showNote(r.msg || '', 6000); if (!r.msg) showNote(''); }
-  else showNote(r.msg || '没发出去', 8000);                        // text stays in the box
+  else showNote(r.msg || '没发出去', 8000);
 }
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
 });
-// the send button reacts on press, hit-tested at the real point (see the note on the card list above)
 document.addEventListener('pointerdown', (e) => {
   if (!chatOn) return;
   const hit = document.elementFromPoint(e.clientX, e.clientY);

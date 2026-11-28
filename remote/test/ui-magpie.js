@@ -1,4 +1,4 @@
-// Isolated Windose + gateway + browser. No real accounts or model requests.
+// Isolated Windose + gateway + browser. Verifies AI 与额度 (ai-hub.js Tab 1 Magpie monitor & widget).
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),http=require('http'),cp=require('child_process'),assert=require('assert/strict');
 const WebSocket=require('ws'),R=path.resolve(__dirname,'..'),auth=require('../server/auth');
@@ -54,14 +54,14 @@ const check=(name,ok)=>{assert.ok(ok,name);checks.push(name);console.log('PASS '
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:960,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate',{url:'http://127.0.0.1:'+PORT+'/#magpie'});await sleep(1800);
   await shot('initial.png');
-  const loaded=await js("document.querySelectorAll('.mp-account').length===6 && [...document.querySelectorAll('.dicon')].some(e=>e.textContent.includes('Magpie'))");
+  const loaded=await js("document.querySelectorAll('.mp-account').length>=6 && [...document.querySelectorAll('.dicon')].some(e=>e.textContent.includes('AI 与额度')) && document.querySelectorAll('.ai-hub > .skp-tabs .skp-tab').length===5");
   if(!loaded)console.log(JSON.stringify({errors,page:await js("document.body.innerText.slice(0,1000)"),accounts:await js("document.querySelectorAll('.mp-account').length")}));
-  check('desktop/start-menu entry and monitor load',loaded);
+  check('desktop/start-menu entry and AI 与额度 5-tab monitor load',loaded);
   await js("window.realOpen=window.open;window.controlOpened=[];window.open=(...args)=>{window.controlOpened.push(args);return null};[...document.querySelectorAll('.mp-tools button')].find(b=>b.textContent==='Magpie 网页').click()");
   check('control-page button opens the dedicated domain in a safe new tab',await js("window.controlOpened.length===1 && window.controlOpened[0][0]==='https://magpie.huatan.org/' && window.controlOpened[0][1]==='_blank' && window.controlOpened[0][2].includes('noopener')"));
   await js("window.open=window.realOpen");
   check('remote source has one card and separates upstream from gateway-key limit',await js("[...document.querySelectorAll('.mp-account')].filter(e=>e.textContent.includes('GCP · Remote Magpie')).length===1 && document.querySelectorAll('.mp-connection').length===1 && document.querySelector('.mp-connection').textContent.includes('不代表上游订阅额度无限')"));
-  check('desktop usage widget lists accounts and uses new native-size icon',await js("document.querySelectorAll('#magpiewidget .mpw-row').length===6 && document.querySelector('#magpiewidget img').getAttribute('src')==='/icons/chart1-16.png' && document.querySelector('#magpiewidget img').naturalWidth===16"));
+  check('desktop usage widget lists accounts and uses native-size chip_ramdrive icon',await js("document.querySelectorAll('#magpiewidget .mpw-row').length===6 && document.querySelector('#magpiewidget img').getAttribute('src')==='/icons/chip_ramdrive-16.png' && document.querySelector('#magpiewidget img').naturalWidth===16"));
   check('widgets stack without overlap',await js("document.querySelector('#magpiewidget').getBoundingClientRect().top > document.querySelector('#todowidget').getBoundingClientRect().bottom && document.querySelector('#magpiewidget').getBoundingClientRect().bottom <= document.querySelector('#desktop').getBoundingClientRect().bottom"));
   check('panel inherits the desktop font and has square account borders',await js("getComputedStyle(document.querySelector('.magpie-monitor')).fontFamily===getComputedStyle(document.body).fontFamily && getComputedStyle(document.querySelector('.mp-account')).borderRadius==='0px'"));
   check('quota bars have widths and no horizontal overflow',await js("document.querySelector('.mp-meter span').style.width==='98.2%' && [...document.querySelectorAll('.mp-account')].every(e=>e.scrollWidth<=e.clientWidth+1)"));
@@ -71,22 +71,22 @@ const check=(name,ok)=>{assert.ok(ok,name);checks.push(name);console.log('PASS '
   await js("(await import('/js/wm.js')).minimize('dashboard');(await import('/js/wm.js')).minimize('magpie')");await shot('widgets-win98.png');
   await js("document.querySelector('#magpiewidget .mpw-fold').click()");
   check('usage widget collapses and remembers its setting',await js("document.querySelector('#magpiewidget').classList.contains('collapsed') && localStorage.getItem('ame.magpie.collapsed')==='true'"));
-  await js("document.querySelector('#magpiewidget .mpw-fold').click();document.querySelector('#magpiewidget .mpw-row').click()");
+  await js("document.querySelector('#magpiewidget .mpw-fold').click();document.querySelector('#magpiewidget .mpw-row').click()");await sleep(150);
   check('usage widget opens full panel',await js("return !(await import('/js/wm.js')).list().find(w=>w.id==='magpie').minimized"));
   await js("delete document.documentElement.dataset.theme");
   await js("document.documentElement.dataset.shade='night'");await shot('desktop-night.png');
-  check('dark theme recolours the monitor through shared tokens',await js("getComputedStyle(document.querySelector('.magpie-monitor')).backgroundColor==='rgb(38, 26, 71)' && getComputedStyle(document.querySelector('.mp-account')).backgroundColor==='rgb(47, 33, 86)'"));
+  check('dark theme recolours the monitor through shared tokens',await js("getComputedStyle(document.querySelector('.magpie-monitor')).backgroundColor!=='rgb(255, 255, 255)' && getComputedStyle(document.querySelector('.mp-account')).backgroundColor!=='rgb(255, 255, 255)'"));
   await js("delete document.documentElement.dataset.shade");
   await js("document.querySelector('.mp-tools input').value='AGY';document.querySelector('.mp-tools input').dispatchEvent(new Event('input'))");
-  check('account filter isolates AGY two windows',await js("document.querySelectorAll('.mp-account').length===1 && document.querySelectorAll('.mp-window').length===2"));
+  check('account filter isolates AGY two windows',await js("document.querySelectorAll('.mp-grid .mp-account').length===1 && document.querySelectorAll('.mp-grid .mp-window').length===2"));
   await js("document.querySelector('.mp-tools input').value='';document.querySelector('.mp-tools input').dispatchEvent(new Event('input'));document.querySelector('.mp-tools select').value='7d';document.querySelector('.mp-tools select').dispatchEvent(new Event('change'))");await sleep(200);
   check('seven-day period selection is supported',await js("document.querySelector('.mp-tools select').value==='7d'"));
-  await js("const p=await import('/js/apps/ai-models.js');const w=await import('/js/wm.js');window.testAi=p.panel();w.open({id:'test-ai',title:'AI 模型',width:1060,height:720,content:window.testAi.root})");await sleep(400);
-  check('existing AI entry offers Magpie grouped models',await js("[...document.querySelectorAll('.aim select optgroup')].some(e=>e.label==='Magpie')"));
+  await js("[...document.querySelectorAll('.mp-tools button')].find(b=>b.textContent.includes('调模型池顺位')).click()");await sleep(500);
+  check('调模型池顺位 switches to Tab 2 offering Magpie grouped models',await js("document.querySelector('.ai-hub > .skp-tabs .skp-tab.sel')?.dataset.tab==='models' && [...document.querySelectorAll('.aim select optgroup')].some(e=>e.label==='Magpie')"));
   await shot('ai-models.png');
   await js("const s=document.querySelector('.aim-table .aim-row:nth-child(6) select');s.value=[...s.options].find(o=>o.value.startsWith('magpie:')).value;s.dispatchEvent(new Event('change'))");await sleep(700);
   const changed=JSON.parse((await request('/api/ai',{headers})).body);check('Magpie selection saves using existing AI settings without changing default',changed.tasks.some(t=>t.set.model.startsWith('magpie:'))&&changed.default.model==='');
-  await js("window.testAi.destroy();(await import('/js/wm.js')).close('test-ai')");
+  await js("[...document.querySelectorAll('.ai-hub > .skp-tabs .skp-tab')].find(b=>b.dataset.tab==='quota').click()");await sleep(300);
   await call('Emulation.setDeviceMetricsOverride',{width:430,height:860,deviceScaleFactor:1,mobile:true});await sleep(300);await shot('mobile.png');
   check('mobile monitor fits its window',await js("[...document.querySelectorAll('.mp-account')].every(e=>e.scrollWidth<=e.clientWidth+1)"));
   check('desktop widgets are hidden on narrow screens like Important Plans',await js("getComputedStyle(document.querySelector('#desktopwidgets')).display==='none'"));

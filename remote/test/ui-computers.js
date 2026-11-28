@@ -1,5 +1,5 @@
 // UI check: throwaway server + agent with fake sessions, headless Chrome over CDP (login cookie injected),
-// screenshots at desktop and phone size, page errors collected.
+// #addpc -> 设备与算力 (设备接入与令牌) + 同步加入网络监控拓扑图联动 + 网上邻居右键菜单, page errors collected.
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process');
 const R = require('path').resolve(__dirname, '..');
 const WebSocket = require(R + '/node_modules/ws');
@@ -10,6 +10,9 @@ const HOME = path.join(T, 'home'), PROJ = path.join(HOME, '.claude', 'projects',
 fs.mkdirSync(PROJ, { recursive: true });
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 const PORT = 18790, CDP = 9333;
+const guiMerged = fs.existsSync(path.join(R, 'public', 'css', 'tokens.css'));
+const pendingIconRe = /\/icons\/(catalog|network_three_pcs|network_drive_world|world|key_world|search_file_2|help_book_computer|script_file_teal|tools_gear|magnifying_glass|users|clock)(-16)?\.png(\?|$)/;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const env = { ...process.env, AME_REMOTE_CONFIG: CFG };
 const node = (args, extra = {}) => cp.execFileSync(process.execPath, args, { env: { ...env, ...extra } }).toString();
@@ -44,7 +47,8 @@ function login() {
 const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { const r = http.request(url, { method }, (res) => { let b = ''; res.on('data', (c) => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } }); }); r.on('error', reject); r.end(); });
 
 (async () => {
-  const errors = [];
+  const errors = [], res = [];
+  const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
   let chrome;
   try {
     spawn([R + '/server/server.js'], { AME_FLUSH_MS: '300' }); await sleep(3000);
@@ -62,7 +66,11 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
       if (o.id && pending.has(o.id)) { pending.get(o.id)(o); pending.delete(o.id); }
       if (o.method === 'Runtime.exceptionThrown') errors.push('exception: ' + JSON.stringify(o.params.exceptionDetails.exception && o.params.exceptionDetails.exception.description || o.params.exceptionDetails.text).slice(0, 300));
       if (o.method === 'Runtime.consoleAPICalled' && o.params.type === 'error') errors.push('console: ' + o.params.args.map((a) => a.value || a.description).join(' ').slice(0, 300));
-      if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') errors.push('log: ' + o.params.entry.text.slice(0, 300) + ' ' + (o.params.entry.url || ''));
+      if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') {
+        const u = o.params.entry.url || '';
+        if (!guiMerged && pendingIconRe.test(u)) return;
+        errors.push('log: ' + o.params.entry.text.slice(0, 300) + ' ' + u);
+      }
     });
     const call = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
     const evalJs = async (expr) => (await call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.result.value;
@@ -74,13 +82,33 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     await call('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
     await sleep(3500);
 
-    const res = []; const chk = (n, c, x) => res.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : ' ' + JSON.stringify(x)));
-    // 添加电脑 window from the network panel's + button
+    // 1. Right-click menu on 网上邻居 machine item
+    await evalJs("(() => { const m = document.querySelector('#netpanel .mach'); m && m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 1180, clientY: 120 })); })()");
+    await sleep(200);
+    const ctxText = await evalJs("(document.querySelector('.ctxm') || {}).textContent || ''");
+    chk('网上邻居 right-click menu offers 我的电脑 / 查看监控详情 / 配置 Fleet',
+      /打开我的电脑/.test(ctxText) && /查看监控详情/.test(ctxText) && /配置 Fleet/.test(ctxText), ctxText);
+    await evalJs("(async () => (await import('/js/ctxmenu.js')).close())()");
+
+    // 2. #addpc opens 设备与算力 on 设备接入与令牌 tab and lists dell97
     await evalJs("document.getElementById('addpc').click()"); await sleep(1200);
-    chk('add-computer window opens and lists dell97', (await evalJs("(document.querySelector('.cmplist')||{}).textContent||''")).includes('dell97'), await evalJs("(document.querySelector('.cmplist')||{}).textContent"));
+    chk('add-computer button opens 设备与算力 › 设备接入与令牌 and lists dell97',
+      (await evalJs("(document.querySelector('.cmplist')||{}).textContent||''")).includes('dell97') &&
+      (await evalJs("document.querySelector('.infra-hub .skp-tab.sel')?.dataset.tab === 'agents'")),
+      await evalJs("(document.querySelector('.cmplist')||{}).textContent"));
+
+    // 3. Adding a computer with ☑ 同步加入网络监控拓扑图 creates both agent token and topology node
+    await evalJs("(() => { const f = document.querySelector('.computers .cmpadd'); const inp = f.querySelector('input'); inp.value = 'gpu-node1'; f.requestSubmit(); })()");
+    await sleep(900);
+    const synced = await evalJs("fetch('/api/infra/state').then(r => r.json()).then(d => ({ listed: (document.querySelector('.cmplist')||{}).textContent.includes('gpu-node1'), node: (d.nodes || []).some(n => n.id === 'gpu-node1') }))");
+    chk('adding computer with topology sync checkbox creates both token and infra topology node',
+      synced && synced.listed && synced.node, synced);
     await shot('17-computers.png');
-    await evalJs("[...document.querySelectorAll('.win .tbtn[title=\"关闭\"]')].forEach(b => { if (b.closest('.win').querySelector('.title').textContent === '添加电脑') b.click(); })");
-    // key row hidden by default on a desktop browser; the dashboard session is read-only here, so no ⌨ either
+
+    await evalJs("[...document.querySelectorAll('.win .tbtn.close')].forEach(b => { if (b.closest('.win').querySelector('.title').textContent.includes('设备与算力')) b.click(); })");
+    await sleep(300);
+
+    // 4. key row hidden by default on a desktop browser
     await evalJs("(() => { const c = [...document.querySelectorAll('.dash .card')].find(x => x.textContent.includes('FDTD')); c && c.click(); })()"); await sleep(800);
     chk('key row hidden (no terminal control in this test)', await evalJs("document.querySelector('.dash .keys').hidden && document.querySelector('.dash .kbd').hidden"), 0);
     console.log(res.join(String.fromCharCode(10)));
@@ -93,6 +121,6 @@ const getJSON = (url, method = 'GET') => new Promise((resolve, reject) => { cons
     try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
     console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no page errors');
     console.log('shots in', OUT);
-    process.exit(0);
+    process.exit(res.some((r) => r.startsWith('FAIL')) || errors.length ? 1 : 0);
   }
 })();

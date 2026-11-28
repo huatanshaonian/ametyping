@@ -1,44 +1,44 @@
-// 控制面板: every setting in one window, each item with the icon it always had -- 显示属性, 声音, 通知, 电脑, Google 账户,
-// 邮箱, AI 模型, 文献. The list on the left, the chosen item on the right (a narrow window: the icons first, then the item
-// with a way back). The items' old open() functions land here, so links elsewhere (the calendar's 「连接 Google」, the
-// tray's warnings, 邮件's 设置) open the right page.
-//   open(id?, arg?) -- arg goes to the item (Google's message after signing in)
+// 控制面板（纯净 6 项系统与个人偏好）：显示属性、声音、通知、Google 账户、邮箱、文献推送设置。
+// 已迁移模块 100% 兼容旧 ID 精准转发至「设备与算力」(infra.js)、「AI 与额度」(ai-hub.js) 与「研究档案与记忆」(knowledge.js)。
 import { h, icon } from '../util.js';
 import * as wm from '../wm.js';
 import { settingsPanel as displayPanel } from '../wallpaper.js';
 import { panel as soundsPanel } from './sounds.js';
-import { panel as computersPanel } from './computers.js';
 import { panel as googlePanel } from './google.js';
 import { panel as mailPanel } from './mail-accounts.js';
-import { panel as aiPanel } from './ai-models.js';
-import { panel as opencodePanel } from './opencode-guide.js';
-import { open as openKnowledge } from './knowledge.js';
 import { panel as notifyPanel } from './notify.js';
 import { panel as litPanel } from './lit-settings.js';
-import { panel as mcpPanel } from './mcp-panel.js';
-import { panel as skillsPanel } from './skills-panel.js';
+import { open as openKnowledge } from './knowledge.js';
+import * as infra from './infra.js';
+import * as aiHub from './ai-hub.js';
 import * as backnav from '../backnav.js';
 
 const ITEMS = [
-  { id: 'display', label: '显示属性', icon: 'display_properties', note: '壁纸、配色、界面大小', panel: displayPanel },
+  { id: 'display', label: '显示属性', icon: 'display_properties', note: '壁纸、配色、界面大小、桌面额外图标', panel: displayPanel },
   { id: 'sounds', label: '声音', icon: 'mixer_sound', note: '系统音效、静音、手机振动', panel: soundsPanel },
   { id: 'notify', label: '通知', icon: 'msg_information', note: '手机通知、安装为应用', panel: notifyPanel },
-  { id: 'computers', label: '电脑', icon: 'network_normal_two_pcs', note: '添加 / 移除连到这里的电脑', panel: computersPanel },
-  { id: 'google', label: 'Google 账户', icon: 'key_win', note: '日历、任务、云端硬盘、提醒到手机', panel: googlePanel },
+  { id: 'google', label: 'Google 账户', icon: 'key_world', note: '日历、任务、云端硬盘、提醒到手机', panel: googlePanel },
   { id: 'mail', label: '邮箱', icon: 'outlook_express', note: '收信的邮箱、签名、推荐文献按什么判断', panel: mailPanel },
-  { id: 'ai', label: 'AI 模型', icon: 'chip_ramdrive', note: '每项工作用哪个模型、后备模型、Claude Code / Codex 更新', panel: aiPanel },
-  { id: 'opencode', label: 'OpenCode 配置指南', icon: 'help_book_big', note: 'Windows / Linux 安装、NAS 接入与代理', panel: opencodePanel },
-  { id: 'literature', label: '文献', icon: 'help_book_big', note: '文献来源的 key、联系邮箱、每日推送', panel: litPanel },
-  { id: 'mcp', label: 'MCP', icon: 'network_normal_two_pcs', note: '给 agent 用的工具：协同、文献下载、研究档案', panel: mcpPanel },
-  { id: 'skills', label: 'Skill 与协同', icon: 'notepad', note: 'Skill 文档、角色提示词、模型池、机器角色、设备与 Harness（安装、更新、一键配置）', panel: skillsPanel },
+  { id: 'literature', label: '文献推送设置', icon: 'catalog', note: '文献来源的 key、联系邮箱、每日推送', panel: litPanel },
 ];
 export const items = () => ITEMS.map(({ id, label, icon: ic, note }) => ({ id, label, icon: ic, note }));
 
 let app = null;
 export function open(id, arg) {
-  if (id === 'apis') id = 'opencode'; // Old control-panel links land on the new guide.
-  if (id === 'fleet') { id = 'skills'; arg = 'fleet'; } // 设备更新 is a tab of Skill 与协同 now.
+  if (id === 'computers') return infra.open({ tab: 'agents' });
+  if (id === 'fleet') return infra.open({ tab: 'fleet' });
+  if (id === 'ai') return aiHub.open({ tab: 'models', sec: arg });
+  if (id === 'skills') {
+    if (arg === 'machines') return infra.open({ tab: 'compute' });
+    if (arg === 'fleet') return infra.open({ tab: 'fleet' });
+    if (arg === 'pools') return aiHub.open({ tab: 'models' });
+    return aiHub.open({ tab: 'skills', sub: arg || 'skills' });
+  }
+  if (id === 'mcp') return aiHub.open({ tab: 'mcp' });
+  if (id === 'opencode') return aiHub.open({ tab: 'clients', sec: 'opencode' });
+  if (id === 'apis') return aiHub.open({ tab: 'clients', sec: 'apis' });
   if (id === 'knowledge') return openKnowledge(arg);
+
   if (!app) {
     app = mount();
     wm.open({ id: 'control', title: '控制面板', icon: icon('directory_control_panel', true), content: app.root, width: 820, height: 600,
@@ -53,11 +53,21 @@ function mount() {
   const back = h('button', { class: 'btn cp-back', type: 'button', text: '‹ 控制面板', onclick: () => home() });
   const title = h('b', { class: 'cp-title' });
   const root = h('div', { class: 'cp' }, nav, h('div', { class: 'cp-main' }, h('div', { class: 'cp-head' }, back, title), pane));
-  backnav.pane(root, 'picked', () => back.click());       // (a phone's back gesture: js/backnav.js)
-  let cur = null;                                       // { id, panel: { root, destroy?, show? } }
+  backnav.pane(root, 'picked', () => back.click());
+  let cur = null;
 
-  nav.replaceChildren(...ITEMS.map((it) => h('button', { class: 'cp-item', type: 'button', dataset: { id: it.id }, title: it.note, onclick: () => show(it.id) },
-    h('img', { src: icon(it.icon), alt: '' }), h('span', { class: 'cp-l', text: it.label }), h('small', { text: it.note }))));
+  const itemBtns = ITEMS.map((it) => h('button', { class: 'cp-item', type: 'button', dataset: { id: it.id }, title: it.note, onclick: () => show(it.id) },
+    h('img', { src: icon(it.icon), alt: '' }), h('span', { class: 'cp-l', text: it.label }), h('small', { text: it.note })));
+
+  const hubLinks = h('div', { class: 'cp-hub-links', style: 'margin-top:auto;padding:8px 6px;border-top:1px solid var(--edge);font-size:11.5px;display:flex;flex-direction:column;gap:4px' },
+    h('small', { class: 'ghint', style: 'margin:0', text: '硬件与 AI 配置已收口至独立中心：' }),
+    h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
+      h('button', { class: 'btn', type: 'button', style: 'font-size:11px;padding:1px 6px', text: '↗ 设备与算力', onclick: () => infra.open() }),
+      h('button', { class: 'btn', type: 'button', style: 'font-size:11px;padding:1px 6px', text: '↗ AI 与额度', onclick: () => aiHub.open() })
+    )
+  );
+
+  nav.replaceChildren(...itemBtns, hubLinks);
 
   function close() { if (cur && cur.panel.destroy) try { cur.panel.destroy(); } catch {} cur = null; }
   function show(id, arg) {
@@ -69,11 +79,10 @@ function mount() {
     pane.replaceChildren(panel.root || h('p', { text: '（空）' }));
     pane.scrollTop = 0;
     title.textContent = it.label;
-    for (const b of nav.children) b.classList.toggle('sel', b.dataset.id === it.id);
+    for (const b of itemBtns) b.classList.toggle('sel', b.dataset.id === it.id);
     root.classList.add('picked');
     const w = wm.get('control'); if (w && w.handle) w.handle.setTitle('控制面板 - ' + it.label);
   }
-  // the list of items (a wide window keeps one open beside it)
   function home() {
     root.classList.remove('picked');
     if (root.classList.contains('narrow')) { const w = wm.get('control'); if (w && w.handle) w.handle.setTitle('控制面板'); }

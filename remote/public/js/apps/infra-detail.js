@@ -48,7 +48,7 @@ export function renderEventsView(detailPane, { state, onCloseEvents }) {
 }
 
 export function renderDetailPane(detailPane, ctx) {
-  const { state, selId, showEvents, runControl, togglePin, attachItemMenu, openNodeDialog, openLinkDialog, fetchState } = ctx;
+  const { state, selId, showEvents, runControl, togglePin, attachItemMenu, openNodeDialog, openLinkDialog, fetchState, onJumpCompute, onJumpFleet, onJumpAgents } = ctx;
   if (showEvents) return renderEventsView(detailPane, ctx);
   const n = state.nodes.find((x) => x.id === selId);
   if (!n) {
@@ -253,7 +253,21 @@ export function renderDetailPane(detailPane, ctx) {
         ),
         h('div', { class: 'inf-det-sub', text: `ID: ${n.id}${n.host ? ` · 地址: ${n.host}` : ''}${n.lastSeen ? ` · 最近上报: ${ago(n.lastSeen)}` : ' · 尚未收到探针上报'}` })
       ),
-      h('div', { style: 'display:flex;gap:4px' },
+      h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end' },
+        onJumpCompute ? h('button', {
+          class: 'btn',
+          type: 'button',
+          title: '查看并编辑该节点的硬件/软件算力画像与作业队列',
+          text: '⚡ 算力画像',
+          onclick: () => onJumpCompute(n.id),
+        }) : null,
+        onJumpFleet ? h('button', {
+          class: 'btn',
+          type: 'button',
+          title: '管理该节点的 Agent / Harness 版本与网关配置',
+          text: '🔧 Fleet',
+          onclick: () => onJumpFleet(n.id),
+        }) : null,
         h('button', {
           class: 'btn',
           type: 'button',
@@ -273,7 +287,10 @@ export function renderDetailPane(detailPane, ctx) {
         h('span', { text: `常驻服务与守护进程 (${svcs.length})` }),
         h('span', { style: 'font-weight:normal;font-size:11px;color:var(--muted)', text: '📌 必看 · 右键可降级为按需未开(黄)' })
       ),
-      svcRows.length ? h('div', { class: 'inf-list' }, ...svcRows) : h('div', { class: 'notice', text: n.online ? '未发现额外服务，可点击右上角「＋ 关注服务」添加。' : '节点尚未连接上报。请在「🔑 令牌与安装命令」生成令牌并运行一键安装脚本。' })
+      svcRows.length ? h('div', { class: 'inf-list' }, ...svcRows) : h('div', { class: 'notice' },
+        n.online
+          ? '未发现额外服务，可点击右上角「＋ 关注服务」添加。'
+          : ['节点尚未连接上报。请在 ', h('button', { class: 'btn', type: 'button', style: 'padding:1px 6px', text: '🔑 设备接入与令牌', onclick: () => onJumpAgents && onJumpAgents() }), ' 生成令牌并运行一键安装脚本。'])
     ),
     (cntRows.length > 0 || n.role === 'nas') ? h('div', { class: 'inf-sec' },
       h('div', { class: 'inf-sec-hd' },

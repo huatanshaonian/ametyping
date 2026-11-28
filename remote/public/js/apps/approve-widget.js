@@ -1,9 +1,8 @@
-// Desktop sticky widget: 待我介入 / 审批便签 (sits beside 重要计划 & Magpie 用量; pops above windows when permissions or watchdog alerts need attention)
+// Desktop sticky widget: 待我介入 / 审批便签 + Taskbar tray urgent badge (#approvebtn.tray-urgent, GUI-4)
 import { h, icon, prefs } from '../util.js';
 import * as net from '../net.js';
 import * as mesh from '../mesh.js';
 import * as dashboard from './dashboard.js';
-import * as projects from './projects.js';
 
 function permBrief(p) {
   const tool = String((p && p.tool) || '操作');
@@ -27,12 +26,17 @@ function permBrief(p) {
   return clean ? `${tool}: ${clean.slice(0, 72)}${clean.length > 72 ? '…' : ''}` : tool;
 }
 
+function openAlertTopo(projectId, nodeId) {
+  location.hash = `#proj=${encodeURIComponent(projectId)}&tab=topo${nodeId ? '&node=' + encodeURIComponent(nodeId) : ''}`;
+}
+
 export function initWidget(desktop) {
   if (document.getElementById('approvewidget')) return;
   let collapsed = prefs.get('approve.collapsed', false);
   let dismissedSig = ''; // user clicked "先收到底层" for this exact set of pending IDs
   const hiddenSigs = new Set(); // user clicked "×" to forcibly clear specific items
   const busyPerms = new Set();
+  let trayBtn = null;
 
   const rows = h('div', { class: 'mpw-rows apw-rows' });
   const status = h('small', { class: 'mpw-status', text: '暂无待审批项', role: 'status' });
@@ -125,6 +129,40 @@ export function initWidget(desktop) {
     applyFold();
   });
 
+  function syncTrayButton(items) {
+    const tray = document.getElementById('tray');
+    if (!tray || !items.length) {
+      if (trayBtn) { trayBtn.remove(); trayBtn = null; }
+      return;
+    }
+    if (!trayBtn || !trayBtn.isConnected) {
+      trayBtn = h('button', {
+        id: 'approvebtn',
+        class: 'tray-urgent',
+        type: 'button',
+        onclick: () => {
+          const curItems = collectItems();
+          dismissedSig = '';
+          if (collapsed) { collapsed = false; prefs.set('approve.collapsed', false); applyFold(); }
+          render();
+          const first = curItems[0];
+          if (first && first.kind === 'perm') {
+            dashboard.openSession(first.machine, first.sessionId);
+          } else if (first && first.kind === 'alert') {
+            openAlertTopo(first.projectId, first.node && first.node.id);
+          } else {
+            root.scrollIntoView({ block: 'nearest' });
+          }
+        },
+      });
+      tray.insertBefore(trayBtn, document.getElementById('conn'));
+    }
+    trayBtn.textContent = `⚠ 待介入 (${items.length})`;
+    trayBtn.title = items.slice(0, 3).map((it) => (it.kind === 'perm'
+      ? `${it.machine} · ${it.label}: ${permBrief(it.perm)}`
+      : `${it.projectName} · ${it.node.alias || it.node.id}: ${it.alert.label || '看门狗告警'}`)).join('；');
+  }
+
   function render() {
     const items = collectItems();
     latestSig = items.map((x) => x.sig).sort().join(',');
@@ -138,10 +176,11 @@ export function initWidget(desktop) {
       applyFold();
     }
     title.textContent = items.length ? `待介入 (${items.length})` : '待介入';
+    syncTrayButton(items);
 
     if (!items.length) {
       rows.replaceChildren(h('div', { class: 'mpw-empty', text: '全部畅通，暂无权限确认或告警。' }));
-      status.textContent = '平时静驻桌面底层，有审批时自动置顶';
+      status.textContent = '平时静驻桌面挂件区，有审批时在任务栏托盘闪烁提醒';
       return;
     }
 
@@ -179,7 +218,7 @@ export function initWidget(desktop) {
         ),
         h('div', { class: 'apw-desc', text: `${it.alert.label || '看门狗告警'}${it.alert.detail ? ' · ' + it.alert.detail : ''}` }),
         h('div', { class: 'apw-acts' },
-          h('button', { class: 'btn go', type: 'button', text: '看拓扑', onclick: () => projects.open(it.projectId) }),
+          h('button', { class: 'btn go', type: 'button', text: '看拓扑', onclick: () => openAlertTopo(it.projectId, it.node && it.node.id) }),
           it.node.sessionId ? h('button', { class: 'btn', type: 'button', text: '跳看板', onclick: () => dashboard.openSession(it.node.machine, it.node.sessionId) }) : null
         )
       );
@@ -187,8 +226,8 @@ export function initWidget(desktop) {
 
     rows.replaceChildren(...els);
     status.textContent = urgent
-      ? `共 ${items.length} 项待处理 · 可直接审批或点 ↓ 先收到底层`
-      : `共 ${items.length} 项待处理（已手动收到底层）`;
+      ? `共 ${items.length} 项待处理 · 可直接审批或点 ↓ 收起紧急提示`
+      : `共 ${items.length} 项待处理（已收起紧急提示）`;
   }
 
   applyFold();

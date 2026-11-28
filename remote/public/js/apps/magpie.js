@@ -1,8 +1,7 @@
 import { h, icon, prefs } from '../util.js';
-import * as wm from '../wm.js';
 import * as net from '../net.js';
 import { confirmBox } from '../dialog.js';
-let inst;
+
 const number = (v, digits = 0) => typeof v === 'number' ? v.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '未知';
 const when = v => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '未知';
 const duration = ms => {
@@ -10,27 +9,36 @@ const duration = ms => {
   return hours >= 24 ? `${Math.floor(hours / 24)} 天${hours % 24 ? ' ' + hours % 24 + ' 小时' : ''}` : ms >= 3600000 ? `${hours} 小时` : `${Math.ceil(ms / 60000)} 分钟`;
 };
 const providers = { kiro: 'Kiro', devin: 'Devin', antigravity: 'AGY', deepseek: 'DeepSeek', gcp: 'GCP' };
-export function open() {
-  if (inst) return wm.restore('magpie');
-  inst = mount();
-  wm.open({ id: 'magpie', title: 'Magpie 用量', icon: icon('chart1', true), width: 1060, height: 720, content: inst.root,
-    onClose() { inst.destroy(); inst = null; } });
+
+// Compatible entry: opens unified AI & Quota Hub on Tab 1 (window id 'magpie')
+export function open(opts) {
+  import('./ai-hub.js').then((m) => m.open(opts || { tab: 'quota' }));
 }
-function mount() {
+
+export function panel({ onJumpModels } = {}) {
   let period = 'today', filter = '', dead = false, loading = false;
-  const root = h('div', { class: 'magpie-monitor' }), body = h('div', { class: 'mp-body' }), status = h('span', { class: 'mp-status' });
+  const jumpModels = () => {
+    if (onJumpModels) onJumpModels();
+    else import('./ai-hub.js').then((m) => m.open({ tab: 'models' }));
+  };
+  const root = h('div', { class: 'magpie-monitor', style: 'flex:1;min-height:0' });
+  const body = h('div', { class: 'mp-body' });
+  const status = h('span', { class: 'mp-status' });
   const select = h('select', { class: 'field', 'aria-label': '统计时段' }, ...[['today', '今日'], ['7d', '近 7 天'], ['30d', '近 30 天']].map(([value, text]) => h('option', { value, text })));
   const search = h('input', { class: 'field', placeholder: '筛选来源 / 套餐 / 账号', 'aria-label': '筛选账号' });
-  const refresh = h('button', { class: 'btn', text: '刷新', onclick: () => load() });
+  const refresh = h('button', { class: 'btn', type: 'button', text: '刷新', onclick: () => load() });
   const website = h('button', { class: 'btn', type: 'button', text: 'Magpie 网页', title: '在新标签页打开 Magpie 控制程序',
     onclick: () => window.open('https://magpie.huatan.org/', '_blank', 'noopener,noreferrer') });
-  const tools = h('div', { class: 'mp-tools' }, select, search, website, refresh);
+  const poolJumpBtn = h('button', { class: 'btn', type: 'button', text: '调模型池顺位 →', title: '切换到「模型路由与能力池」调整候选顺位或复位熔断', onclick: jumpModels });
+  const tools = h('div', { class: 'mp-tools' }, select, search, poolJumpBtn, website, refresh);
   status.setAttribute('role', 'status');
   root.append(tools, body, h('footer', { class: 'mp-statusbar' }, status));
   select.addEventListener('change', () => { period = select.value; load(); });
   search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); if (last) render(last); });
+
   let last, fableAdvice = null, fableForce = false, meshMachines = [];
   function stat(label, value) { return h('div', { class: 'mp-stat' }, h('small', { text: label }), h('strong', { text: value })); }
+
   function openFableLaunchDialog(s) {
     const onlineCtrl = (meshMachines || []).filter((m) => m.online && m.control);
     const machList = onlineCtrl.length ? onlineCtrl : (meshMachines || []);
@@ -100,7 +108,7 @@ function mount() {
           h('h3', { text: 'Devin / Fable 5.2 难题顾问（临近到期消化）' }),
           h('span', { text: winTxt })
         ),
-        h('div', { style: 'display:flex;align-items:center;gap:6px' },
+        h('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' },
           h('span', { class: 'mp-badge' + (adv && adv.due ? '' : ' mp-warn'), text: badgeTxt }),
           h('button', {
             class: 'btn',
@@ -149,15 +157,25 @@ function mount() {
           })
     );
   }
+
   function windowRow(w) {
     const known = typeof w.remaining === 'number', pct = known ? Math.min(100, Math.max(0, w.remaining)) : null;
+    const isLow = known && !w.unlimited && pct <= 20;
     const meter = h('div', { class: 'mp-meter' + (known && pct <= 15 ? ' mp-low' : '') + (!known ? ' mp-unknown' : ''), role: 'meter', 'aria-label': w.name + '剩余额度', ...(known ? { 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 } : {}) }, h('span', { style: `width:${pct ?? 0}%` }));
     const left = w.resetsAt ? Date.parse(w.resetsAt) - Date.now() : null;
     const reset = left === null ? '重置时间未知' : left <= 0 ? '已到重置时间，等待来源更新' : `${duration(left)}后重置`;
-    return h('div', { class: 'mp-window' }, h('div', { class: 'mp-window-head' }, h('b', { text: w.name }), h('strong', { text: w.unlimited ? '不限额' : known ? `剩余 ${number(w.remaining, 2)}%` : '额度未知' })),
-      meter, h('div', { class: 'mp-window-meta' }, typeof w.amount === 'number' ? `已用 ${number(w.amount, 2)} / ${number(w.limit, 2)} ${w.unit}` : typeof w.used === 'number' ? `已用 ${number(w.used, 2)}%` : '使用量未知', h('span', { text: reset, title: '来源重置时间：' + when(w.resetsAt) })),
+    const rightEl = isLow
+      ? h('span', { style: 'display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap' },
+          h('strong', { text: `剩余 ${number(w.remaining, 2)}%` }),
+          h('button', { class: 'btn', type: 'button', style: 'padding:0 5px;font-size:11px;line-height:1.3', text: '调模型池顺位 →', onclick: jumpModels }))
+      : h('strong', { text: w.unlimited ? '不限额' : known ? `剩余 ${number(w.remaining, 2)}%` : '额度未知' });
+    return h('div', { class: 'mp-window' },
+      h('div', { class: 'mp-window-head' }, h('b', { text: w.name }), rightEl),
+      meter,
+      h('div', { class: 'mp-window-meta' }, typeof w.amount === 'number' ? `已用 ${number(w.amount, 2)} / ${number(w.limit, 2)} ${w.unit}` : typeof w.used === 'number' ? `已用 ${number(w.used, 2)}%` : '使用量未知', h('span', { text: reset, title: '来源重置时间：' + when(w.resetsAt) })),
       h('small', { text: w.resetsAt ? '重置于 ' + when(w.resetsAt) : '' }));
   }
+
   function account(q, stale) {
     const old = !q.readAt || Date.now() - Date.parse(q.readAt) > 20 * 60000;
     const u = q.usage;
@@ -174,6 +192,7 @@ function mount() {
         ...[['errors', '错误'], ['input', '输入 tokens'], ['output', '输出 tokens'], ['cache_read', '缓存读取 tokens'], ['cache_write', '缓存写入 tokens'], ['cache_unknown', '缓存情况未知 tokens'], ['cache_unknown_calls', '缓存情况未知调用'], ['reasoning', '推理 tokens'], ['unpriced', '未定价调用']].map(([k, label]) => h('div', { text: label + '：' + number(u[k]) }))) : '该账号的时段调用统计未提供或无法精确匹配'),
       h('footer', { text: `额度读取：${when(q.readAt)}${q.lastServedAt ? ' · 最近调用：' + when(q.lastServedAt) : ''}${q.remote ? ' · 来自远程 Magpie' : ''}` }));
   }
+
   function render(s) {
     status.textContent = s.enabled ? `后台每 5 分钟采集 · 最近采集 ${when(s.quotaAt)}` : '尚未启用 Magpie';
     const rows = s.accounts.filter(q => `${q.provider} ${providers[q.provider] || ''} ${q.plan} ${q.name} ${q.account}`.toLowerCase().includes(filter));
@@ -187,6 +206,7 @@ function mount() {
       renderFableAdvisor(),
       h('details', {}, h('summary', { text: `可用模型（${s.models.length}）` }), h('div', { class: 'mp-models' }, ...s.models.map(m => h('code', { text: m.id })))));
   }
+
   async function load() {
     if (loading || dead) return; loading = true; refresh.disabled = true;
     try {
@@ -206,7 +226,7 @@ function mount() {
     finally { loading = false; refresh.disabled = false; }
   }
   const off = net.on('magpie', load), timer = setInterval(load, 60000); load();
-  return { root, destroy() { dead = true; off(); clearInterval(timer); } };
+  return { root, load, destroy() { dead = true; off(); clearInterval(timer); } };
 }
 
 // Share in-flight/cache reads between the desktop widget and the full window.
@@ -231,10 +251,10 @@ export function initWidget(desktop) {
   if (document.getElementById('magpiewidget')) return;
   let collapsed = prefs.get('magpie.collapsed', false), loading = false, dead = false;
   const rows = h('div', { class: 'mpw-rows' }), status = h('small', { class: 'mpw-status', text: '正在读取…', role: 'status' });
-  const title = h('button', { class: 'mpw-title', type: 'button', text: 'Magpie 用量', title: '打开完整用量面板', onclick: open });
-  const fold = h('button', { class: 'mpw-fold', type: 'button', title: '收起 / 展开', 'aria-label': '收起或展开 Magpie 用量' });
+  const title = h('button', { class: 'mpw-title', type: 'button', text: 'AI 与额度', title: '打开 AI 与额度面板', onclick: () => open() });
+  const fold = h('button', { class: 'mpw-fold', type: 'button', title: '收起 / 展开', 'aria-label': '收起或展开 AI 与额度' });
   const root = h('section', { id: 'magpiewidget', class: 'mp-widget', 'aria-label': 'Magpie 用量摘要' },
-    h('div', { class: 'mpw-head' }, h('img', { src: icon('chart1', true), alt: '' }), title, fold),
+    h('div', { class: 'mpw-head' }, h('img', { src: icon('chip_ramdrive', true), alt: '' }), title, fold),
     h('div', { class: 'mpw-body' }, rows, status));
   function folding() { root.classList.toggle('collapsed', collapsed); fold.textContent = collapsed ? '＋' : '－'; fold.setAttribute('aria-expanded', String(!collapsed)); }
   fold.addEventListener('click', () => { collapsed = !collapsed; prefs.set('magpie.collapsed', collapsed); folding(); });
@@ -246,7 +266,7 @@ export function initWidget(desktop) {
         const stale = s.stale || !q.readAt || Date.now() - Date.parse(q.readAt) > 20 * 60000;
         const resets = q.windows.map(w => Date.parse(w.resetsAt)).filter(t => Number.isFinite(t) && t > Date.now()).sort((a, b) => a - b);
         const reset = resets.length ? `${duration(resets[0] - Date.now())}后重置` : '';
-        return h('button', { class: 'mpw-row' + (q.status === 'error' ? ' mpw-error' : ''), type: 'button', title: `${q.account} · ${when(q.readAt)}`, onclick: open },
+        return h('button', { class: 'mpw-row' + (q.status === 'error' ? ' mpw-error' : ''), type: 'button', title: `${q.account} · ${when(q.readAt)}`, onclick: () => open() },
           h('span', { class: 'mpw-name', text: q.provider === 'antigravity' && q.windows.some(w => /claude/i.test(w.name)) ? 'AGY Claude' : q.plan || providers[q.provider] || q.name || q.provider }),
           h('b', { class: 'mpw-value', text: brief(q) }),
           h('small', { text: [stale ? '来源待更新' : '', reset].filter(Boolean).join(' · ') || (q.status === 'error' ? '详情见完整面板' : q.windows.length ? '重置时间未知' : '') }));

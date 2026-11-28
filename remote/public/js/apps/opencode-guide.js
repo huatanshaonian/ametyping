@@ -1,6 +1,4 @@
-// Read-only instructions for connecting another computer to the NAS gateway, with a generator for opencode.json:
-// the models and routing groups the gateway offers (read on the server, the key stays there), ticked, renamed and
-// assigned to the main model / sub-agents here; the configuration in use on huatanshaonian is the starting point.
+// AI 与额度 › 客户端配置与入口（上半区：OpenCode opencode.json 生成器、用量插件与折叠手动教程）
 import { h, prefs, codeBlock } from '../util.js';
 import { BASE_CONFIG } from './opencode-base.js';
 import { buildConfig, rows as modelRows } from './opencode-config.js';
@@ -82,7 +80,6 @@ opencode run --model magpie/group/deepseek-worker '不要调用工具，只回�
 # 在自己的项目目录启动
 opencode`;
 
-// 第 4 步: the gateway's models as ticked rows -> opencode.json
 function createGenerator(urls) {
   const state = { gateway: [], rows: [], picked: new Map(), names: new Map(), main: '', general: '', explore: '', filter: '' };
   const base = BASE_CONFIG, baseModels = base.providers.magpie.models;
@@ -91,10 +88,10 @@ function createGenerator(urls) {
   for (const [id, e] of Object.entries(baseModels)) { state.picked.set(id, true); state.names.set(id, e.name); }
 
   const status = h('p', { class: 'ocg-gen-status', 'aria-live': 'polite', text: '正在读取 NAS Magpie 的模型…' });
-  const search = h('input', { type: 'search', placeholder: '筛选模型 ID 或名称', 'aria-label': '筛选模型', oninput: () => { state.filter = search.value.trim().toLowerCase(); renderList(); } });
+  const search = h('input', { type: 'search', class: 'field', placeholder: '筛选模型 ID 或名称', 'aria-label': '筛选模型', oninput: () => { state.filter = search.value.trim().toLowerCase(); renderList(); } });
   const count = h('span', { class: 'ocg-gen-count' });
   const list = h('div', { class: 'ocg-gen-list' });
-  const selects = Object.fromEntries(['main', 'general', 'explore'].map((k) => [k, h('select', { dataset: { role: k }, onchange: (e) => { state[k] = e.target.value; renderOut(); } })]));
+  const selects = Object.fromEntries(['main', 'general', 'explore'].map((k) => [k, h('select', { class: 'field', dataset: { role: k }, onchange: (e) => { state[k] = e.target.value; renderOut(); } })]));
   const out = h('code', {});
   const copyNote = h('span', { class: 'ocg-copy-note', 'aria-live': 'polite' });
   const bulk = (fn) => () => { for (const r of visible()) state.picked.set(r.id, fn(r)); renderList(); };
@@ -141,7 +138,7 @@ function createGenerator(urls) {
           h('div', { class: 'ocg-gen-main' },
             h('code', { text: r.id }),
             h('span', { class: 'ocg-gen-meta', text: r.offered ? meta : 'NAS 现在没有提供这个模型（保留原配置）' })),
-          h('input', { type: 'text', class: 'ocg-gen-name', value: state.names.get(r.id) || r.name, 'aria-label': r.id + ' 的显示名',
+          h('input', { type: 'text', class: 'field ocg-gen-name', value: state.names.get(r.id) || r.name, 'aria-label': r.id + ' 的显示名',
             oninput: (e) => { state.names.set(r.id, e.target.value.trim()); renderOut(); } }));
       }))));
     renderOut();
@@ -180,7 +177,6 @@ export function panel() {
     const button = h('button', { class: 'btn', type: 'button', dataset: { download: 'usage-plugin' }, text: '下载 Magpie 用量插件', onclick: async () => {
       const controller = new AbortController(); downloads.add(controller); button.disabled = true; note.textContent = '准备下载…';
       try {
-        // Fetch JSON, then save a Blob: download managers cannot take over a .zip URL.
         const response = await fetch('/downloads/opencode-magpie-usage.json', { signal: controller.signal });
         if (!response.ok) throw new Error();
         const pkg = await response.json();
@@ -194,22 +190,39 @@ export function panel() {
       } catch (error) { if (error.name !== 'AbortError') note.textContent = '下载失败，请刷新后重试'; }
       finally { downloads.delete(controller); button.disabled = false; }
     } });
-    return h('p', {}, button, ' ', note);
+    return h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0' }, button, note,
+      h('small', { class: 'ghint', style: 'margin:0', text: '解压 opencode-magpie-usage 到 ~/.config/opencode/plugins/ 并在 cli.json 注册，即可用 /usage 查看 NAS 订阅额度。' }));
   }
+
   const body = h('div', { class: 'ocg-body', id: 'ocg-body', role: 'tabpanel' });
   const tabs = h('div', { class: 'ocg-tabs', role: 'tablist', 'aria-label': '选择操作系统' });
+  const manualDetails = h('details', { class: 'ocg-manual', style: 'margin-top:10px' },
+    h('summary', { style: 'cursor:pointer;font-weight:bold;padding:4px 0', text: '展开手动安装与代理配置教程（Windows / Linux 命令行步骤）' }),
+    tabs,
+    body
+  );
+
   const root = h('div', { class: 'ocg' },
-    h('h2', { text: 'OpenCode 连接 NAS Magpie' }),
-    para('电脑上运行 OpenCode，NAS 统一提供模型和账号。主模型为 Opus，general / explore 子 Agent 使用 DeepSeek Flash。适用 OpenCode 2.x，本机已验证 2.2.0。'),
+    h('h2', { text: 'OpenCode 连接 NAS Magpie（配置生成器与插件）' }),
+    h('p', { class: 'ghint' },
+      '已安装 Windose Agent 的在线电脑可直接前往 ',
+      h('a', { href: '#infra?tab=fleet', text: '↗ 设备与算力 › Fleet', onclick: async (e) => { e.preventDefault(); (await import('./infra.js')).open({ tab: 'fleet' }); } }),
+      ' 一键远程下发密钥与配置；下方生成器用于自定义勾选模型或为未装 Agent 的电脑生成 opencode.json。'
+    ),
     h('dl', { class: 'ocg-addresses' }, h('dt', { text: 'API 地址' }), h('dd', {}, h('code', { text: BASE })),
       h('dt', { text: '管理网页' }), h('dd', {}, link(WEB, WEB))),
-    tabs, body);
+    generator.root,
+    pluginDownload(),
+    manualDetails
+  );
+
   let os = prefs.get('opencode-guide.os', 'windows');
   if (!['windows', 'linux'].includes(os)) os = 'windows';
   for (const [id, label] of [['windows', 'Windows / PowerShell'], ['linux', 'Linux / Bash']]) tabs.append(h('button', {
     class: 'btn', type: 'button', role: 'tab', text: label, dataset: { os: id }, 'aria-controls': 'ocg-body',
     onclick: () => { os = id; prefs.set('opencode-guide.os', os); render(); },
   }));
+
   function render() {
     const win = os === 'windows';
     for (const tab of tabs.children) { const active = tab.dataset.os === os; tab.classList.toggle('sel', active); tab.setAttribute('aria-selected', String(active)); }
@@ -234,12 +247,9 @@ export function panel() {
         h('p', {}, '到 ', link('Magpie 管理网页', WEB), ' 的 API key 管理页，为这台电脑创建或选择允许上述模型的调用 key。网页登录用的 MAGPIE_WEB_KEY 与这里的 API key 是两类密钥。'),
         para('下面的命令会隐藏输入，并写入当前用户的独立密钥文件。每台电脑单独保存自己的 key。'),
         code(win ? 'PowerShell：保存调用 key' : 'Bash：保存调用 key', win ? WIN_KEY : LINUX_KEY)),
-      step('4. 生成配置文件',
-        para(win ? '配置位置：%USERPROFILE%\\.config\\opencode\\opencode.json' : '配置位置：~/.config/opencode/opencode.json'),
-        para('下面列出 NAS Magpie 现在提供的全部模型和路由组。默认勾选的是主力电脑正在用的配置；勾选、改名、选主模型和子 Agent 后，下方的 opencode.json 随之更新。'),
-        generator.root,
-        para('新安装直接保存到上面的位置。已有配置先备份，再合并 providers.magpie、model 和 agents；不要覆盖自己已有的 MCP、插件或其他供应商。'),
-        para('配置用文件引用读取步骤 3 的 key，不含任何密钥。NAS 的账号优先级由 NAS 管理，无需在每台电脑重设。')),
+      step('4. 保存配置文件',
+        para(win ? '将本页上方生成器产出的 opencode.json 保存到：%USERPROFILE%\\.config\\opencode\\opencode.json' : '将本页上方生成器产出的 opencode.json 保存到：~/.config/opencode/opencode.json'),
+        para('已有配置先备份，再合并 providers.magpie、model 和 agents；不要覆盖自己已有的 MCP、插件或其他供应商。配置用文件引用读取步骤 3 的 key，不含任何密钥。')),
       step('5. 设置代理例外',
         para('只使用 NAS 模型时，客户端无需为模型请求设置外网代理；NAS 负责访问上游。如果机器已设置 HTTP_PROXY / HTTPS_PROXY，NAS 两个域名和本机回环必须直连。'),
         code(win ? 'PowerShell：保留已有条目并添加直连域名' : 'Bash：保留已有条目并添加直连域名', win ? WIN_PROXY : LINUX_PROXY),
@@ -250,14 +260,10 @@ export function panel() {
           para('这些是当前终端和 OpenCode 后台服务的代理设置。安装工具若也要长期使用代理，按该工具的方式保存；NAS 域名继续保留在直连例外中。'))),
       step('6. 验证并开始使用',
         code(win ? 'PowerShell：DNS、API 和模型检查' : 'Bash：DNS、API 和模型检查', win ? WIN_CHECK : LINUX_CHECK),
-        para('API 有效 key 应返回模型 JSON；在 models 列表中应能找到第 4 步勾选的 Magpie 入口。启动后用 /models 选择模型。')),
-      fold('可选：把 /usage 换成 Magpie 用量弹窗',
-        para('新安装的 /usage 默认是 OpenCode 自带统计。要像当前电脑一样看 NAS 订阅额度，可安装下面的本地插件。'),
-        pluginDownload(),
-        para(win ? '将 ZIP 中的 opencode-magpie-usage 文件夹放到 %USERPROFILE%\\.config\\opencode\\plugins\\ 下。' : '将 ZIP 中的 opencode-magpie-usage 文件夹放到 ~/.config/opencode/plugins/ 下。'),
-        para('在同级 cli.json 的 plugins 数组中追加下面的路径（已有内容保留），重开 OpenCode。支持 /usage、/uasge、Ctrl+R 刷新和 Esc；没有常驻侧栏。'),
-        code('~/.config/opencode/cli.json', JSON.stringify({plugins:['./plugins/opencode-magpie-usage']}, null, 2)),
-        para('用量读取复用步骤 3 的 key。糖糖与额度提醒另依赖该电脑的 AmeTyping Agent，不随此插件包自动安装。')),
+        para('API 有效 key 应返回模型 JSON；在 models 列表中应能找到上方勾选的 Magpie 入口。启动后用 /models 选择模型。')),
+      fold('可选：/usage 用量插件 cli.json 注册参考',
+        code('~/.config/opencode/cli.json', JSON.stringify({ plugins: ['./plugins/opencode-magpie-usage'] }, null, 2)),
+        para('用量读取复用步骤 3 的 key。糖糖与额度提醒另依赖该电脑的 AmeTyping Agent。')),
       step('常见情况',
         h('ul', {},
           ...[
@@ -271,5 +277,5 @@ export function panel() {
     );
   }
   render();
-  return { root, destroy() { for (const controller of downloads) controller.abort(); for (const url of urls) URL.revokeObjectURL(url); downloads.clear(); urls.clear(); } };
+  return { root, openManual: () => { manualDetails.open = true; }, destroy() { for (const controller of downloads) controller.abort(); for (const url of urls) URL.revokeObjectURL(url); downloads.clear(); urls.clear(); } };
 }

@@ -27,7 +27,7 @@ export function openNodeDialog(existing, { onSelectNode, fetchState }) {
   const form = h('form', { class: 'dlgbox xnote-dlg', autocomplete: 'off' },
     h('div', { class: 'dlgt' }, h('span', { text: isEdit ? `编辑节点「${existing.id}」` : '添加监控设备节点' }), h('button', { class: 'dlgx', type: 'button', text: '×', onclick: done })),
     h('div', { class: 'dlgb' },
-      h('label', { class: 'xnote-lbl', text: '节点标识 ID（需与「控制面板 → 电脑」里的名字一致）：' }),
+      h('label', { class: 'xnote-lbl', text: '节点标识 ID（需与「设备接入与令牌」里的电脑名字一致）：' }),
       idIn,
       h('label', { class: 'xnote-lbl', text: '显示名称与地址说明：' }),
       h('div', { style: 'display:flex;gap:6px' }, labelIn, hostIn),

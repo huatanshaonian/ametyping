@@ -1,10 +1,10 @@
-// Skill 与协同 › 设备与 Harness (server/fleet): each computer's agent version against the bundle the last deploy put on
-// the NAS, the update the server pushes over the agent's own connection (no SSH; a development checkout never), the
-// coding agents ("harnesses") there -- installed, version, install / update, all at once -- and 一键配置: Claude Code
-// and OpenCode pointed at Magpie with a gateway key of the computer's own, Codex given the computer's proxy.
+// 设备与算力中心 › Agent 与 Harness (Fleet):
+// Consolidates fleet-wide Agent updates, coding harness installs/upgrades, proxy probing, one-click gateway config,
+// Hook/MCP sync, AND the NAS local Claude Code / Codex CLI version status (from ai-cli.js).
 import { h, ago } from '../util.js';
 import * as net from '../net.js';
 import { confirmBox } from '../dialog.js';
+import { cliBox } from './ai-cli.js';
 
 const short = (c) => (c ? c.slice(0, 7) : '—');
 const STATUS = { running: '更新中', restarting: '重启中', ok: '已更新', failed: '失败', blocked: '没更新' };
@@ -15,16 +15,33 @@ const PROXY_HINT = 'http://127.0.0.1:10808';
 
 const post = (path, body) => net.post('/api/fleet/' + path, body);
 
-export function panel() {
-  const root = h('div', { class: 'mcp fleet' });
+export function panel({ machine: initialMachine = '' } = {}) {
+  const root = h('div', { class: 'mcp fleet', style: 'flex:1;min-height:0;overflow:auto' });
   const msg = h('p', { class: 'gnote', 'aria-live': 'polite' });
   const body = h('div');
-  root.append(h('p', { class: 'ghint', text: '每台电脑的 agent 连着看板服务器。部署（deploy.js）会把新版本更新包与 git bundle 放到 NAS 上，各电脑直接从 NAS 经 HTTP 拉取并精确切到部署版本，重启失败两分钟内自动回滚。标了 autoUpdate: false 或多工作树的开发目录永不自动更新；非开发机若本地改动文件导致无法拉取，会直接在此提示手动处理。编程 agent（harness）也在这里装和更新。' }), msg, body);
+  const nasCliClaude = cliBox('claude');
+  const nasCliCodex = cliBox('codex');
+  const nasCliSection = h('div', { class: 'mcp-card', style: 'margin-top:12px' },
+    h('div', { class: 'mcp-h' }, h('b', { text: '群晖 NAS 本机 CLI 状态与更新（后台日报 / 文献 / 问答任务调用）' })),
+    h('h4', { class: 'aim-h', text: 'Claude Code (NAS)' }),
+    nasCliClaude.root,
+    h('h4', { class: 'aim-h', text: 'Codex (NAS)' }),
+    nasCliCodex.root
+  );
+
+  root.append(
+    h('p', { class: 'ghint', text: '每台电脑的 agent 连着看板服务器。部署（deploy.js）会把新版本更新包与 git bundle 放到 NAS 上，各电脑直接从 NAS 经 HTTP 拉取并精确切到部署版本，重启失败两分钟内自动回滚。标了 autoUpdate: false 或多工作树的开发目录永不自动更新；非开发机若本地改动文件导致无法拉取，会直接在此提示手动处理。编程 agent（harness）与 NAS 本机 CLI 也统一在这里检查更新。' }),
+    msg,
+    body,
+    nasCliSection
+  );
+
   let data = null, busy = false, destroyed = false, loadSeq = 0;
+  let pendingFocusMachine = initialMachine;
   const say = (t) => { msg.textContent = t || ''; };
-  const act = async (path, body, doing) => {
+  const act = async (path, bodyPayload, doing) => {
     busy = true; say(doing);
-    const r = await post(path, body);
+    const r = await post(path, bodyPayload);
     busy = false; say(r.msg || (r.ok ? '已开始' : '失败')); load();
     return r;
   };
@@ -77,7 +94,6 @@ export function panel() {
       onchange: (e) => act('settings', { harnessOff: { machine: m.name, off: !e.target.checked } }, '保存中…') }), h('small', { text: ' 每天自动更新' })) : '',
     m.harnessBusy ? h('small', { text: '正在进行…' }) : '');
   }
-  // the way out this computer uses for Codex and downloads, where it came from, and what the agent found
   const REACH = [['openai', 'OpenAI'], ['npm', 'npm'], ['github', 'GitHub'], ['claude', 'Claude 下载'], ['agy', 'agy 下载']];
   function netCell(m) {
     const v = m.version, e = m.effective || {}, n = v && v.net;
@@ -89,7 +105,6 @@ export function panel() {
       data.control && m.online && v && v.control ? h('button', { class: 'btn fleet-sm', type: 'button', text: '重新检测', disabled: busy,
         onclick: () => act('netprobe', { machine: m.name }, `${m.name}：检测网络…`) }) : '');
   }
-  // the daily harness check: when, the last one, the newest versions and what changed
   function dailyBox() {
     const s = data.settings, d = s.daily || {}, rel = data.releases || {};
     const on = h('input', { type: 'checkbox', checked: !!d.on });
@@ -137,11 +152,11 @@ export function panel() {
       return h('label', {}, c, ' ' + (NAMES[t] || t), h('small', { text: `（${TARGET_NOTE[t] || ''}${inst.get(t) === false ? '；还没装，配置先写好，装上就能用' : ''}）` }));
     });
     const eff = m.effective || {};
-    const proxy = h('input', { type: 'url', value: m.proxy || '', size: 30,
+    const proxy = h('input', { class: 'field', type: 'url', value: m.proxy || '', size: 30,
       placeholder: eff.proxy && !m.proxy ? `不填：${eff.proxy}（${eff.source}）` : data.settings.proxy ? '默认 ' + data.settings.proxy : PROXY_HINT });
-    const reissue = h('input', { type: 'checkbox', checked: !(m.version.magpieKey && m.version.magpieKey.id) });
+    const reissue = h('input', { type: 'checkbox', checked: !(m.version && m.version.magpieKey && m.version.magpieKey.id) });
     const out = h('div');
-    const go = h('button', { class: 'btn', type: 'button', text: '写入配置', onclick: async () => {
+    const go = h('button', { class: 'btn go', type: 'button', text: '写入配置', onclick: async () => {
       const targets = checks.map((l) => l.querySelector('input')).filter((c) => c.checked).map((c) => c.dataset.t);
       go.disabled = true; out.replaceChildren(h('small', { text: '正在写入…' }));
       const r = await post('configure', { machine: m.name, targets, reissue: reissue.checked, proxy: proxy.value.trim() });
@@ -157,7 +172,7 @@ export function panel() {
       h('div', { class: 'mcp-h' }, h('b', { text: '配置 ' + m.name }), h('small', { text: `网关 ${data.settings.gateway || '（未填）'}` })),
       h('div', { class: 'fleet-checks' }, ...checks),
       h('label', { class: 'fleet-row' }, h('span', { text: '这台电脑的代理' }), proxy),
-      h('label', {}, reissue, m.version.magpieKey && m.version.magpieKey.id ? ` 重新发一把密钥（现在用的是 ${m.version.magpieKey.name || m.version.magpieKey.id}，旧的会失效）` : ' 给这台电脑发一把自己的 Magpie 密钥'),
+      h('label', {}, reissue, m.version && m.version.magpieKey && m.version.magpieKey.id ? ` 重新发一把密钥（现在用的是 ${m.version.magpieKey.name || m.version.magpieKey.id}，旧的会失效）` : ' 给这台电脑发一把自己的 Magpie 密钥'),
       h('p', { class: 'ghint', text: '只改各配置文件里 Magpie 相关的几项，其余保持原样；每个文件改之前都会备份到这台电脑的 ~/.ametyping/config-backups。代理不填就用自动检测到的；填了就固定用这个，也用于在这台电脑上安装、更新 harness。' }),
       go, out));
     cfgBox.scrollIntoView({ block: 'nearest' });
@@ -166,10 +181,10 @@ export function panel() {
   function settingsBox() {
     const s = data.settings;
     const auto = h('input', { type: 'checkbox', checked: !!s.auto });
-    const gw = h('input', { type: 'url', value: s.gateway || '', placeholder: 'https://你的网关域名', size: 34 });
-    const px = h('input', { type: 'url', value: s.proxy || '', placeholder: PROXY_HINT, size: 34 });
+    const gw = h('input', { class: 'field', type: 'url', value: s.gateway || '', placeholder: 'https://你的网关域名', size: 34 });
+    const px = h('input', { class: 'field', type: 'url', value: s.proxy || '', placeholder: PROXY_HINT, size: 34 });
     const list = h('datalist', { id: 'fleet-models' }, ...(data.models || []).map((m) => h('option', { value: m.id, label: m.name || m.id })));
-    const inputs = MODEL_KEYS.map(([k, label]) => { const i = h('input', { type: 'text', value: (s.models || {})[k] || '', list: 'fleet-models', size: 34, placeholder: '不填就不改' }); i.dataset.k = k; return h('label', { class: 'fleet-row' }, h('span', { text: label }), i); });
+    const inputs = MODEL_KEYS.map(([k, label]) => { const i = h('input', { class: 'field', type: 'text', value: (s.models || {})[k] || '', list: 'fleet-models', size: 34, placeholder: '不填就不改' }); i.dataset.k = k; return h('label', { class: 'fleet-row' }, h('span', { text: label }), i); });
     const save = h('button', { class: 'btn', type: 'button', text: '保存', disabled: !data.control, onclick: async () => {
       const models = {}; for (const l of inputs) { const i = l.querySelector('input'); if (i.value.trim()) models[i.dataset.k] = i.value.trim(); }
       save.disabled = true; const r = await post('settings', { auto: auto.checked, gateway: gw.value.trim(), proxy: px.value.trim(), models }); save.disabled = false;
@@ -188,6 +203,21 @@ export function panel() {
       mag.ok ? '' : h('pre', { text: '# 在 NAS 上（Magpie 要是有管理接口的新版本）\nsudo docker exec magpie magpie gateway-key add "Windose 管理"   # 记下打印出来的 id 和密钥\nsudo docker exec magpie magpie gateway-key admin <id> local\n# 把密钥存进文件（chmod 600），在看板 config.json 里加：\n#   "magpie": { "baseURL": "http://127.0.0.1:3425/v1", "adminKeyFile": "/path/to/magpie-admin.key" }\n# 然后重启看板服务器' }));
   }
 
+  function applyFocusMachine() {
+    if (!pendingFocusMachine || !data || !Array.isArray(data.machines)) return;
+    const target = pendingFocusMachine;
+    pendingFocusMachine = '';
+    const tr = body.querySelector(`tr[data-machine="${CSS.escape(target)}"]`);
+    if (tr) {
+      tr.style.outline = '2px solid var(--fill)';
+      tr.scrollIntoView({ block: 'nearest' });
+    }
+    const m = data.machines.find((x) => x.name === target);
+    if (m && data.control && m.online && m.version && m.version.control) {
+      configure(m);
+    }
+  }
+
   async function load() {
     const seq = ++loadSeq;
     const next = await net.getJson('/api/fleet');
@@ -195,7 +225,7 @@ export function panel() {
     data = next;
     if (!data || !data.machines) { say('读不到设备信息（看板服务器版本太旧？）'); return; }
     const b = data.bundle;
-    const rows = data.machines.map((m) => h('tr', {},
+    const rows = data.machines.map((m) => h('tr', { dataset: { machine: m.name } },
       h('td', {}, h('b', { text: m.name }), h('small', { text: m.online ? ' 在线' : ' 离线' })),
       h('td', {}, versionCell(m)), h('td', {}, runCell(m)), h('td', {}, harnessCell(m)), h('td', {}, netCell(m)), h('td', {}, actions(m))));
     const anyHarness = data.machines.some((m) => m.online && m.version && m.version.control && (m.version.harnesses || []).some((x) => x.installed));
@@ -213,8 +243,26 @@ export function panel() {
         : h('p', { class: 'ghint', text: '还没有电脑连上来。' }),
       cfgBox, dailyBox(), settingsBox());
     if (!data.control) say('服务器处于只读模式：只能看，不能更新或配置。');
+    applyFocusMachine();
   }
   const off = net.on('fleet', () => { if (!busy && !destroyed) load(); });
   load();
-  return { root, show: load, destroy() { destroyed = true; off(); } };
+  return {
+    root,
+    show(mach = '') {
+      if (mach) pendingFocusMachine = mach;
+      load();
+    },
+    focusMachine(mach) {
+      pendingFocusMachine = String(mach || '').trim();
+      if (data) applyFocusMachine();
+      else load();
+    },
+    destroy() {
+      destroyed = true;
+      off();
+      nasCliClaude.destroy();
+      nasCliCodex.destroy();
+    },
+  };
 }

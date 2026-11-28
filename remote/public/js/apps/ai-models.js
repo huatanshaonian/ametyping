@@ -1,12 +1,8 @@
-// AI 模型 (in 控制面板): which model each AI job uses and how hard it thinks (remote/server/ai) -- one default for all,
-// any job set on its own (empty = the default), and a backup model (后备模型) that finishes the job when the chosen one
-// fails or is out of usage. The models are the ones Codex and Claude Code list for their accounts, each offering only
-// the efforts it has. Once a Claude API key is on the NAS (ai-api.js) Claude's models are asked over the API first
-// (its monthly credit), through Claude Code when that fails -- nothing to choose. A model that failed lately is shown
-// (it rests 15 minutes), the API too. Below, the Claude API's key and the two tools (ai-cli.js).
+// NAS 后台任务模型分配与 API 密钥（挂载于「AI 与额度 › 模型路由与能力池」下半区）
+// NAS Claude Code / Codex CLI 版本检查与更新已统一迁入「设备与算力 › Agent 与 Harness (Fleet)」。
 import { h } from '../util.js';
 import * as net from '../net.js';
-import { cliBox, when } from './ai-cli.js';
+import { when } from './ai-cli.js';
 import { apiBox } from './ai-api.js';
 import { googleApiBox } from './ai-google.js';
 import { deepseekApiBox } from './ai-deepseek.js';
@@ -14,22 +10,44 @@ import { deepseekApiBox } from './ai-deepseek.js';
 const EFFORT = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极高' };
 const GROUP = { claude: 'Claude', codex: 'OpenAI（Codex）', google: 'Google AI Studio', magpie: 'Magpie' };
 
-export function panel() {
+export function panel(opts = {}) {
+  const initialSec = typeof opts === 'string' ? opts : (opts && opts.sec) || '';
   const root = h('div', { class: 'aim' });
   const msg = h('p', { class: 'gnote' });
   const down = h('div', { class: 'aim-down' });
   const table = h('div', { class: 'aim-table' });
+  const clippyHead = h('h4', { class: 'aim-h', text: 'Clippy 与项目智能总结' });
   const clippyBox = h('div', { class: 'aim-codex aim-cli', dataset: { tool: 'clippy-model' } });
-  const boxes = [cliBox('claude'), cliBox('codex'), apiBox(() => load()), googleApiBox(() => load()), deepseekApiBox(() => load())];
-  root.append(h('p', { class: 'ghint' }, 'Magpie 模型通过群晖上的网关调用，沿用网关的账号与路由。', h('a', { href: '#magpie', text: '查看账号用量', onclick: async e => { e.preventDefault(); (await import('./magpie.js')).open(); } })), msg, h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：OpenAI 的模型走 Codex；Claude 的模型在填了 Claude API 的 key 后先走 API（用每月的 API 赠金），API 出错或赠金用完时自动改走 Claude Code（用订阅用量）；填了 Google AI Studio API key 后可直接选用官方 Gemini 模型。更强的模型和更高的推理强度更准，但更慢、用量更多。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
-    down, table, h('h4', { class: 'aim-h', text: 'Clippy 与项目智能总结' }), clippyBox, h('h4', { class: 'aim-h', text: 'Google AI Studio API' }), boxes[3].root, h('h4', { class: 'aim-h', text: 'DeepSeek API（研究与计算抽取）' }), boxes[4].root, h('h4', { class: 'aim-h', text: 'Claude API' }), boxes[2].root, h('h4', { class: 'aim-h', text: 'Claude Code' }), boxes[0].root, h('h4', { class: 'aim-h', text: 'Codex' }), boxes[1].root);
-  let view = null, dirty = false;
+  const cApi = apiBox(() => load());
+  const gApi = googleApiBox(() => load());
+  const dApi = deepseekApiBox(() => load());
+  const boxes = [cApi, gApi, dApi];
+
+  root.append(
+    h('p', { class: 'ghint' },
+      'Magpie 模型通过群晖上的网关调用，沿用网关的账号与路由。',
+      h('a', { href: '#magpie', text: '查看账号用量', onclick: async (e) => { e.preventDefault(); (await import('./ai-hub.js')).open({ tab: 'quota' }); } }),
+      ' · NAS 本机与各电脑的 Claude Code / Codex CLI 版本与升级请前往 ',
+      h('a', { href: '#infra?tab=fleet', text: '↗ 设备与算力 › Fleet', onclick: async (e) => { e.preventDefault(); (await import('./infra.js')).open({ tab: 'fleet' }); } }),
+      '。'
+    ),
+    msg,
+    h('p', { class: 'ghint', text: '日报、周报、问一问、邮件、文献都由群晖调用模型完成：OpenAI 的模型走 Codex；Claude 的模型在填了 Claude API 的 key 后先走 API（用每月的 API 赠金），API 出错或赠金用完时自动改走 Claude Code（用订阅用量）；填了 Google AI Studio API key 后可直接选用官方 Gemini 模型。没单独设置的任务跟随「默认」；首选模型出错或用量用完时，自动改用「后备模型」把任务做完。' }),
+    down,
+    table,
+    clippyHead,
+    clippyBox,
+    h('h4', { class: 'aim-h', text: 'Google AI Studio API' }), gApi.root,
+    h('h4', { class: 'aim-h', text: 'DeepSeek API（研究与计算抽取）' }), dApi.root,
+    h('h4', { class: 'aim-h', text: 'Claude API' }), cApi.root
+  );
+
+  let view = null, dirty = false, pendingSec = initialSec;
   const nameOf = (slug, api = '') => {
     const m = view.models.find((x) => x.slug === (api ? `api:${api}:${slug}` : slug)) || view.models.find((x) => x.slug === slug) || view.models.find((x) => x.provider === 'magpie' && x.model === slug);
     return (m && m.name) || slug;
   };
 
-  // a model + effort pair of selects, the models grouped by tool; follow: the '' option's text (跟随默认 / 不用后备)
   function pair(cur, follow, onChange) {
     const groups = Object.keys(GROUP).map((p) => [p, view.models.filter((m) => m.provider === p)]).filter(([, ms]) => ms.length);
     const model = h('select', { class: 'field' }, h('option', { value: '', text: follow }),
@@ -53,11 +71,23 @@ export function panel() {
 
   const one = (u) => `${nameOf(u.model, u.api)} · ${u.effort ? EFFORT[u.effort] || u.effort : '默认强度'}`;
   const uses = (u) => '实际：' + one(u) + (u.backup ? `；出错时改用 ${nameOf(u.backup.model, u.backup.api)}` : '');
-  // the models that failed lately: the next calls go to the other one first for 15 minutes
+
   function showDown() {
     const list = (view.down || []).filter((d) => d.until > Date.now());
     const ad = view.api && view.api.down;
     down.replaceChildren(...(ad && ad.until > Date.now() ? [h('p', { class: 'ghint bad', text: `Claude API 在 ${when(ad.at)} 出错（${ad.error.slice(0, 120)}），${when(ad.until).replace(/.* 日 /, '')} 前 Claude 的模型先走 Claude Code（订阅用量）` })] : []), ...list.map((d) => h('p', { class: 'ghint bad', text: `${nameOf(d.model, d.api)} 在 ${when(d.at)} 出错（${d.error.slice(0, 120)}），${when(d.until).replace(/.* 日 /, '')} 前先用另一个模型` })));
+  }
+
+  function focusSec(sec) {
+    if (!sec) return;
+    pendingSec = sec;
+    if (sec === 'clippy') {
+      requestAnimationFrame(() => {
+        try { clippyHead.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        const sel = clippyBox.querySelector('select');
+        if (sel) sel.focus();
+      });
+    }
   }
 
   async function load() {
@@ -71,7 +101,6 @@ export function panel() {
       h('div', { class: 'aim-row aim-def aim-bak' }, h('div', {}, h('b', { text: '后备模型' }), h('small', { text: '首选模型出错或用量用完时，自动改用它把任务做完' })), bak.model, bak.effort, h('span')),
       ...rows.map(({ t, p, out }) => h('div', { class: 'aim-row' }, h('div', {}, h('b', { text: t.name }), h('small', { text: t.note })), p.model, p.effort, out)));
 
-    // Render Clippy / Project Overview model selector card
     const clippyGroups = [['magpie', view.models.filter((m) => m.provider === 'magpie')], ['google', view.models.filter((m) => m.provider === 'google')]].filter(([, ms]) => ms.length);
     const clippySelect = h('select', { class: 'field', style: 'min-width:260px' },
       h('option', { value: '', text: '默认（Magpie · antigravity/gemini-4-hydrogen）' }),
@@ -91,6 +120,8 @@ export function panel() {
     );
 
     showDown();
+    if (pendingSec) { const s = pendingSec; pendingSec = ''; focusSec(s); }
+
     let saveT = null;
     async function save() {
       clearTimeout(saveT);
@@ -105,5 +136,5 @@ export function panel() {
   }
 
   load();
-  return { root, destroy() { for (const b of boxes) b.destroy(); } };
+  return { root, show: focusSec, load, destroy() { for (const b of boxes) b.destroy(); } };
 }

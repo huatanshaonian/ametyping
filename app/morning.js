@@ -1,16 +1,14 @@
 // 早安日报: when the NAS has written a new daily report (the dashboard agent passes a short note on:
 // POST /control/report), the first key you press after it arrives makes Ame show a small window next to her --
 // what yesterday was about, how many things are still open, the weekly report on Mondays, and what today holds
-// (Google Calendar events, tasks and 重要计划 due -- only when the note's agenda is for today). A click opens the
-// report in the Windose web desktop. Each note is shown once (remembered across restarts); tray option 早安日报.
+// (Google Calendar events, tasks and 重要计划 due, mail alerts, and today's literature -- only when the note's agenda
+// is for today). Clicking any section opens its exact view in the Windose web desktop (#report, #calendar, #mail-alerts, #lit).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
 const W = 300, H = 170, LINE = 19, SHOW_MS = 45e3;
 
-// deps: { app, BrowserWindow, ipcMain, screen, anchor: () => Ame's window bounds, enabled: () => bool,
-//         dashboardUrl: () => string, openExternal(url) }
 function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, dashboardUrl, openExternal }) {
   const file = path.join(app.getPath('userData'), 'morning.json');
   let st = {}; try { st = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}   // { note, shown }
@@ -22,28 +20,37 @@ function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, d
   const strs = (v, k, n) => (Array.isArray(v) ? v : []).slice(0, k).map((x) => str(x, n)).filter(Boolean);
   const pad = (n) => String(n).padStart(2, '0');
   const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
-  // today's agenda: { date, google, events: [{ time, title }], tasks: [title], todos: [text] }
+
   function agendaOf(t) {
     if (!t || !/^\d{4}-\d{2}-\d{2}$/.test(t.date)) return undefined;
-    return { date: t.date, google: !!t.google, tasks: strs(t.tasks, 5, 40), todos: strs(t.todos, 5, 60),
+    return {
+      date: t.date,
+      google: !!t.google,
+      tasks: strs(t.tasks, 5, 40),
+      todos: strs(t.todos, 5, 60),
       events: (Array.isArray(t.events) ? t.events : []).slice(0, 6).map((e) => ({ time: /^\d{2}:\d{2}$/.test(e && e.time) ? e.time : '', title: str(e && e.title, 40) })).filter((e) => e.title),
-      // the mail alerts still open: { todo, reading, top: [line], due }
-      mail: t.mail ? { todo: +t.mail.todo || 0, reading: +t.mail.reading || 0, top: strs(t.mail.top, 3, 40), due: /^\d{4}-\d{2}-\d{2}$/.test(t.mail.due) ? t.mail.due : '' } : undefined };
+      mail: t.mail ? { todo: +t.mail.todo || 0, reading: +t.mail.reading || 0, top: strs(t.mail.top, 3, 40), due: /^\d{4}-\d{2}-\d{2}$/.test(t.mail.due) ? t.mail.due : '' } : undefined,
+      papers: t.papers && (+t.papers.new || +t.papers.cards || +t.papers.review)
+        ? { new: +t.papers.new || 0, cards: +t.papers.cards || 0, review: +t.papers.review || 0, top: strs(t.papers.top, 3, 50) }
+        : undefined,
+    };
   }
-  // the agenda's lines in the bubble (none when it is not today's)
+
   const agendaLines = (n) => {
     const t = n && n.today;
     if (!t || t.date !== today()) return 0;
-    return (t.events.length || t.google ? 1 : 0) + (t.tasks.length || t.todos.length ? 1 : 0) + (t.mail && (t.mail.todo || t.mail.reading) ? 1 : 0);
+    return (t.events.length || t.google ? 1 : 0)
+      + (t.tasks.length || t.todos.length ? 1 : 0)
+      + (t.mail && (t.mail.todo || t.mail.reading) ? 1 : 0)
+      + (t.papers && (t.papers.new || t.papers.cards || t.papers.review) ? 1 : 0);
   };
-  // a note from the agent: { date, headline, projects: [name], open: n, chores: n, week?: { start, end, headline }, today?: agenda }
+
   function setNote(d) {
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return false;
     const note = { date: d.date, headline: str(d.headline, 200), projects: (Array.isArray(d.projects) ? d.projects : []).slice(0, 6).map((x) => str(x, 40)),
       open: +d.open || 0, done: +d.done || 0, chores: +d.chores || 0 };
     if (d.week && /^\d{4}-\d{2}-\d{2}$/.test(d.week.start)) note.week = { start: d.week.start, end: str(d.week.end, 10), headline: str(d.week.headline, 200) };
     note.today = agendaOf(d.today);
-    // the same report again (the agent reconnected): only its agenda is newer
     if (keyOf(note) === keyOf(st.note)) { if (note.today) { st.note.today = note.today; save(); } return true; }
     st.note = note; save();
     return true;
@@ -70,7 +77,6 @@ function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, d
   }
   function hide() { clearTimeout(hideT); if (win && win.isVisible()) win.hide(); }
 
-  // every key press: the first one after a new note shows it
   function onKey() {
     const now = Date.now();
     if (now - lastCheck < 2000) return;
@@ -80,10 +86,21 @@ function createMorning({ app, BrowserWindow, ipcMain, screen, anchor, enabled, d
     show();
   }
 
-  ipcMain.on('morning-open', (e) => {
+  ipcMain.on('morning-open', (e, targetArg) => {
     if (!win || e.sender !== win.webContents) return;
     const u = String(dashboardUrl() || '');
-    if (/^https:\/\/\S+$/.test(u) && st.note) openExternal(u.replace(/\/?$/, '/') + '#report=' + st.note.date);
+    if (/^https:\/\/\S+$/.test(u) && st.note) {
+      let target = '#report=' + st.note.date;
+      if (typeof targetArg === 'string' && /^#(report=[-\w]+|calendar=\d{4}-\d{2}-\d{2}|mail-alerts|lit)$/.test(targetArg)) {
+        target = targetArg;
+      } else {
+        try {
+          const raw = decodeURIComponent(new URL(e.sender.getURL()).hash.slice(1));
+          if (/^#(report=[-\w]+|calendar=\d{4}-\d{2}-\d{2}|mail-alerts|lit)$/.test(raw)) target = raw;
+        } catch {}
+      }
+      openExternal(u.replace(/\/?$/, '/') + target);
+    }
     hide();
   });
   ipcMain.on('morning-close', (e) => { if (win && e.sender === win.webContents) hide(); });

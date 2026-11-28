@@ -82,6 +82,22 @@ export async function init() {
   apply();
 }
 
+export const EXTRA_ICONS = [
+  ['todo', '重要计划'],
+  ['office', 'Office 文档'],
+  ['notepad', '记事本'],
+  ['board', '画板'],
+];
+const extraListeners = new Set();
+export function onExtraIconsChange(fn) {
+  extraListeners.add(fn);
+  return () => extraListeners.delete(fn);
+}
+export function getExtraIcons() {
+  const v = prefs.get('desk.extra', {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
 // ---- 显示属性 window ----
 // the 显示属性 page itself, for 控制面板: { root }
 export function settingsPanel() {
@@ -133,12 +149,25 @@ export function settingsPanel() {
   const shades = shadePanel();
   const look = theme.picker(() => { apply(); render(); });
   look.addEventListener('change', () => shades.render());
+  const extraBar = h('div', { class: 'wallbar', style: 'border-top:0;border-bottom:1px dotted var(--edge)' },
+    h('span', { text: '桌面额外显示图标：' }),
+    ...EXTRA_ICONS.map(([id, label]) => {
+      const cb = h('input', { type: 'checkbox', checked: !!getExtraIcons()[id], dataset: { extraIcon: id } });
+      cb.addEventListener('change', () => {
+        const next = { ...getExtraIcons(), [id]: cb.checked };
+        prefs.set('desk.extra', next);
+        for (const fn of extraListeners) { try { fn(next); } catch {} }
+      });
+      return h('label', { style: 'display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-right:8px' }, cb, label);
+    })
+  );
   const content = h('div', {},
     h('div', { class: 'wallbar', style: 'border-top:0;border-bottom:1px dotted var(--edge)' },
       h('span', { text: '配色方案：' }), look,
       h('span', { text: '界面大小：' }), theme.scalePicker(), h('span', { text: '显示方式：' }), mode,
       h('span', { style: 'font-size:12px;opacity:.65', text: '填充：铺满不留边（裁掉多余部分）；适应：完整显示' })),
     shades.root,
+    extraBar,
     grid,
     h('div', { class: 'wallbar' }, url, fetchBtn, h('button', { class: 'btn', type: 'button', text: '本地图片…', onclick: () => file.click() }), file),
     msg);

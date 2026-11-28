@@ -3,8 +3,9 @@
 
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
-const { createRemoteControl } = require('./remote-control');
+const { createRemoteControl, cleanMeshEnv } = require('./remote-control');
 const { createLocator } = require('./session-locate');
 const { lineage } = require('./running-sessions');
 const transcript = require('./transcript');
@@ -27,7 +28,9 @@ const GONE_CHECK_MS = 2 * 60e3;
 const CHAT_KEEP_MS = 12 * 3600e3;
 
 const apiId = (v) => (typeof v === 'string' && /^[A-Za-z0-9._-]{1,40}$/.test(v) ? v : '');
+const meshId = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(v) ? v : '');
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const normPath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 function createSessionRuntime({
   app,
@@ -35,6 +38,7 @@ function createSessionRuntime({
   screen,
   port,
   settings,
+  save = () => {},
   bridge,
   getWin,
   getBubbleWin,
@@ -50,8 +54,43 @@ function createSessionRuntime({
 }) {
   const sessions = new Map();
   const chats = new Map();
+  const pendingMeshLaunches = [];
   let chatSel = null;
   let hideTimer = null;
+  let cachedMachine = '';
+  let cachedMachineAt = 0;
+
+  function localMachineName() {
+    if (cachedMachine && Date.now() - cachedMachineAt < 30000) return cachedMachine;
+    cachedMachineAt = Date.now();
+    const candidates = [
+      process.env.AME_AGENT_CONFIG,
+      path.join(app.getPath('home'), '.ametyping', 'agent.json'),
+      path.join(__dirname, '..', 'remote', 'agent', 'agent.json'),
+    ].filter(Boolean);
+    for (const f of candidates) {
+      try {
+        const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+        if (c && typeof c.name === 'string' && c.name.trim()) {
+          cachedMachine = c.name.trim();
+          return cachedMachine;
+        }
+      } catch {}
+    }
+    cachedMachine = os.hostname() || '';
+    return cachedMachine;
+  }
+
+  function matchPendingMesh(cwd) {
+    const now = Date.now();
+    for (let i = pendingMeshLaunches.length - 1; i >= 0; i--) {
+      if (now - pendingMeshLaunches[i].at > 90000) pendingMeshLaunches.splice(i, 1);
+    }
+    if (!cwd) return null;
+    const nc = normPath(cwd);
+    const hit = pendingMeshLaunches.find((x) => normPath(x.cwd) === nc);
+    return hit ? hit.mesh : null;
+  }
 
   function sessionLabel(s) {
     if (s.title) return s.title;
@@ -101,10 +140,18 @@ function createSessionRuntime({
     const list = listed().sort((x, y) => x.born - y.born).map((s) => ({
       id: s.id, label: sessionLabel(s), project: s.project, state: s.state, lines: s.lines, steps: s.steps, t0: s.t0, last: s.last, bg: sessionLineage().bg.has(s.id),
       provider: s.provider, via: replyVia(s), permissions: permissions.list(s.id), ai: s.ai || undefined, model: s.model || undefined,
+      mesh: s.mesh || undefined,
     }));
     sendPanel();
     if (!list.length && !chatMode()) { hideBubble(); return; }
-    bubbleWin.webContents.send('bubble-state', { sessions: list, changedId, mode: settings.panelMode, sound: settings.petSound !== false });
+    bubbleWin.webContents.send('bubble-state', {
+      sessions: list,
+      changedId,
+      mode: settings.panelMode,
+      sound: settings.petSound !== false,
+      machine: localMachineName(),
+      shade: settings.shade || '',
+    });
     if (changedId && settings.panelMode !== 'off') {
       placeBubble();
       if (!folded() && !bubbleWin.isVisible()) bubbleWin.showInactive();
@@ -148,6 +195,12 @@ function createSessionRuntime({
     if (d.title) s.title = String(d.title).slice(0, 60);
     if (d.transcript) s.transcript = String(d.transcript);
     if (d.cwd && !((d.provider === 'codex' || d.provider === 'agy') && d.agentId)) s.cwd = String(d.cwd);
+    if (meshId(d.projectId)) {
+      s.mesh = { projectId: meshId(d.projectId), ...(meshId(d.nodeId) ? { nodeId: meshId(d.nodeId) } : {}) };
+    } else if (!s.mesh && s.cwd) {
+      const pm = matchPendingMesh(s.cwd);
+      if (pm) s.mesh = pm;
+    }
     if (d.model) s.model = d.model;
     if (d.ai) s.ai = d.ai;
     if (s.provider === 'agy' && !d.model && s.transcript && !(s.modelReadAt > t - 15000)) {
@@ -310,7 +363,7 @@ function createSessionRuntime({
     return listed().sort((x, y) => x.born - y.born).map((s) => ({
       id: s.id, label: sessionLabel(s), project: s.project, provider: s.provider, state: s.state, via: replyVia(s), bg: sessionLineage().bg.has(s.id),
       t0: s.t0, last: s.last, lines: s.lines.filter((l) => !l.sep).slice(-8), btw: btwList(s), api: s.api || undefined,
-      ai: s.ai || undefined, model: s.model || undefined,
+      ai: s.ai || undefined, model: s.model || undefined, mesh: s.mesh || undefined,
       perms: permissions.list(s.id).map((p) => ({
         id: p.id, provider: p.provider, tool: p.tool, cwd: p.cwd, subagent: p.subagent, always: p.always, ask: p.ask || undefined,
         input: JSON.stringify(p.input || {}, null, 2).slice(0, 8000),
@@ -327,8 +380,21 @@ function createSessionRuntime({
     let d = {};
     try { d = JSON.parse(body || '{}'); } catch {}
     if (req.method === 'POST' && req.url === '/control/report') return out(200, { ok: morning().setNote(d) });
-    if (req.method === 'POST' && req.url === '/control/quota') return out(200, { ok: quotaNotice().add(d) });
+    if (req.method === 'POST' && req.url === '/control/quota') {
+      if (settings.quotaBubble === false) return out(200, { ok: false, muted: true });
+      return out(200, { ok: quotaNotice().add(d) });
+    }
     if (req.method === 'POST' && req.url === '/control/mail') return out(200, { ok: mailNotice().add(d) });
+    if (req.method === 'POST' && req.url === '/control/shade') {
+      const sh = typeof d.shade === 'string' && ['dusk', 'night', 'plum', 'desert', 'green'].includes(d.shade) ? d.shade : '';
+      if (settings.shade !== sh) {
+        settings.shade = sh;
+        save();
+        const bw = getBubbleWin();
+        if (bw && !bw.isDestroyed()) bw.webContents.send('bubble-shade', sh);
+      }
+      return out(200, { ok: true, shade: sh });
+    }
     if (req.method === 'POST' && req.url === '/control/title') {
       const s = typeof d.id === 'string' && sessions.get(d.id), t = typeof d.title === 'string' ? d.title.trim().slice(0, 60) : '';
       if (s && t && t !== s.title) { s.title = t; pushBubble(null); }
@@ -350,6 +416,12 @@ function createSessionRuntime({
     }
     if (req.method === 'POST' && req.url === '/control/launch') {
       if (typeof d.cwd !== 'string' || !d.cwd || (d.prompt != null && typeof d.prompt !== 'string')) return out(400, { ok: false, msg: '无效请求' });
+      const mEnv = cleanMeshEnv(d.meshEnv);
+      if (mEnv && mEnv.AME_PROJECT_ID) {
+        const meshInfo = { projectId: mEnv.AME_PROJECT_ID, ...(mEnv.AME_NODE_ID ? { nodeId: mEnv.AME_NODE_ID } : {}) };
+        pendingMeshLaunches.push({ cwd: d.cwd, mesh: meshInfo, at: Date.now() });
+        if (typeof d.resume === 'string' && sessions.has(d.resume)) sessions.get(d.resume).mesh = meshInfo;
+      }
       return out(200, await launch(d.cwd, d.prompt || '', typeof d.resume === 'string' ? d.resume : '', ['codex', 'opencode', 'agy', 'kiro'].includes(d.tool) ? d.tool : 'claude', d.api, d.meshEnv, d.model));
     }
     if (req.method === 'POST' && req.url === '/control/decide') {

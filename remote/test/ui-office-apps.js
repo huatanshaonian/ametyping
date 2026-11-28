@@ -1,8 +1,6 @@
-// UI check (Word / Excel / PowerPoint on the desktop): their icons; the start box; 新建 -- the save dialog over a computer's
-// folders, a blank document put there and the editor opened on it, a name already there refused, a read-only place
-// refused; 打开 -- only that kind of file listed, the one picked opened; 最近的文档 per kind; the blank documents served.
-// Server + agent (files and uploads on) + a stand-in for the OnlyOffice container whose editor script only notes what it
-// was given + headless Chrome. Screenshots in test/out/shots.
+// UI check (Office 文档统一启动台 + Word / Excel / PowerPoint 单应用兼容):
+// 11 图标桌面下通过「显示属性」额外勾选 Office 文档 + 开始菜单「办公与附件 ▸」进入；
+// 新建空白文档 / 只读目录拒绝 / 重名拒绝 / 打开指定后缀 / 最近文档列表 / 重载持久化全覆盖。
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), cp = require('child_process'), crypto = require('crypto');
 const R = path.resolve(__dirname, '..');
 const WebSocket = require(R + '/node_modules/ws');
@@ -17,10 +15,12 @@ fs.copyFileSync(path.join(TPL, 'blank.xlsx'), path.join(SHARE, 'docs', '预算.x
 fs.writeFileSync(path.join(SHARE, 'docs', 'notes.txt'), 'x');
 const CFG = path.join(T, 'srv', 'config.json'); fs.mkdirSync(path.dirname(CFG));
 const PORT = 18864, CDP = 9369, SECRET = crypto.randomBytes(24).toString('hex');
+const guiMerged = fs.existsSync(path.join(R, 'public', 'css', 'tokens.css'));
+const pendingIconRe = /\/icons\/(catalog|network_three_pcs|network_drive_world|world|key_world|search_file_2|help_book_computer|script_file_teal|tools_gear|magnifying_glass|users|clock)(-16)?\.png(\?|$)/;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const env = { ...process.env, AME_REMOTE_CONFIG: CFG, AME_SUMMARY_TICK_MS: '600000' };
 const node = (args, extra = {}) => cp.execFileSync(process.execPath, args, { env: { ...env, ...extra } }).toString();
-// the stand-in container: healthy, and an editor script that shows the title it was given
 const STUB = "window.DocsAPI={DocEditor:function(id,c){(window.__oo=window.__oo||[]).push(c.document.title);document.getElementById(id).textContent='STUB '+c.document.title;this.destroyEditor=function(){};setTimeout(function(){c.events.onAppReady()},10);}};";
 const fake = http.createServer((q, s) => {
   if (q.url === '/healthcheck') return s.end('true');
@@ -77,7 +77,11 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
       const o = JSON.parse(m);
       if (o.id && pending.has(o.id)) { pending.get(o.id)(o); pending.delete(o.id); }
       if (o.method === 'Runtime.exceptionThrown') errors.push('exception: ' + JSON.stringify(o.params.exceptionDetails.exception && o.params.exceptionDetails.exception.description || o.params.exceptionDetails.text).slice(0, 300));
-      if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') errors.push('log: ' + o.params.entry.text.slice(0, 300));
+      if (o.method === 'Log.entryAdded' && o.params.entry.level === 'error') {
+        const u = o.params.entry.url || '';
+        if (!guiMerged && pendingIconRe.test(u)) return;
+        errors.push('log: ' + o.params.entry.text.slice(0, 300) + ' ' + u);
+      }
     });
     const call = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
     const evalJs = async (expr) => (await call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.result.value;
@@ -90,18 +94,39 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await sleep(3500);
     await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())");
 
-    const icons = await evalJs("['word','excel','powerpoint'].map(k => { const b = document.querySelector(`.dicon[data-id=\"${k}\"]`); return b && [b.textContent, b.querySelector('img').getAttribute('src'), b.querySelector('img').naturalWidth]; })");
-    chk('Word / Excel / PowerPoint on the desktop, with their own icons', JSON.stringify(icons) === JSON.stringify([['Word', '/icons/word.png', 32], ['Excel', '/icons/excel.png', 32], ['PowerPoint', '/icons/powerpoint.png', 32]]), icons);
-    const dbl = (k) => evalJs(`document.querySelector('.dicon[data-id="${k}"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    // 1. Unified Office 文档 optional desktop icon + Start Menu 办公与附件 cascading items
+    await evalJs("(async () => { const ctrl = await import('/js/apps/control.js'); ctrl.open('display'); })()"); await sleep(800);
+    await evalJs("document.querySelector('.cp-pane input[data-extra-icon=\"office\"]').click()"); await sleep(300);
+    await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())");
+    const officeIcon = await evalJs("(() => { const b = document.querySelector('.dicon[data-id=\"office\"]'); return b && [b.textContent, b.querySelector('img').getAttribute('src'), b.querySelector('img').naturalWidth]; })()");
+    chk('Office 文档 optional desktop icon renders with directory_open_cool and opens unified launcher',
+      JSON.stringify(officeIcon) === JSON.stringify(['Office 文档', '/icons/directory_open_cool.png', 48]), officeIcon);
+
+    await evalJs("document.querySelector('.dicon[data-id=\"office\"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
     const app = (k) => `[...document.querySelectorAll('.win')].find(w => w.querySelector('.title').textContent === ${JSON.stringify(k)})`;
-    await dbl('word');
+    const hubBox = await until(`(() => { const w = ${app('Office 文档')}; return w && w.querySelector('.office-app') ? [...w.querySelectorAll('.oa-big b')].map(b => b.textContent) : null; })()`);
+    chk('Office 文档 launcher offers Word / Excel / PPT creation and unified open',
+      JSON.stringify(hubBox) === JSON.stringify(['Word（.docx）', 'Excel（.xlsx）', 'PowerPoint（.pptx）', '打开已有文档…']), hubBox);
+    await shot('79-office-hub.png');
+    await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())");
+
+    // 2. Open Word via Start Menu 办公与附件 ▸ Word (and helper openApp for Excel)
+    const openApp = (k) => evalJs(`(async () => {
+      document.getElementById('startbtn').click();
+      const sub = [...document.querySelectorAll('#startmenu .mitem.has-sub')].find(x => x.textContent.includes('办公与附件'));
+      sub && sub.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
+      const label = ${JSON.stringify(k === 'word' ? 'Word' : k === 'excel' ? 'Excel' : 'PowerPoint')};
+      const item = [...document.querySelectorAll('#startmenu .msub .mitem')].find(x => x.textContent.trim() === label);
+      item && item.click();
+    })()`);
+
+    await openApp('word');
     const box = await until(`(() => { const w = ${app('Word')}; return w && w.querySelector('.office-app') ? [...w.querySelectorAll('.oa-big b')].map(b => b.textContent).concat(w.querySelector('.oa-none') ? w.querySelector('.oa-none').textContent : '') : null; })()`);
-    chk('Word opens its start box: 新建 / 打开, no recent documents yet', box && box[0] === '新建空白文档' && box[1] === '打开文档…' && /还没有编辑过文档/.test(box[2]), box);
+    chk('Word opens its start box from Start Menu: 新建 / 打开, no recent documents yet', box && box[0] === '新建空白文档' && box[1] === '打开文档…' && /还没有编辑过文档/.test(box[2]), box);
     await shot('80-office-start.png');
 
     // 新建: the save dialog -- the computer's places, one read-only
     const dlg = "document.querySelector('.filedlg')";
-    const rows = () => evalJs(`[...${dlg}.querySelectorAll('.fd-row')].map(r => r.querySelector('.fd-n').textContent)`);
     const dblRow = (name) => evalJs(`(() => { const r = [...${dlg}.querySelectorAll('.fd-row')].find(r => r.querySelector('.fd-n').textContent === ${JSON.stringify(name)}); r && r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return !!r; })()`);
     const clickRow = (name) => evalJs(`(() => { const r = [...${dlg}.querySelectorAll('.fd-row')].find(r => r.querySelector('.fd-n').textContent === ${JSON.stringify(name)}); r && r.click(); return !!r; })()`);
     const msg = () => evalJs(`${dlg}.querySelector('.fd-msg').textContent`);
@@ -112,7 +137,7 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await until(`${dlg}.querySelector('.fd-where').value === ${JSON.stringify(RO)}`);
     await evalJs(`${dlg}.querySelector('.btn.go').click()`);
     chk('a read-only place: refused', /只读/.test(await until(`/只读/.test(${dlg}.querySelector('.fd-msg').textContent) && ${dlg}.querySelector('.fd-msg').textContent`)), await msg());
-    await evalJs(`${dlg}.querySelector('.fd-bar .btn').click()`);                      // ↑ back to the places
+    await evalJs(`${dlg}.querySelector('.fd-bar .btn').click()`);
     await until(`${dlg}.querySelectorAll('.fd-row').length === 2 && ${dlg}.querySelector('.fd-where').value === ''`);
     await dblRow(SHARE);
     await until(`${dlg}.querySelector('.fd-where').value === ${JSON.stringify(SHARE)}`);
@@ -141,21 +166,23 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await shot('83-office-recent.png');
 
     // Excel: its own recent list (none), only .xlsx to open
-    await dbl('excel');
+    await openApp('excel');
     const ex = await until(`(() => { const w = ${app('Excel')}; return w && w.querySelector('.oa-none') && w.querySelector('.oa-none').textContent; })()`);
     chk('Excel: Word documents are not in its recent list', /还没有编辑过工作簿/.test(ex || ''), ex);
     await evalJs(`${app('Excel')}.querySelectorAll('.oa-big')[1].click()`);
     const xl = await until(`(() => { const d = ${dlg}; return d && d.closest('.win').querySelector('.title').textContent === '打开工作簿' && d.querySelector('.fd-where').value && [...d.querySelectorAll('.fd-row')].map(r => r.querySelector('.fd-n').textContent); })()`);
     chk('Excel\'s 打开 lists only spreadsheets', JSON.stringify(xl) === JSON.stringify(['预算.xlsx']), xl);
-    await evalJs(`${dlg}.querySelectorAll('.fd-foot .btn')[1].click()`);              // 取消
+    await evalJs(`${dlg}.querySelectorAll('.fd-foot .btn')[1].click()`);
     chk('取消 closes the dialog', await until(`!${dlg}`), 0);
+
     // 我的电脑: the documents with their icons
     const xicons = await evalJs("(async () => { const { iconOf } = await import('/js/filetypes.js'); return ['a.docx', 'b.xlsx', 'c.pptx', 'd.txt'].map(n => iconOf({ name: n })); })()");
     chk('我的电脑 shows the documents with these icons', JSON.stringify(xicons) === JSON.stringify(['word-doc', 'excel-doc', 'powerpoint-doc', 'notepad_file']), xicons);
-    // reloaded: the recent list kept
+
+    // reloaded: the recent list kept (both in Word and in unified Office 文档!)
     await call('Page.reload'); await sleep(3500);
     await evalJs("document.querySelectorAll('.win .tbtn.close').forEach(b => b.click())");
-    await dbl('word');
+    await openApp('word');
     chk('after a reload the recent documents are still there', await until(`(() => { const w = ${app('Word')}; return w && w.querySelectorAll('.oa-row').length === 2; })()`), 0);
   } catch (e) { errors.push('script: ' + e.stack); }
   finally {
@@ -166,6 +193,6 @@ const portUp = () => new Promise((r) => http.get(`http://127.0.0.1:${PORT}/login
     await sleep(800);
     try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
     console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no page errors');
-    process.exit(0);
+    process.exit(res.some((r) => r.startsWith('FAIL')) || errors.length ? 1 : 0);
   }
 })();

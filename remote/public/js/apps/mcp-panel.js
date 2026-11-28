@@ -59,7 +59,7 @@ export function panel() {
         : h('p', { class: 'ghint', text: '还没有电脑连上来。' }),
       h('p', { class: 'ghint', text: '改了配置后要重启那个客户端（或开新会话）才会加载新的 MCP。' }),
       h('h4', { class: 'aim-h', text: '怎么安装' }),
-      h('p', { text: `装好 Windose agent 的电脑（控制面板 › 电脑 里添加），agent 每次启动都会自动把这 ${r.servers.length} 个 MCP 登记进这台电脑上找得到的客户端，也可以直接点上面的按钮远程一键同步。要手动装、看状态或卸载，在 AmeTyping 仓库目录里运行：` }),
+      h('p', { text: `装好 Windose agent 的电脑（设备与算力 › 设备接入与令牌 里添加），agent 每次启动都会自动把这 ${r.servers.length} 个 MCP 登记进这台电脑上找得到的客户端，也可以直接点上面的按钮远程一键同步。要手动装、看状态或卸载，在 AmeTyping 仓库目录里运行：` }),
       code('登记（Windows / Linux 一样）', 'node install-mesh-mcp.js'),
       code('看这台电脑哪些客户端登记了', 'node install-mesh-mcp.js --status'),
       code('全部卸载', 'node install-mesh-mcp.js --remove'),
