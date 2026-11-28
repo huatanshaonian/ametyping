@@ -21,7 +21,10 @@ function gpuPct(g) {
 
 export function createComputeView({ say = () => {} } = {}) {
   let data = { jobs: [], machines: [], providers: [] };
+  let profiles = [];
   let projects = [];
+  let filterProject = '';
+  let focusedMachine = '';
   let loading = false;
   let destroyed = false;
   let refreshSeq = 0;
@@ -38,13 +41,15 @@ export function createComputeView({ say = () => {} } = {}) {
     loading = true;
     const seq = ++refreshSeq;
     try {
-      const [qRes, pRes] = await Promise.all([
+      const [qRes, pRes, profRes] = await Promise.all([
         net.getJson('/api/mesh/queue'),
         net.getJson('/api/mesh/projects'),
+        net.getJson('/api/mesh/machine-profiles'),
       ]);
       if (destroyed || seq !== refreshSeq) return;
       if (qRes && qRes.ok) data = qRes;
       if (pRes && pRes.ok && Array.isArray(pRes.projects)) projects = pRes.projects;
+      if (profRes && profRes.ok && Array.isArray(profRes.machines)) profiles = profRes.machines;
       render();
     } finally {
       loading = false;
@@ -134,6 +139,8 @@ export function createComputeView({ say = () => {} } = {}) {
       h('option', { value: '', text: '（不绑定项目，仅在算力面板查看）' }),
       ...projects.map((p) => h('option', { value: p.id, text: `${p.name} (${p.id})` }))
     );
+    const initProj = (opts && opts.projectId) || filterProject || '';
+    if (initProj && projects.some((p) => p.id === initProj)) projSel.value = initProj;
     const resSel = h('select', { class: 'field' },
       h('option', { value: 'gpu', text: 'GPU 算力' }),
       h('option', { value: 'cpu', text: 'CPU / NUMA 算力' })
@@ -362,7 +369,12 @@ export function createComputeView({ say = () => {} } = {}) {
       : [h('div', { class: 'inf-comp-muted', text: '无独立 NVIDIA GPU（仅 CPU 槽位）' })];
 
     const dirs = Array.isArray(m.computeDirs) ? m.computeDirs.slice(0, 4) : [];
-    return h('div', { class: `inf-comp-card${m.online ? '' : ' off'}` },
+    const isFocused = focusedMachine && m.machine === focusedMachine;
+    return h('div', {
+      class: `inf-comp-card${m.online ? '' : ' off'}`,
+      dataset: { machine: m.machine },
+      style: isFocused ? 'outline:2px solid var(--fill)' : '',
+    },
       h('div', { class: 'inf-comp-card-hd' },
         h('span', { class: `inf-dot ${m.online ? 'on' : ''}` }),
         h('b', { text: m.machine }),
@@ -376,6 +388,7 @@ export function createComputeView({ say = () => {} } = {}) {
       ...gpuRows,
       h('div', { class: 'inf-comp-meta' },
         h('span', { text: `CPU: ${comp.cpuCount || '—'} 核 / ${comp.numaCount || 1} NUMA${comp.cpuBusy ? ' (忙)' : ''}` }),
+        m.hardware ? h('span', { text: `硬件配置: ${m.hardware}` }) : null,
         m.software ? h('span', { class: 'inf-comp-sw', text: `软件基建: ${m.software}` }) : null,
         m.note ? h('span', { class: 'inf-comp-muted', text: m.note }) : null
       ),
@@ -406,6 +419,16 @@ export function createComputeView({ say = () => {} } = {}) {
         h('b', { text: j.label || j.id }),
         h('span', { class: 'inf-comp-muted', text: `${j.machine} · ${slotTxt} · ${dur}` }),
         h('div', { style: 'margin-left:auto;display:flex;gap:4px' },
+          j.projectId
+            ? h('button', {
+                class: 'btn',
+                type: 'button',
+                style: 'padding:1px 6px;font-size:10px',
+                title: `跳转到关联协同项目 ${j.projectId}`,
+                text: '↗ 项目',
+                onclick: () => { location.hash = '#proj=' + encodeURIComponent(j.projectId); },
+              })
+            : null,
           j.status === 'queued' && j.priority !== 'urgent'
             ? h('button', { class: 'btn', type: 'button', style: 'padding:1px 6px;font-size:10px', text: '置顶', onclick: () => postQueue({ op: 'prioritize', jobId: j.id, priority: 'urgent' }, `已置顶 ${j.label}`) })
             : null,
@@ -510,26 +533,50 @@ export function createComputeView({ say = () => {} } = {}) {
   }
 
   function render() {
-    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const allJobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const jobs = filterProject ? allJobs.filter((j) => j.projectId === filterProject) : allJobs;
     const running = jobs.filter((j) => j.status === 'running');
     const queued = jobs.filter((j) => j.status === 'queued');
     const history = jobs.filter((j) => j.status !== 'running' && j.status !== 'queued').slice(-15).reverse();
-    const machs = Array.isArray(data.machines) ? data.machines : [];
+
+    // Merge /api/mesh/queue machines with /api/mesh/machine-profiles so this is the single authoritative profile hub
+    const profMap = new Map(profiles.map((p) => [p.machine, p]));
+    const machMap = new Map();
+    for (const m of Array.isArray(data.machines) ? data.machines : []) {
+      const pf = profMap.get(m.machine) || {};
+      machMap.set(m.machine, {
+        ...pf,
+        ...m,
+        role: m.role || pf.role || '',
+        hardware: m.hardware || pf.hardware || '',
+        software: m.software || pf.software || '',
+        note: m.note || pf.note || '',
+      });
+    }
+    for (const pf of profiles) {
+      if (pf && pf.machine && !machMap.has(pf.machine)) machMap.set(pf.machine, { ...pf });
+    }
+    const machs = [...machMap.values()];
     const providers = Array.isArray(data.providers) ? data.providers : [];
 
     const totalGpus = machs.reduce((s, m) => s + ((m.compute && m.compute.gpus && m.compute.gpus.length) || 0), 0);
     const freeGpus = machs.reduce((s, m) => s + ((m.compute && m.compute.gpus) || []).filter((g) => !g.busy && !g.managedBy).length, 0);
+    const filterProjObj = filterProject ? projects.find((p) => p.id === filterProject) : null;
 
-    headBar.replaceChildren(
+    headBar.replaceChildren(...[
       h('span', { class: 'inf-stat-pill ok', text: `空闲 GPU ${freeGpus} / ${totalGpus}` }),
       h('span', { class: 'inf-stat-pill', text: `运行中 ${running.length}` }),
       h('span', { class: 'inf-stat-pill', text: `排队中 ${queued.length}` }),
+      filterProject ? h('span', { class: 'inf-stat-pill' },
+        `筛选项目：${(filterProjObj && filterProjObj.name) || filterProject} `,
+        h('button', { class: 'btn', type: 'button', style: 'padding:0 5px;font-size:10px', text: '显示全部', onclick: () => { filterProject = ''; render(); } })
+      ) : null,
       h('div', { class: 'inf-bar-right' },
-        h('button', { class: 'btn go', type: 'button', text: '+ 远程提交算例', onclick: () => openSubmitDialog('') }),
+        h('button', { class: 'btn go', type: 'button', text: '+ 远程提交算例', onclick: () => openSubmitDialog('', { projectId: filterProject }) }),
         h('button', { class: 'btn', type: 'button', text: '清空历史', onclick: () => postQueue({ op: 'clear_done' }, '已清空已完成作业历史') }),
         h('button', { class: 'btn', type: 'button', text: '刷新队列', onclick: refresh })
-      )
-    );
+      ),
+    ].filter(Boolean));
 
     const sortedMachines = [...machs].sort((a, b) =>
       ((b.online ? 1 : 0) - (a.online ? 1 : 0)) ||
@@ -643,5 +690,23 @@ export function createComputeView({ say = () => {} } = {}) {
     );
   }
 
-  return { root, refresh, destroy() { destroyed = true; } };
+  return {
+    root,
+    refresh,
+    setProject(projectId) {
+      filterProject = String(projectId || '').trim();
+      render();
+    },
+    focusMachine(machineId) {
+      focusedMachine = String(machineId || '').trim();
+      render();
+      if (focusedMachine) {
+        requestAnimationFrame(() => {
+          const card = leftCol.querySelector(`[data-machine="${CSS.escape(focusedMachine)}"]`);
+          if (card) card.scrollIntoView({ block: 'nearest' });
+        });
+      }
+    },
+    destroy() { destroyed = true; },
+  };
 }

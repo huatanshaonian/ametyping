@@ -1,17 +1,21 @@
 // 网上邻居: every remote computer with its state; clicking one makes it the desktop's current computer.
-// On a wide screen it stands at the right and can be put away (» in its title; remembered); on phones it is a sheet.
-// Either way the tray's button / the start menu opens it again.
+// Right-clicking (or long-pressing) a computer opens quick actions: 我的电脑 / 查看监控详情 / 配置 Fleet.
 import { $, h, icon, isWorking, prefs } from './util.js';
+import * as ctxmenu from './ctxmenu.js';
 
 const panel = $('#netpanel'), box = $('#machines');
 let onSelect = () => {};
+let actions = {};
 
-export function init(select) {
+export function init(select, extraActions = {}) {
   onSelect = select;
+  actions = extraActions || {};
   document.documentElement.classList.toggle('net-off', !!prefs.get('net.off', false));
   $('#hidepc').addEventListener('click', (e) => { e.stopPropagation(); toggle(false); });
   $('#netbtn').addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  document.addEventListener('pointerdown', (e) => { if (panel.classList.contains('open') && !panel.contains(e.target) && !$('#netbtn').contains(e.target)) panel.classList.remove('open'); });
+  document.addEventListener('pointerdown', (e) => {
+    if (panel.classList.contains('open') && !panel.contains(e.target) && !$('#netbtn').contains(e.target)) panel.classList.remove('open');
+  });
 }
 const wide = () => !window.matchMedia('(max-width: 700px)').matches;
 export function toggle(force) {
@@ -33,12 +37,41 @@ export function render(machines, current) {
   box.replaceChildren(...machines.map((m) => {
     const c = summary(m);
     const info = m.online ? `${c.live} 个会话${c.working ? ` · ${c.working} 个进行中` : ''}${m.control ? '' : ' · 只读'}` : `离线 · ${c.total} 个历史会话`;
-    return h('button', { class: `mach${m.online ? ' on' : ' off'}${m.machine === current ? ' sel' : ''}`, type: 'button',
+    const btn = h('button', { class: `mach${m.online ? ' on' : ' off'}${m.machine === current ? ' sel' : ''}`, type: 'button',
       onclick: () => { onSelect(m.machine); panel.classList.remove('open'); } },
     h('img', { src: icon('computer_2'), alt: '' }),
     h('div', { style: 'min-width:0' },
       h('div', { class: 'mn' }, h('span', { class: 'dot' }), m.machine),
       h('div', { class: 'mi', text: info }),
       c.perms ? h('span', { class: 'mb', text: `待确认 ${c.perms}` }) : null));
+
+    ctxmenu.attach(btn, () => [
+      {
+        label: '打开我的电脑',
+        onClick: () => {
+          onSelect(m.machine);
+          panel.classList.remove('open');
+          if (actions.openMyComputer) actions.openMyComputer(m.machine);
+          else location.hash = '#explorer=' + encodeURIComponent(m.machine);
+        },
+      },
+      {
+        label: '查看监控详情',
+        onClick: () => {
+          panel.classList.remove('open');
+          if (actions.openTopo) actions.openTopo(m.machine);
+          else location.hash = '#infra?tab=topo&node=' + encodeURIComponent(m.machine);
+        },
+      },
+      {
+        label: '配置 Fleet',
+        onClick: () => {
+          panel.classList.remove('open');
+          if (actions.openFleet) actions.openFleet(m.machine);
+          else location.hash = '#infra?tab=fleet&machine=' + encodeURIComponent(m.machine);
+        },
+      },
+    ]);
+    return btn;
   }));
 }

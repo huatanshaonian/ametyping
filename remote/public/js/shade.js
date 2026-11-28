@@ -7,6 +7,7 @@
 // which puts it back before the first paint of the next visit; it is looked at again every minute and whenever the
 // page comes back on screen.
 import { prefs } from './util.js';
+import * as net from './net.js';
 import { isNightAt, sunTimes, CITIES } from './sun.js';
 
 export const SHADES = {
@@ -57,7 +58,11 @@ export function apply() {
   if (nl) { el.dataset.nl = '1'; el.style.setProperty('--nl', String(nl)); } else { delete el.dataset.nl; el.style.removeProperty('--nl'); }
   const now = { shade, nl, night };
   const was = prefs.get('shade.applied', null);
-  if (!was || was.shade !== shade || was.nl !== nl) { prefs.set('shade.applied', { shade, nl }); for (const fn of listeners) fn(now); }
+  if (!was || was.shade !== shade || was.nl !== nl) {
+    prefs.set('shade.applied', { shade, nl });
+    try { net.send({ t: 'shade', shade: shade || '' }); } catch {}
+    for (const fn of listeners) fn(now);
+  }
   return now;
 }
 

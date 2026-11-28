@@ -30,6 +30,7 @@ const settings = {
   scale: 0.36, x: null, y: null, clickThrough: false, debug: false,
   facing: 'her', panelMode: 'popup', remoteControl: false,
   dashboardUrl: 'https://win98.huatan.org', petSound: true, kangel: false,
+  quotaBubble: true, shade: '',
 };
 try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8').replace(/^\uFEFF/, ''))); } catch {}
 const save = () => {
@@ -78,6 +79,7 @@ runtime = createSessionRuntime({
   screen,
   port: PORT,
   settings,
+  save,
   bridge,
   getWin: () => win,
   getBubbleWin: ui.getBubbleWin,
@@ -141,11 +143,22 @@ function setScale(s, commit = true) {
 }
 ipcMain.on('set-scale', (_e, s, commit) => { if (win) setScale(s, commit); });
 
+function openWebHash(hash = '') {
+  const u = String(settings.dashboardUrl || '').trim();
+  if (!/^https:\/\/\S+$/.test(u)) return;
+  const cleanHash = typeof hash === 'string' && hash ? (hash.startsWith('#') ? hash : '#' + hash) : '';
+  if (cleanHash && !/^#[A-Za-z0-9_=?&.|/%:-]{1,200}$/.test(cleanHash)) return;
+  const base = u.replace(/#.*$/, '');
+  shell.openExternal(cleanHash ? base.replace(/\/?$/, '/') + cleanHash : base);
+}
 function openDashboard() {
-  const u = String(settings.dashboardUrl || '');
-  if (/^https:\/\/\S+$/.test(u)) shell.openExternal(u);
+  openWebHash('');
 }
 ipcMain.on('open-dashboard', (e) => { if (win && e.sender === win.webContents) openDashboard(); });
+ipcMain.on('bubble-open-web', (e, hash) => {
+  const bw = ui.getBubbleWin();
+  if (bw && !bw.isDestroyed() && e.sender === bw.webContents) openWebHash(typeof hash === 'string' ? hash : '');
+});
 
 function createWindow() {
   const { width, height } = winSize();
@@ -195,44 +208,63 @@ async function runUpdate() {
 function buildMenu() {
   if (!tray) return;
   const menu = Menu.buildFromTemplate([
-    { label: '大小', submenu: Object.entries(SCALES).map(([k, v]) => ({
-      label: k, type: 'radio', checked: Math.abs(settings.scale - v) < 1e-3, click: () => setScale(v) })) },
-    { label: '键盘朝向', submenu: [['her', '朝她（真实对坐）'], ['you', '朝你（布局和你的键盘一样）']].map(([v, l]) => ({
-      label: l, type: 'radio', checked: settings.facing === v,
-      click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
+    // 1. 网页工作台快捷入口（修复鼠标穿透开启后无法打开网页桌面的死锁）
+    { label: '🌐 打开 Windose 桌面', click: () => openWebHash('') },
+    { label: '💬 打开糖糖看板', click: () => openWebHash('#dashboard') },
+    { label: '📊 查看 AI 额度', click: () => openWebHash('#magpie') },
+    { type: 'separator' },
+
+    // 2. 面板与提醒
     { label: '面板模式', submenu: [['popup', '弹出进度（有动静时弹出）'], ['chat', '常驻对话（完整对话 + 回复）'], ['pchan', 'P 酱（收成 P 酱，有动静它会跳，点它看面板）'], ['off', '关闭（不弹出面板）']].map(([v, l]) => ({
       label: l, type: 'radio', checked: settings.panelMode === v, click: () => ui.setPanelMode(v) })) },
-    { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
-      label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
-      click: () => { settings.kbTheme = v; save(); win.webContents.send('config', cfg()); } })) },
-    { label: '允许远程控制（看板回复 / 审批）', type: 'checkbox', checked: !!settings.remoteControl,
-      click: (m) => { settings.remoteControl = m.checked; save(); } },
-    { label: '提示音', type: 'checkbox', checked: settings.petSound !== false,
-      click: (m) => { settings.petSound = m.checked; save(); runtime.pushBubble(null); } },
-    { label: '早安日报（每天第一次打字时说昨天做了什么）', type: 'checkbox', checked: settings.morningBubble !== false,
-      click: (m) => { settings.morningBubble = m.checked; save(); if (!m.checked) morning.hide(); } },
-    { label: '邮件提醒气泡（要办的通知、推荐文献）', type: 'checkbox', checked: settings.mailBubble !== false,
-      click: (m) => { settings.mailBubble = m.checked; save(); if (!m.checked) mailNotice.hide(); } },
+    { label: '提醒与音效', submenu: [
+      { label: '提示音', type: 'checkbox', checked: settings.petSound !== false,
+        click: (m) => { settings.petSound = m.checked; save(); runtime.pushBubble(null); } },
+      { label: '早安日报（每天第一次打字时说昨天做了什么）', type: 'checkbox', checked: settings.morningBubble !== false,
+        click: (m) => { settings.morningBubble = m.checked; save(); if (!m.checked) morning.hide(); } },
+      { label: '邮件提醒气泡（要办的通知、推荐文献）', type: 'checkbox', checked: settings.mailBubble !== false,
+        click: (m) => { settings.mailBubble = m.checked; save(); if (!m.checked) mailNotice.hide(); } },
+      { label: '额度预警气泡（低余量与到期消化提醒）', type: 'checkbox', checked: settings.quotaBubble !== false,
+        click: (m) => { settings.quotaBubble = m.checked; save(); if (!m.checked && quotaNotice && quotaNotice.hide) quotaNotice.hide(); } },
+      { label: '久坐休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
+        click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
+    ] },
+    { type: 'separator' },
+
+    // 3. 外观与交互
+    { label: '外观装扮', submenu: [
+      { label: '大小', submenu: Object.entries(SCALES).map(([k, v]) => ({
+        label: k, type: 'radio', checked: Math.abs(settings.scale - v) < 1e-3, click: () => setScale(v) })) },
+      { label: '键盘朝向', submenu: [['her', '朝她（真实对坐）'], ['you', '朝你（布局和你的键盘一样）']].map(([v, l]) => ({
+        label: l, type: 'radio', checked: settings.facing === v,
+        click: () => { settings.facing = v; save(); win.webContents.send('config', cfg()); } })) },
+      { label: '键帽主题', submenu: [['ngo', 'NGO 主题'], ['default', '默认']].map(([v, l]) => ({
+        label: l, type: 'radio', checked: (settings.kbTheme || 'ngo') === v,
+        click: () => { settings.kbTheme = v; save(); win.webContents.send('config', cfg()); } })) },
+      { type: 'separator' },
+      { label: '显示腿部（跪坐全身）', type: 'checkbox', checked: settings.legs !== false,
+        click: (m) => { settings.legs = m.checked; setScale(settings.scale); } },
+      { label: '天使模式（常驻）', type: 'checkbox', checked: !!settings.kangel,
+        enabled: fs.existsSync(path.join(__dirname, 'assets', 'rig', 'kangel', 'kangel.js')),
+        click: (m) => { settings.kangel = m.checked; save(); win.webContents.send('config', cfg()); } },
+    ] },
     { label: '鼠标穿透', type: 'checkbox', checked: settings.clickThrough,
       click: (m) => { settings.clickThrough = m.checked; save(); applyClickThrough(); } },
     { label: '触屏模式（手指能直接拖她、点她）', type: 'checkbox', checked: !!settings.touchMode,
       click: (m) => { settings.touchMode = m.checked; save(); applyClickThrough(); win.webContents.send('config', cfg()); } },
-    { label: '休息提醒', type: 'checkbox', checked: settings.breakNag !== false,
-      click: (m) => { settings.breakNag = m.checked; save(); win.webContents.send('config', cfg()); } },
-    { label: '显示腿部（跪坐全身）', type: 'checkbox', checked: settings.legs !== false,
-      click: (m) => { settings.legs = m.checked; setScale(settings.scale); } },
-    { label: '天使模式（常驻）', type: 'checkbox', checked: !!settings.kangel,
-      enabled: fs.existsSync(path.join(__dirname, 'assets', 'rig', 'kangel', 'kangel.js')),
-      click: (m) => { settings.kangel = m.checked; save(); win.webContents.send('config', cfg()); } },
-    { label: '调试信息', type: 'checkbox', checked: settings.debug,
-      click: (m) => { settings.debug = m.checked; save(); win.webContents.send('config', cfg()); } },
-    { label: '开机自动启动', type: 'checkbox', checked: app.getLoginItemSettings({ path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath }).openAtLogin,
-      enabled: app.isPackaged,
-      click: (m) => app.setLoginItemSettings({ openAtLogin: m.checked, path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath }) },
     { label: '回到右下角', click: () => {
       const wa = screen.getPrimaryDisplay().workArea, { width, height } = winSize();
       win.setPosition(wa.x + wa.width - width - 24, wa.y + wa.height - height); } },
     { type: 'separator' },
+
+    // 4. 系统与连接
+    { label: '允许远程控制（看板回复 / 审批）', type: 'checkbox', checked: !!settings.remoteControl,
+      click: (m) => { settings.remoteControl = m.checked; save(); } },
+    { label: '开机自动启动', type: 'checkbox', checked: app.getLoginItemSettings({ path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath }).openAtLogin,
+      enabled: app.isPackaged,
+      click: (m) => app.setLoginItemSettings({ openAtLogin: m.checked, path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath }) },
+    { label: '调试信息', type: 'checkbox', checked: settings.debug,
+      click: (m) => { settings.debug = m.checked; save(); win.webContents.send('config', cfg()); } },
     { label: updating ? '正在更新…' : '检查更新（拉取最新代码并重启）', enabled: !app.isPackaged && !updating, click: runUpdate },
     { label: '退出', click: () => app.quit() },
   ]);

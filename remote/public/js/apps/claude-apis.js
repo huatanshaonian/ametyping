@@ -96,5 +96,5 @@ export function panel() {
     h('div', { class: 'capi-form' }, machine, refresh, add), note, paths, rows, form,
     h('p', { class: 'ghint', text: 'API 配置和密钥保存在所选电脑的 cc-environments 中，修改前自动备份。已有的统一启动器会保留；启动目录跟随所选项目。换入口可恢复同一份历史，请勿同时打开同一会话。' }));
   load();
-  return { root, destroy() { dead = true; seq++; key.value = ''; } };
+  return { root, load, show: (m) => load(m || ''), destroy() { dead = true; seq++; key.value = ''; } };
 }

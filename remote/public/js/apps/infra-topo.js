@@ -9,9 +9,9 @@ export const ROLE_NAMES = {
 };
 
 export const ROLE_ICONS = {
-  router: 'network_cool_two_pcs',
+  router: 'network_drive_world',
   nas: 'hard_disk_drive',
-  cloud: 'network_normal_two_pcs',
+  cloud: 'world',
   workstation: 'computer_2',
 };
 

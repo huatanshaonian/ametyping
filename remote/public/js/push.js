@@ -7,7 +7,7 @@
 //     notification hands this window its link
 import * as net from './net.js';
 
-const handlers = { s: null, mail: null };          // set by main.js: what to open for a session / a message
+const handlers = { s: null, mail: null, proj: null, any: null }; // set by main.js / router.js
 let reg = null, installOffer = null, sub = null;
 const listeners = new Set();
 const changed = () => { for (const fn of listeners) { try { fn(); } catch {} } };
@@ -77,12 +77,18 @@ function here() {
 }
 
 // what a link points at
-export function route(handlersIn) { Object.assign(handlers, handlersIn); openHash(location.hash); }
+export function route(handlersIn) {
+  if (typeof handlersIn === 'function') handlers.any = handlersIn;
+  else if (handlersIn && typeof handlersIn === 'object') Object.assign(handlers, handlersIn);
+  openHash(location.hash);
+}
 function openHash(hash) {
+  if (!hash) return;
+  if (handlers.any && handlers.any(hash)) return;
   const m = /^#(s|mail|proj)=(.+)$/.exec(hash || '');
   if (!m) return;
   const v = decodeURIComponent(m[2]);
-  history.replaceState(null, '', location.pathname);              // (a reload does not open it again)
+  history.replaceState(null, '', location.pathname + location.search); // (a reload does not open it again)
   if (m[1] === 's' && handlers.s) { const i = v.indexOf('|'); if (i > 0) handlers.s(v.slice(0, i), v.slice(i + 1)); }
   if (m[1] === 'mail' && handlers.mail) handlers.mail(v);
   if (m[1] === 'proj' && handlers.proj) handlers.proj(v);

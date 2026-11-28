@@ -1,32 +1,52 @@
-// 网络与设备 (Infrastructure & Network Topology Monitor):
-//   - Visualizes workstations, OpenWrt router, Synology NAS, and cloud servers (AWS/GCP) with live SVG interconnect links.
-//   - Event-driven low-traffic monitoring: 60s silent heartbeat when closed, 10s fast refresh while this window is open.
-//   - Remote control (restart/start/stop systemd/init.d services, Docker containers, NAS egress.sh, OpenWrt sing-box retest)
-//     protected by TOTP step-up authentication.
+// 设备与算力中心 (Device, Compute & Fleet Hub — IA 1-A):
+// Unified 4-Tab operations hub:
+//   1) 拓扑与服务 (topo): 3-tier live SVG interconnect topology, node metrics, systemd/Docker/Sing-box remote control
+//   2) 算力与作业 (compute): Mini-Slurm GPU/NUMA & Colab/Sugon queue + single authoritative 4-field machine profiles
+//   3) Agent 与 Harness (fleet): Fleet-wide agent updates, CLI harness installs/upgrades, gateway config & NAS CLI status
+//   4) 设备接入与令牌 (agents): Register/revoke computers, generate install commands, and auto-sync topology nodes
 import { h, icon, svgEl } from '../util.js';
 import * as net from '../net.js';
 import * as wm from '../wm.js';
 import { confirmBox } from '../dialog.js';
 import * as ctxmenu from '../ctxmenu.js';
-import * as computers from './computers.js';
+import { panel as computersPanel } from './computers.js';
+import { panel as fleetPanel } from './fleet-panel.js';
 import { createComputeView } from './infra-compute.js';
 import { renderTopology, drawSvgLinks } from './infra-topo.js';
 import { renderDetailPane } from './infra-detail.js';
 import { openNodeDialog, openLinkDialog } from './infra-dialogs.js';
 
+const TABS = [
+  ['topo', '拓扑与服务'],
+  ['compute', '算力与作业 (Mini-Slurm)'],
+  ['fleet', 'Agent 与 Harness (Fleet)'],
+  ['agents', '设备接入与令牌'],
+];
+
+function normalizeOpts(arg) {
+  if (!arg) return {};
+  if (typeof arg === 'string') {
+    if (TABS.some(([id]) => id === arg)) return { tab: arg };
+    return { tab: 'topo', node: arg };
+  }
+  if (typeof arg === 'object') return arg;
+  return {};
+}
+
 let inst = null;
 
-export function open(initialNodeId) {
+export function open(arg) {
+  const opts = normalizeOpts(arg);
   if (inst) {
-    if (initialNodeId) inst.select(initialNodeId);
-    wm.focus('infra');
+    wm.open({ id: 'infra' });
+    inst.applyOpts(opts);
     return;
   }
-  inst = mount(initialNodeId);
+  inst = mount(opts);
   wm.open({
     id: 'infra',
-    title: '网络与设备 — 服务监控与互联拓扑',
-    icon: icon('network_cool_two_pcs', true),
+    title: '设备与算力',
+    icon: icon('network_three_pcs', true),
     width: 1140,
     height: 680,
     content: inst.root,
@@ -37,18 +57,17 @@ export function open(initialNodeId) {
   });
 }
 
-function mount(initialNodeId) {
+function mount(initialOpts = {}) {
   let state = { nodes: [], links: [], events: [], fast: false, intervalSec: 60 };
-  let selId = initialNodeId || 'nas';
+  let selId = initialOpts.node || 'nas';
   let showEvents = false;
-  let activeTab = 'topo'; // 'topo' | 'compute'
+  let activeTab = TABS.some(([id]) => id === initialOpts.tab) ? initialOpts.tab : 'topo';
   let destroyed = false;
   let fetchSeq = 0;
 
   const topBar = h('div', { class: 'inf-bar' });
   const svgCanvas = svgEl('svg', { class: 'inf-svg' });
   const tiersBox = h('div', { class: 'inf-tiers' });
-  // the svg shares the stage's origin with the tiers grid, so link geometry is measured relative to tiersBox and scrolls with it
   const stage = h('div', { class: 'inf-stage' }, svgCanvas, tiersBox);
   const canvasWrap = h('div', { class: 'inf-canvas-wrap' }, stage);
 
@@ -64,9 +83,39 @@ function mount(initialNodeId) {
   const detailPane = h('div', { class: 'inf-detail-pane' });
   const body = h('div', { class: 'inf-body' }, topoPane, detailPane);
   const statusLine = h('div', { class: 'inf-status' });
+
   const computeView = createComputeView({ say });
   computeView.root.style.display = 'none';
-  const root = h('div', { class: 'inf-app' }, topBar, body, computeView.root, statusLine);
+  if (initialOpts.project) computeView.setProject(initialOpts.project);
+
+  let fleetView = null;
+  const fleetWrap = h('div', { style: 'display:none;flex:1;min-height:0;overflow:auto' });
+  function ensureFleet(mach = '') {
+    if (!fleetView) {
+      fleetView = fleetPanel({ machine: mach });
+      fleetWrap.replaceChildren(fleetView.root);
+    } else {
+      fleetView.show(mach);
+    }
+  }
+
+  let agentsView = null;
+  const agentsWrap = h('div', { style: 'display:none;flex:1;min-height:0;overflow:auto' });
+  function ensureAgents() {
+    if (!agentsView) {
+      agentsView = computersPanel({
+        onAdded: (newName) => {
+          selId = newName;
+          fetchState();
+        },
+      });
+      agentsWrap.replaceChildren(agentsView.root);
+    } else {
+      agentsView.show();
+    }
+  }
+
+  const root = h('div', { class: 'inf-app infra-hub' }, topBar, body, computeView.root, fleetWrap, agentsWrap, statusLine);
 
   function say(msg) {
     statusLine.replaceChildren(
@@ -163,53 +212,70 @@ function mount(initialNodeId) {
     openLinkDialog(existing, { nodes: state.nodes, fetchState });
   }
 
+  function switchTab(tabId, extra = {}) {
+    if (TABS.some(([id]) => id === tabId)) activeTab = tabId;
+    if (extra.node) { selId = extra.node; showEvents = false; }
+    if (extra.project !== undefined) computeView.setProject(extra.project);
+    if (activeTab === 'compute') {
+      computeView.refresh();
+      if (extra.machine || extra.node) computeView.focusMachine(extra.machine || extra.node);
+    } else if (activeTab === 'fleet') {
+      ensureFleet(extra.machine || '');
+    } else if (activeTab === 'agents') {
+      ensureAgents();
+    }
+    render();
+    if (activeTab === 'topo') scheduleDraw();
+  }
+
   function renderTopBar() {
     const onlineCnt = state.nodes.filter((n) => n.online).length;
     const totalSvcs = state.nodes.reduce((s, n) => s + (n.services || []).filter((x) => x.state === 'running').length, 0);
     const totalCnts = state.nodes.reduce((s, n) => s + (n.containers || []).filter((x) => x.state === 'running').length, 0);
     const totalAlerts = state.nodes.reduce((s, n) => s + (n.alertCount || 0), 0);
 
-    topBar.replaceChildren(
-      h('button', {
-        class: `btn ${activeTab === 'topo' ? 'go' : ''}`,
+    const tabGroup = h('div', { class: 'skp-tabs', role: 'tablist', style: 'padding-bottom:0;border-bottom:0' },
+      ...TABS.map(([id, label]) => h('button', {
+        class: `btn skp-tab${activeTab === id ? ' sel go' : ''}`,
         type: 'button',
-        text: '拓扑与服务',
-        onclick: () => { activeTab = 'topo'; render(); scheduleDraw(); },
-      }),
-      h('button', {
-        class: `btn ${activeTab === 'compute' ? 'go' : ''}`,
-        type: 'button',
-        text: '算力与作业 (Mini-Slurm)',
-        onclick: () => { activeTab = 'compute'; render(); computeView.refresh(); },
-      }),
+        role: 'tab',
+        'aria-selected': String(activeTab === id),
+        dataset: { tab: id },
+        text: label,
+        onclick: () => switchTab(id),
+      }))
+    );
+
+    topBar.replaceChildren(...[
+      tabGroup,
       h('span', { class: `inf-stat-pill ${onlineCnt > 0 ? 'ok' : ''}`, text: `在线设备 ${onlineCnt} / ${state.nodes.length}` }),
-      h('span', { class: 'inf-stat-pill', text: `运行服务 ${totalSvcs}` }),
-      h('span', { class: 'inf-stat-pill', text: `Docker 容器 ${totalCnts}` }),
+      activeTab === 'topo' ? h('span', { class: 'inf-stat-pill', text: `运行服务 ${totalSvcs}` }) : null,
+      activeTab === 'topo' ? h('span', { class: 'inf-stat-pill', text: `Docker 容器 ${totalCnts}` }) : null,
       totalAlerts > 0
         ? h('span', { class: 'inf-stat-pill err', text: `⚠️ 异常告警 ${totalAlerts}` })
         : h('span', { class: 'inf-stat-pill ok', text: '✓ 核心服务正常' }),
-      h('div', { class: 'inf-bar-right' },
+      activeTab === 'topo' ? h('div', { class: 'inf-bar-right' },
         h('button', { class: 'btn', type: 'button', text: '🔄 立即刷新', onclick: triggerRefresh }),
         h('button', { class: 'btn', type: 'button', text: '＋ 添加节点', onclick: () => openNode(null) }),
         h('button', { class: 'btn', type: 'button', text: '🔗 添加互联链路', onclick: () => openLink(null) }),
-        h('button', { class: 'btn', type: 'button', text: '🔑 令牌与安装命令', onclick: () => computers.open() }),
+        h('button', { class: 'btn', type: 'button', text: '🔑 令牌与安装命令', onclick: () => switchTab('agents') }),
         h('button', {
           class: `btn ${showEvents ? 'go' : ''}`,
           type: 'button',
           text: `📋 事件流水 (${(state.events || []).length})`,
           onclick: () => { showEvents = !showEvents; renderDetail(); },
         })
-      )
-    );
+      ) : null,
+    ].filter(Boolean));
   }
 
   let drawQueued = false;
   function scheduleDraw() {
-    if (drawQueued || destroyed) return;
+    if (drawQueued || destroyed || activeTab !== 'topo') return;
     drawQueued = true;
     requestAnimationFrame(() => {
       drawQueued = false;
-      if (destroyed) return;
+      if (destroyed || activeTab !== 'topo') return;
       drawSvgLinks(svgCanvas, tiersBox, { state, selId, showEvents, onSelectNode: selectNode });
     });
   }
@@ -226,6 +292,9 @@ function mount(initialNodeId) {
       openNodeDialog: openNode,
       openLinkDialog: openLink,
       fetchState,
+      onJumpCompute: (nodeId) => switchTab('compute', { machine: nodeId }),
+      onJumpFleet: (nodeId) => switchTab('fleet', { machine: nodeId }),
+      onJumpAgents: () => switchTab('agents'),
     });
   }
 
@@ -233,6 +302,8 @@ function mount(initialNodeId) {
     renderTopBar();
     body.style.display = activeTab === 'topo' ? '' : 'none';
     computeView.root.style.display = activeTab === 'compute' ? '' : 'none';
+    fleetWrap.style.display = activeTab === 'fleet' ? 'flex' : 'none';
+    agentsWrap.style.display = activeTab === 'agents' ? 'flex' : 'none';
     if (activeTab === 'topo') {
       renderTopology(tiersBox, { state, selId, showEvents, onSelectNode: selectNode, attachItemMenu });
       scheduleDraw();
@@ -258,11 +329,20 @@ function mount(initialNodeId) {
   const offInfra = net.on('infra', fetchState);
   const offSess = net.on('sessions', fetchState);
   const offMesh = net.on('mesh', () => { if (activeTab === 'compute') computeView.refresh(); });
+
+  // Activate initial tab immediately, then load live infra state
+  if (activeTab !== 'topo') switchTab(activeTab, initialOpts);
+  else render();
   fetchState();
 
   return {
     root,
-    select(id) { selId = id; showEvents = false; render(); },
+    select(id) { switchTab('topo', { node: id }); },
+    applyOpts(opts = {}) {
+      if (opts.tab || opts.node || opts.machine || opts.project !== undefined) {
+        switchTab(opts.tab || activeTab, opts);
+      }
+    },
     destroy() {
       destroyed = true;
       clearInterval(watchTimer);
@@ -272,6 +352,8 @@ function mount(initialNodeId) {
       offSess();
       offMesh();
       if (computeView.destroy) computeView.destroy();
+      if (fleetView && fleetView.destroy) fleetView.destroy();
+      if (agentsView && agentsView.destroy) agentsView.destroy();
       fetch('/api/infra/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"on":false}' }).catch(() => {});
     },
   };

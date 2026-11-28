@@ -1,20 +1,129 @@
-// Taskbar: start button + menu, one button per open window, tray (network panel toggle on phones, connection, clock).
-import { $, h } from './util.js';
+// Taskbar: start button + 4-section cascading start menu (.mitem.has-sub + .msub), window dock buttons, and tray.
+import { $, h, narrow } from './util.js';
 import * as wm from './wm.js';
 import * as net from './net.js';
 
 const dock = $('#dock'), startBtn = $('#startbtn'), menu = $('#startmenu'), items = $('.items', menu);
 const conn = $('#conn'), clock = $('#clock');
 
-// items: [{ icon, label, action, disabled }] or 'sep'
-export function setMenu(list) {
-  items.replaceChildren(...list.map((it) => (it === 'sep' ? h('div', { class: 'smsep' })
-    : h('button', { class: 'smi', type: 'button', disabled: !!it.disabled, title: it.hint || null,
-      onclick: () => { closeMenu(); it.action(); } }, h('img', { src: it.icon, alt: '' }), h('span', { text: it.label })))));
+function closeAllSubs() {
+  for (const w of items.querySelectorAll('.mitem.has-sub')) {
+    w.classList.remove('open');
+    const sub = $('.msub', w);
+    if (sub) sub.hidden = true;
+  }
 }
-function closeMenu() { menu.hidden = true; startBtn.classList.remove('on'); }
-startBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; startBtn.classList.toggle('on', !menu.hidden); });
-document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target) && e.target !== startBtn && !startBtn.contains(e.target)) closeMenu(); });
+
+function applyFallbackFlyout(wrap, sub) {
+  // When components.css is merged, .msub already has its own position/display rules;
+  // when running standalone before CSS merge, apply clean token-based flyout positioning.
+  if (narrow()) {
+    sub.style.cssText = 'padding-left:14px;border-top:1px dotted var(--edge);border-bottom:1px dotted var(--edge);background:var(--tint)';
+    return;
+  }
+  const cs = getComputedStyle(sub);
+  if (cs.position === 'static') {
+    wrap.style.position = 'relative';
+    sub.style.cssText = 'position:absolute;left:100%;bottom:-3px;min-width:196px;z-index:65;padding:3px 0;background:var(--body);border:2px solid var(--border);box-shadow:4px 4px 0 rgba(20,10,90,.35)';
+  } else {
+    sub.style.cssText = '';
+  }
+}
+
+function openSubWrap(wrap) {
+  for (const other of items.querySelectorAll('.mitem.has-sub')) {
+    if (other !== wrap) {
+      other.classList.remove('open');
+      const oSub = $('.msub', other);
+      if (oSub) oSub.hidden = true;
+    }
+  }
+  const sub = $('.msub', wrap);
+  if (!sub) return;
+  wrap.classList.add('open');
+  sub.hidden = false;
+  applyFallbackFlyout(wrap, sub);
+}
+
+function buildLeaf(it) {
+  return h('button', {
+    class: 'smi mitem',
+    type: 'button',
+    disabled: !!it.disabled,
+    title: it.hint || null,
+    onclick: () => { closeMenu(); if (it.action) it.action(); },
+  }, h('img', { src: it.icon, alt: '' }), h('span', { text: it.label }));
+}
+
+function buildMenuNode(it) {
+  if (it === 'sep' || it === '-') return h('div', { class: 'smsep' });
+  if (!Array.isArray(it.sub) || !it.sub.length) return buildLeaf(it);
+
+  const sub = h('div', { class: 'msub', role: 'menu', hidden: true },
+    ...it.sub.map((c) => (c === 'sep' || c === '-' ? h('div', { class: 'smsep' }) : buildLeaf(c)))
+  );
+  const arrow = h('span', { class: 'ar', style: 'margin-left:auto;font-size:10px;padding-left:6px', text: '▸' });
+  const btn = h('button', {
+    class: 'smi',
+    type: 'button',
+    disabled: !!it.disabled,
+    title: it.hint || null,
+  }, h('img', { src: it.icon, alt: '' }), h('span', { style: 'flex:1', text: it.label }), arrow);
+
+  const wrap = h('div', { class: 'mitem has-sub' }, btn, sub);
+
+  const onHoverOpen = () => {
+    if (!narrow() && !it.disabled) openSubWrap(wrap);
+  };
+  wrap.addEventListener('mouseenter', onHoverOpen);
+  wrap.addEventListener('pointerenter', onHoverOpen);
+  wrap.addEventListener('mouseleave', () => {
+    if (!narrow()) {
+      wrap.classList.remove('open');
+      sub.hidden = true;
+    }
+  });
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const clickedArrow = e.target === arrow || arrow.contains(e.target);
+    if (it.action && !narrow() && !clickedArrow) {
+      closeMenu();
+      it.action();
+      return;
+    }
+    if (wrap.classList.contains('open')) {
+      wrap.classList.remove('open');
+      sub.hidden = true;
+    } else {
+      openSubWrap(wrap);
+    }
+  });
+  return wrap;
+}
+
+// items: [{ icon, label, action, disabled, sub }] or 'sep'
+export function setMenu(list) {
+  items.replaceChildren(...list.map(buildMenuNode));
+}
+
+function closeMenu() {
+  closeAllSubs();
+  menu.hidden = true;
+  startBtn.classList.remove('on');
+}
+
+startBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!menu.hidden) closeMenu();
+  else {
+    closeAllSubs();
+    menu.hidden = false;
+    startBtn.classList.add('on');
+  }
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!menu.hidden && !menu.contains(e.target) && e.target !== startBtn && !startBtn.contains(e.target)) closeMenu();
+});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
 // window buttons, kept in the order windows were opened
